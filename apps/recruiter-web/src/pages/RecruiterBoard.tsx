@@ -63,6 +63,8 @@ import {
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
 import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
+import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
+import { SubmissionUpdatesToggle } from "../components/SubmissionUpdatesToggle.js"
 
 type RecruiterTab = "overview" | "inbox" | "roles" | "access" | "matches" | "candidates" | "submissions" | "performance" | "earnings" | "settings"
 
@@ -138,6 +140,8 @@ const STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "su
   new: { label: "Submitted", tone: "live" },
   submitted: { label: "Submitted", tone: "live" },
   reviewing: { label: "WeKruit review", tone: "info" },
+  wekruit_interview: { label: "WeKruit interview", tone: "info" },
+  client_review: { label: "With client", tone: "success" },
   advanced: { label: "Sent to hiring team", tone: "success" },
   interviewing: { label: "Interviewing", tone: "success" },
   backburner: { label: "Backburner", tone: "info" },
@@ -180,15 +184,6 @@ const CALIBRATION_LABELS: Record<string, { label: string; tone: "live" | "info" 
   suggested: { label: "Suggested direction", tone: "info" },
 }
 
-const SUBMISSION_PROGRESS = [
-  { id: "submitted", label: "Submitted" },
-  { id: "reviewing", label: "WeKruit review" },
-  { id: "advanced", label: "Hiring team" },
-  { id: "interviewing", label: "Interviewing" },
-  { id: "offer", label: "Offer" },
-  { id: "hired", label: "Hired" },
-] as const
-
 const SUBMISSION_FILTERS = [
   { id: "all", label: "All" },
   { id: "active", label: "Active review" },
@@ -200,10 +195,10 @@ const SUBMISSION_FILTERS = [
 
 type SubmissionFilter = typeof SUBMISSION_FILTERS[number]["id"]
 const ACTIVE_REVIEW_STATUSES = ["submitted", "new", "reviewing", "backburner"]
-const ADVANCED_STATUSES = ["advanced", "interviewing", "offer", "hired"]
-const LATE_STAGE_STATUSES = ["interviewing", "offer", "hired"]
+const ADVANCED_STATUSES = ["advanced", "wekruit_interview", "client_review", "interviewing", "offer", "hired"]
+const LATE_STAGE_STATUSES = ["client_review", "interviewing", "offer", "hired"]
 const CLOSED_NEGATIVE_STATUSES = ["rejected", "duplicate"]
-const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer"]
+const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "client_review", "interviewing", "backburner", "offer"]
 
 function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
@@ -303,6 +298,10 @@ function submissionNextAction(status?: string): { title: string; body: string; t
   switch (status) {
     case "reviewing":
       return { title: "WeKruit is reviewing", body: "Hold additional lookalikes until the review note lands.", tone: "info" }
+    case "wekruit_interview":
+      return { title: "WeKruit interview", body: "Keep the candidate warm while WeKruit runs the first interview.", tone: "info" }
+    case "client_review":
+      return { title: "With client", body: "The packet is with the hiring team. Watch for client feedback.", tone: "success" }
     case "advanced":
       return { title: "Sent to hiring team", body: "Keep the candidate warm and be ready for interview logistics.", tone: "success" }
     case "interviewing":
@@ -1535,6 +1534,7 @@ export default function RecruiterBoard() {
             <em>{session.recruiter.email}</em>
           </span>
         </div>
+        <SubmissionUpdatesToggle session={session} onSessionChange={setSession} compact />
         <nav className="rb-platform__tabs" aria-label="Recruiter workspace">
           {TABS.map((tab) => (
             <button
@@ -1686,6 +1686,8 @@ export default function RecruiterBoard() {
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "submissions" && statusLoaded && (
           <SubmissionsTab
+            session={session}
+            onSessionChange={setSession}
             jobs={openJobs}
             submissions={submissions}
             onRefresh={reloadSubmissions}
@@ -9175,12 +9177,16 @@ function SourcedCandidateCard({
 }
 
 function SubmissionsTab({
+  session,
+  onSessionChange,
   jobs,
   submissions,
   onRefresh,
   onRoles,
   onCandidates,
 }: {
+  session: RecruiterSession
+  onSessionChange: (session: RecruiterSession) => void
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   onRefresh: () => Promise<void>
@@ -9224,6 +9230,7 @@ function SubmissionsTab({
     <section className="rb-panel rb-panel--fill rb-submissions-dashboard">
       <header className="rb-panel__head">
         <div><h2>Submission pipeline</h2><p>Track candidate ownership, WeKruit review status, feedback, and next action from one dashboard.</p></div>
+        <SubmissionUpdatesToggle session={session} onSessionChange={onSessionChange} />
       </header>
 
       <SubmissionCommandPanel
@@ -10531,7 +10538,7 @@ function SettingsTab({
     setErr(null)
     try {
       const updated = await updateRecruiterPreferences({
-        notificationPreferences: { newRolesEmail: next },
+        notificationPreferences: { ...session.recruiter.notificationPreferences, newRolesEmail: next },
         workspacePreferences: session.recruiter.workspacePreferences ?? { primaryRoleIds: [] },
       })
       onSessionChange(updated)
@@ -10754,10 +10761,6 @@ function SubmissionRow({
 }) {
   const meta = statusMeta(submission.status)
   const consent = candidateConsentMeta(submission.candidateConsentStatus)
-  const currentStatus = submission.status === "new" ? "submitted" : submission.status ?? "submitted"
-  const timelineStatus = currentStatus === "backburner" ? "reviewing" : currentStatus
-  const currentIndex = SUBMISSION_PROGRESS.findIndex((step) => step.id === timelineStatus)
-  const isClosed = currentStatus === "rejected" || currentStatus === "duplicate"
   const nextAction = submissionNextAction(submission.status)
   const activity = submissionActivityEvents(submission)
   const feedbackReasons = submissionFeedbackReasonLabels(submission)
@@ -10778,14 +10781,7 @@ function SubmissionRow({
       </div>
       {expanded && (
         <div className="rb-submission__detail">
-          <div className={`rb-submission-timeline ${isClosed ? "is-closed" : ""}`} aria-label="Submission status timeline">
-            {SUBMISSION_PROGRESS.map((step, index) => (
-              <span key={step.id} className={currentIndex >= index ? "is-complete" : ""}>
-                {step.label}
-              </span>
-            ))}
-            {isClosed && <span className="is-complete">{meta.label}</span>}
-          </div>
+          <SubmissionStatusStepper status={submission.status} requestedInfo={submission.requestedInfo} />
           <p><strong>Candidate:</strong> {submission.candidate?.currentRole || "Role not provided"}{submission.candidate?.yoe ? ` · ${submission.candidate.yoe} YOE` : ""}</p>
           {submission.candidate?.email && <p><strong>Email:</strong> {submission.candidate.email}</p>}
           {submission.candidate?.link && <a href={submission.candidate.link} target="_blank" rel="noopener noreferrer">{shortText(submission.candidate.link, submission.candidate.link, 80)}</a>}

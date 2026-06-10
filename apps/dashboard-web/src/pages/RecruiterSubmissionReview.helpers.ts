@@ -145,7 +145,7 @@ export function buildSubmissionAdminReviewSummary(
       tone: "warn",
     }
   }
-  if (["advanced", "interviewing", "offer", "hired"].includes(status)) {
+  if (["advanced", "wekruit_interview", "interviewing", "offer", "client_review", "hired"].includes(status)) {
     return {
       title: "Candidate is moving",
       body: "Keep the recruiter tracker current with status and feedback so the recruiter can keep the candidate warm.",

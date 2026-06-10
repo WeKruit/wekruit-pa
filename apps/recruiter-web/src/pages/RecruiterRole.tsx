@@ -43,6 +43,7 @@ import {
   type SubmissionResponse,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
+import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 import { buildCandidateProofPromptItems } from "./RecruiterRolePacket.helpers.js"
 
 const STORAGE_KEY_PREFIX = "rb-state-v1:"
@@ -68,7 +69,7 @@ const ROLE_FEEDBACK_REASONS: Array<{ id: RecruiterRoleFeedbackReason; label: str
 ]
 
 const ROLE_PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
-const ROLE_ADVANCED_SUBMISSION_STATUSES = ["advanced", "interviewing", "offer", "hired"]
+const ROLE_ADVANCED_SUBMISSION_STATUSES = ["advanced", "wekruit_interview", "client_review", "interviewing", "offer", "hired"]
 const ROLE_NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 
 interface FormState {
@@ -83,6 +84,7 @@ interface FormState {
   candidateNotes: string
   candidateConsent: boolean
   checklist: Record<string, boolean>
+  extraFields: Record<string, string>
 }
 
 function looksLikeLinkedinUrl(value: string): boolean {
@@ -99,6 +101,33 @@ function splitCandidateLink(link: string | undefined): Pick<FormState, "candidat
 
 function candidateLinkValue(form: Pick<FormState, "candidateLinkedinUrl" | "candidateResumeUrl">): string {
   return form.candidateLinkedinUrl.trim() || form.candidateResumeUrl.trim()
+}
+
+type RoleSubmitField = NonNullable<CollabJob["recruiterBoard"]["submitFields"]>[number]
+
+function roleSubmitFields(job: CollabJob): RoleSubmitField[] {
+  return job.recruiterBoard.submitFields ?? []
+}
+
+function normalizeSubmitUrl(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+  try {
+    const parsed = new URL(withScheme)
+    return parsed.hostname.includes(".") ? withScheme : null
+  } catch {
+    return null
+  }
+}
+
+function buildExtraFieldsPayload(job: CollabJob, form: Pick<FormState, "extraFields">): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const field of roleSubmitFields(job)) {
+    const value = (form.extraFields[field.id] ?? "").trim().slice(0, 500)
+    if (value) out[field.id] = value
+  }
+  return out
 }
 
 type RoleQuickCandidateDraft = {
@@ -163,6 +192,7 @@ function emptyForm(): FormState {
     candidateNotes: "",
     candidateConsent: false,
     checklist: {},
+    extraFields: {},
   }
 }
 
@@ -272,6 +302,8 @@ function roleBlockedAccessMessage(application: RecruiterRoleApplicationItem | nu
 function roleSubmissionStatusLabel(status?: string): string {
   switch (status) {
     case "reviewing": return "WeKruit review"
+    case "wekruit_interview": return "WeKruit interview"
+    case "client_review": return "With client"
     case "advanced": return "Sent to team"
     case "interviewing": return "Interviewing"
     case "backburner": return "Backburner"
@@ -289,6 +321,8 @@ function roleSubmissionStatusLabel(status?: string): string {
 function roleSubmissionNextAction(status?: string): string {
   switch (status) {
     case "reviewing": return "Wait for WeKruit calibration before sending lookalikes."
+    case "wekruit_interview": return "Candidate is interviewing with WeKruit. Keep them warm."
+    case "client_review": return "Packet is with the client. Watch for hiring-team feedback."
     case "advanced": return "Keep the candidate warm for hiring-team review."
     case "interviewing": return "Watch for scheduling and close-process updates."
     case "backburner": return "Candidate is parked, not rejected. Wait for a clearer next step before sending lookalikes."
@@ -302,6 +336,11 @@ function roleSubmissionNextAction(status?: string): string {
 
 function roleSubmissionLastActivity(row: RecruiterSubmissionItem): string {
   const ms = submissionTimeMs(row.recruiterFeedbackUpdatedAt ?? row.updatedAt ?? row.createdAt)
+  return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Today"
+}
+
+function roleSubmissionSubmittedDate(row: RecruiterSubmissionItem): string {
+  const ms = submissionTimeMs(row.createdAt)
   return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Today"
 }
 
@@ -1016,6 +1055,12 @@ function buildRoleSubmissionPacket(input: {
   if (!candidateEmail) blockers.push("Candidate email is missing.")
   else if (!candidateEmailValid) blockers.push("Candidate email is invalid.")
   if (!candidateLink) blockers.push("LinkedIn or resume link is missing.")
+  for (const field of roleSubmitFields(job)) {
+    const value = (form.extraFields[field.id] ?? "").trim()
+    if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
+    else if (value.length > 500) blockers.push(`${field.label} must be 500 characters or fewer.`)
+    else if (value && field.kind === "url" && !normalizeSubmitUrl(value)) blockers.push(`${field.label} must be a valid URL.`)
+  }
   if (!form.candidateConsent) blockers.push("Candidate consent is not confirmed.")
   if (pendingSlots <= 0) blockers.push("This role has no pending submission slots left.")
   if (hardItems.length > 0 && hardChecked < hardItems.length) blockers.push(`${hardItems.length - hardChecked} hard check${hardItems.length - hardChecked === 1 ? "" : "s"} still need proof.`)
@@ -2752,6 +2797,7 @@ export default function RecruiterRole() {
     try {
       const candidateLinkedinUrl = form.candidateLinkedinUrl.trim()
       const candidateResumeUrl = form.candidateResumeUrl.trim()
+      const extraFields = buildExtraFieldsPayload(job, form)
       const result = await submitRecruiterCandidate({
         jobId: job.jobId,
         sourcedCandidateId: selectedCandidate?.id,
@@ -2771,6 +2817,7 @@ export default function RecruiterRole() {
         candidateConsent: true,
         candidateLinkedinUrl: candidateLinkedinUrl || undefined,
         candidateResumeUrl: candidateResumeUrl || undefined,
+        ...(Object.keys(extraFields).length ? { extraFields } : {}),
       })
       if (!result.ok) {
         setSubmitError(formatSubmissionFailure(result.reason))
@@ -2961,6 +3008,23 @@ export default function RecruiterRole() {
 
         {trackerError && <div className="rb-error">Could not load role tracker: {trackerError}</div>}
 
+        {roleSubmissions.length > 0 && (
+          <section className="rb-role-your-submissions" aria-label="Your submissions for this role">
+            <h3>Your submissions for this role</h3>
+            <div className="rb-role-your-submissions__list">
+              {roleSubmissions.map((row) => (
+                <article key={row.id} className="rb-role-your-submissions__card">
+                  <header>
+                    <strong>{row.candidate?.name || "Candidate"}</strong>
+                    <span>Submitted {roleSubmissionSubmittedDate(row)}</span>
+                  </header>
+                  <SubmissionStatusStepper status={row.status} requestedInfo={row.requestedInfo} />
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
         <div className="rb-role-dashboard">
           <section className="rb-role-main">
             <div className="rb-jd">
@@ -3150,6 +3214,28 @@ export default function RecruiterRole() {
                 />
               </div>
             </>
+          )}
+          {roleSubmitFields(job).length > 0 && (
+            <div className="rb-extra-fields">
+              <h3 className="section-title" style={{ marginTop: 24 }}>Role-specific details</h3>
+              {roleSubmitFields(job).map((field) => (
+                <div className="field" key={field.id}>
+                  <label>{field.label}{field.required ? " *" : ""}</label>
+                  <input
+                    type="text"
+                    inputMode={field.kind === "url" ? "url" : "text"}
+                    aria-required={field.required ? true : undefined}
+                    maxLength={500}
+                    placeholder={field.placeholder || (field.kind === "url" ? "https://…" : "")}
+                    value={form.extraFields[field.id] ?? ""}
+                    onChange={(e) => setForm({ ...form, extraFields: { ...form.extraFields, [field.id]: e.target.value } })}
+                  />
+                  {field.kind === "url" && (form.extraFields[field.id] ?? "").trim() !== "" && !normalizeSubmitUrl(form.extraFields[field.id] ?? "") && (
+                    <p className="rb-form-note">Enter a valid URL (https:// is added automatically if missing).</p>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
           <label className="rb-consent">
             <input

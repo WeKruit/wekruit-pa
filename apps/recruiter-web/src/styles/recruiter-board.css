@@ -10620,3 +10620,183 @@
     width: 100%;
   }
 }
+
+/* ---- Submission status stepper (role page + My submissions) ------------- */
+
+.rb-submission-stepper {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.rb-submission-stepper ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rb-submission-stepper li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--cream-3);
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
+.rb-submission-stepper li i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.rb-submission-stepper li.is-done,
+.rb-submission-stepper li.is-current {
+  background: var(--live-soft);
+  border-color: var(--live-border);
+  color: var(--live-2);
+}
+
+.rb-submission-stepper li.is-current {
+  border-color: var(--live);
+}
+
+.rb-submission-stepper li.is-current.is-ok {
+  background: var(--success-bg);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.rb-submission-stepper li.is-current.is-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-bg);
+  color: var(--danger);
+}
+
+.rb-submission-stepper li.is-current.is-muted {
+  background: var(--cream-3);
+  border-color: var(--border);
+  color: var(--ink-3);
+}
+
+.rb-submission-stepper__pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--r-pill);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 11px;
+  justify-self: start;
+}
+
+.rb-submission-stepper__pill strong {
+  font-weight: 800;
+}
+
+.rb-submission-stepper__pill span {
+  color: var(--ink-2);
+}
+
+/* ---- Your submissions for this role (role page inline tracker) ---------- */
+
+.rb-role-your-submissions {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 22px;
+}
+
+.rb-role-your-submissions h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.rb-role-your-submissions__list {
+  display: grid;
+  gap: 10px;
+}
+
+.rb-role-your-submissions__card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--cream-3);
+  padding: 10px 12px;
+}
+
+.rb-role-your-submissions__card header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.rb-role-your-submissions__card header strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-role-your-submissions__card header span {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.rb-role-your-submissions__card .rb-submission-stepper {
+  margin-bottom: 0;
+}
+
+/* ---- Email status-update subscription toggle ----------------------------- */
+
+.rb-email-updates-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.rb-email-updates-toggle input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.rb-email-updates-toggle em {
+  color: var(--danger);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.rb-email-updates-toggle.is-compact {
+  margin: 0 8px 4px;
+  background: var(--cream-3);
+  font-size: 11.5px;
+  padding: 5px 10px;
+}

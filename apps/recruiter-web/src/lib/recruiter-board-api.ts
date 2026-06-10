@@ -30,6 +30,14 @@ export const RECRUITER_CANDIDATE_CONFIRMATION_RESEND_URL = `${DEFAULT_BASE}/paRe
 
 // Mirrors PublicCollabJob in apps/functions/src/recruiter-board.ts. Loose
 // typing on purpose — the server is source of truth.
+export interface RecruiterSubmitField {
+  id: string
+  label: string
+  kind: "url" | "text"
+  required?: boolean
+  placeholder?: string
+}
+
 export interface CollabJob {
   jobId: string
   title: string
@@ -53,6 +61,7 @@ export interface CollabJob {
         items: Array<{ id: string; text: string }>
       }>
     }
+    submitFields?: RecruiterSubmitField[]
     interviewProcess?: string
   }
 }
@@ -76,6 +85,9 @@ export interface SubmissionInput {
   // today, and the backend schema is being extended to store these.
   candidateLinkedinUrl?: string
   candidateResumeUrl?: string
+  // Per-job extra submit fields (pa-jobs.recruiterBoard.submitFields), keyed
+  // by field id. Trimmed values only; server re-validates required + url kinds.
+  extraFields?: Record<string, string>
 }
 
 export interface SubmissionResponse {
@@ -111,7 +123,9 @@ export interface RecruiterProfile {
   name: string
   email: string
   notificationPreferences?: {
-    newRolesEmail: boolean
+    newRolesEmail?: boolean
+    // Absent ⇒ true: status-update emails are opt-out.
+    submissionUpdatesEmail?: boolean
   }
   workspacePreferences?: {
     primaryRoleIds: string[]
@@ -154,6 +168,13 @@ export interface RecruiterSubmissionStatusHistoryItem {
   reasons?: string[]
 }
 
+// Appended by paAdminRecruiterSubmissionAction request_info.
+export interface RecruiterSubmissionRequestedInfoEntry {
+  message?: string
+  at?: string
+  by?: string
+}
+
 export interface RecruiterSubmissionPayout {
   status?: string
   amount?: number
@@ -193,6 +214,8 @@ export interface RecruiterSubmissionItem {
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
   statusHistory?: RecruiterSubmissionStatusHistoryItem[]
+  requestedInfo?: RecruiterSubmissionRequestedInfoEntry[]
+  extraFields?: Record<string, string>
   recruiterFeedbackNote?: string | null
   recruiterFeedbackRating?: number | null
   recruiterFeedbackReasons?: string[]
@@ -699,7 +722,7 @@ export async function saveRecruiterSourcedCandidate(
 
 export async function updateRecruiterPreferences(
   input: {
-    notificationPreferences?: { newRolesEmail: boolean }
+    notificationPreferences?: { newRolesEmail?: boolean; submissionUpdatesEmail?: boolean }
     workspacePreferences?: { primaryRoleIds: string[] }
   },
 ): Promise<RecruiterSession> {
