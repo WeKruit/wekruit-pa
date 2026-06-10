@@ -87,6 +87,14 @@ test("My submissions tab no longer renders command, deal-room, or kanban packet 
   assert.match(tabSlice, /<SubmissionTable/)
 })
 
+test("My submissions empty state uses candidate and submission language instead of packet jargon", () => {
+  const emptySlice = sliceBetween(boardSource, "function SubmissionEmptyState(", "\nfunction PerformanceTab(")
+  assert.match(emptySlice, /Start with a role lane and a consented candidate\./)
+  assert.match(emptySlice, /Submit candidate/)
+  assert.match(emptySlice, /tracked submission/)
+  assert.doesNotMatch(emptySlice, /candidate packet|Submit packet|tracked receipt|payout movement/)
+})
+
 test("role page is the sheet: collapsed JD, checklist columns, rows + blank add row", () => {
   assert.match(roleSource, /export default function RoleSheetPage\(\)/)
   assert.ok(roleSource.includes('<details className="rs-jd">'), "JD collapses behind one click")

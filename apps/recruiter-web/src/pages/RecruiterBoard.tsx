@@ -9449,8 +9449,8 @@ function SubmissionEmptyState({
     <div className="rb-submissions-empty">
       <div className="rb-submissions-empty__copy">
         <span>No submissions yet</span>
-        <strong>Start with a role lane and a consented candidate packet.</strong>
-        <p>Submission rows appear here only after a candidate is sent from a recruiter role brief. Each row will carry ownership, confirmation, review status, feedback, and payout movement.</p>
+        <strong>Start with a role lane and a consented candidate.</strong>
+        <p>Submission rows appear here after a candidate is sent from a role sheet. Each row carries ownership, consent, WeKruit status, feedback, and reward progress.</p>
       </div>
       <div className="rb-submissions-empty__steps">
         <article>
@@ -9465,8 +9465,8 @@ function SubmissionEmptyState({
         </article>
         <article>
           <span>03</span>
-          <strong>Submit packet</strong>
-          <p>Candidate consent creates the tracked receipt.</p>
+          <strong>Submit candidate</strong>
+          <p>Candidate consent creates the tracked submission.</p>
         </article>
       </div>
       <div className="rb-submissions-empty__actions">
