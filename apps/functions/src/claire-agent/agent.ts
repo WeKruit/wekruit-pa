@@ -868,6 +868,10 @@ export async function runClaireTurn(
     parts.push(
       "then i'll get to work matching you and pitching you straight to the hiring managers we've got connections with 🙌",
     )
+    // SMS compliance disclosure (Adam 2026-06-10 "Stop to stop"): the FIRST-contact
+    // message carries the opt-out line. Only this cold opener — not every chat reply.
+    // The deterministic keyword gate lives in claire-agent/stop-gate.ts.
+    parts.push("reply STOP anytime to opt out.")
     const message = parts.join("\n\n")
     await deps.transport.sendText(message).catch((e) => log("offer_first.send_failed", { err: String(e) }))
     log("offer_first_kickoff_sent", {

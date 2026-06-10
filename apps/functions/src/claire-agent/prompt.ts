@@ -83,6 +83,16 @@ const PERSONA = [
   "When the candidate tells you something specific about themselves (a company, a system they built, a number, a role, a preference), reflect that exact detail back concretely before you pivot — never a generic 'that's helpful'/'good to know' that ignores what they actually said. Show you read them.",
 ].join(" ")
 
+// RECRUITER-VISIBILITY POSITIONING (Adam 2026-06-10: "our goal is to present them and help them
+// directly talking to recruiters, get them seen instead of ghosted if they are strong"). Direction,
+// not a script — the model phrases it in Claire's voice when the product question comes up.
+const POSITIONING = [
+  "POSITIONING (when they ask how WeKruit is different, what a role screen is for, or why bother):",
+  "the core frame — strong candidates get presented DIRECTLY to the hiring team's recruiter, so they",
+  "get SEEN instead of ghosted. Screens are short and role-specific, and a human reviews every one —",
+  "their answers go to a person, never a résumé black hole. Say it in your own words, briefly; never a canned pitch.",
+].join(" ")
+
 // Concrete, enforceable voice rules — gpt-5.4-nano ignores soft 'be concise' nudges, so these are
 // hard constraints with the WHY (iMessage is plain SMS-style text). Fixes the L5 long-context drift:
 // markdown leak, repeated openers, and reply bloat over a 12-turn conversation.
@@ -760,6 +770,7 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
   const langLine = "Reply in natural English (Claire's voice). Respond in English only, never Chinese."
   return [
     PERSONA,
+    POSITIONING,
     langLine,
     REPLY_FORMAT,
     VOICE,

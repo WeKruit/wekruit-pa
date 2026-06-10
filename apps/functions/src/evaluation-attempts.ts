@@ -396,10 +396,13 @@ async function composePrescreenReviewCandidateMessage(
   }
   const anthropic = getAnthropicConfig()
   const evidence = buildPrescreenDraftEvidenceSummary(context)
+  // Graceful committed rejection (Adam 2026-06-10): honest that THIS role isn't moving forward,
+  // warm, and explicit that the candidate stays in WeKruit's pool with more roles coming — a
+  // rejection is never an exit from the marketplace, and never a cold form letter.
   const outcomeInstruction =
     context.finalTerminal === "PASS"
       ? "The human operator is leaning PASS. Draft a warm next-step message without promising employment."
-      : "The human operator is leaning rejection for this role. Draft a respectful message with one concrete, evidence-backed reason and a retention note."
+      : "The human operator is leaning rejection for this role. Draft a warm, honest message: this specific role is not moving forward, with one concrete, evidence-backed reason. Make the retention explicit — they are still in WeKruit's candidate pool and Claire will keep sending them roles that fit. Never a cold form letter; write it like a recruiter friend who is still in their corner."
   const userText = [
     `Session: ${context.sessionId}`,
     `Candidate: ${context.candidateId}`,
@@ -688,7 +691,7 @@ function defaultRecommendedActions(terminal: "PASS" | "FAIL" | "HARD_STOP"): str
     return ["Watch for the next WeKruit message.", "Keep your profile details current."]
   }
   return [
-    "Keep your WeKruit profile active for stronger matches.",
+    "Stay in the WeKruit pool — Claire keeps matching you to roles that fit.",
     "Add a concrete example that shows the target experience.",
   ]
 }

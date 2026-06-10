@@ -860,8 +860,11 @@ export function terminalText(
   }
 }
 
+// Graceful review-pending ack (Adam 2026-06-10): the whole point of the screen is that strong
+// candidates get put in front of the hiring team's recruiter — seen, not ghosted. MUST NOT promise
+// or imply pass/fail (review-pending invariant: never say "you passed" before the operator commits).
 export function prescreenReviewPendingAckText(_lang: Lang): string {
-  return "Received — your role screen is complete. WeKruit is reviewing the result now, and we’ll text you the next step here."
+  return "that's the whole screen — nice work. the hiring team reviews every screen personally, and strong screens go straight to their recruiter, so you get seen instead of ghosted. i'll text you the next step here either way — and i'm still matching you to other roles in the meantime."
 }
 
 function clarifyText(
@@ -956,6 +959,9 @@ function clampClarifyText(text: string): string {
   return `${normalized.slice(0, 317).trimEnd()}...`
 }
 
+// Graceful PAUSE ending (Adam 2026-06-10: "even tho we reject them for un-achieved hard filter, we
+// need to end it more gracefully"). NOT_PASS/PAUSE is NOT an exit — the candidate stays in the
+// marketplace pool, and the copy must say so instead of a robotic dead-end.
 function terminalPauseText(_lang: Lang): string {
-  return "Thanks, that helps. Overall fit for this role still looks low, so I will pause this screen and keep using what you shared for better-aligned roles."
+  return "thanks for being straight with me — honestly, this particular role doesn't look like the right fit, so i'm pausing this screen here rather than waste your time. you're still in my pool though: everything you shared sharpens your profile, and i'll keep sending you roles that actually fit."
 }
