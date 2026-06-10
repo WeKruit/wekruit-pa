@@ -2936,53 +2936,6 @@ export default function RecruiterRole() {
           </article>
         </section>
 
-        <RoleWorkroomPanel
-          model={roleWorkroom}
-          candidates={candidateRecommendations}
-          onAction={runRoleWorkroomAction}
-        />
-
-        <RoleDealDeskPanel
-          model={roleDealDesk}
-          onAction={runRoleWorkroomAction}
-        />
-
-        <RoleIntakeMemoPanel
-          memo={roleIntakeMemo}
-          onAction={runRoleWorkroomAction}
-        />
-
-        <RoleRewardCenterPanel
-          center={roleRewardCenter}
-          onAction={runRoleWorkroomAction}
-        />
-
-        <RoleAccessPanel
-          job={job}
-          application={currentRoleApplication}
-          approvedByLegacySlot={legacyApprovedRole}
-          preparedCandidates={preparedApplicationCandidates}
-          saving={roleApplicationSaving}
-          error={roleApplicationError}
-          onSave={saveRoleApplication}
-          onOpenCandidates={() => navigate("/recruiters?tab=candidates")}
-        />
-
-        <RoleIntelligencePanel
-          intelligence={currentRoleIntelligence}
-          fallback={{
-            candidates: roleCandidates.length,
-            submissions: roleSubmissions.length,
-            pending: pendingCount,
-            questions: currentRoleQuestions.length,
-            feedback: currentRoleFeedback,
-          }}
-        />
-
-        <RoleCalibrationBriefPanel brief={calibrationBrief} />
-
-        <RoleSourcingKitPanel kit={sourcingKit} onOpenCandidates={() => navigate("/recruiters?tab=candidates")} />
-
         {submission && submission.ok && (
           <div className="rb-success">
             <strong>Candidate submitted.</strong> We&apos;ll review and update your tracker.

@@ -86,7 +86,9 @@ const RECRUITER_CANDIDATE_CONFIRM_URL =
 
 const HIRING_BOARD_ADMIN_EMAIL_DOMAIN = "@wekruit.com"
 const RECRUITER_PRIMARY_ROLE_SLOT_LIMIT = 10
-const RECRUITER_SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
+// Anti-abuse backstop only — contracted recruiters submit freely; the
+// role-approval ceremony is not a product gate (founder 2026-06-09).
+const RECRUITER_SINGLE_SUBMISSION_WEEKLY_LIMIT = 100
 const RECRUITER_PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
 const RECRUITER_ADVANCED_SUBMISSION_STATUSES = ["advanced", "wekruit_interview", "client_review", "interviewing", "offer", "hired"]
 
