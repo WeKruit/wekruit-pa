@@ -17,6 +17,7 @@ import { db } from "../lib/firebase.js"
 import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
   runRecruiterSubmissionAction,
+  sendRecruiterSubmissionComment,
   type RecruiterSubmissionAction,
 } from "../lib/recruiter-submission-actions-api.js"
 
@@ -56,6 +57,31 @@ interface SubmissionAiEvaluation {
   error?: string
 }
 
+interface SubmissionRequestedInfoEntry {
+  message?: string
+  at?: string
+  by?: string
+}
+
+interface SubmissionCommentDoc {
+  id: string
+  message?: string
+  by?: string
+  authorName?: string
+  authorEmail?: string
+  at?: string
+}
+
+export interface ConversationEntry {
+  key: string
+  kind: "comment" | "request"
+  side: "left" | "right"
+  author: string
+  at?: string
+  message: string
+  pending?: boolean
+}
+
 interface BoardSubmissionDoc {
   id: string
   jobId?: string
@@ -86,6 +112,7 @@ interface BoardSubmissionDoc {
   recruiterId?: string | null
   recruiterEmail?: string
   aiEvaluation?: SubmissionAiEvaluation
+  requestedInfo?: SubmissionRequestedInfoEntry[]
   createdAt?: { seconds?: number } | string | null
   createdAtMs?: number
 }
@@ -256,6 +283,45 @@ export function extraFieldHref(value: string): string | null {
   } catch {
     return null
   }
+}
+
+export function buildConversationEntries(
+  comments: Array<{ id: string; message?: string; by?: string; authorName?: string; at?: string }>,
+  requestedInfo: Array<{ message?: string; at?: string; by?: string }> | undefined,
+): ConversationEntry[] {
+  const entries: ConversationEntry[] = []
+  ;(requestedInfo ?? []).forEach((entry, i) => {
+    const message = entry?.message?.trim()
+    if (!message) return
+    entries.push({
+      key: `request-${i}`,
+      kind: "request",
+      side: "right",
+      author: entry.by?.trim() || "WeKruit",
+      at: entry.at,
+      message,
+    })
+  })
+  for (const comment of comments) {
+    const message = comment.message?.trim()
+    if (!message) continue
+    const fromWekruit = comment.by === "wekruit"
+    entries.push({
+      key: `comment-${comment.id}`,
+      kind: "comment",
+      side: fromWekruit ? "right" : "left",
+      author: comment.authorName?.trim() || (fromWekruit ? "WeKruit" : "Recruiter"),
+      at: comment.at,
+      message,
+    })
+  }
+  return entries.sort((a, b) => (Date.parse(a.at ?? "") || 0) - (Date.parse(b.at ?? "") || 0))
+}
+
+function formatMessageTime(at: string | undefined): string {
+  const ms = at ? Date.parse(at) : Number.NaN
+  if (!Number.isFinite(ms)) return ""
+  return new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 }
 
 function recruiterMatches(submission: BoardSubmissionDoc, recruiter: BoardRecruiterDoc): boolean {
@@ -473,6 +539,160 @@ function AiDetail({ submission }: { submission: BoardSubmissionDoc }) {
   )
 }
 
+function ConversationSection({
+  submission,
+  onCommentCount,
+}: {
+  submission: BoardSubmissionDoc
+  onCommentCount: (submissionId: string, count: number) => void
+}) {
+  const [comments, setComments] = useState<SubmissionCommentDoc[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [draft, setDraft] = useState("")
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [pendingComment, setPendingComment] = useState<SubmissionCommentDoc | null>(null)
+
+  async function fetchComments(): Promise<SubmissionCommentDoc[]> {
+    const snap = await getDocs(
+      query(collection(db(), "pa-recruiter-submissions", submission.id, "comments"), orderBy("at", "asc")),
+    )
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionCommentDoc, "id">) }))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const rows = await fetchComments()
+        if (cancelled) return
+        setComments(rows)
+        setLoadError(null)
+        onCommentCount(submission.id, rows.length)
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [submission.id])
+
+  async function handleSend() {
+    const message = draft.trim()
+    if (!message || sending) return
+    setSending(true)
+    setSendError(null)
+    setPendingComment({
+      id: `pending-${Date.now()}`,
+      message,
+      by: "wekruit",
+      authorName: "you",
+      at: new Date().toISOString(),
+    })
+    setDraft("")
+    try {
+      await sendRecruiterSubmissionComment({ submissionId: submission.id, message })
+      const rows = await fetchComments()
+      setComments(rows)
+      onCommentCount(submission.id, rows.length)
+      setPendingComment(null)
+    } catch (e) {
+      setPendingComment(null)
+      setDraft(message)
+      setSendError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const entries = buildConversationEntries(comments ?? [], submission.requestedInfo)
+  if (pendingComment) {
+    entries.push({
+      key: pendingComment.id,
+      kind: "comment",
+      side: "right",
+      author: pendingComment.authorName ?? "you",
+      at: pendingComment.at,
+      message: pendingComment.message ?? "",
+      pending: true,
+    })
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ fontWeight: 600, fontSize: 12, color: "#555" }}>Conversation</div>
+      {loadError && <div style={{ color: "#9c3a1d", fontSize: 12 }}>Failed to load comments: {loadError}</div>}
+      {comments === null && !loadError ? (
+        <div style={{ color: "#777", fontSize: 12 }}>Loading conversation…</div>
+      ) : entries.length === 0 ? (
+        <div style={{ color: "#777", fontSize: 12 }}>No messages yet.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 6 }}>
+          {entries.map((entry) => (
+            <div
+              key={entry.key}
+              style={{ display: "flex", justifyContent: entry.side === "right" ? "flex-end" : "flex-start" }}
+            >
+              <div
+                style={{
+                  maxWidth: 420,
+                  padding: "6px 10px",
+                  borderRadius: 10,
+                  border: `1px solid ${entry.side === "right" ? "#d7e3f6" : "#e6e2d8"}`,
+                  background: entry.side === "right" ? "#eef3fb" : "#fdfcf8",
+                  opacity: entry.pending ? 0.6 : 1,
+                }}
+              >
+                <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: "#777", marginBottom: 2 }}>
+                  <span style={{ fontWeight: 600 }}>{entry.author}</span>
+                  {entry.kind === "request" && (
+                    <span
+                      style={{
+                        border: "1px solid #d8c9a8",
+                        background: "#fbf4e3",
+                        color: "#7a5c1e",
+                        borderRadius: 999,
+                        padding: "0 6px",
+                        fontSize: 10,
+                      }}
+                    >
+                      request
+                    </span>
+                  )}
+                  <span>{entry.pending ? "sending…" : formatMessageTime(entry.at)}</span>
+                </div>
+                <div style={{ fontSize: 12, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{entry.message}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6, alignItems: "flex-start", maxWidth: 560 }}>
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          maxLength={4000}
+          placeholder="Message the recruiter…"
+          aria-label="Message the recruiter"
+          style={{ flex: 1, padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}
+        />
+        <button
+          type="button"
+          disabled={sending || !draft.trim()}
+          aria-disabled={sending || !draft.trim()}
+          onClick={() => void handleSend()}
+          style={actionButtonStyle}
+        >
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
+      {sendError && <div style={{ color: "#9c3a1d", fontSize: 11 }}>Send failed: {sendError}</div>}
+    </div>
+  )
+}
+
 export default function RecruiterBoardOps() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -485,6 +705,11 @@ export default function RecruiterBoardOps() {
   const [inFlightId, setInFlightId] = useState<string | null>(null)
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [reloadKey, setReloadKey] = useState(0)
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
+
+  function handleCommentCount(submissionId: string, count: number) {
+    setCommentCounts((prev) => (prev[submissionId] === count ? prev : { ...prev, [submissionId]: count }))
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -537,7 +762,19 @@ export default function RecruiterBoardOps() {
         action,
         ...(action === "request_info" && message ? { requestMessage: message } : {}),
       })
-      setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, status: result.status } : s)))
+      setSubmissions((prev) =>
+        prev.map((s) =>
+          s.id === submission.id
+            ? {
+                ...s,
+                status: result.status,
+                ...(action === "request_info" && message
+                  ? { requestedInfo: [...(s.requestedInfo ?? []), { message, at: new Date().toISOString(), by: "WeKruit" }] }
+                  : {}),
+              }
+            : s,
+        ),
+      )
       if (action === "request_info") {
         setRequestInfoId(null)
         setRequestMessage(DEFAULT_REQUEST_MESSAGE)
@@ -624,7 +861,25 @@ export default function RecruiterBoardOps() {
             <Badge tone={chip.tone}>{chip.label}</Badge>
           </td>
           <td style={cellStyle}>
-            <Badge tone={status.tone}>{status.label}</Badge>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <Badge tone={status.tone}>{status.label}</Badge>
+              {(commentCounts[submission.id] ?? 0) > 0 && (
+                <span
+                  title={`${commentCounts[submission.id]} comment${commentCounts[submission.id] === 1 ? "" : "s"}`}
+                  style={{
+                    fontSize: 11,
+                    color: "#555",
+                    border: "1px solid #e2ddd4",
+                    borderRadius: 999,
+                    padding: "1px 7px",
+                    background: "#fff",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  💬 {commentCounts[submission.id]}
+                </span>
+              )}
+            </div>
           </td>
           <td style={cellStyle} onClick={(e) => e.stopPropagation()}>
             {stage === "terminal" ? (
@@ -738,6 +993,7 @@ export default function RecruiterBoardOps() {
               <div style={{ display: "grid", gap: 12 }}>
                 <ExtraFieldsDetail extraFields={submission.extraFields} />
                 <AiDetail submission={submission} />
+                <ConversationSection submission={submission} onCommentCount={handleCommentCount} />
               </div>
             </td>
           </tr>

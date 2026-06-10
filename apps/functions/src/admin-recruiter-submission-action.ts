@@ -8,6 +8,10 @@
  *     name, same adminDecision conventions (status pipeline stages)
  *   request_info → keep/set status "reviewing" + append requestedInfo[]
  *     { message, at, by }
+ *   comment → create pa-recruiter-submissions/{id}/comments/{commentId}
+ *     { message, by:"wekruit", authorName, authorEmail?, at } — no status /
+ *     adminDecision / statusHistory change; returns { ok, submissionId,
+ *     commentId }
  *
  * Idempotent: re-applying the same action returns ok without duplicating
  * the decision — the first decidedAt is kept, the note is updated.
@@ -27,12 +31,15 @@ import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
 const SUBMISSIONS_COLLECTION = "pa-recruiter-submissions"
+const COMMENTS_SUBCOLLECTION = "comments"
+const COMMENT_MESSAGE_MAX = 4_000
 
 export const AdminRecruiterSubmissionActionInputSchema = z.object({
   submissionId: z.string().transform((value) => value.trim()).pipe(z.string().min(1)),
-  action: z.enum(["advance", "reject", "reviewing", "duplicate", "request_info", "wekruit_interview", "client_review", "hired"]),
+  action: z.enum(["advance", "reject", "reviewing", "duplicate", "request_info", "wekruit_interview", "client_review", "hired", "comment"]),
   note: z.string().max(4_000).optional(),
   requestMessage: z.string().max(4_000).optional(),
+  message: z.string().optional(),
   adminToken: z.string().optional(),
 })
 export type AdminRecruiterSubmissionActionInput = z.infer<typeof AdminRecruiterSubmissionActionInputSchema>
@@ -49,11 +56,9 @@ const ACTION_TO_STATUS = {
   hired: "hired",
 } as const
 
-export type AdminRecruiterSubmissionActionResult = {
-  ok: true
-  submissionId: string
-  status: string
-}
+export type AdminRecruiterSubmissionActionResult =
+  | { ok: true; submissionId: string; status: string }
+  | { ok: true; submissionId: string; commentId: string }
 
 function cleanString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
@@ -86,6 +91,31 @@ export async function runAdminRecruiterSubmissionAction(
   }
 
   const ref = deps.db.collection(SUBMISSIONS_COLLECTION).doc(submissionId)
+
+  if (action === "comment") {
+    const message = cleanString(parsed.data.message)
+    if (!message) {
+      throw new HttpsError("invalid-argument", "message_required")
+    }
+    if (message.length > COMMENT_MESSAGE_MAX) {
+      throw new HttpsError("invalid-argument", "message_too_long")
+    }
+    const exists = (await ref.get()).exists
+    if (!exists) {
+      throw new HttpsError("not-found", "submission_not_found")
+    }
+    const actorEmail = cleanString(deps.actorEmail)
+    const commentRef = ref.collection(COMMENTS_SUBCOLLECTION).doc()
+    await commentRef.set({
+      message,
+      by: "wekruit",
+      authorName: actorEmail?.split("@")[0]?.trim() || "WeKruit",
+      ...(actorEmail ? { authorEmail: actorEmail } : {}),
+      at: deps.now?.() ?? new Date().toISOString(),
+    })
+    return { ok: true, submissionId, commentId: commentRef.id }
+  }
+
   const snap = await ref.get()
   if (!snap.exists) {
     throw new HttpsError("not-found", "submission_not_found")

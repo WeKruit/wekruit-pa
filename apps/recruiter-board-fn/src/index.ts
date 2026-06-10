@@ -43,6 +43,10 @@ export {
   paRecruiterSourcedCandidateSave,
   paRecruiterSourcedCandidatesList,
   paRecruiterSubmission,
+  paRecruiterSubmissionCommentAdd,
+  paRecruiterSubmissionCommentNotify,
+  paRecruiterSubmissionCommentsList,
   paRecruiterSubmissionFeedbackNotify,
+  paRecruiterSubmissionUpdate,
   paRecruiterSubmissionsList,
 } from "./recruiter-board.js"

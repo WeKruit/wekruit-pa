@@ -56,3 +56,34 @@ export async function runRecruiterSubmissionAction(
     status: result.data.status,
   }
 }
+
+export interface RecruiterSubmissionCommentInput {
+  submissionId: string
+  message: string
+  adminToken?: string
+}
+
+export interface RecruiterSubmissionCommentResult {
+  ok: true
+  submissionId: string
+  commentId: string
+}
+
+export async function sendRecruiterSubmissionComment(
+  input: RecruiterSubmissionCommentInput,
+): Promise<RecruiterSubmissionCommentResult> {
+  const { functions } = await import("./firebase.js")
+  const fn = httpsCallable<
+    RecruiterSubmissionCommentInput & { action: "comment" },
+    Partial<RecruiterSubmissionCommentResult>
+  >(functions(), RECRUITER_SUBMISSION_ACTION_CALLABLE)
+  const result = await fn({ ...input, action: "comment" })
+  if (result.data?.ok !== true || !result.data.commentId) {
+    throw new Error("recruiter_submission_comment_failed")
+  }
+  return {
+    ok: true,
+    submissionId: result.data.submissionId ?? input.submissionId,
+    commentId: result.data.commentId,
+  }
+}

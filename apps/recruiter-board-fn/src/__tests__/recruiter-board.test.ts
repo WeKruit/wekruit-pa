@@ -17,13 +17,19 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import * as recruiterBoardEntrypoint from "../index.js"
 import {
+  addRecruiterSubmissionComment,
+  applyRecruiterSubmissionUpdate,
   buildRecruiterRoleIntelligence,
   buildRecruiterRoleApplicationDecisionEvent,
   buildRecruiterRoleFeedbackEvent,
   buildRecruiterSubmissionFeedbackEvent,
   candidateCalibrationNotification,
   candidateConfirmationNotification,
+  coerceStoredSubmissionChecklist,
+  coerceSubmissionChecklistInput,
   computeSubmissionScore,
+  deliverRecruiterSubmissionCommentNotification,
+  listRecruiterSubmissionComments,
   composeCandidateSubmissionConfirmationEmail,
   composeRecruiterInviteEmail,
   composeRecruiterRoleNotificationEmail,
@@ -55,12 +61,15 @@ import {
   sanitizeRecruiterSubmitFields,
   sendRecruiterSubmissionUpdateEmail,
   shouldNotifyRecruitersForRoleRelease,
+  submissionCommentNotification,
   submissionFeedbackNotification,
   submissionRequestedInfoNotification,
   sanitizeSubmissionRequestedInfo,
   sanitizeSubmissionStatusHistory,
   validateCandidateConfirmationResendInput,
   validateRecruiterCandidateIdentityCheckInput,
+  validateRecruiterSubmissionCommentAddInput,
+  validateRecruiterSubmissionUpdateInput,
   validateInviteCodeCreate,
   validateInviteCodeReplace,
   validateInviteCodeRestore,
@@ -75,9 +84,11 @@ import {
   writeRecruiterRoleApplicationDecisionEvent,
   writeRecruiterRoleFeedbackEvent,
   writeRecruiterSubmissionFeedbackEvent,
+  type ChecklistCellLevel,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
   type RecruiterBoardSubmitField,
+  type RecruiterProfilePublic,
 } from "../recruiter-board.js"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2788,5 +2799,846 @@ describe("fetchCollabJobs status filter", () => {
     assert.equal(total, 2)
     assert.equal(jobs[0]!.jobId, "pub-inactive1")
     assert.equal(jobs[1]!.jobId, "pub-inactive2")
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sheet model — checklist cell levels, candidate core cells, row edits, thread
+// ─────────────────────────────────────────────────────────────────────────────
+
+function nestedMemoryFirestore(seed: Record<string, Record<string, unknown>> = {}) {
+  const docs = new Map<string, Record<string, unknown>>()
+  for (const [key, value] of Object.entries(seed)) docs.set(key, { ...value })
+  const makeSnap = (key: string) => ({
+    exists: docs.has(key),
+    id: key.slice(key.lastIndexOf("/") + 1),
+    data: () => docs.get(key),
+  })
+  const makeRef = (key: string) => ({
+    id: key.slice(key.lastIndexOf("/") + 1),
+    get: async () => makeSnap(key),
+    set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+      docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : { ...data })
+    },
+    update: async (data: Record<string, unknown>) => {
+      if (!docs.has(key)) throw new Error(`NOT_FOUND: ${key}`)
+      docs.set(key, { ...docs.get(key)!, ...data })
+    },
+    create: async (data: Record<string, unknown>) => {
+      if (docs.has(key)) throw new Error("ALREADY_EXISTS")
+      docs.set(key, { ...data })
+    },
+    collection: (sub: string) => makeCollection(`${key}/${sub}`),
+  })
+  const makeCollection = (collectionPath: string): Record<string, unknown> => ({
+    doc: (docId: string) => makeRef(`${collectionPath}/${docId}`),
+    get: async () => ({
+      docs: [...docs.keys()]
+        .filter((key) => key.startsWith(`${collectionPath}/`) && !key.slice(collectionPath.length + 1).includes("/"))
+        .map((key) => makeSnap(key)),
+    }),
+  })
+  return {
+    db: { collection: (name: string) => makeCollection(name) },
+    docs,
+    findKey: (prefix: string) => [...docs.keys()].find((key) => key.startsWith(prefix)),
+  }
+}
+
+const sheetRecruiter: RecruiterProfilePublic = {
+  recruiterId: "rec-1",
+  firebaseUid: "rec-1",
+  name: "Sloane",
+  email: "sloane@agency.com",
+  notificationPreferences: { newRolesEmail: true, submissionUpdatesEmail: true },
+  workspacePreferences: { primaryRoleIds: [] },
+}
+
+const otherSheetRecruiter: RecruiterProfilePublic = {
+  ...sheetRecruiter,
+  recruiterId: "rec-2",
+  firebaseUid: "rec-2",
+  email: "other@agency.com",
+}
+
+function sheetSubmissionSeed(
+  submissionOverrides: Record<string, unknown> = {},
+): Record<string, Record<string, unknown>> {
+  return {
+    "pa-jobs/job-1": {
+      title: "Founding Engineer",
+      publicId: "public-job-1",
+      wekruitCollaborationStatus: "collaborated",
+      recruiterBoard: {
+        active: true,
+        sortOrder: 1,
+        label: { company: "Co. B", companyCode: "B", location: "San Francisco", pills: [] },
+        culture: { bet: "", bullets: [] },
+        checklist: { groups: sampleGroups },
+        submitFields: [{ id: "portfolio", label: "Portfolio", kind: "url", required: true }],
+      },
+    },
+    "pa-recruiter-submissions/sub-1": {
+      submissionId: "sub-1",
+      jobId: "job-1",
+      inboundJobId: "public-job-1",
+      jobTitleSnapshot: "Founding Engineer",
+      companyLabelSnapshot: "Co. B",
+      recruiterId: "rec-1",
+      recruiterEmail: "sloane@agency.com",
+      status: "reviewing",
+      candidate: {
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        link: "https://linkedin.com/in/ada",
+        notes: "old note",
+      },
+      checklist: { h1: true, f1: true },
+      extraFields: { portfolio: "https://ada.dev" },
+      ...submissionOverrides,
+    },
+  }
+}
+
+describe("checklist cell coercion", () => {
+  it("keeps legacy boolean payloads working by coercing true to yes and dropping false", () => {
+    const result = coerceSubmissionChecklistInput({ h1: true, h2: false, f1: true })
+    assert.deepEqual(result, { ok: true, value: { h1: "yes", f1: "yes" } })
+  })
+
+  it("accepts the four string levels verbatim", () => {
+    const result = coerceSubmissionChecklistInput({ h1: "strong", h2: "yes", f1: "partial", a1: "no" })
+    assert.deepEqual(result, {
+      ok: true,
+      value: { h1: "strong", h2: "yes", f1: "partial", a1: "no" },
+    })
+  })
+
+  it("rejects unknown checklist values", () => {
+    assert.deepEqual(coerceSubmissionChecklistInput({ h1: "maybe" }), {
+      ok: false,
+      reason: "invalid_checklist_value",
+    })
+    assert.deepEqual(coerceSubmissionChecklistInput({ h1: 1 }), {
+      ok: false,
+      reason: "invalid_checklist_value",
+    })
+  })
+
+  it("coerces stored legacy boolean maps leniently for list reads", () => {
+    assert.deepEqual(coerceStoredSubmissionChecklist({ h1: true, h2: false, f1: "strong", junk: 42 }), {
+      h1: "yes",
+      f1: "strong",
+    })
+    assert.deepEqual(coerceStoredSubmissionChecklist(null), {})
+  })
+
+  it("scores strong and yes as checked; partial and no as unchecked", () => {
+    const score = computeSubmissionScore(sampleGroups, {
+      h1: "strong", h2: "yes", h3: "partial",
+      f1: "no", f2: "yes",
+      b1: "partial",
+    })
+    assert.equal(score.hardChecked, 2)
+    assert.equal(score.hardTotal, 3)
+    assert.equal(score.fitChecked, 1)
+    assert.equal(score.bonusChecked, 0)
+  })
+
+  it("does not flag anti items marked partial", () => {
+    const score = computeSubmissionScore(sampleGroups, { a1: "partial", a2: "no" })
+    assert.equal(score.antiChecked, 0)
+    assert.equal(score.antiTotal, 2)
+    const flagged = computeSubmissionScore(sampleGroups, { a1: "strong" })
+    assert.equal(flagged.antiChecked, 1)
+  })
+
+  it("coerces legacy boolean checklists on submission create", () => {
+    const result = validateSubmission({
+      jobId: "public-job-1",
+      source: "hiring-board",
+      submitter: { name: "Sloane", email: "sloane@agency.com" },
+      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada" },
+      checklist: { hard_1: true, hard_2: false, fit_1: "strong" },
+      candidateConsent: true,
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value.checklist, { hard_1: "yes", fit_1: "strong" })
+  })
+
+  it("rejects malformed checklist values on submission create", () => {
+    assert.deepEqual(validateSubmission({
+      jobId: "public-job-1",
+      submitter: { name: "Sloane", email: "sloane@agency.com" },
+      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada" },
+      checklist: { hard_1: "kinda" },
+      candidateConsent: true,
+    }), {
+      ok: false,
+      reason: "invalid_checklist_value",
+    })
+  })
+})
+
+describe("candidate core cells", () => {
+  const baseSubmission = {
+    jobId: "public-job-1",
+    submitter: { name: "Sloane", email: "sloane@agency.com" },
+    candidate: {
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      link: "https://linkedin.com/in/ada",
+    },
+    checklist: { h1: true },
+    candidateConsent: true,
+  }
+
+  it("accepts, trims, and stores the seven core cells on create", () => {
+    const result = validateSubmission({
+      ...baseSubmission,
+      candidate: {
+        ...baseSubmission.candidate,
+        currentCompany: "  Acme Robotics  ",
+        location: " Brooklyn, NY ",
+        workAuthorization: " US citizen ",
+        employmentStatus: " employed ",
+        compensationExpectation: " $180k base ",
+        noticePeriod: " 2 weeks ",
+        interviewAvailability: " weekday mornings ",
+      },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.candidate.currentCompany, "Acme Robotics")
+    assert.equal(result.value.candidate.location, "Brooklyn, NY")
+    assert.equal(result.value.candidate.workAuthorization, "US citizen")
+    assert.equal(result.value.candidate.employmentStatus, "employed")
+    assert.equal(result.value.candidate.compensationExpectation, "$180k base")
+    assert.equal(result.value.candidate.noticePeriod, "2 weeks")
+    assert.equal(result.value.candidate.interviewAvailability, "weekday mornings")
+  })
+
+  it("never writes absent or blank core cells", () => {
+    const result = validateSubmission({
+      ...baseSubmission,
+      candidate: { ...baseSubmission.candidate, currentCompany: "  ", noticePeriod: "" },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    for (const field of [
+      "currentCompany",
+      "location",
+      "workAuthorization",
+      "employmentStatus",
+      "compensationExpectation",
+      "noticePeriod",
+      "interviewAvailability",
+    ]) {
+      assert.equal(field in result.value.candidate, false, `${field} must be omitted`)
+    }
+  })
+
+  it("rejects non-string or oversized core cells", () => {
+    assert.deepEqual(validateSubmission({
+      ...baseSubmission,
+      candidate: { ...baseSubmission.candidate, workAuthorization: 42 },
+    }), {
+      ok: false,
+      reason: "invalid_workAuthorization",
+    })
+    assert.deepEqual(validateSubmission({
+      ...baseSubmission,
+      candidate: { ...baseSubmission.candidate, compensationExpectation: "x".repeat(301) },
+    }), {
+      ok: false,
+      reason: "compensationExpectation_too_long",
+    })
+  })
+
+  it("round-trips core cells and the coerced checklist through the list shape", () => {
+    const row = publicRecruiterSubmission({
+      id: "sub-1",
+      data: () => ({
+        jobId: "job-1",
+        status: "reviewing",
+        candidate: {
+          name: "Ada Lovelace",
+          email: "ada@example.com",
+          link: "https://linkedin.com/in/ada",
+          linkedinUrl: "https://linkedin.com/in/ada-lovelace",
+          currentCompany: "Acme Robotics",
+          location: "Brooklyn, NY",
+          workAuthorization: "US citizen",
+          employmentStatus: "employed",
+          compensationExpectation: "$180k base",
+          noticePeriod: "2 weeks",
+          interviewAvailability: "weekday mornings",
+          junk: 42,
+        },
+        checklist: { h1: true, h2: false, f1: "partial" },
+      }),
+    })
+    assert.deepEqual(row.candidate, {
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      link: "https://linkedin.com/in/ada",
+      linkedinUrl: "https://linkedin.com/in/ada-lovelace",
+      currentCompany: "Acme Robotics",
+      location: "Brooklyn, NY",
+      workAuthorization: "US citizen",
+      employmentStatus: "employed",
+      compensationExpectation: "$180k base",
+      noticePeriod: "2 weeks",
+      interviewAvailability: "weekday mornings",
+    })
+    assert.deepEqual(row.checklist, { h1: "yes", f1: "partial" })
+  })
+})
+
+describe("recruiter submission update validation", () => {
+  it("requires a well-formed submission id", () => {
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({ candidate: { notes: "x" } }), {
+      ok: false,
+      reason: "missing_submission_id",
+    })
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({ submissionId: "../bad", candidate: { notes: "x" } }), {
+      ok: false,
+      reason: "invalid_submission_id",
+    })
+  })
+
+  it("requires at least one editable section", () => {
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({ submissionId: "sub-1" }), {
+      ok: false,
+      reason: "missing_update",
+    })
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      candidate: { name: "Ada", email: "new@example.com", link: "https://x", unknownField: "x" },
+    }), {
+      ok: false,
+      reason: "missing_update",
+    })
+  })
+
+  it("trims editable candidate fields, keeps empty string as a clear marker, and ignores identity fields", () => {
+    const result = validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      candidate: {
+        name: "Hacked Name",
+        email: "hacked@example.com",
+        link: "https://hacked.example",
+        currentCompany: "  Acme  ",
+        notes: "",
+        linkedinUrl: " https://linkedin.com/in/ada ",
+      },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value.candidate, {
+      currentCompany: "Acme",
+      notes: "",
+      linkedinUrl: "https://linkedin.com/in/ada",
+    })
+  })
+
+  it("applies create-equivalent limits to edited candidate fields", () => {
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      candidate: { noticePeriod: 42 },
+    }), {
+      ok: false,
+      reason: "invalid_noticePeriod",
+    })
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      candidate: { location: "x".repeat(301) },
+    }), {
+      ok: false,
+      reason: "location_too_long",
+    })
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      candidate: { linkedinUrl: `https://x.example/${"a".repeat(500)}` },
+    }), {
+      ok: false,
+      reason: "candidate_linkedin_url_too_long",
+    })
+  })
+
+  it("coerces checklist edits with the create rules", () => {
+    const result = validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      checklist: { h1: true, h2: false, h3: "partial" },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value.checklist, { h1: "yes", h3: "partial" })
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      checklist: { h1: "nope" },
+    }), {
+      ok: false,
+      reason: "invalid_checklist_value",
+    })
+  })
+
+  it("cleans extraFields edits with the create rules", () => {
+    const result = validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      extraFields: { portfolio: "  ada.dev/work  ", blank: "  " },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value.extraFields, { portfolio: "ada.dev/work" })
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      extraFields: { portfolio: 9 },
+    }), {
+      ok: false,
+      reason: "invalid_extra_fields",
+    })
+  })
+})
+
+describe("recruiter submission update endpoint behavior", () => {
+  it("rejects edits from a non-owning recruiter with 403", async () => {
+    const fake = nestedMemoryFirestore(sheetSubmissionSeed())
+    const result = await applyRecruiterSubmissionUpdate(fake.db as never, otherSheetRecruiter, {
+      submissionId: "sub-1",
+      candidate: { notes: "mine now" },
+    })
+    assert.deepEqual(result, { ok: false, status: 403, reason: "forbidden" })
+    const stored = fake.docs.get("pa-recruiter-submissions/sub-1") as Record<string, unknown>
+    assert.equal((stored.candidate as Record<string, unknown>).notes, "old note")
+  })
+
+  it("returns 404 for a missing submission", async () => {
+    const fake = nestedMemoryFirestore()
+    const result = await applyRecruiterSubmissionUpdate(fake.db as never, sheetRecruiter, {
+      submissionId: "sub-404",
+      candidate: { notes: "x" },
+    })
+    assert.deepEqual(result, { ok: false, status: 404, reason: "submission_not_found" })
+  })
+
+  it("locks the row with 409 once the submission reaches client_review", async () => {
+    const fake = nestedMemoryFirestore(sheetSubmissionSeed({ status: "client_review" }))
+    const result = await applyRecruiterSubmissionUpdate(fake.db as never, sheetRecruiter, {
+      submissionId: "sub-1",
+      candidate: { notes: "too late" },
+    })
+    assert.deepEqual(result, { ok: false, status: 409, reason: "row_locked" })
+  })
+
+  it("keeps the row editable through submitted, new, reviewing, and wekruit_interview", async () => {
+    for (const status of ["submitted", "new", "reviewing", "wekruit_interview"]) {
+      const fake = nestedMemoryFirestore(sheetSubmissionSeed({ status }))
+      const result = await applyRecruiterSubmissionUpdate(fake.db as never, sheetRecruiter, {
+        submissionId: "sub-1",
+        candidate: { currentCompany: "Acme" },
+      })
+      assert.equal(result.ok, true, `status ${status} must stay editable`)
+    }
+  })
+
+  it("merges candidate cells, clears empty-string fields, and stamps the edit audit", async () => {
+    const fake = nestedMemoryFirestore(sheetSubmissionSeed())
+    const result = await applyRecruiterSubmissionUpdate(fake.db as never, sheetRecruiter, {
+      submissionId: "sub-1",
+      candidate: { currentCompany: "Acme Robotics", noticePeriod: "2 weeks", notes: "" },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    const stored = fake.docs.get("pa-recruiter-submissions/sub-1") as Record<string, unknown>
+    const candidate = stored.candidate as Record<string, unknown>
+    assert.equal(candidate.name, "Ada Lovelace")
+    assert.equal(candidate.email, "ada@example.com")
+    assert.equal(candidate.currentCompany, "Acme Robotics")
+    assert.equal(candidate.noticePeriod, "2 weeks")
+    assert.equal("notes" in candidate, false)
+    assert.equal(stored.lastEditedBy, "recruiter")
+    assert.ok(stored.lastEditedAt)
+    assert.equal(result.submission.candidate?.currentCompany, "Acme Robotics")
+    assert.equal(result.submission.candidate?.noticePeriod, "2 weeks")
+  })
+
+  it("recomputes the score when checklist cells change", async () => {
+    const fake = nestedMemoryFirestore(sheetSubmissionSeed())
+    const result = await applyRecruiterSubmissionUpdate(fake.db as never, sheetRecruiter, {
+      submissionId: "sub-1",
+      checklist: { h2: "strong", h3: "partial", a1: "no" },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    const expectedChecklist: Record<string, ChecklistCellLevel> = {
+      h1: "yes",
+      f1: "yes",
+      h2: "strong",
+      h3: "partial",
+      a1: "no",
+    }
+    assert.deepEqual(result.submission.checklist, expectedChecklist)
+    assert.deepEqual(result.submission.score, {
+      hardChecked: 2, hardTotal: 3,
+      fitChecked: 1, fitTotal: 2,
+      bonusChecked: 0, bonusTotal: 1,
+      antiChecked: 0, antiTotal: 2,
+    })
+    const stored = fake.docs.get("pa-recruiter-submissions/sub-1") as Record<string, unknown>
+    assert.deepEqual(stored.checklist, expectedChecklist)
+  })
+
+  it("re-validates extraFields against the job submitFields config", async () => {
+    const missingRequired = nestedMemoryFirestore(sheetSubmissionSeed())
+    assert.deepEqual(await applyRecruiterSubmissionUpdate(missingRequired.db as never, sheetRecruiter, {
+      submissionId: "sub-1",
+      extraFields: {},
+    }), {
+      ok: false,
+      status: 400,
+      reason: "missing_extra_field_portfolio",
+    })
+
+    const fake = nestedMemoryFirestore(sheetSubmissionSeed())
+    const result = await applyRecruiterSubmissionUpdate(fake.db as never, sheetRecruiter, {
+      submissionId: "sub-1",
+      extraFields: { portfolio: "ada.dev/work", rogue: "drop me" },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.submission.extraFields, { portfolio: "https://ada.dev/work" })
+  })
+
+  it("returns 404 job_not_found when scoring config is unavailable", async () => {
+    const seed = sheetSubmissionSeed()
+    delete (seed as Record<string, unknown>)["pa-jobs/job-1"]
+    const fake = nestedMemoryFirestore(seed)
+    const result = await applyRecruiterSubmissionUpdate(fake.db as never, sheetRecruiter, {
+      submissionId: "sub-1",
+      checklist: { h1: "strong" },
+    })
+    assert.deepEqual(result, { ok: false, status: 404, reason: "job_not_found" })
+  })
+
+  it("does not fire recruiter-facing notifications for cell edits", () => {
+    const before = sheetSubmissionSeed()["pa-recruiter-submissions/sub-1"]!
+    const after = {
+      ...before,
+      candidate: { ...(before.candidate as Record<string, unknown>), currentCompany: "Acme" },
+      checklist: { h1: "yes", f1: "yes", h2: "strong" },
+      lastEditedBy: "recruiter",
+    }
+    assert.equal(submissionFeedbackNotification(before, after), null)
+    assert.equal(submissionRequestedInfoNotification(before, after), null)
+    assert.equal(candidateConfirmationNotification(before, after), null)
+    assert.equal(payoutUpdateNotification(before, after), null)
+  })
+
+  it("requires recruiter Bearer auth on the update endpoint", async () => {
+    const out: { statusCode?: number; body?: unknown } = {}
+    const res = {
+      set: () => {},
+      setHeader: () => {},
+      getHeader: () => undefined,
+      end: () => {},
+      on: () => {},
+      status: (code: number) => {
+        out.statusCode = code
+        return {
+          json: (body: unknown) => { out.body = body },
+          send: (body: unknown) => { out.body = body },
+        }
+      },
+    }
+    const req = {
+      method: "POST",
+      headers: {},
+      body: { submissionId: "sub-1", candidate: { notes: "x" } },
+      get: () => undefined,
+    }
+    await recruiterBoardEntrypoint.paRecruiterSubmissionUpdate(req as never, res as never)
+    assert.equal(out.statusCode, 401)
+    assert.deepEqual(out.body, { ok: false, reason: "unauthorized" })
+  })
+})
+
+describe("recruiter submission comments", () => {
+  it("validates comment payloads", () => {
+    assert.deepEqual(validateRecruiterSubmissionCommentAddInput({ message: "hi" }), {
+      ok: false,
+      reason: "missing_submission_id",
+    })
+    assert.deepEqual(validateRecruiterSubmissionCommentAddInput({ submissionId: "../bad", message: "hi" }), {
+      ok: false,
+      reason: "invalid_submission_id",
+    })
+    assert.deepEqual(validateRecruiterSubmissionCommentAddInput({ submissionId: "sub-1", message: "   " }), {
+      ok: false,
+      reason: "missing_message",
+    })
+    assert.deepEqual(validateRecruiterSubmissionCommentAddInput({
+      submissionId: "sub-1",
+      message: "x".repeat(4001),
+    }), {
+      ok: false,
+      reason: "message_too_long",
+    })
+    assert.deepEqual(validateRecruiterSubmissionCommentAddInput({ submissionId: "sub-1", message: " Need an update " }), {
+      ok: true,
+      value: { submissionId: "sub-1", message: "Need an update" },
+    })
+  })
+
+  it("lets only the owning recruiter add a comment, stamped with the profile identity", async () => {
+    const fake = nestedMemoryFirestore(sheetSubmissionSeed())
+    const denied = await addRecruiterSubmissionComment(fake.db as never, otherSheetRecruiter, {
+      submissionId: "sub-1",
+      message: "not mine",
+    })
+    assert.deepEqual(denied, { ok: false, status: 403, reason: "forbidden" })
+
+    const missing = await addRecruiterSubmissionComment(fake.db as never, sheetRecruiter, {
+      submissionId: "sub-404",
+      message: "hello",
+    })
+    assert.deepEqual(missing, { ok: false, status: 404, reason: "submission_not_found" })
+
+    const added = await addRecruiterSubmissionComment(
+      fake.db as never,
+      sheetRecruiter,
+      { submissionId: "sub-1", message: "Any feedback on Ada?" },
+      "2026-06-09T10:00:00.000Z",
+    )
+    assert.equal(added.ok, true)
+    if (!added.ok) return
+    assert.equal(added.comment.by, "recruiter")
+    assert.equal(added.comment.authorName, "Sloane")
+    assert.equal(added.comment.authorEmail, "sloane@agency.com")
+    assert.equal(added.comment.at, "2026-06-09T10:00:00.000Z")
+    const storedKey = fake.findKey(`pa-recruiter-submissions/sub-1/comments/${added.comment.id}`)
+    assert.ok(storedKey, "comment lands in the submission subcollection")
+    const stored = fake.docs.get(storedKey!) as Record<string, unknown>
+    assert.equal(stored.message, "Any feedback on Ada?")
+    assert.equal(stored.by, "recruiter")
+  })
+
+  it("lists comments oldest-first for the owning recruiter only", async () => {
+    const fake = nestedMemoryFirestore({
+      ...sheetSubmissionSeed(),
+      "pa-recruiter-submissions/sub-1/comments/c-late": {
+        message: "Second",
+        by: "wekruit",
+        authorName: "WeKruit",
+        at: "2026-06-09T12:00:00.000Z",
+      },
+      "pa-recruiter-submissions/sub-1/comments/c-early": {
+        message: "First",
+        by: "recruiter",
+        authorName: "Sloane",
+        authorEmail: "sloane@agency.com",
+        at: "2026-06-09T10:00:00.000Z",
+      },
+      "pa-recruiter-submissions/sub-1/comments/c-junk": {
+        by: "recruiter",
+        at: "2026-06-09T11:00:00.000Z",
+      },
+    })
+
+    const denied = await listRecruiterSubmissionComments(fake.db as never, otherSheetRecruiter, "sub-1")
+    assert.deepEqual(denied, { ok: false, status: 403, reason: "forbidden" })
+
+    const listed = await listRecruiterSubmissionComments(fake.db as never, sheetRecruiter, "sub-1")
+    assert.equal(listed.ok, true)
+    if (!listed.ok) return
+    assert.deepEqual(listed.comments.map((comment) => comment.message), ["First", "Second"])
+    assert.deepEqual(listed.comments[0], {
+      id: "c-early",
+      message: "First",
+      by: "recruiter",
+      authorName: "Sloane",
+      authorEmail: "sloane@agency.com",
+      at: "2026-06-09T10:00:00.000Z",
+    })
+    assert.equal(listed.comments[1]?.by, "wekruit")
+  })
+
+  it("requires recruiter Bearer auth on both comment endpoints", async () => {
+    for (const [handler, req] of [
+      [recruiterBoardEntrypoint.paRecruiterSubmissionCommentsList, {
+        method: "GET",
+        headers: {},
+        query: { submissionId: "sub-1" },
+        get: () => undefined,
+      }],
+      [recruiterBoardEntrypoint.paRecruiterSubmissionCommentAdd, {
+        method: "POST",
+        headers: {},
+        body: { submissionId: "sub-1", message: "hello" },
+        get: () => undefined,
+      }],
+    ] as const) {
+      const out: { statusCode?: number; body?: unknown } = {}
+      const res = {
+        set: () => {},
+        setHeader: () => {},
+        getHeader: () => undefined,
+        end: () => {},
+        on: () => {},
+        status: (code: number) => {
+          out.statusCode = code
+          return {
+            json: (body: unknown) => { out.body = body },
+            send: (body: unknown) => { out.body = body },
+          }
+        },
+      }
+      await (handler as (rq: never, rs: never) => Promise<void>)(req as never, res as never)
+      assert.equal(out.statusCode, 401)
+      assert.deepEqual(out.body, { ok: false, reason: "unauthorized" })
+    }
+  })
+})
+
+describe("recruiter submission comment notifications", () => {
+  const wekruitComment = {
+    message: "We will move Ada forward this week.",
+    by: "wekruit",
+    authorName: "WeKruit Ops",
+    at: "2026-06-09T12:00:00.000Z",
+  }
+  const recruiterComment = {
+    message: "Any update on Ada?",
+    by: "recruiter",
+    authorName: "Sloane",
+    authorEmail: "sloane@agency.com",
+    at: "2026-06-09T11:00:00.000Z",
+  }
+
+  function withoutMailgunEnv<T>(run: () => Promise<T>): Promise<T> {
+    const saved = { apiKey: process.env.MAILGUN_API_KEY, domain: process.env.MAILGUN_DOMAIN }
+    delete process.env.MAILGUN_API_KEY
+    delete process.env.MAILGUN_DOMAIN
+    return run().finally(() => {
+      if (saved.apiKey !== undefined) process.env.MAILGUN_API_KEY = saved.apiKey
+      if (saved.domain !== undefined) process.env.MAILGUN_DOMAIN = saved.domain
+    })
+  }
+
+  it("titles WeKruit replies for email and keeps recruiter comments in-app only", () => {
+    const submission = sheetSubmissionSeed()["pa-recruiter-submissions/sub-1"]!
+    const wekruit = submissionCommentNotification(wekruitComment, submission)
+    assert.equal(wekruit?.title, "WeKruit replied on Ada Lovelace")
+    assert.match(wekruit?.body ?? "", /Founding Engineer/)
+    assert.match(wekruit?.body ?? "", /move Ada forward/)
+    assert.equal(wekruit?.emailable, true)
+    const recruiter = submissionCommentNotification(recruiterComment, submission)
+    assert.equal(recruiter?.title, "New comment on Ada Lovelace")
+    assert.equal(recruiter?.emailable, false)
+    assert.equal(submissionCommentNotification({ by: "wekruit", message: "  " }, submission), null)
+    assert.equal(submissionCommentNotification({ by: "candidate", message: "hi" }, submission), null)
+    const email = composeRecruiterSubmissionUpdateEmail({
+      title: wekruit!.title,
+      body: wekruit!.body,
+      roleTitle: "Founding Engineer",
+      companyLabel: "Co. B",
+    })
+    assert.equal(email.subject, "WeKruit replied on Ada Lovelace")
+  })
+
+  it("creates a notification and attempts the email for a WeKruit reply", async () => {
+    await withoutMailgunEnv(async () => {
+      const fake = nestedMemoryFirestore(sheetSubmissionSeed())
+      const result = await deliverRecruiterSubmissionCommentNotification(fake.db as never, {
+        triggerEventId: "evt-comment-1",
+        submissionId: "sub-1",
+        comment: wekruitComment,
+      })
+      assert.equal(result.notified, true)
+      assert.equal(result.emailStatus, "not_configured")
+      const notificationKey = fake.findKey("pa-recruiter-notifications/")
+      assert.ok(notificationKey, "notification doc created")
+      const notification = fake.docs.get(notificationKey!) as Record<string, unknown>
+      assert.equal(notification.type, "submission_comment")
+      assert.equal(notification.recruiterId, "rec-1")
+      assert.equal(notification.entityType, "submission")
+      assert.equal(notification.entityId, "sub-1")
+      assert.equal(notification.title, "WeKruit replied on Ada Lovelace")
+      assert.equal(notification.emailStatus, "not_configured")
+    })
+  })
+
+  it("skips the email but keeps the notification when the recruiter opted out", async () => {
+    await withoutMailgunEnv(async () => {
+      const fake = nestedMemoryFirestore({
+        ...sheetSubmissionSeed(),
+        "pa-recruiter-users/rec-1": {
+          recruiterId: "rec-1",
+          email: "sloane@agency.com",
+          notificationPreferences: { submissionUpdatesEmail: false },
+        },
+      })
+      const result = await deliverRecruiterSubmissionCommentNotification(fake.db as never, {
+        triggerEventId: "evt-comment-2",
+        submissionId: "sub-1",
+        comment: wekruitComment,
+      })
+      assert.equal(result.notified, true)
+      assert.equal(result.emailStatus, "skipped")
+      const notificationKey = fake.findKey("pa-recruiter-notifications/")
+      const notification = fake.docs.get(notificationKey!) as Record<string, unknown>
+      assert.equal(notification.emailStatus, "skipped")
+      assert.equal(notification.emailLastError, "submission_updates_email_disabled")
+    })
+  })
+
+  it("writes the notification doc only — never an email — for recruiter comments", async () => {
+    await withoutMailgunEnv(async () => {
+      const fake = nestedMemoryFirestore(sheetSubmissionSeed())
+      const result = await deliverRecruiterSubmissionCommentNotification(fake.db as never, {
+        triggerEventId: "evt-comment-3",
+        submissionId: "sub-1",
+        comment: recruiterComment,
+      })
+      assert.equal(result.notified, true)
+      assert.equal(result.emailStatus, "not_emailed")
+      const notificationKey = fake.findKey("pa-recruiter-notifications/")
+      assert.ok(notificationKey, "notification doc created")
+      const notification = fake.docs.get(notificationKey!) as Record<string, unknown>
+      assert.equal(notification.type, "submission_comment")
+      assert.equal(notification.title, "New comment on Ada Lovelace")
+      assert.equal("emailStatus" in notification, false)
+    })
+  })
+
+  it("does not double-notify or double-email on an idempotent trigger replay", async () => {
+    await withoutMailgunEnv(async () => {
+      const fake = nestedMemoryFirestore(sheetSubmissionSeed())
+      const first = await deliverRecruiterSubmissionCommentNotification(fake.db as never, {
+        triggerEventId: "evt-comment-4",
+        submissionId: "sub-1",
+        comment: wekruitComment,
+      })
+      assert.equal(first.notified, true)
+      const replay = await deliverRecruiterSubmissionCommentNotification(fake.db as never, {
+        triggerEventId: "evt-comment-4",
+        submissionId: "sub-1",
+        comment: wekruitComment,
+      })
+      assert.equal(replay.notified, false)
+      assert.equal(replay.emailStatus, "not_emailed")
+    })
+  })
+
+  it("exports the sheet endpoints and the comment trigger from the deployed entrypoint", () => {
+    for (const name of [
+      "paRecruiterSubmissionUpdate",
+      "paRecruiterSubmissionCommentsList",
+      "paRecruiterSubmissionCommentAdd",
+      "paRecruiterSubmissionCommentNotify",
+    ]) {
+      assert.equal(name in recruiterBoardEntrypoint, true, `${name} must be exported`)
+    }
   })
 })

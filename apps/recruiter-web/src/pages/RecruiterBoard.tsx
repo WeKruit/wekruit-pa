@@ -10694,6 +10694,9 @@ function SubmissionRow({
         <span>{formatWhen(submission)}</span>
         <strong>{submissionScore(submission)}</strong>
         <em>{submissionModeLabel(submission.submissionMode)}</em>
+        {(submission.inboundJobId || submission.jobId) && (
+          <Link to={`/recruiters/job/${submission.inboundJobId || submission.jobId}`}>Open sheet</Link>
+        )}
       </div>
       {expanded && (
         <div className="rb-submission__detail">
