@@ -19,6 +19,8 @@ import {
   RecruiterApiError,
   submitRecruiterCandidate,
   updateRecruiterSubmission,
+  uploadResumeFile,
+  validateResumeFile,
   type CollabJob,
   type RecruiterSubmissionComment,
   type RecruiterSubmissionItem,
@@ -109,6 +111,7 @@ type RowDraft = {
   notes: string
   checklist: Record<string, "" | SubmissionChecklistValue>
   extraFields: Record<string, string>
+  resumeFileName?: string
 }
 
 type AddRowDraft = RowDraft & { consent: boolean }
@@ -335,8 +338,8 @@ function addRowBlockers(draft: AddRowDraft, fields: RecruiterSubmitField[]): str
   const resume = draft.cells.resume.trim()
   if (!linkedin) blockers.push("LinkedIn URL is required.")
   else if (!normalizeSheetUrl(linkedin)) blockers.push("LinkedIn URL must be a valid URL.")
-  if (!resume) blockers.push("Resume URL is required.")
-  else if (!normalizeSheetUrl(resume)) blockers.push("Resume URL must be a valid URL.")
+  if (!resume) blockers.push("Resume is required — paste a link or drop a file.")
+  else if (!normalizeSheetUrl(resume) && !draft.resumeFileName) blockers.push("Resume must be a valid URL or an uploaded file.")
   for (const field of fields) {
     const value = (draft.extraFields[field.id] ?? "").trim()
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
@@ -387,6 +390,104 @@ function renderJdBody(text: string): ReactNode[] {
   }
   flushList()
   return out
+}
+
+function ResumeCell({
+  value,
+  fileName,
+  editable,
+  jobId,
+  onChange,
+}: {
+  value: string
+  fileName?: string
+  editable: boolean
+  jobId: string
+  onChange: (url: string, fileName?: string) => void
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+
+  const handleFile = async (file: File) => {
+    const err = validateResumeFile(file)
+    if (err) { setUploadError(err); return }
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const url = await uploadResumeFile(file, jobId)
+      onChange(url, file.name)
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Upload failed.")
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  if (!editable) {
+    if (value) {
+      const href = normalizeSheetUrl(value)
+      if (href) {
+        return (
+          <a className="rs-link-cell" href={href} target="_blank" rel="noopener noreferrer">
+            {fileName || excerpt(value, 40)}
+          </a>
+        )
+      }
+    }
+    return <>{value || "—"}</>
+  }
+
+  return (
+    <div
+      className={`rs-resume-cell${dragOver ? " rs-resume-drag" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragOver(false)
+        const file = e.dataTransfer.files[0]
+        if (file) void handleFile(file)
+      }}
+    >
+      {uploading ? (
+        <span className="rs-resume-uploading">Uploading…</span>
+      ) : fileName ? (
+        <span className="rs-resume-file">
+          {fileName}
+          <button type="button" className="rs-resume-clear" onClick={() => onChange("", undefined)} title="Remove">×</button>
+        </span>
+      ) : (
+        <>
+          <input
+            type="text"
+            aria-label="Resume URL"
+            placeholder="Paste link or drop file"
+            value={value}
+            onChange={(e) => onChange(e.target.value, undefined)}
+          />
+          <button type="button" className="rs-resume-pick" onClick={() => fileRef.current?.click()} title="Upload file">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M8 1v10M4 5l4-4 4 4M2 12v2h12v-2"/>
+            </svg>
+          </button>
+        </>
+      )}
+      {uploadError && <span className="rs-resume-err">{uploadError}</span>}
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".pdf,.doc,.docx"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) void handleFile(file)
+          e.target.value = ""
+        }}
+      />
+    </div>
+  )
 }
 
 export default function RoleSheetPage() {
@@ -645,7 +746,7 @@ export default function RoleSheetPage() {
           )}
         </div>
 
-        <details className="rs-jd">
+        <details className="rs-jd" open>
           <summary>Job description</summary>
           <div className="rs-jd__body">
             {job.jdBlocks.map((block, i) => (
@@ -719,6 +820,7 @@ export default function RoleSheetPage() {
                   extraFieldDefs={extraFieldDefs}
                   comments={commentsByRow[row.id]}
                   saving={savingRowId === row.id}
+                  jobId={job.jobId}
                   onEdit={(mutate) => editRow(row, mutate)}
                   onSave={() => void saveRow(row)}
                   onOpenThread={() => openThread(row)}
@@ -731,6 +833,7 @@ export default function RoleSheetPage() {
                 blockers={addBlockers}
                 ready={addRowReady}
                 submitting={submitting}
+                jobId={job.jobId}
                 onChange={changeAddDraft}
                 onSubmit={() => void submitAddRow()}
               />
@@ -770,6 +873,7 @@ function SheetRow({
   extraFieldDefs,
   comments,
   saving,
+  jobId,
   onEdit,
   onSave,
   onOpenThread,
@@ -780,6 +884,7 @@ function SheetRow({
   extraFieldDefs: RecruiterSubmitField[]
   comments?: RecruiterSubmissionComment[]
   saving: boolean
+  jobId: string
   onEdit: (mutate: (draft: RowDraft) => RowDraft) => void
   onSave: () => void
   onOpenThread: () => void
@@ -794,8 +899,21 @@ function SheetRow({
 
   const renderCandidateCell = (column: SheetColumn) => {
     const value = view.cells[column.id]
+    if (column.id === "resume") {
+      return (
+        <ResumeCell
+          value={value}
+          fileName={view.resumeFileName}
+          editable={editable}
+          jobId={jobId}
+          onChange={(url, name) =>
+            onEdit((d) => ({ ...d, cells: { ...d.cells, resume: url }, resumeFileName: name }))
+          }
+        />
+      )
+    }
     if (!editable) {
-      if ((column.id === "linkedin" || column.id === "resume") && value) {
+      if (column.id === "linkedin" && value) {
         const href = normalizeSheetUrl(value)
         if (href) {
           return (
@@ -909,6 +1027,7 @@ function AddRow({
   blockers,
   ready,
   submitting,
+  jobId,
   onChange,
   onSubmit,
 }: {
@@ -918,6 +1037,7 @@ function AddRow({
   blockers: string[]
   ready: boolean
   submitting: boolean
+  jobId: string
   onChange: (draft: AddRowDraft) => void
   onSubmit: () => void
 }) {
@@ -929,13 +1049,25 @@ function AddRow({
     <tr className="rs-row-add">
       {CANDIDATE_COLUMNS.map((column) => (
         <td key={column.id} data-label={`${column.label}${column.required ? " *" : ""}`} className={`rs-c-${column.id}`}>
-          <input
-            type="text"
-            aria-label={`New candidate ${column.label}`}
-            placeholder={column.id === "name" ? "Add a candidate…" : column.label}
-            value={draft.cells[column.id]}
-            onChange={(e) => setCell(column.id, e.target.value)}
-          />
+          {column.id === "resume" ? (
+            <ResumeCell
+              value={draft.cells.resume}
+              fileName={draft.resumeFileName}
+              editable
+              jobId={jobId}
+              onChange={(url, name) =>
+                onChange({ ...draft, cells: { ...draft.cells, resume: url }, resumeFileName: name })
+              }
+            />
+          ) : (
+            <input
+              type="text"
+              aria-label={`New candidate ${column.label}`}
+              placeholder={column.id === "name" ? "Add a candidate…" : column.label}
+              value={draft.cells[column.id]}
+              onChange={(e) => setCell(column.id, e.target.value)}
+            />
+          )}
         </td>
       ))}
       {checklistColumns.map((column) => (

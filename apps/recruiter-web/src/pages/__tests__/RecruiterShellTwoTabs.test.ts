@@ -95,18 +95,18 @@ test("My submissions empty state uses candidate and submission language instead 
   assert.doesNotMatch(emptySlice, /candidate packet|Submit packet|tracked receipt|payout movement/)
 })
 
-test("role page is the sheet: collapsed JD, checklist columns, rows + blank add row", () => {
+test("role page is the sheet: open JD, checklist columns, rows + blank add row", () => {
   assert.match(roleSource, /export default function RoleSheetPage\(\)/)
-  assert.ok(roleSource.includes('<details className="rs-jd">'), "JD collapses behind one click")
+  assert.ok(roleSource.includes('<details className="rs-jd" open>'), "JD is open by default")
   assert.match(roleSource, /\{job\.jdBlocks\.map\(\(block, i\) => \(/)
   assert.match(roleSource, /<h3>\{block\.heading\}<\/h3>/)
   assert.match(roleSource, /job\.recruiterBoard\.checklist\.groups/)
   assert.match(roleSource, /<table className="rs-sheet">/)
   assert.match(roleSource, /\{roleSubmissions\.map\(\(row\) => \(/)
   assert.match(roleSource, /<AddRow/)
-  const jdIdx = roleSource.indexOf('<details className="rs-jd">')
+  const jdIdx = roleSource.indexOf('<details className="rs-jd" open>')
   const tableIdx = roleSource.indexOf('<table className="rs-sheet">')
-  assert.ok(jdIdx > 0 && tableIdx > jdIdx, "the sheet is the hero, JD on demand above it")
+  assert.ok(jdIdx > 0 && tableIdx > jdIdx, "the sheet follows the JD")
 })
 
 test("role page renders none of the retired workspace panels", () => {

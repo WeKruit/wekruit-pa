@@ -2,7 +2,8 @@
  * Client helpers for the recruiter board CFs (paCollabJobsList,
  * paRecruiterSubmission). Backs /recruiters and /recruiters/job/:jobId routes.
  */
-import { auth } from "./firebase.js"
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
+import { auth, storage } from "./firebase.js"
 
 const DEFAULT_BASE =
   (typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_PA_FUNCTIONS_BASE_URL?: string } }).env?.VITE_PA_FUNCTIONS_BASE_URL) ||
@@ -913,4 +914,28 @@ export async function resendRecruiterCandidateConfirmation(
     candidateConsentStatus: body.candidateConsentStatus,
     confirmationStatus: body.confirmationStatus,
   }
+}
+
+const ALLOWED_RESUME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+])
+const MAX_RESUME_BYTES = 10 * 1024 * 1024
+
+export function validateResumeFile(file: File): string | null {
+  if (!ALLOWED_RESUME_TYPES.has(file.type)) return "Only PDF and Word documents are accepted."
+  if (file.size > MAX_RESUME_BYTES) return "Resume must be under 10 MB."
+  return null
+}
+
+export async function uploadResumeFile(file: File, jobId: string): Promise<string> {
+  const user = auth().currentUser
+  if (!user) throw new Error("Not signed in.")
+  const ext = file.name.split(".").pop()?.toLowerCase() || "pdf"
+  const stamp = Date.now().toString(36)
+  const path = `recruiter-submissions/${jobId}/${user.uid}/${stamp}.${ext}`
+  const storageRef = ref(storage(), path)
+  await uploadBytes(storageRef, file, { contentType: file.type })
+  return getDownloadURL(storageRef)
 }

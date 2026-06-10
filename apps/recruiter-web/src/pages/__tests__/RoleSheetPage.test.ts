@@ -101,8 +101,8 @@ test("add row gates Submit on required identity URLs, required submit fields, an
   assert.match(blockersSlice, /if \(!email\) blockers\.push\("Candidate email is required\."\)/)
   assert.match(blockersSlice, /if \(!linkedin\) blockers\.push\("LinkedIn URL is required\."\)/)
   assert.match(blockersSlice, /else if \(!normalizeSheetUrl\(linkedin\)\) blockers\.push\("LinkedIn URL must be a valid URL\."\)/)
-  assert.match(blockersSlice, /if \(!resume\) blockers\.push\("Resume URL is required\."\)/)
-  assert.match(blockersSlice, /else if \(!normalizeSheetUrl\(resume\)\) blockers\.push\("Resume URL must be a valid URL\."\)/)
+  assert.match(blockersSlice, /if \(!resume\) blockers\.push\("Resume is required — paste a link or drop a file\."\)/)
+  assert.match(blockersSlice, /else if \(!normalizeSheetUrl\(resume\) && !draft\.resumeFileName\) blockers\.push\("Resume must be a valid URL or an uploaded file\."\)/)
   assert.doesNotMatch(blockersSlice, /LinkedIn URL or resume link is required/)
   assert.match(blockersSlice, /if \(field\.required && !value\) blockers\.push\(`\$\{field\.label\} is required for this role\.`\)/)
   assert.match(blockersSlice, /if \(!draft\.consent\) blockers\.push\("Candidate consent is required\."\)/)
@@ -230,12 +230,11 @@ test("Status and Feedback columns are read-only sheet cells", () => {
   assert.match(source, /return "—"\n\}/)
 })
 
-test("JD section is collapsed by default with the sheet as the hero", () => {
-  assert.ok(source.includes('<details className="rs-jd">'), "JD renders inside a <details>")
-  assert.ok(!source.includes('<details className="rs-jd" open'), "JD starts collapsed")
-  const jdIdx = source.indexOf('<details className="rs-jd">')
+test("JD section is open by default above the sheet", () => {
+  assert.ok(source.includes('<details className="rs-jd" open>'), "JD renders inside an open <details>")
+  const jdIdx = source.indexOf('<details className="rs-jd" open>')
   const tableIdx = source.indexOf('<table className="rs-sheet">')
-  assert.ok(jdIdx >= 0 && tableIdx > jdIdx, "the sheet follows the collapsed JD")
+  assert.ok(jdIdx >= 0 && tableIdx > jdIdx, "the sheet follows the JD")
   assert.match(source, /\{job\.jdBlocks\.map\(\(block, i\) => \(/)
   assert.match(source, /\{job\.recruiterBoard\.culture\.bullets\.map\(\(bullet, i\) => \(/)
 })

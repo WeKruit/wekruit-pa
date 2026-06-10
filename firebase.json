@@ -3,6 +3,9 @@
     "rules": "config/firebase/firestore.rules",
     "indexes": "config/firebase/firestore.indexes.json"
   },
+  "storage": {
+    "rules": "config/firebase/storage.rules"
+  },
   "functions": [
     {
       "source": "apps/functions/lib",
