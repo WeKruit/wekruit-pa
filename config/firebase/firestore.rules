@@ -576,6 +576,14 @@ service cloud.firestore {
     match /pa-recruiter-submissions/{submissionId} {
       allow read, update: if isPaOperator();
       allow create, delete: if false;
+      // Recruiter↔WeKruit thread on one submission. Admin dashboard reads the
+      // thread client-side; recruiters go through the recruiter-board CF
+      // endpoints, and the admin write path is a pa-orchestrator callable
+      // using the Admin SDK (bypasses rules) — so no client writes at all.
+      match /comments/{commentId} {
+        allow read: if isPaOperator();
+        allow write: if false;
+      }
     }
     match /pa-recruiter-role-applications/{applicationId} {
       allow read, update: if isPaOperator();

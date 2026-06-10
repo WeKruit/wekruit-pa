@@ -26,6 +26,9 @@ export const RECRUITER_ROLE_QUESTION_CREATE_URL = `${DEFAULT_BASE}/paRecruiterRo
 export const RECRUITER_CANDIDATE_IDENTITY_CHECK_URL = `${DEFAULT_BASE}/paRecruiterCandidateIdentityCheck`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
 export const RECRUITER_SUBMISSIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionsList`
+export const RECRUITER_SUBMISSION_UPDATE_URL = `${DEFAULT_BASE}/paRecruiterSubmissionUpdate`
+export const RECRUITER_SUBMISSION_COMMENTS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionCommentsList`
+export const RECRUITER_SUBMISSION_COMMENT_ADD_URL = `${DEFAULT_BASE}/paRecruiterSubmissionCommentAdd`
 export const RECRUITER_CANDIDATE_CONFIRMATION_RESEND_URL = `${DEFAULT_BASE}/paRecruiterCandidateConsentResend`
 
 // Mirrors PublicCollabJob in apps/functions/src/recruiter-board.ts. Loose
@@ -66,19 +69,38 @@ export interface CollabJob {
   }
 }
 
+// Checklist answers on the wire are graded strings per item (legacy rows may
+// still carry booleans; true reads as "yes").
+export type SubmissionChecklistValue = "strong" | "yes" | "partial" | "no"
+
+// Sheet cells stored inside candidate{} — all optional strings on create and
+// update; returned by paRecruiterSubmissionsList.
+export interface SubmissionCandidateCells {
+  name?: string
+  email?: string
+  link?: string
+  currentRole?: string
+  yoe?: string
+  notes?: string
+  currentCompany?: string
+  location?: string
+  workAuthorization?: string
+  employmentStatus?: string
+  compensationExpectation?: string
+  noticePeriod?: string
+  interviewAvailability?: string
+}
+
 export interface SubmissionInput {
   jobId: string
   sourcedCandidateId?: string
   submitter: { name: string; email: string }
-  candidate: {
+  candidate: SubmissionCandidateCells & {
     name: string
     email: string
     link: string
-    currentRole?: string
-    yoe?: string
-    notes?: string
   }
-  checklist: { [itemId: string]: boolean }
+  checklist: { [itemId: string]: boolean | SubmissionChecklistValue }
   candidateConsent: true
   // Split link fields. `candidate.link` stays the back-compat single value
   // (linkedin || resume); validateSubmission ignores unknown top-level keys
@@ -192,14 +214,8 @@ export interface RecruiterSubmissionItem {
   inboundJobId?: string
   jobTitleSnapshot?: string
   companyLabelSnapshot?: string
-  candidate?: {
-    name?: string
-    email?: string
-    link?: string
-    currentRole?: string
-    yoe?: string
-    notes?: string
-  }
+  candidate?: SubmissionCandidateCells
+  checklist?: { [itemId: string]: boolean | SubmissionChecklistValue }
   candidateConsentStatus?: string
   candidateConfirmation?: {
     status?: string
@@ -760,6 +776,82 @@ export async function submitRecruiterCandidate(input: SubmissionInput): Promise<
   const body = (await res.json().catch(() => ({}))) as SubmissionResponse
   if (!res.ok) return { ok: false, reason: body.reason ?? `http_${res.status}` }
   return body
+}
+
+export interface RecruiterSubmissionUpdateInput {
+  submissionId: string
+  candidate?: SubmissionCandidateCells
+  checklist?: Record<string, SubmissionChecklistValue>
+  extraFields?: Record<string, string>
+}
+
+// POST paRecruiterSubmissionUpdate → 200 {ok,submission} | 409 row_locked | 403.
+// Throws RecruiterApiError carrying the HTTP status so callers can branch on 409.
+export async function updateRecruiterSubmission(
+  input: RecruiterSubmissionUpdateInput,
+): Promise<RecruiterSubmissionItem> {
+  const res = await fetch(RECRUITER_SUBMISSION_UPDATE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    submission?: RecruiterSubmissionItem
+  }
+  if (!res.ok || !body.ok || !body.submission) {
+    throw new RecruiterApiError(body.reason ?? `paRecruiterSubmissionUpdate HTTP ${res.status}`, res.status)
+  }
+  return body.submission
+}
+
+export interface RecruiterSubmissionComment {
+  message: string
+  by: "recruiter" | "wekruit"
+  authorName?: string
+  at?: string
+}
+
+// GET paRecruiterSubmissionCommentsList?submissionId= → comments oldest-first.
+export async function fetchRecruiterSubmissionComments(
+  submissionId: string,
+): Promise<RecruiterSubmissionComment[]> {
+  const res = await fetch(
+    `${RECRUITER_SUBMISSION_COMMENTS_LIST_URL}?submissionId=${encodeURIComponent(submissionId)}`,
+    { method: "GET", headers: await recruiterAuthHeaders() },
+  )
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    comments?: RecruiterSubmissionComment[]
+  }
+  if (!res.ok || !body.ok || !body.comments) {
+    throw new Error(body.reason ?? `paRecruiterSubmissionCommentsList HTTP ${res.status}`)
+  }
+  return body.comments
+}
+
+export async function addRecruiterSubmissionComment(input: {
+  submissionId: string
+  message: string
+}): Promise<{ ok: true }> {
+  const res = await fetch(RECRUITER_SUBMISSION_COMMENT_ADD_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; reason?: string }
+  if (!res.ok || !body.ok) {
+    throw new Error(body.reason ?? `paRecruiterSubmissionCommentAdd HTTP ${res.status}`)
+  }
+  return { ok: true }
 }
 
 export async function checkRecruiterCandidateIdentity(input: {

@@ -7,7 +7,7 @@ import test from "node:test"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const boardSource = readFileSync(resolve(here, "../RecruiterBoard.tsx"), "utf8")
-const roleSource = readFileSync(resolve(here, "../RecruiterRole.tsx"), "utf8")
+const roleSource = readFileSync(resolve(here, "../RoleSheetPage.tsx"), "utf8")
 
 function sliceBetween(source: string, start: string, end: string): string {
   const startIdx = source.indexOf(start)
@@ -63,28 +63,31 @@ test("roles list rows carry title, company, location, comp summary, and fee note
   assert.match(listSlice, /to=\{`\/recruiters\/job\/\$\{job\.jobId\}`\}/, "row links straight to the role page")
 })
 
-test("My submissions view still renders the shared list with steppers", () => {
+test("My submissions view still renders the shared list with steppers and an Open sheet link", () => {
   assert.match(boardSource, /\{activeTab === "submissions" && statusLoaded && \(\s*\n\s*<SubmissionsTab/)
   assert.match(boardSource, /<SubmissionStatusStepper status=\{submission\.status\} requestedInfo=\{submission\.requestedInfo\} \/>/)
+  assert.match(
+    boardSource,
+    /<Link to=\{`\/recruiters\/job\/\$\{submission\.inboundJobId \|\| submission\.jobId\}`\}>Open sheet<\/Link>/,
+    "submission rows link to the role sheet",
+  )
 })
 
-test("role page shows jdBlocks, checklist groups, submit form, and own submissions inline", () => {
+test("role page is the sheet: collapsed JD, checklist columns, rows + blank add row", () => {
+  assert.match(roleSource, /export default function RoleSheetPage\(\)/)
+  assert.ok(roleSource.includes('<details className="rs-jd">'), "JD collapses behind one click")
   assert.match(roleSource, /\{job\.jdBlocks\.map\(\(block, i\) => \(/)
   assert.match(roleSource, /<h3>\{block\.heading\}<\/h3>/)
-  assert.match(roleSource, /\{renderMarkdown\(block\.body\)\}/)
-  assert.match(roleSource, /const groups = job\.recruiterBoard\.checklist\.groups/)
-  assert.match(roleSource, /\{groups\.map\(\(group\) => \(/)
-  assert.match(roleSource, /\{group\.heading\}/)
-  assert.match(roleSource, /id="submit-candidate"/)
-  assert.match(roleSource, /roleSubmitFields\(job\)\.map\(\(field\) =>/)
-  assert.match(roleSource, /Your submissions for this role/)
-  assert.match(roleSource, /<SubmissionStatusStepper status=\{row\.status\} requestedInfo=\{row\.requestedInfo\} \/>/)
-  const jdIdx = roleSource.indexOf('className="rb-jd"')
-  const formIdx = roleSource.indexOf('id="submit-candidate"')
-  assert.ok(jdIdx > 0 && formIdx > jdIdx, "JD renders on the page with the submit form after it — no sub-tabs")
+  assert.match(roleSource, /job\.recruiterBoard\.checklist\.groups/)
+  assert.match(roleSource, /<table className="rs-sheet">/)
+  assert.match(roleSource, /\{roleSubmissions\.map\(\(row\) => \(/)
+  assert.match(roleSource, /<AddRow/)
+  const jdIdx = roleSource.indexOf('<details className="rs-jd">')
+  const tableIdx = roleSource.indexOf('<table className="rs-sheet">')
+  assert.ok(jdIdx > 0 && tableIdx > jdIdx, "the sheet is the hero, JD on demand above it")
 })
 
-test("role page no longer renders the workspace gamification panels", () => {
+test("role page renders none of the retired workspace panels", () => {
   for (const panel of [
     "<RoleWorkroomPanel",
     "<RoleDealDeskPanel",
@@ -93,8 +96,8 @@ test("role page no longer renders the workspace gamification panels", () => {
     "<RoleIntelligencePanel",
     "<RoleCalibrationBriefPanel",
     "<RoleSourcingKitPanel",
+    "<RoleAccessPanel",
   ]) {
     assert.ok(!roleSource.includes(panel), `${panel} stays out of the role page render`)
   }
-  assert.doesNotMatch(roleSource, /<RoleAccessPanel/, "role-access ceremony removed — contracted recruiters submit without approval theater")
 })

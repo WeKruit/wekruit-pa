@@ -29,6 +29,10 @@
  *   POST paRecruiterCandidateIdentityCheck -> checks candidate ownership before submit
  *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
  *                                     (honors Idempotency-Key header)
+ *   POST paRecruiterSubmissionUpdate -> owning recruiter edits candidate cells /
+ *                                       checklist / extraFields while the row is unlocked
+ *   GET  paRecruiterSubmissionCommentsList -> recruiter↔WeKruit thread on one submission
+ *   POST paRecruiterSubmissionCommentAdd -> recruiter appends one thread comment
  *   POST paRecruiterCandidateConsentResend -> recruiter resends candidate double-opt-in email
  *   GET  paRecruiterCandidateConsentConfirm -> candidate confirms submitted interest
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
@@ -37,13 +41,15 @@
  *   TRG  paRecruiterRoleApplicationDecisionNotify -> creates recruiter inbox decision notices
  *   TRG  paRecruiterSubmissionFeedbackNotify -> emails + creates recruiter inbox status/feedback,
  *                                                requested-info, confirmation, and payout notices
+ *   TRG  paRecruiterSubmissionCommentNotify -> recruiter inbox (+ email for WeKruit replies)
+ *                                               on submission thread comments
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
  *
  * Companion docs:
  *   .planning/INITIATIVE-recruiter-board.md
  */
 import { onRequest } from "firebase-functions/v2/https"
-import { onDocumentWritten } from "firebase-functions/v2/firestore"
+import { onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore"
 import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, FieldValue, type DocumentReference, type Firestore, type Timestamp } from "firebase-admin/firestore"
@@ -553,6 +559,7 @@ function publicRecruiterNotification(
     type === "role_application_decision" ? "Role application reviewed" :
     type === "candidate_confirmation" ? "Candidate confirmation update" :
     type === "payout_update" ? "Payout update" :
+    type === "submission_comment" ? "Submission comment" :
     type === "submission_feedback" ? "Submission update" :
     "Recruiter notification"
   const fallbackBody =
@@ -1618,6 +1625,86 @@ export const paRecruiterNotificationsRead = onRequest(
   },
 )
 
+/**
+ * Sheet-model checklist cell values. Legacy clients send booleans; they are
+ * coerced on input (`true` → `"yes"`, `false` → dropped) and the string map is
+ * what gets persisted. Scoring counts `"strong"` and `"yes"` as checked;
+ * `"partial"` and `"no"` do not count.
+ */
+export const CHECKLIST_CELL_LEVELS = ["strong", "yes", "partial", "no"] as const
+
+export type ChecklistCellLevel = (typeof CHECKLIST_CELL_LEVELS)[number]
+
+function isChecklistCellLevel(v: unknown): v is ChecklistCellLevel {
+  return typeof v === "string" && (CHECKLIST_CELL_LEVELS as readonly string[]).includes(v)
+}
+
+/**
+ * Coerces a caller-provided checklist map into the canonical string-level map.
+ * Accepts legacy booleans (`true` → `"yes"`, `false` → dropped) alongside the
+ * four string levels; anything else rejects the payload.
+ */
+export function coerceSubmissionChecklistInput(raw: unknown):
+  | { ok: true; value: Record<string, ChecklistCellLevel> }
+  | { ok: false; reason: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, reason: "missing_checklist" }
+  }
+  const cleaned: Record<string, ChecklistCellLevel> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof k !== "string" || k.length > 200) return { ok: false, reason: "invalid_checklist_key" }
+    if (v === false) continue
+    if (v === true) {
+      cleaned[k] = "yes"
+      continue
+    }
+    if (isChecklistCellLevel(v)) {
+      cleaned[k] = v
+      continue
+    }
+    return { ok: false, reason: "invalid_checklist_value" }
+  }
+  return { ok: true, value: cleaned }
+}
+
+/**
+ * Lenient coercion for checklist maps already stored on Firestore docs
+ * (pre-sheet docs persisted booleans). Never throws; invalid entries and
+ * legacy `false` values are dropped.
+ */
+export function coerceStoredSubmissionChecklist(raw: unknown): Record<string, ChecklistCellLevel> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  const out: Record<string, ChecklistCellLevel> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof k !== "string" || !k || k.length > 200) continue
+    if (v === true) {
+      out[k] = "yes"
+      continue
+    }
+    if (isChecklistCellLevel(v)) out[k] = v
+  }
+  return out
+}
+
+/**
+ * Candidate "core cell" columns of the recruiter sheet. Optional free-text
+ * strings, trimmed, capped at 300 chars; stored under `candidate.*` next to
+ * the original name/email/link identity fields.
+ */
+export const CANDIDATE_CORE_CELL_FIELDS = [
+  "currentCompany",
+  "location",
+  "workAuthorization",
+  "employmentStatus",
+  "compensationExpectation",
+  "noticePeriod",
+  "interviewAvailability",
+] as const
+
+export type CandidateCoreCellField = (typeof CANDIDATE_CORE_CELL_FIELDS)[number]
+
+const CANDIDATE_CORE_CELL_MAX_LENGTH = 300
+
 interface RecruiterSubmissionListItem {
   id: string
   submissionId?: string
@@ -1630,10 +1717,21 @@ interface RecruiterSubmissionListItem {
     name?: string
     email?: string
     link?: string
+    linkedinUrl?: string
+    resumeUrl?: string
     currentRole?: string
     yoe?: string
     notes?: string
+    currentCompany?: string
+    location?: string
+    workAuthorization?: string
+    employmentStatus?: string
+    compensationExpectation?: string
+    noticePeriod?: string
+    interviewAvailability?: string
   }
+  /** Sheet-model checklist cells. Stored legacy booleans are coerced (`true` → `"yes"`). */
+  checklist?: Record<string, ChecklistCellLevel>
   candidateConsentStatus?: string
   candidateConfirmation?: {
     status?: string
@@ -1753,6 +1851,29 @@ export function sanitizeSubmissionRequestedInfo(raw: unknown): RecruiterSubmissi
     .slice(-20)
 }
 
+const SUBMISSION_CANDIDATE_PUBLIC_FIELDS = [
+  "name",
+  "email",
+  "link",
+  "linkedinUrl",
+  "resumeUrl",
+  "currentRole",
+  "yoe",
+  "notes",
+  ...CANDIDATE_CORE_CELL_FIELDS,
+] as const
+
+function sanitizeSubmissionCandidate(raw: unknown): RecruiterSubmissionListItem["candidate"] | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
+  const data = raw as Record<string, unknown>
+  const out: Record<string, string> = {}
+  for (const key of SUBMISSION_CANDIDATE_PUBLIC_FIELDS) {
+    const value = typeof data[key] === "string" ? (data[key] as string).trim() : ""
+    if (value) out[key] = value
+  }
+  return Object.keys(out).length ? out as RecruiterSubmissionListItem["candidate"] : undefined
+}
+
 function sanitizeSubmissionExtraFields(raw: unknown): Record<string, string> | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
   const out: Record<string, string> = {}
@@ -1776,9 +1897,8 @@ export function publicRecruiterSubmission(d: { id: string; data: () => Record<st
     inboundJobId: typeof data.inboundJobId === "string" ? data.inboundJobId : undefined,
     jobTitleSnapshot: typeof data.jobTitleSnapshot === "string" ? data.jobTitleSnapshot : undefined,
     companyLabelSnapshot: typeof data.companyLabelSnapshot === "string" ? data.companyLabelSnapshot : undefined,
-    candidate: typeof data.candidate === "object" && data.candidate !== null
-      ? data.candidate as RecruiterSubmissionListItem["candidate"]
-      : undefined,
+    candidate: sanitizeSubmissionCandidate(data.candidate),
+    checklist: coerceStoredSubmissionChecklist(data.checklist),
     candidateConsentStatus: typeof data.candidateConsentStatus === "string" ? data.candidateConsentStatus : undefined,
     candidateConfirmation: publicRecruiterCandidateConfirmation(data.candidateConfirmation),
     score: typeof data.score === "object" && data.score !== null ? data.score as SubmissionScore : undefined,
@@ -3531,8 +3651,15 @@ interface SubmissionPayload {
     currentRole?: string
     yoe?: string
     notes?: string
+    currentCompany?: string
+    location?: string
+    workAuthorization?: string
+    employmentStatus?: string
+    compensationExpectation?: string
+    noticePeriod?: string
+    interviewAvailability?: string
   }
-  checklist: { [itemId: string]: boolean }
+  checklist: Record<string, ChecklistCellLevel>
   /** Per-job custom submit fields, keyed by `recruiterBoard.submitFields[].id`. */
   extraFields?: Record<string, string>
   candidateConsent: true
@@ -3745,6 +3872,12 @@ export function validateSubmission(input: unknown):
     if (c[k] !== undefined && typeof c[k] !== "string") return { ok: false, reason: `invalid_${k}` }
     if (typeof c[k] === "string" && (c[k] as string).length > 4000) return { ok: false, reason: `${k}_too_long` }
   }
+  for (const k of CANDIDATE_CORE_CELL_FIELDS) {
+    if (c[k] !== undefined && c[k] !== null && typeof c[k] !== "string") return { ok: false, reason: `invalid_${k}` }
+    if (typeof c[k] === "string" && (c[k] as string).length > CANDIDATE_CORE_CELL_MAX_LENGTH) {
+      return { ok: false, reason: `${k}_too_long` }
+    }
+  }
   // Optional candidate URLs. Accepted both as top-level `candidateLinkedinUrl`
   // / `candidateResumeUrl` and nested `candidate.linkedinUrl` /
   // `candidate.resumeUrl` so old and new clients interop.
@@ -3763,14 +3896,9 @@ export function validateSubmission(input: unknown):
   const resumeUrl = optionalCandidateUrl(b.candidateResumeUrl ?? c.resumeUrl, "candidate_resume_url")
   if (!resumeUrl.ok) return resumeUrl
 
-  const cl = b.checklist
-  if (!cl || typeof cl !== "object") return { ok: false, reason: "missing_checklist" }
-  const cleanedChecklist: Record<string, boolean> = {}
-  for (const [k, v] of Object.entries(cl as Record<string, unknown>)) {
-    if (typeof k !== "string" || k.length > 200) return { ok: false, reason: "invalid_checklist_key" }
-    if (typeof v !== "boolean") return { ok: false, reason: "invalid_checklist_value" }
-    cleanedChecklist[k] = v
-  }
+  const checklistResult = coerceSubmissionChecklistInput(b.checklist)
+  if (!checklistResult.ok) return checklistResult
+  const cleanedChecklist = checklistResult.value
 
   // Optional per-job extra fields. Values are trimmed strings keyed by the
   // job's `recruiterBoard.submitFields[].id`. Required/url/unknown-key rules
@@ -3812,6 +3940,13 @@ export function validateSubmission(input: unknown):
   const currentRole = sanitizeOptionalString(c.currentRole, 4000)
   const yoe = sanitizeOptionalString(c.yoe, 4000)
   const notes = sanitizeOptionalString(c.notes, 4000)
+  const currentCompany = sanitizeOptionalString(c.currentCompany, CANDIDATE_CORE_CELL_MAX_LENGTH)
+  const location = sanitizeOptionalString(c.location, CANDIDATE_CORE_CELL_MAX_LENGTH)
+  const workAuthorization = sanitizeOptionalString(c.workAuthorization, CANDIDATE_CORE_CELL_MAX_LENGTH)
+  const employmentStatus = sanitizeOptionalString(c.employmentStatus, CANDIDATE_CORE_CELL_MAX_LENGTH)
+  const compensationExpectation = sanitizeOptionalString(c.compensationExpectation, CANDIDATE_CORE_CELL_MAX_LENGTH)
+  const noticePeriod = sanitizeOptionalString(c.noticePeriod, CANDIDATE_CORE_CELL_MAX_LENGTH)
+  const interviewAvailability = sanitizeOptionalString(c.interviewAvailability, CANDIDATE_CORE_CELL_MAX_LENGTH)
 
   return {
     ok: true,
@@ -3831,6 +3966,13 @@ export function validateSubmission(input: unknown):
         ...(currentRole ? { currentRole } : {}),
         ...(yoe ? { yoe } : {}),
         ...(notes ? { notes } : {}),
+        ...(currentCompany ? { currentCompany } : {}),
+        ...(location ? { location } : {}),
+        ...(workAuthorization ? { workAuthorization } : {}),
+        ...(employmentStatus ? { employmentStatus } : {}),
+        ...(compensationExpectation ? { compensationExpectation } : {}),
+        ...(noticePeriod ? { noticePeriod } : {}),
+        ...(interviewAvailability ? { interviewAvailability } : {}),
       },
       checklist: cleanedChecklist,
       ...(extraFields ? { extraFields } : {}),
@@ -3919,9 +4061,18 @@ export interface SubmissionScore {
   antiTotal: number
 }
 
+/**
+ * True when a checklist cell value counts toward the score. Legacy boolean
+ * `true` and the `"strong"` / `"yes"` levels count; `"partial"` / `"no"` /
+ * `false` / absent do not.
+ */
+export function checklistCellChecked(value: unknown): boolean {
+  return value === true || value === "strong" || value === "yes"
+}
+
 export function computeSubmissionScore(
   groups: RecruiterBoardChecklistGroup[],
-  checklist: Record<string, boolean>,
+  checklist: Record<string, boolean | string>,
 ): SubmissionScore {
   const score: SubmissionScore = {
     hardChecked: 0, hardTotal: 0,
@@ -3931,7 +4082,7 @@ export function computeSubmissionScore(
   }
   for (const g of groups) {
     for (const item of g.items) {
-      const checked = checklist[item.id] === true
+      const checked = checklistCellChecked(checklist[item.id])
       switch (g.kind) {
         case "hard":  score.hardTotal++;  if (checked) score.hardChecked++;  break
         case "fit":   score.fitTotal++;   if (checked) score.fitChecked++;   break
@@ -3942,6 +4093,454 @@ export function computeSubmissionScore(
   }
   return score
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// paRecruiterSubmissionUpdate — owning recruiter edits the sheet row
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Statuses in which the owning recruiter may still edit the row. Once the
+ * candidate reaches "With client" (or any later/terminal state) the row locks
+ * and edits return 409 `row_locked`.
+ */
+export const RECRUITER_EDITABLE_SUBMISSION_STATUSES = [
+  "submitted",
+  "new",
+  "reviewing",
+  "wekruit_interview",
+] as const
+
+/**
+ * Candidate fields the owning recruiter may edit after submission. Identity
+ * fields (name/email/link) are deliberately NOT editable — they feed the
+ * candidate dedup keys and the double-opt-in confirmation email.
+ * `max` mirrors the create-path limits; `reasonKey` mirrors the create-path
+ * validation reason vocabulary.
+ */
+const EDITABLE_SUBMISSION_CANDIDATE_FIELDS: ReadonlyArray<{ field: string; max: number; reasonKey: string }> = [
+  { field: "linkedinUrl", max: 500, reasonKey: "candidate_linkedin_url" },
+  { field: "resumeUrl", max: 500, reasonKey: "candidate_resume_url" },
+  { field: "currentRole", max: 4000, reasonKey: "currentRole" },
+  { field: "yoe", max: 4000, reasonKey: "yoe" },
+  { field: "notes", max: 4000, reasonKey: "notes" },
+  ...CANDIDATE_CORE_CELL_FIELDS.map((field) => ({
+    field,
+    max: CANDIDATE_CORE_CELL_MAX_LENGTH,
+    reasonKey: field,
+  })),
+]
+
+export interface RecruiterSubmissionUpdateInput {
+  submissionId: string
+  /** Editable candidate fields only; trimmed. `""` clears the stored field. */
+  candidate?: Record<string, string>
+  /** Coerced string-level map. Merged over the stored map; score recomputed. */
+  checklist?: Record<string, ChecklistCellLevel>
+  /** Full replacement, re-validated against the job's submitFields config. */
+  extraFields?: Record<string, string>
+}
+
+export function validateRecruiterSubmissionUpdateInput(input: unknown):
+  | { ok: true; value: RecruiterSubmissionUpdateInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  if (!isNonEmptyString(b.submissionId)) return { ok: false, reason: "missing_submission_id" }
+  const submissionId = b.submissionId.trim()
+  if (!IDEMPOTENCY_KEY_RE.test(submissionId)) return { ok: false, reason: "invalid_submission_id" }
+
+  let candidate: Record<string, string> | undefined
+  if (b.candidate !== undefined && b.candidate !== null) {
+    if (typeof b.candidate !== "object" || Array.isArray(b.candidate)) {
+      return { ok: false, reason: "invalid_candidate" }
+    }
+    const c = b.candidate as Record<string, unknown>
+    const cleaned: Record<string, string> = {}
+    for (const { field, max, reasonKey } of EDITABLE_SUBMISSION_CANDIDATE_FIELDS) {
+      if (c[field] === undefined) continue
+      if (c[field] === null) {
+        cleaned[field] = ""
+        continue
+      }
+      if (typeof c[field] !== "string") return { ok: false, reason: `invalid_${reasonKey}` }
+      const raw = c[field] as string
+      if (raw.length > max) return { ok: false, reason: `${reasonKey}_too_long` }
+      cleaned[field] = raw.trim()
+    }
+    if (Object.keys(cleaned).length > 0) candidate = cleaned
+  }
+
+  let checklist: Record<string, ChecklistCellLevel> | undefined
+  if (b.checklist !== undefined && b.checklist !== null) {
+    if (typeof b.checklist !== "object" || Array.isArray(b.checklist)) {
+      return { ok: false, reason: "invalid_checklist" }
+    }
+    const coerced = coerceSubmissionChecklistInput(b.checklist)
+    if (!coerced.ok) return coerced
+    checklist = coerced.value
+  }
+
+  let extraFields: Record<string, string> | undefined
+  if (b.extraFields !== undefined && b.extraFields !== null) {
+    if (typeof b.extraFields !== "object" || Array.isArray(b.extraFields)) {
+      return { ok: false, reason: "invalid_extra_fields" }
+    }
+    const cleanedExtraFields: Record<string, string> = {}
+    for (const [k, v] of Object.entries(b.extraFields as Record<string, unknown>)) {
+      const key = typeof k === "string" ? k.trim() : ""
+      if (!key || key.length > 120) return { ok: false, reason: "invalid_extra_fields" }
+      if (typeof v !== "string") return { ok: false, reason: "invalid_extra_fields" }
+      const value = v.trim()
+      if (value.length > 500) return { ok: false, reason: "extra_field_too_long" }
+      if (value) cleanedExtraFields[key] = value
+    }
+    extraFields = cleanedExtraFields
+  }
+
+  if (!candidate && !checklist && extraFields === undefined) {
+    return { ok: false, reason: "missing_update" }
+  }
+
+  return {
+    ok: true,
+    value: {
+      submissionId,
+      ...(candidate ? { candidate } : {}),
+      ...(checklist ? { checklist } : {}),
+      ...(extraFields !== undefined ? { extraFields } : {}),
+    },
+  }
+}
+
+/**
+ * Applies a validated recruiter edit to one owned submission row.
+ *
+ *   - Only the OWNING recruiter (`submission.recruiterId === recruiter.recruiterId`)
+ *     may edit → 403 `forbidden` otherwise.
+ *   - Editable only while `status ∈ RECRUITER_EDITABLE_SUBMISSION_STATUSES` →
+ *     409 `row_locked` otherwise.
+ *   - `checklist` merges over the stored (coerced) map and the score is
+ *     recomputed against the job's current checklist groups.
+ *   - `extraFields` is re-validated against the job's submitFields config with
+ *     the same rules as create (required/url/unknown-key).
+ *   - Candidate edits merge per-field; `""` clears the field. The whole
+ *     `candidate` map is rewritten via `update()` so cleared keys actually
+ *     disappear (set+merge would deep-merge them back).
+ *   - Stamps `lastEditedAt` + `lastEditedBy: "recruiter"`.
+ */
+export async function applyRecruiterSubmissionUpdate(
+  db: Firestore,
+  recruiter: RecruiterProfilePublic,
+  input: RecruiterSubmissionUpdateInput,
+): Promise<
+  | { ok: true; submission: RecruiterSubmissionListItem }
+  | { ok: false; status: 400 | 403 | 404 | 409; reason: string }
+> {
+  const submissionRef = db.collection(RECRUITER_SUBMISSIONS_COLLECTION).doc(input.submissionId)
+  const snap = await submissionRef.get()
+  if (!snap.exists) return { ok: false, status: 404, reason: "submission_not_found" }
+  const data = (snap.data() ?? {}) as Record<string, unknown>
+  if (data.recruiterId !== recruiter.recruiterId) return { ok: false, status: 403, reason: "forbidden" }
+  const status = typeof data.status === "string" && data.status.trim() ? data.status.trim() : "submitted"
+  if (!(RECRUITER_EDITABLE_SUBMISSION_STATUSES as readonly string[]).includes(status)) {
+    return { ok: false, status: 409, reason: "row_locked" }
+  }
+
+  const update: Record<string, unknown> = {}
+
+  if (input.candidate) {
+    const storedCandidate = data.candidate && typeof data.candidate === "object" && !Array.isArray(data.candidate)
+      ? { ...(data.candidate as Record<string, unknown>) }
+      : {}
+    for (const [field, value] of Object.entries(input.candidate)) {
+      if (value === "") delete storedCandidate[field]
+      else storedCandidate[field] = value
+    }
+    update.candidate = storedCandidate
+  }
+
+  let recruiterBoard: RecruiterBoardPayload | undefined
+  if (input.checklist || input.extraFields !== undefined) {
+    const jobId = typeof data.jobId === "string" ? data.jobId : ""
+    const jobSnap = jobId ? await db.collection("pa-jobs").doc(jobId).get() : null
+    const jobData = jobSnap?.exists ? jobSnap.data() as Record<string, unknown> : null
+    recruiterBoard = jobData?.recruiterBoard as RecruiterBoardPayload | undefined
+    if (!recruiterBoard) return { ok: false, status: 404, reason: "job_not_found" }
+  }
+
+  if (input.checklist) {
+    const mergedChecklist = { ...coerceStoredSubmissionChecklist(data.checklist), ...input.checklist }
+    const groups = Array.isArray(recruiterBoard?.checklist?.groups) ? recruiterBoard.checklist.groups : []
+    update.checklist = mergedChecklist
+    update.score = computeSubmissionScore(groups, mergedChecklist)
+  }
+
+  if (input.extraFields !== undefined) {
+    const extraFieldsResult = resolveSubmissionExtraFields(
+      sanitizeRecruiterSubmitFields(recruiterBoard?.submitFields),
+      input.extraFields,
+    )
+    if (!extraFieldsResult.ok) return { ok: false, status: 400, reason: extraFieldsResult.reason }
+    update.extraFields = extraFieldsResult.value ?? {}
+  }
+
+  if (Object.keys(update).length === 0) return { ok: false, status: 400, reason: "missing_update" }
+
+  update.lastEditedAt = FieldValue.serverTimestamp()
+  update.lastEditedBy = "recruiter"
+  update.updatedAt = FieldValue.serverTimestamp()
+  await submissionRef.update(update)
+
+  const fresh = await submissionRef.get()
+  return {
+    ok: true,
+    submission: publicRecruiterSubmission({
+      id: input.submissionId,
+      data: () => (fresh.data() ?? {}) as Record<string, unknown>,
+    }),
+  }
+}
+
+export const paRecruiterSubmissionUpdate = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    const validated = validateRecruiterSubmissionUpdateInput(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+    try {
+      const result = await applyRecruiterSubmissionUpdate(db, recruiter, validated.value)
+      if (!result.ok) {
+        res.status(result.status).json({ ok: false, reason: result.reason })
+        return
+      }
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, submission: result.submission })
+    } catch (err) {
+      logger.error("paRecruiterSubmissionUpdate_failed", {
+        error: String(err),
+        recruiterId: recruiter.recruiterId,
+        submissionId: validated.value.submissionId,
+      })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Submission comments — recruiter↔WeKruit thread per sheet row
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RECRUITER_SUBMISSION_COMMENTS_SUBCOLLECTION = "comments"
+const RECRUITER_SUBMISSION_COMMENT_MAX_LENGTH = 4000
+const RECRUITER_SUBMISSION_COMMENT_LIST_LIMIT = 200
+
+export interface RecruiterSubmissionCommentListItem {
+  id: string
+  message: string
+  by: "recruiter" | "wekruit"
+  authorName: string
+  authorEmail?: string
+  at: string | null
+}
+
+export function publicRecruiterSubmissionComment(
+  d: { id: string; data: () => Record<string, unknown> | undefined },
+): RecruiterSubmissionCommentListItem | null {
+  const data = d.data() ?? {}
+  const message = typeof data.message === "string" ? data.message.trim() : ""
+  const by = data.by === "recruiter" || data.by === "wekruit" ? data.by : null
+  if (!message || !by) return null
+  const authorEmail = typeof data.authorEmail === "string" ? data.authorEmail.trim() : ""
+  return {
+    id: d.id,
+    message,
+    by,
+    authorName: typeof data.authorName === "string" && data.authorName.trim()
+      ? data.authorName.trim()
+      : (by === "wekruit" ? "WeKruit" : "Recruiter"),
+    ...(authorEmail ? { authorEmail } : {}),
+    at: coerceToIso(data.at),
+  }
+}
+
+export function validateRecruiterSubmissionCommentAddInput(input: unknown):
+  | { ok: true; value: { submissionId: string; message: string } }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  if (!isNonEmptyString(b.submissionId)) return { ok: false, reason: "missing_submission_id" }
+  const submissionId = b.submissionId.trim()
+  if (!IDEMPOTENCY_KEY_RE.test(submissionId)) return { ok: false, reason: "invalid_submission_id" }
+  if (typeof b.message !== "string" || !b.message.trim()) return { ok: false, reason: "missing_message" }
+  if (b.message.length > RECRUITER_SUBMISSION_COMMENT_MAX_LENGTH) return { ok: false, reason: "message_too_long" }
+  return { ok: true, value: { submissionId, message: b.message.trim() } }
+}
+
+async function loadOwnedRecruiterSubmission(
+  db: Firestore,
+  recruiter: RecruiterProfilePublic,
+  submissionId: string,
+): Promise<
+  | { ok: true; ref: DocumentReference; data: Record<string, unknown> }
+  | { ok: false; status: 403 | 404; reason: string }
+> {
+  const ref = db.collection(RECRUITER_SUBMISSIONS_COLLECTION).doc(submissionId)
+  const snap = await ref.get()
+  if (!snap.exists) return { ok: false, status: 404, reason: "submission_not_found" }
+  const data = (snap.data() ?? {}) as Record<string, unknown>
+  if (data.recruiterId !== recruiter.recruiterId) return { ok: false, status: 403, reason: "forbidden" }
+  return { ok: true, ref: ref as DocumentReference, data }
+}
+
+export async function listRecruiterSubmissionComments(
+  db: Firestore,
+  recruiter: RecruiterProfilePublic,
+  submissionId: string,
+): Promise<
+  | { ok: true; comments: RecruiterSubmissionCommentListItem[] }
+  | { ok: false; status: 403 | 404; reason: string }
+> {
+  const owned = await loadOwnedRecruiterSubmission(db, recruiter, submissionId)
+  if (!owned.ok) return owned
+  const snap = await owned.ref.collection(RECRUITER_SUBMISSION_COMMENTS_SUBCOLLECTION).get()
+  const comments = snap.docs
+    .map((doc) => publicRecruiterSubmissionComment(doc))
+    .filter((comment): comment is RecruiterSubmissionCommentListItem => comment !== null)
+    .sort((a, b) => timestampMs(a.at) - timestampMs(b.at))
+    .slice(0, RECRUITER_SUBMISSION_COMMENT_LIST_LIMIT)
+  return { ok: true, comments }
+}
+
+export async function addRecruiterSubmissionComment(
+  db: Firestore,
+  recruiter: RecruiterProfilePublic,
+  input: { submissionId: string; message: string },
+  nowIso = new Date().toISOString(),
+): Promise<
+  | { ok: true; comment: RecruiterSubmissionCommentListItem }
+  | { ok: false; status: 403 | 404; reason: string }
+> {
+  const owned = await loadOwnedRecruiterSubmission(db, recruiter, input.submissionId)
+  if (!owned.ok) return owned
+  const commentId = randomUUID()
+  const commentDoc = {
+    message: input.message,
+    by: "recruiter" as const,
+    authorName: recruiter.name || recruiter.email,
+    authorEmail: recruiter.email,
+    at: nowIso,
+  }
+  await owned.ref.collection(RECRUITER_SUBMISSION_COMMENTS_SUBCOLLECTION).doc(commentId).set(commentDoc)
+  return {
+    ok: true,
+    comment: { id: commentId, ...commentDoc },
+  }
+}
+
+export const paRecruiterSubmissionCommentsList = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    const submissionId = parseQueryString(req.query.submissionId) ?? ""
+    if (!submissionId) {
+      res.status(400).json({ ok: false, reason: "missing_submission_id" })
+      return
+    }
+    if (!IDEMPOTENCY_KEY_RE.test(submissionId)) {
+      res.status(400).json({ ok: false, reason: "invalid_submission_id" })
+      return
+    }
+    try {
+      const result = await listRecruiterSubmissionComments(db, recruiter, submissionId)
+      if (!result.ok) {
+        res.status(result.status).json({ ok: false, reason: result.reason })
+        return
+      }
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, comments: result.comments })
+    } catch (err) {
+      logger.error("paRecruiterSubmissionCommentsList_failed", {
+        error: String(err),
+        recruiterId: recruiter.recruiterId,
+        submissionId,
+      })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterSubmissionCommentAdd = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    const validated = validateRecruiterSubmissionCommentAddInput(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+    try {
+      const result = await addRecruiterSubmissionComment(db, recruiter, validated.value)
+      if (!result.ok) {
+        res.status(result.status).json({ ok: false, reason: result.reason })
+        return
+      }
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, comment: result.comment })
+    } catch (err) {
+      logger.error("paRecruiterSubmissionCommentAdd_failed", {
+        error: String(err),
+        recruiterId: recruiter.recruiterId,
+        submissionId: validated.value.submissionId,
+      })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
 
 interface RecruiterRoleNotificationEmailInput {
   recruiterName: string
@@ -4528,7 +5127,7 @@ function eventNotificationId(type: string, entityId: string, eventId: string): s
 async function createRecruiterInAppNotification(
   db: Firestore,
   input: {
-    type: "candidate_calibration" | "candidate_confirmation" | "payout_update" | "requested_info" | "role_application_decision" | "role_question_answer" | "submission_feedback"
+    type: "candidate_calibration" | "candidate_confirmation" | "payout_update" | "requested_info" | "role_application_decision" | "role_question_answer" | "submission_comment" | "submission_feedback"
     eventId: string
     recruiterId: string
     recruiterEmail?: string
@@ -5759,6 +6358,130 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
           emailStatus,
         })
       }
+    }
+  },
+)
+
+/**
+ * Builds the recruiter-inbox notification for one submission thread comment.
+ * WeKruit replies are emailable (subject kept verbatim by
+ * `composeRecruiterSubmissionUpdateEmail` because it starts with "WeKruit");
+ * the recruiter's own comments produce an in-app doc only.
+ */
+export function submissionCommentNotification(
+  comment: Record<string, unknown> | null,
+  submission: Record<string, unknown> | null,
+): { title: string; body: string; emailable: boolean } | null {
+  if (!comment || !submission) return null
+  const by = comment.by === "wekruit" || comment.by === "recruiter" ? comment.by : null
+  const message = typeof comment.message === "string" ? comment.message.trim() : ""
+  if (!by || !message) return null
+  const candidateName = submissionCandidateName(submission)
+  const body = compactNotificationBody([
+    typeof submission.jobTitleSnapshot === "string" ? submission.jobTitleSnapshot : "",
+    message,
+  ])
+  return {
+    title: by === "wekruit" ? `WeKruit replied on ${candidateName}` : `New comment on ${candidateName}`,
+    body,
+    emailable: by === "wekruit",
+  }
+}
+
+/**
+ * Trigger body for `paRecruiterSubmissionCommentNotify`, extracted so unit
+ * tests can drive it with a fake Firestore. `by === "wekruit"` → in-app
+ * notification + submission-update email (respecting the
+ * `submissionUpdatesEmail` opt-out); `by === "recruiter"` → in-app
+ * notification only, never an email.
+ */
+export async function deliverRecruiterSubmissionCommentNotification(
+  db: Firestore,
+  input: {
+    triggerEventId: string
+    submissionId: string
+    comment: Record<string, unknown> | null
+  },
+): Promise<{ notified: boolean; emailStatus: "sent" | "failed" | "not_configured" | "skipped" | "not_emailed" }> {
+  const submissionSnap = await db.collection(RECRUITER_SUBMISSIONS_COLLECTION).doc(input.submissionId).get()
+  if (!submissionSnap.exists) return { notified: false, emailStatus: "not_emailed" }
+  const submission = (submissionSnap.data() ?? {}) as Record<string, unknown>
+  const recruiterId = typeof submission.recruiterId === "string" ? submission.recruiterId : ""
+  const notification = submissionCommentNotification(input.comment, submission)
+  if (!notification || !recruiterId) return { notified: false, emailStatus: "not_emailed" }
+
+  const type = "submission_comment" as const
+  const recruiterEmail = typeof submission.recruiterEmail === "string" ? submission.recruiterEmail : undefined
+  const roleUrl = recruiterNotificationRoleUrl(submission)
+  const created = await createRecruiterInAppNotification(db, {
+    type,
+    eventId: input.triggerEventId,
+    recruiterId,
+    recruiterEmail,
+    entityType: "submission",
+    entityId: input.submissionId,
+    title: notification.title,
+    body: notification.body,
+    jobId: typeof submission.jobId === "string" ? submission.jobId : undefined,
+    publicJobId: typeof submission.inboundJobId === "string" ? submission.inboundJobId : undefined,
+    roleTitle: typeof submission.jobTitleSnapshot === "string" ? submission.jobTitleSnapshot : undefined,
+    companyLabel: typeof submission.companyLabelSnapshot === "string" ? submission.companyLabelSnapshot : undefined,
+    roleUrl,
+  })
+  // `created === false` means an idempotent replay of the same trigger event —
+  // never double-email on retries.
+  if (!notification.emailable || !created) return { notified: created, emailStatus: "not_emailed" }
+
+  let emailOptedOut = false
+  try {
+    const profileSnap = await db.collection(RECRUITER_USERS_COLLECTION).doc(recruiterId).get()
+    const profile = profileSnap.exists ? profileSnap.data() as Record<string, unknown> : null
+    emailOptedOut = !recruiterSubmissionUpdateEmailsEnabled(profile)
+  } catch (err) {
+    logger.error("paRecruiterSubmissionCommentNotify_profile_lookup_failed", {
+      error: String(err),
+      submissionId: input.submissionId,
+      recruiterId,
+    })
+  }
+  const emailStatus = await sendRecruiterSubmissionUpdateEmail(
+    db,
+    eventNotificationId(type, input.submissionId, input.triggerEventId),
+    {
+      to: recruiterEmail,
+      emailOptedOut,
+      title: notification.title,
+      body: notification.body,
+      roleTitle: typeof submission.jobTitleSnapshot === "string" ? submission.jobTitleSnapshot : undefined,
+      companyLabel: typeof submission.companyLabelSnapshot === "string" ? submission.companyLabelSnapshot : undefined,
+      actionUrl: roleUrl ?? `${RECRUITER_PUBLIC_BASE_URL}/recruiters?tab=submissions`,
+    },
+  )
+  return { notified: true, emailStatus }
+}
+
+export const paRecruiterSubmissionCommentNotify = onDocumentCreated(
+  {
+    document: `${RECRUITER_SUBMISSIONS_COLLECTION}/{submissionId}/${RECRUITER_SUBMISSION_COMMENTS_SUBCOLLECTION}/{commentId}`,
+    region: "us-central1",
+    memory: RECRUITER_BOARD_MEMORY,
+    secrets: MAILGUN_SECRETS,
+  },
+  async (event) => {
+    const comment = event.data?.exists ? event.data.data() as Record<string, unknown> : null
+    if (!comment) return
+    const result = await deliverRecruiterSubmissionCommentNotification(getFirestore(), {
+      triggerEventId: event.id,
+      submissionId: event.params.submissionId,
+      comment,
+    })
+    if (result.notified) {
+      logger.info("paRecruiterSubmissionCommentNotify_done", {
+        submissionId: event.params.submissionId,
+        commentId: event.params.commentId,
+        by: comment.by,
+        emailStatus: result.emailStatus,
+      })
     }
   },
 )

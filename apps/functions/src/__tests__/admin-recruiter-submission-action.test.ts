@@ -254,4 +254,121 @@ describe("runAdminRecruiterSubmissionAction", () => {
     assert.equal(write.mode, "merge")
     assert.deepEqual(Object.keys(write.data).sort(), ["adminDecision", "status", "statusHistory", "updatedAt"])
   })
+
+  it("comment creates a by:wekruit doc in the comments subcollection and returns its id", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    const result = await run(mfs, {
+      submissionId: "sub-1",
+      action: "comment",
+      message: "  Looks strong — moving to intro call.  ",
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.submissionId, "sub-1")
+    assert.ok("commentId" in result)
+    assert.ok(typeof result.commentId === "string" && result.commentId.length > 0)
+    const comments = await mfs.collection(SUBMISSIONS).doc("sub-1").collection("comments").get()
+    assert.equal(comments.size, 1)
+    assert.equal(comments.docs[0].id, result.commentId)
+    assert.deepEqual(comments.docs[0].data(), {
+      message: "Looks strong — moving to intro call.",
+      by: "wekruit",
+      authorName: "admin1",
+      authorEmail: "admin1@wekruit.com",
+      at: now,
+    })
+  })
+
+  it("comment leaves the submission doc fully untouched", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs, { adminDecision: { by: "admin1@wekruit.com", at: "2026-06-08T01:00:00.000Z" } })
+    const before = await readDoc(mfs)
+
+    await run(mfs, { submissionId: "sub-1", action: "comment", message: "ping" })
+
+    const after = await readDoc(mfs)
+    assert.deepEqual(after, before)
+    assert.equal(after.status, "submitted")
+    assert.equal((after.statusHistory as unknown[]).length, 1)
+    assert.equal(after.updatedAt, undefined)
+    assert.equal(mfs.writeLog.length, 2)
+    const write = mfs.writeLog.at(-1)!
+    assert.equal(write.path, "pa-recruiter-submissions/sub-1/comments")
+    assert.equal(write.mode, "set")
+    assert.deepEqual(Object.keys(write.data).sort(), ["at", "authorEmail", "authorName", "by", "message"])
+  })
+
+  it("comment message validation: missing / blank / over 4000 chars rejected, exactly 4000 after trim accepted", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    for (const input of [
+      { submissionId: "sub-1", action: "comment" },
+      { submissionId: "sub-1", action: "comment", message: "   " },
+      { submissionId: "sub-1", action: "comment", message: 42 },
+      { submissionId: "sub-1", action: "comment", message: "x".repeat(4_001) },
+    ]) {
+      await assert.rejects(
+        () => run(mfs, input),
+        (err) => err instanceof HttpsError && err.code === "invalid-argument",
+      )
+    }
+    let comments = await mfs.collection(SUBMISSIONS).doc("sub-1").collection("comments").get()
+    assert.equal(comments.size, 0)
+
+    const result = await run(mfs, {
+      submissionId: "sub-1",
+      action: "comment",
+      message: `  ${"x".repeat(4_000)}  `,
+    })
+    assert.equal(result.ok, true)
+    comments = await mfs.collection(SUBMISSIONS).doc("sub-1").collection("comments").get()
+    assert.equal(comments.size, 1)
+    assert.equal((comments.docs[0].data() as { message: string }).message.length, 4_000)
+  })
+
+  it("comment without an auth email falls back to authorName WeKruit and omits authorEmail", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    await run(mfs, { submissionId: "sub-1", action: "comment", message: "hello" }, { actorEmail: undefined })
+
+    const comments = await mfs.collection(SUBMISSIONS).doc("sub-1").collection("comments").get()
+    assert.equal(comments.size, 1)
+    assert.deepEqual(comments.docs[0].data(), {
+      message: "hello",
+      by: "wekruit",
+      authorName: "WeKruit",
+      at: now,
+    })
+  })
+
+  it("repeated comments append distinct docs, never overwrite", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    const first = await run(mfs, { submissionId: "sub-1", action: "comment", message: "first" })
+    const second = await run(mfs, { submissionId: "sub-1", action: "comment", message: "second" }, { now: later })
+
+    assert.ok("commentId" in first && "commentId" in second)
+    assert.notEqual(first.commentId, second.commentId)
+    const comments = await mfs.collection(SUBMISSIONS).doc("sub-1").collection("comments").get()
+    assert.equal(comments.size, 2)
+    assert.deepEqual(
+      comments.docs.map((d) => (d.data() as { message: string }).message).sort(),
+      ["first", "second"],
+    )
+  })
+
+  it("comment on a missing submission throws not-found and writes nothing", async () => {
+    const mfs = new MockFirestore()
+
+    await assert.rejects(
+      () => run(mfs, { submissionId: "sub-404", action: "comment", message: "hello" }),
+      (err) => err instanceof HttpsError && err.code === "not-found",
+    )
+    assert.equal(mfs.writeLog.length, 0)
+  })
 })

@@ -32,7 +32,8 @@ export interface SheetSubmissionInput {
     yoe?: string
     notes?: string
   }
-  checklist: Record<string, boolean>
+  /** Legacy boolean cells or sheet-model levels ("strong"|"yes"|"partial"|"no"). */
+  checklist: Record<string, boolean | string>
   score: SubmissionScore
   jobChecklistGroups: RecruiterBoardChecklistGroup[]
   jobTitle: string
@@ -58,6 +59,12 @@ function staticColumns(): ColumnSpec[] {
   ]
 }
 
+function checklistCellSheetValue(v: boolean | string | undefined): string {
+  if (v === true) return "TRUE"
+  if (v === "strong" || v === "yes" || v === "partial" || v === "no") return v.toUpperCase()
+  return ""
+}
+
 function checklistColumns(groups: RecruiterBoardChecklistGroup[]): ColumnSpec[] {
   const out: ColumnSpec[] = []
   const prefix: Record<RecruiterBoardChecklistGroup["kind"], string> = {
@@ -71,7 +78,7 @@ function checklistColumns(groups: RecruiterBoardChecklistGroup[]): ColumnSpec[] 
       const itemId = item.id
       out.push({
         header: `${prefix[group.kind]}: ${item.text}`,
-        value: (input) => (input.checklist[itemId] === true ? "TRUE" : ""),
+        value: (input) => checklistCellSheetValue(input.checklist[itemId]),
       })
     }
   }
