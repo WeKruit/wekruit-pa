@@ -33,6 +33,17 @@ const host = typeof window !== "undefined" ? window.location.hostname.toLowerCas
 const IS_LAYOFF_HOST = host.startsWith("layoff.") || host === "layoff-wekruit.web.app"
 const HomeLanding = IS_LAYOFF_HOST ? LayoffLanding : Landing
 
+// Recruiter platform is owned by the isolated pa-recruiter SPA (gated by name +
+// WK- access code). The old ungated /recruiters board must never render from
+// this candidate bundle — hosting 301s cover direct hits, this covers SPA
+// navigation and cached HTML shells.
+function RecruiterRedirect() {
+  React.useEffect(() => {
+    window.location.replace("https://wekruit-recruiters.web.app/recruiters")
+  }, [])
+  return null
+}
+
 // Adam directive 2026-05-16: "tanstack / cache / paginated job load". Single
 // shared QueryClient — 5 min staleTime means revisits to the market and role
 // pages paint instantly from cache; 30 min gcTime keeps freed entries around
@@ -86,6 +97,8 @@ const fullRoutes = (
     <Route path="/r/:slug" element={<ReferPublicPage />} />
     <Route path="/me/refer" element={<ReferPage />} />
     <Route path="/connect-linkedin" element={<ConnectLinkedin />} />
+    <Route path="/recruiters" element={<RecruiterRedirect />} />
+    <Route path="/recruiters/job/:jobId" element={<RecruiterRedirect />} />
     <Route path="*" element={<HomeLanding />} />
   </Routes>
 )
