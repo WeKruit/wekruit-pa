@@ -397,6 +397,38 @@ describe("ConversationExtractResultSchema", () => {
     })
     assert.equal(r.tagPatch.targetLocations, undefined)
   })
+
+  // 2026-06-09 — negation parity for the jobType axis. The schema had negative
+  // tokens only for roleFunction + industrySector; "I am not looking for an
+  // internship" was INEXPRESSIBLE, so a stale targetJobType=["internship"]
+  // (an EXACT-match hard filter) kept matching only intern jobs.
+  it("accepts negativeJobType (array + scalar coercion)", () => {
+    const arr = ConversationExtractResultSchema.parse({
+      tagPatch: { negativeJobType: ["internship", "new_graduate"] },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.deepEqual(arr.tagPatch.negativeJobType, ["internship", "new_graduate"])
+    const scalar = ConversationExtractResultSchema.parse({
+      tagPatch: { negativeJobType: "internship" },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.deepEqual(scalar.tagPatch.negativeJobType, ["internship"])
+  })
+
+  it("rejects an off-vocab negativeJobType token", () => {
+    assert.throws(() =>
+      ConversationExtractResultSchema.parse({
+        tagPatch: { negativeJobType: ["side_hustle"] },
+        memoryEntities: [],
+        confidence: 0.9,
+        rationale: "",
+      }),
+    )
+  })
 })
 
 describe("buildExtractorPrompt", () => {
@@ -413,6 +445,24 @@ describe("buildExtractorPrompt", () => {
     assert.ok(prompt.includes(`< ${MIN_CONFIDENCE}`))
     assert.ok(prompt.includes('"industrySector":[]'))
     assert.ok(prompt.includes("I want fintech"))
+  })
+
+  it("lists negativeJobType as an emittable field with avoid instructions", () => {
+    // NOTE: the transcript body deliberately does NOT mention internships, so
+    // these assertions can only be satisfied by the INSTRUCTION text.
+    const prompt = buildExtractorPrompt({
+      userId: "u",
+      recentMessages: [
+        { role: "user", body: "hey what roles do you have", createdAt: "2026-06-09T00:00:00.000Z" },
+      ],
+      existingTags: { targetJobType: ["internship"] },
+      trigger: "turn_count",
+    })
+    assert.ok(prompt.includes("negativeJobType"), "field key listed")
+    assert.ok(
+      /not looking for an internship/i.test(prompt),
+      "the avoid-job-type instruction carries the canonical example",
+    )
   })
 
   it("slices recentMessages to last 20", () => {

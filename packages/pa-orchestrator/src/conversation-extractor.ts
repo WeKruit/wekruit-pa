@@ -225,6 +225,15 @@ export const ConversationExtractResultSchema = z.object({
       careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
       targetJobType: coerceArray(z.enum(JOB_TYPE_VOCAB)).optional(),
       /**
+       * Job types the user does NOT want (2026-06-09) — negation parity with
+       * negativeRoleFunction/negativeIndustrySector. "I am not looking for an
+       * internship" → ["internship"]. The sole writer subtracts these tokens
+       * from the stored `targetJobType` (an EXACT-match hard filter), so a
+       * pure negation can clear a stale value — the live bug left
+       * targetJobType=["internship"] matching only intern jobs.
+       */
+      negativeJobType: coerceArray(z.enum(JOB_TYPE_VOCAB)).optional(),
+      /**
        * Company-size preference. MULTI-PICK / OR (2026-05-30) — "a small team
        * or big tech" → ["early_startup", "enterprise"]. Closed enum from
        * `@wekruit/shared-tags`; the model maps the free-form answer to the
@@ -417,6 +426,7 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     `  visaStatus (string):            ${VISA_STATUS_VOCAB.join(", ")}`,
     `  careerStage (string):           ${CAREER_STAGE_VOCAB.join(", ")}`,
     `  targetJobType (string[]):       ${JOB_TYPE_VOCAB.join(", ")}`,
+    `  negativeJobType (string[]):     ${JOB_TYPE_VOCAB.join(", ")}`,
     `  companySize (string[]):         ${COMPANY_SIZE_VOCAB.join(", ")} (MULTI-PICK / OR — headcount/maturity; capture EVERY size the user is open to, e.g. "small startup or big tech" → [early_startup, enterprise]; "open" = no preference)`,
     `  companyStage (string[]):        ${COMPANY_STAGE_VOCAB.join(", ")} (MULTI-PICK / OR — FUNDING stage, ORTHOGONAL to companySize; e.g. "early-stage startup or a public company" → [seed, ipo_public]; omit if not signalled)`,
     "  targetLocations (string[]):     free-form normalized location tokens, e.g. new_york, san_francisco_bay_area, remote",
@@ -450,6 +460,11 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     "If the user asks to AVOID / exclude / is not interested in an industry (e.g. \"avoid crypto and adtech\"),",
     "emit that industry in negativeIndustrySector (canonical token, e.g. crypto_web3_blockchain) — do NOT put it",
     "in industrySector. industrySector is ONLY for PREFERRED industries the user wants more of.",
+    "If the user says they are NOT looking for / done with / does NOT want a JOB TYPE",
+    "(e.g. \"I am not looking for an internship\", \"no more contract gigs\", \"done with internships, full-time only\"), emit that token in",
+    "negativeJobType (canonical token, e.g. internship) — do NOT put it in targetJobType. targetJobType is ONLY",
+    "for job types the user WANTS. When they also state what they DO want (\"full-time only\"), emit BOTH",
+    "(targetJobType=[full_time] AND negativeJobType=[internship]).",
     "If the user asks to AVOID / move away from / does NOT want a ROLE FUNCTION (e.g. \"I want to avoid pure SWE\",",
     "\"not a coding role\", \"product strategy only, not engineering\", \"away from hands-on dev\"), emit that role",
     "function in negativeRoleFunction (canonical token, e.g. software_engineering) — do NOT put it in",

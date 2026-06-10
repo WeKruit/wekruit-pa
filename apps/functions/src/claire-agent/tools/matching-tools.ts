@@ -99,6 +99,7 @@ async function readMatchingSlice(
       targetRoleFunction: asArr(tags.targetRoleFunction),
       negativeRoleFunction: asArr(tags.negativeRoleFunction),
       targetJobType: asArr(tags.targetJobType),
+      negativeJobType: asArr(tags.negativeJobType),
       targetLocations: asArr(tags.targetLocations),
     }
   } catch (err) {
@@ -1057,19 +1058,27 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "If they say they want ONLY / want to SWITCH TO a kind of role → put it in onlyRoleFunctions (a REPLACE of the whole positive set). " +
       "If they say they are DONE WITH / want to AVOID / are NOT INTERESTED IN a kind of role → put that role in avoidRoleFunctions " +
       "(e.g. 'done with software engineering, only product' → onlyRoleFunctions:[product_management] AND avoidRoleFunctions:[software_engineering]). " +
-      "Also pass jobType (full_time/internship/...) and locations when stated. Pass null for anything not stated.",
+      "Also pass jobType (full_time/internship/...) and locations when stated. " +
+      "If they say they are NOT looking for / done with a JOB TYPE → put it in avoidJobTypes (it is REMOVED from their saved job types) " +
+      "(e.g. 'I'm not looking for an internship' → avoidJobTypes:[internship]; 'no more contract gigs, full-time only' → jobType:[full_time] AND avoidJobTypes:[contract]). " +
+      "If they say they're open to ANY job type / want the job-type filter gone → clearTargetJobType:true. " +
+      "Pass null for anything not stated.",
     parameters: z.object({
       onlyRoleFunctions: z.array(RoleFunctionEnum).nullable(),
       avoidRoleFunctions: z.array(RoleFunctionEnum).nullable(),
       jobType: z.array(JobTypeEnum).nullable(),
+      avoidJobTypes: z.array(JobTypeEnum).nullable(),
+      clearTargetJobType: z.boolean().nullable(),
       locations: z.array(z.string()).nullable(),
     }),
-    async execute({ onlyRoleFunctions, avoidRoleFunctions, jobType, locations }) {
+    async execute({ onlyRoleFunctions, avoidRoleFunctions, jobType, avoidJobTypes, clearTargetJobType, locations }) {
       const current = await readMatchingSlice(ctx.db, ctx.userId, ctx.log)
       const { changed, removedFromPositive } = reduceMatchingPreferences(current, {
         onlyRoleFunctions,
         avoidRoleFunctions,
         jobType,
+        avoidJobTypes,
+        clearTargetJobType,
         locations,
       })
       if (Object.keys(changed).length === 0) {

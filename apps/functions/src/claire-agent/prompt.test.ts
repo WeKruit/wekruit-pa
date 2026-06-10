@@ -97,3 +97,32 @@ test("grounding prose no longer references CONTEXT as positioned 'above'", () =>
   assert.ok(!prescreen.includes("PRIOR prescreen sessions, above)"))
   assert.ok(prescreen.includes("PRESCREEN CONTEXT provided this turn"))
 })
+
+// ── extractor-negation coverage (2026-06-09) ──────────────────────────────────
+// Thin Claire NEVER runs the conversation extractor — capture happens ONLY when
+// the LLM volunteers a set_matching_preferences call. So the PROMPT must teach
+// the negation: "I am not looking for an internship" → avoidJobTypes:["internship"].
+// Live victim: tags.targetJobType stayed ["internship"] (an EXACT-match hard
+// filter) and only intern jobs ever matched.
+
+test("PREFERENCES directive teaches the avoid/clear job-type negation with the internship example", () => {
+  const head = buildClairePrompt({ mode: "triage", lang: "en" })
+  assert.ok(head.includes("avoidJobTypes"), "avoidJobTypes field must be named")
+  assert.ok(head.includes("clearTargetJobType"), "clearTargetJobType field must be named")
+  assert.ok(
+    /not looking for internships/i.test(head),
+    "carries the canonical negation example",
+  )
+})
+
+test("prescreen mode prompt instructs durable mid-screen preference capture via set_matching_preferences", () => {
+  const prescreen = buildClairePrompt({ mode: "prescreen", lang: "en" })
+  assert.ok(
+    prescreen.includes("set_matching_preferences"),
+    "prescreen FSM must allow durable preference capture mid-screen",
+  )
+  assert.ok(
+    /answers to .* questions themselves are NOT preferences/i.test(prescreen),
+    "must scope the rule: screen answers are not preferences",
+  )
+})

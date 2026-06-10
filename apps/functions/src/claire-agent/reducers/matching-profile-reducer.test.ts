@@ -91,3 +91,72 @@ test("'only' then 'avoid' in one proposal: avoid wins the subtraction", () => {
   assert.deepEqual(next.targetRoleFunction, ["product_management"])
   assert.deepEqual(next.negativeRoleFunction, ["sales"])
 })
+
+// ── negation coverage for the jobType axis (live victim 2026-06-09: "I am not
+// looking for an internship" left tags.targetJobType=["internship"], an
+// EXACT-match hard filter → only intern jobs ever matched) ─────────────────
+
+test("avoidJobTypes subtracts from targetJobType — pure negation writes [] (must actually clear)", () => {
+  const { next, changed } = reduceMatchingPreferences(
+    { targetJobType: ["internship"] },
+    { avoidJobTypes: ["internship"] },
+  )
+  assert.deepEqual(next.targetJobType, [], "internship removed; empty set remains")
+  assert.deepEqual(changed.targetJobType, [], "the [] MUST be in `changed` so the writer persists the clear")
+  assert.deepEqual(changed.negativeJobType, ["internship"], "negation recorded durably")
+})
+
+test("avoidJobTypes subtracts only the avoided tokens (others survive)", () => {
+  const { next } = reduceMatchingPreferences(
+    { targetJobType: ["internship", "full_time"] },
+    { avoidJobTypes: ["internship"] },
+  )
+  assert.deepEqual(next.targetJobType, ["full_time"])
+  assert.deepEqual(next.negativeJobType, ["internship"])
+})
+
+test("avoidJobTypes accumulates negativeJobType across turns", () => {
+  const afterFirst = reduceMatchingPreferences(
+    { targetJobType: ["internship", "contract", "full_time"] },
+    { avoidJobTypes: ["internship"] },
+  ).next
+  const afterSecond = reduceMatchingPreferences(afterFirst, { avoidJobTypes: ["contract"] }).next
+  assert.deepEqual(afterSecond.negativeJobType?.sort(), ["contract", "internship"])
+  assert.deepEqual(afterSecond.targetJobType, ["full_time"])
+})
+
+test("positive jobType replace un-avoids a previously-negated job type", () => {
+  const start = { targetJobType: [], negativeJobType: ["internship"] }
+  const { next, changed } = reduceMatchingPreferences(start, { jobType: ["internship"] })
+  assert.deepEqual(next.targetJobType, ["internship"])
+  assert.deepEqual(next.negativeJobType ?? [], [], "internship off the negative axis once re-wanted")
+  assert.deepEqual(changed.negativeJobType, [], "the un-avoid is persisted, not just computed")
+})
+
+test("jobType + avoidJobTypes in one proposal: avoid wins the subtraction", () => {
+  const { next } = reduceMatchingPreferences(
+    { targetJobType: ["internship"] },
+    { jobType: ["full_time", "internship"], avoidJobTypes: ["internship"] },
+  )
+  assert.deepEqual(next.targetJobType, ["full_time"])
+  assert.deepEqual(next.negativeJobType, ["internship"])
+})
+
+test("clearTargetJobType empties targetJobType regardless of prior value", () => {
+  const { next, changed } = reduceMatchingPreferences(
+    { targetJobType: ["internship", "new_graduate"] },
+    { clearTargetJobType: true },
+  )
+  assert.deepEqual(next.targetJobType, [])
+  assert.deepEqual(changed.targetJobType, [])
+})
+
+test("clearTargetJobType=false / null / absent is a no-op", () => {
+  for (const clear of [false, null, undefined]) {
+    const { changed } = reduceMatchingPreferences(
+      { targetJobType: ["full_time"] },
+      { clearTargetJobType: clear },
+    )
+    assert.deepEqual(changed, {}, `clear=${String(clear)} must not change anything`)
+  }
+})

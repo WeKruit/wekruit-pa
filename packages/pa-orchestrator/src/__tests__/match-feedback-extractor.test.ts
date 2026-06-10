@@ -54,6 +54,34 @@ test("OR tag deltas from the dislike reason validate against shared-tags vocab",
   assert.equal(r.tagDeltas.careerStage, "senior")
 })
 
+test("negativeJobType tag delta validates + passes through (jobType negation parity 2026-06-09)", () => {
+  // "stop sending internships, I want full-time" — the dislike reason must be
+  // expressible as a jobType negation, not just role/industry.
+  const r = validateFeedbackResult({
+    sentiment: "negative",
+    reasonCategory: "wrong_job_type",
+    tagDeltas: {
+      targetJobType: ["full_time"],
+      negativeJobType: ["internship", "not_a_job_type"],
+    },
+  })
+  assert.deepEqual(r.tagDeltas.targetJobType, ["full_time"])
+  assert.deepEqual(r.tagDeltas.negativeJobType, ["internship"], "off-vocab dropped, valid token kept")
+})
+
+test("feedback prompt lists negativeJobType as an emittable tagDeltas key", async () => {
+  let seenPrompt = ""
+  const llm: FeedbackLlmCall = async ({ prompt }) => {
+    seenPrompt = prompt
+    return { json: {} }
+  }
+  await extractMatchFeedback(
+    { questionKind: "dislike_reason", reply: "I'm not looking for an internship" },
+    llm,
+  )
+  assert.ok(seenPrompt.includes("negativeJobType"), "tagDeltas key list must include negativeJobType")
+})
+
 test("extractMatchFeedback fails OPEN to ambiguous on LLM error (no regex fallback)", async () => {
   const throwing: FeedbackLlmCall = async () => {
     throw new Error("provider down")
