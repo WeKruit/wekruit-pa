@@ -97,14 +97,14 @@ const REASON_SUMMARIES: Record<string, string> = {
   no_email_on_profile:
     "I don't have a verified email for you yet — share the email you use for Valet first.",
   no_valet_account:
-    "You don't have a Valet account yet — visit candidate.wekruit.com/auto-apply to get set up, then ask me again.",
+    "You don't have a Valet account yet — visit wekruit.com/auto-apply to get set up, then ask me again.",
   link_failed: "Couldn't link your Valet account — try again later.",
   no_resume:
     "Your Valet setup isn't finished — open the Valet desktop app and complete the quick setup (resume + preferences), then ask me again.",
   no_desktop_app:
-    "You haven't installed the Valet desktop app yet — download it at candidate.wekruit.com/auto-apply, sign in with this email, and I can apply for you.",
+    "You haven't installed the Valet desktop app yet — download it at wekruit.com/auto-apply, sign in with this email, and I can apply for you.",
   not_linked:
-    "Your Valet account isn't linked yet — visit candidate.wekruit.com/auto-apply to get set up, then ask me again.",
+    "Your Valet account isn't linked yet — visit wekruit.com/auto-apply to get set up, then ask me again.",
   task_not_found: "I couldn't find that application in Valet.",
 }
 
