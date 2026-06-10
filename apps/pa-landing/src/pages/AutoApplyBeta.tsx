@@ -1,21 +1,19 @@
 /**
  * AutoApplyBeta.tsx — Auto-Apply Beta landing page.
  *
- * Route: /auto-apply (candidate.wekruit.com).
+ * Route: /auto-apply (wekruit.com / candidate.wekruit.com).
  *
  * Claire can now apply to jobs for the candidate automatically via the Valet
- * desktop app (macOS first; Windows rolling out). This page:
+ * desktop app (macOS first; Windows rolling out). The desktop app is the ONLY
+ * Valet surface — sign-in and onboarding both happen inside the app. This page:
  *   1. Explains the 3-step flow (download → sign in → quick setup in the app).
- *   2. Fetches the latest desktop build from the Valet API
- *      (GET /api/v1/desktop/latest) and renders download buttons — Apple
- *      Silicon primary, Intel/Windows only when those URLs are non-null.
+ *   2. Fetches the latest desktop build from the public releases repo
+ *      (GitHub API, CORS-open, anonymous: WeKruit/valet-releases) and renders
+ *      download buttons — Apple Silicon primary; Intel/Windows when present.
  *   3. Signed-out → "Sign in to get started" CTA via the existing
  *      /login?next=… convention (browser-identity.ts honors /auto-apply
  *      through first login).
- *   4. Signed-in → "Open Valet Web": exchanges the Firebase ID token at
- *      POST /api/v1/auth/exchange-firebase for Valet JWTs and opens
- *      valet-web.fly.dev/apply with a session-handoff query param in a new
- *      tab. Tokens are NEVER logged or rendered.
+ *   4. Signed-in → reminder to use the same email in the desktop app.
  *
  * Visual: warm cream/terracotta editorial system (CandidateShell chrome).
  * Page-scoped styles live in AUTO_APPLY_STYLES under `.wk-aab-*`.
@@ -26,8 +24,7 @@ import { onAuthStateChanged, type User } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
 import { CandidateShell, Icon, PulseDot } from "./CandidateLogin.js"
 
-const VALET_API_URL = "https://valet-api.fly.dev"
-const VALET_WEB_URL = "https://valet-web.fly.dev"
+const RELEASES_API_URL = "https://api.github.com/repos/WeKruit/valet-releases/releases/latest"
 
 type DesktopLatest = {
   version: string
@@ -43,16 +40,44 @@ type DesktopState =
   | { status: "ready"; latest: DesktopLatest }
   | { status: "unavailable" }
 
-type ValetWebState =
-  | { status: "idle" }
-  | { status: "opening" }
-  | { status: "error"; message: string }
-
 function formatReleaseDate(releasedAt: string | null): string | null {
   if (!releasedAt) return null
   const date = new Date(releasedAt)
   if (Number.isNaN(date.getTime())) return null
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+}
+
+type GithubReleaseAsset = { name?: unknown; browser_download_url?: unknown }
+
+/** Map a GitHub release (public repo, anonymous + CORS-open) to download URLs. */
+function parseGithubRelease(json: {
+  tag_name?: unknown
+  html_url?: unknown
+  published_at?: unknown
+  assets?: unknown
+}): DesktopLatest | null {
+  if (typeof json.tag_name !== "string") return null
+  const assets: GithubReleaseAsset[] = Array.isArray(json.assets) ? json.assets : []
+  const findUrl = (match: (name: string) => boolean): string | null => {
+    for (const asset of assets) {
+      if (
+        typeof asset?.name === "string" &&
+        typeof asset?.browser_download_url === "string" &&
+        match(asset.name.toLowerCase())
+      ) {
+        return asset.browser_download_url
+      }
+    }
+    return null
+  }
+  return {
+    version: json.tag_name.replace(/^v/, ""),
+    dmgArm64Url: findUrl((n) => n.endsWith(".dmg") && n.includes("arm64")),
+    dmgX64Url: findUrl((n) => n.endsWith(".dmg") && !n.includes("arm64")),
+    exeX64Url: findUrl((n) => n.endsWith(".exe")),
+    releaseUrl: typeof json.html_url === "string" ? json.html_url : null,
+    releasedAt: typeof json.published_at === "string" ? json.published_at : null,
+  }
 }
 
 const HOW_IT_WORKS_STEPS = [
@@ -66,14 +91,13 @@ const HOW_IT_WORKS_STEPS = [
   },
   {
     title: "Finish quick setup in the app",
-    body: "Add your resume and preferences once. After that, ask Claire to apply to jobs for you — or drive the app directly.",
+    body: "Add your resume and preferences once — onboarding lives right in the app. After that, ask Claire to apply to jobs for you, or drive the app directly.",
   },
 ]
 
 export default function AutoApplyBeta() {
   const [authUser, setAuthUser] = useState<User | null | "unknown">("unknown")
   const [desktop, setDesktop] = useState<DesktopState>({ status: "loading" })
-  const [valetWeb, setValetWeb] = useState<ValetWebState>({ status: "idle" })
 
   useEffect(() => {
     let unsub = () => {}
@@ -89,94 +113,26 @@ export default function AutoApplyBeta() {
     const controller = new AbortController()
     void (async () => {
       try {
-        const res = await fetch(`${VALET_API_URL}/api/v1/desktop/latest`, {
+        const res = await fetch(RELEASES_API_URL, {
           signal: controller.signal,
+          headers: { Accept: "application/vnd.github+json" },
         })
         if (!res.ok) {
           setDesktop({ status: "unavailable" })
           return
         }
-        const json = (await res.json()) as Partial<DesktopLatest>
-        if (typeof json.version !== "string") {
+        const latest = parseGithubRelease((await res.json()) as Parameters<typeof parseGithubRelease>[0])
+        if (!latest) {
           setDesktop({ status: "unavailable" })
           return
         }
-        setDesktop({
-          status: "ready",
-          latest: {
-            version: json.version,
-            dmgArm64Url: typeof json.dmgArm64Url === "string" ? json.dmgArm64Url : null,
-            dmgX64Url: typeof json.dmgX64Url === "string" ? json.dmgX64Url : null,
-            exeX64Url: typeof json.exeX64Url === "string" ? json.exeX64Url : null,
-            releaseUrl: typeof json.releaseUrl === "string" ? json.releaseUrl : null,
-            releasedAt: typeof json.releasedAt === "string" ? json.releasedAt : null,
-          },
-        })
+        setDesktop({ status: "ready", latest })
       } catch {
         if (!controller.signal.aborted) setDesktop({ status: "unavailable" })
       }
     })()
     return () => controller.abort()
   }, [])
-
-  async function openValetWeb() {
-    const user = auth().currentUser
-    if (!user) {
-      setValetWeb({ status: "error", message: "Sign in first, then try again." })
-      return
-    }
-    setValetWeb({ status: "opening" })
-    // Open the tab synchronously so popup blockers don't eat it; point it at
-    // the Valet web app only after the token exchange succeeds.
-    let popup: Window | null = null
-    try {
-      popup = window.open("", "_blank")
-    } catch {
-      popup = null
-    }
-    try {
-      const firebaseIdToken = await user.getIdToken()
-      const res = await fetch(`${VALET_API_URL}/api/v1/auth/exchange-firebase`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ firebaseIdToken }),
-      })
-      if (!res.ok) {
-        popup?.close()
-        setValetWeb({
-          status: "error",
-          message:
-            res.status === 401
-              ? "We couldn't verify your account with Valet. Make sure your email is verified on WeKruit, then try again."
-              : "Valet is temporarily unavailable. Please try again in a few minutes.",
-        })
-        return
-      }
-      const json = (await res.json()) as { accessToken?: unknown }
-      const accessToken = typeof json.accessToken === "string" ? json.accessToken : null
-      if (!accessToken) {
-        popup?.close()
-        setValetWeb({
-          status: "error",
-          message: "Valet returned an unexpected response. Please try again in a few minutes.",
-        })
-        return
-      }
-      const url = `${VALET_WEB_URL}/apply?access_token=${encodeURIComponent(accessToken)}`
-      if (popup && !popup.closed) {
-        popup.location.replace(url)
-      } else {
-        window.open(url, "_blank", "noopener")
-      }
-      setValetWeb({ status: "idle" })
-    } catch {
-      popup?.close()
-      setValetWeb({
-        status: "error",
-        message: "Couldn't reach Valet right now. Check your connection and try again.",
-      })
-    }
-  }
 
   const latest = desktop.status === "ready" ? desktop.latest : null
   const releaseDate = latest ? formatReleaseDate(latest.releasedAt) : null
@@ -291,28 +247,15 @@ export default function AutoApplyBeta() {
               </div>
             </>
           ) : (
-            <>
-              <div className="wk-aab-card__head">
-                <h2 className="wk-aab-card__h">You&rsquo;re signed in</h2>
-                <p className="wk-aab-card__meta">
-                  Prefer the browser? Open your Valet dashboard — same account, no extra login.
-                </p>
-              </div>
-              <div className="wk-aab-card__btns">
-                <button
-                  type="button"
-                  className="wk-btn wk-btn--ink"
-                  onClick={() => void openValetWeb()}
-                  disabled={valetWeb.status === "opening"}
-                >
-                  {valetWeb.status === "opening" ? "Opening…" : "Open Valet Web"}
-                  <Icon name="arrow-right" size={15} stroke={2} />
-                </button>
-              </div>
-              {valetWeb.status === "error" ? (
-                <p className="wk-error" role="alert">{valetWeb.message}</p>
-              ) : null}
-            </>
+            <div className="wk-aab-card__head">
+              <h2 className="wk-aab-card__h">You&rsquo;re signed in</h2>
+              <p className="wk-aab-card__meta">
+                Download the app above and sign in with{" "}
+                <strong>{authUser.email ?? "the same email you use here"}</strong> — your account,
+                setup, and applications all live in the desktop app. Then ask Claire to apply to
+                jobs for you.
+              </p>
+            </div>
           )}
         </section>
       </div>
