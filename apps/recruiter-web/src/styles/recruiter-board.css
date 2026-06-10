@@ -10010,6 +10010,40 @@
   font-size: 12.5px;
 }
 
+.rb-form-note__edit {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  color: #2a5fb8;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.rb-more-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 4px;
+  padding: 7px 10px;
+  border: 1px solid #d6d6cf;
+  border-radius: 6px;
+  background: #fff;
+  color: #2a2a26;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rb-more-toggle span {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
 .rb-consent {
   display: flex;
   align-items: flex-start;

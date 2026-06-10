@@ -429,6 +429,18 @@ export async function registerRecruiterAccess(input: {
   return { recruiterId: body.recruiterId, recruiter: body.recruiter }
 }
 
+export class RecruiterApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
+export function isRecruiterProfileRejection(error: unknown): boolean {
+  return error instanceof RecruiterApiError && (error.status === 401 || error.status === 403)
+}
+
 export async function getRecruiterProfile(): Promise<RecruiterSession> {
   const res = await fetch(RECRUITER_ME_URL, {
     method: "GET",
@@ -441,7 +453,7 @@ export async function getRecruiterProfile(): Promise<RecruiterSession> {
     recruiter?: RecruiterProfile
   }
   if (!res.ok || !body.ok || !body.recruiterId || !body.recruiter) {
-    throw new Error(body.reason ?? `paRecruiterMe HTTP ${res.status}`)
+    throw new RecruiterApiError(body.reason ?? `paRecruiterMe HTTP ${res.status}`, res.status)
   }
   return { recruiterId: body.recruiterId, recruiter: body.recruiter }
 }
