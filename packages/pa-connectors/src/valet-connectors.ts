@@ -101,6 +101,8 @@ const REASON_SUMMARIES: Record<string, string> = {
   link_failed: "Couldn't link your Valet account — try again later.",
   no_resume:
     "Your Valet setup isn't finished — open the Valet desktop app and complete the quick setup (resume + preferences), then ask me again.",
+  no_desktop_app:
+    "You haven't installed the Valet desktop app yet — download it at candidate.wekruit.com/auto-apply, sign in with this email, and I can apply for you.",
   not_linked:
     "Your Valet account isn't linked yet — visit candidate.wekruit.com/auto-apply to get set up, then ask me again.",
   task_not_found: "I couldn't find that application in Valet.",
@@ -158,15 +160,16 @@ export const VALET_APPLY_CONNECTOR: ConnectorDef<ValetApplyInput, ValetApplyOutp
     if (res.status === 201 && res.json?.ok) {
       const taskId = String(res.json.taskId)
       const status = String(res.json.status)
+      const desktopOnline = res.json.desktopOnline === true
       return {
         ok: true,
         source: "valet-apply" as const,
         reason: null,
         taskId,
         status,
-        summary:
-          `Application queued in Valet (task ${taskId}, status: ${status}). ` +
-          "It will run when the user's Valet desktop app is online.",
+        summary: desktopOnline
+          ? `Application submitted to Valet (task ${taskId}, status: ${status}). The user's desktop app is online — it should start shortly.`
+          : `Application queued in Valet (task ${taskId}, status: ${status}). The user's Valet desktop app is currently closed — it will run the next time they open it; suggest opening the app.`,
       }
     }
     const reason = typeof res.json?.reason === "string" ? res.json.reason : "rejected"
