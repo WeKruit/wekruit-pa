@@ -227,6 +227,36 @@ export default function AutoApplyBeta() {
           )}
         </section>
 
+        {/* First launch (Gatekeeper) ----------------------------------------- */}
+        <section className="wk-aab-card" aria-label="Opening Valet the first time">
+          <div className="wk-aab-card__head">
+            <h2 className="wk-aab-card__h">Opening Valet the first time</h2>
+            <p className="wk-aab-card__meta">
+              The beta build isn&rsquo;t notarized by Apple yet, so macOS shows a
+              &ldquo;Valet&rdquo; Not Opened warning on first launch. It takes 20 seconds to get
+              past — one time only:
+            </p>
+          </div>
+          <ol className="wk-aab-list">
+            <li>
+              Open the downloaded <strong>.dmg</strong> and drag <strong>Valet</strong> into{" "}
+              <strong>Applications</strong>.
+            </li>
+            <li>
+              Double-click Valet. When macOS says it can&rsquo;t verify the app, click{" "}
+              <strong>Done</strong> (not &ldquo;Move to Bin&rdquo;).
+            </li>
+            <li>
+              Open <strong>System Settings &rarr; Privacy &amp; Security</strong>, scroll down to
+              the Security section, and click <strong>&ldquo;Open Anyway&rdquo;</strong> next to
+              the Valet message.
+            </li>
+            <li>
+              Confirm with <strong>Open</strong>. After this, Valet launches normally every time.
+            </li>
+          </ol>
+        </section>
+
         {/* Account / next step ------------------------------------------------ */}
         <section className="wk-aab-card wk-aab-card--account" aria-label="Your account">
           {authUser === "unknown" ? (
@@ -353,4 +383,14 @@ const AUTO_APPLY_STYLES = `
 .wk-aab-card__meta { margin: 0; color: var(--wk-ink-3); font-size: 14px; }
 .wk-aab-card__btns { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .wk-aab-card__note { margin: 0; color: var(--wk-ink-3); font-size: 13.5px; line-height: 1.55; }
+.wk-aab-list {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 10px;
+  color: var(--wk-ink-2);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.wk-aab-list strong { color: var(--wk-ink); font-weight: 600; }
 `
