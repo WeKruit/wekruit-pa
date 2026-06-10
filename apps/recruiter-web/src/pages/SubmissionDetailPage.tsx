@@ -19,9 +19,16 @@ interface SubmissionComment {
 
 function formatDate(raw: unknown): string {
   if (!raw) return ""
-  const ts = typeof raw === "object" && raw !== null && "_seconds" in raw
-    ? (raw as { _seconds: number })._seconds * 1000
-    : typeof raw === "string" ? Date.parse(raw) : typeof raw === "number" ? raw : NaN
+  let ts: number = NaN
+  if (typeof raw === "object" && raw !== null) {
+    const obj = raw as Record<string, unknown>
+    if (typeof obj.seconds === "number") ts = obj.seconds * 1000
+    else if (typeof obj._seconds === "number") ts = obj._seconds * 1000
+  } else if (typeof raw === "string") {
+    ts = Date.parse(raw)
+  } else if (typeof raw === "number") {
+    ts = raw
+  }
   if (Number.isNaN(ts)) return ""
   const d = new Date(ts)
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
@@ -41,6 +48,7 @@ export default function SubmissionDetailPage() {
   const [copied, setCopied] = useState(false)
   const [newComment, setNewComment] = useState("")
   const [posting, setPosting] = useState(false)
+  const [commentError, setCommentError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!authReady || !session || !submissionId) return
@@ -76,13 +84,14 @@ export default function SubmissionDetailPage() {
   const handleAddComment = async () => {
     if (!newComment.trim() || !submissionId) return
     setPosting(true)
+    setCommentError(null)
     try {
       await addRecruiterSubmissionComment({ submissionId, message: newComment.trim() })
       const refreshed = await fetchRecruiterSubmission(submissionId)
       setComments(refreshed.comments)
       setNewComment("")
     } catch {
-      // silent — comment thread will show on next load
+      setCommentError("Failed to post comment. Try again.")
     } finally {
       setPosting(false)
     }
@@ -217,6 +226,7 @@ export default function SubmissionDetailPage() {
               placeholder="Add a comment..."
               rows={3}
             />
+            {commentError && <p className="sd-state error" style={{ padding: "4px 0", fontSize: "13px" }}>{commentError}</p>}
             <button type="button" onClick={() => void handleAddComment()} disabled={posting || !newComment.trim()}>
               {posting ? "Posting..." : "Post comment"}
             </button>
