@@ -1446,7 +1446,36 @@ export async function updateJob(jobId: string, patch: JobLifecycleUpdate): Promi
   await setDoc(doc(db(), PA_COLLECTIONS.jobs, jobId), patch, { merge: true })
 }
 
-export async function listCompanies(limit = 100): Promise<CompanyRow[]> {
+export interface ListCompaniesOptions {
+  collabOnly?: boolean
+}
+
+export interface ListJobsOptions {
+  collabOnly?: boolean
+}
+
+export async function listCompanies(
+  limit = 100,
+  opts: ListCompaniesOptions = {},
+): Promise<CompanyRow[]> {
+  if (opts.collabOnly === true) {
+    const snap = await getDocs(
+      query(
+        collection(db(), "pa-companies"),
+        where("wekruitCollab", "==", true),
+        fsLimit(limit),
+      ),
+    )
+    return snap.docs
+      .map((d) => coerceCompanyRow(d.id, d.data()))
+      .sort(
+        (a, b) =>
+          String(a.displayName ?? a.name ?? a.companyId).localeCompare(
+            String(b.displayName ?? b.name ?? b.companyId),
+          ),
+      )
+  }
+
   // Two-pass read so WeKruit collab partners (pa-jobs-backed employers like
   // Rain / Invoko / Paradigm) ALWAYS surface above the LLM-enriched
   // directory long tail. Without this, alphabetic doc-id order pushes
@@ -1480,24 +1509,31 @@ export async function getCompany(companyId: string): Promise<CompanyRow | null> 
 export async function listJobsByCompany(
   companyId: string,
   limit = 200,
+  opts: ListJobsOptions = {},
 ): Promise<JobRow[]> {
-  const snap = await getDocs(
-    query(
-      collection(db(), PA_COLLECTIONS.jobs),
-      where("companyId", "==", companyId),
-      fsLimit(limit),
-    ),
-  )
-  return snap.docs.map((d) => coerceJobRow(d.id, d.data()))
+  const constraints: QueryConstraint[] = [
+    where("companyId", "==", companyId),
+    fsLimit(limit),
+  ]
+  const snap = await getDocs(query(collection(db(), PA_COLLECTIONS.jobs), ...constraints))
+  const rows = snap.docs.map((d) => coerceJobRow(d.id, d.data()))
+  return opts.collabOnly === true
+    ? rows.filter((job) => job.wekruitCollaborationStatus === "collaborated")
+    : rows
 }
 
-export async function listJobs(limit = 200): Promise<JobRow[]> {
+export async function listJobs(
+  limit = 200,
+  opts: ListJobsOptions = {},
+): Promise<JobRow[]> {
   // Best-effort: order by `firstSeenAt` desc when present; the loose schema
   // means some docs may lack it — getDocs without orderBy returns
   // doc-id order which is still useful.
-  const snap = await getDocs(
-    query(collection(db(), PA_COLLECTIONS.jobs), fsLimit(limit)),
-  )
+  const constraints: QueryConstraint[] = [fsLimit(limit)]
+  if (opts.collabOnly === true) {
+    constraints.unshift(where("wekruitCollaborationStatus", "==", "collaborated"))
+  }
+  const snap = await getDocs(query(collection(db(), PA_COLLECTIONS.jobs), ...constraints))
   return snap.docs.map((d) => coerceJobRow(d.id, d.data()))
 }
 

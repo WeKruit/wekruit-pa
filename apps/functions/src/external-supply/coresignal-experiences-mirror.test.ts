@@ -476,3 +476,89 @@ test("buildParsedResumeDocFromRecord — caps topSkills at 12", () => {
   assert.equal((doc.topSkills as string[]).length, 12)
   assert.equal((doc.candidateProfile as { skills: string[] }).skills.length, 30) // full list preserved
 })
+
+test("runCoresignalExperiencesMirror — employer-history signals fold into mergedFacts (Adam 2026-06-10)", async () => {
+  const writes: Array<{ mergedFacts?: Record<string, unknown> }> = []
+  let sawRows: Array<Record<string, unknown>> = []
+  const result = await runCoresignalExperiencesMirror(makeRecord(), "uid-emp", {
+    findExistingForUser: async () => [],
+    mergeAndDetermine: async () => ({
+      mergedExperiences: [{ title: "Software Engineer", company: "Mews", isCurrent: true }],
+      recentRoleTitle: "Software Engineer",
+      recentCompany: "Mews",
+    }),
+    deriveEmployerSignals: async (rows) => {
+      sawRows = rows as Array<Record<string, unknown>>
+      return {
+        employerTags: ["big_tech"],
+        hasBigTechBackground: true,
+        employerGrowthTier: "mature",
+        scopeOfOwnership: { teamSize: 4 },
+      }
+    },
+    writeBoth: async (args) => {
+      writes.push(args as { mergedFacts?: Record<string, unknown> })
+    },
+    now: () => NOW,
+  })
+  assert.equal(result.status, "mirrored")
+  assert.equal(sawRows.length, 1, "derivation fed the MERGED canonical timeline")
+  assert.equal(sawRows[0]?.company, "Mews")
+  const facts = writes[0]?.mergedFacts
+  assert.ok(facts)
+  assert.equal(facts?.recentRoleTitle, "Software Engineer", "determined facts preserved")
+  assert.deepEqual(facts?.employerTags, ["big_tech"])
+  assert.equal(facts?.hasBigTechBackground, true)
+  assert.equal(facts?.employerGrowthTier, "mature")
+  assert.deepEqual(facts?.scopeOfOwnership, { teamSize: 4 })
+})
+
+test("runCoresignalExperiencesMirror — employer-signals derivation is FAIL-OPEN (throws → facts unaffected, mirror still writes)", async () => {
+  const writes: Array<{ mergedFacts?: Record<string, unknown> }> = []
+  const events: string[] = []
+  const result = await runCoresignalExperiencesMirror(makeRecord(), "uid-emp-throw", {
+    findExistingForUser: async () => [],
+    mergeAndDetermine: async () => ({
+      mergedExperiences: [{ title: "Software Engineer", company: "Mews", isCurrent: true }],
+      recentRoleTitle: "Software Engineer",
+    }),
+    deriveEmployerSignals: async () => {
+      throw new Error("derivation down")
+    },
+    writeBoth: async (args) => {
+      writes.push(args as { mergedFacts?: Record<string, unknown> })
+    },
+    log: (e) => events.push(e),
+    now: () => NOW,
+  })
+  assert.equal(result.status, "mirrored")
+  assert.equal(writes.length, 1, "mirror write unaffected")
+  assert.equal(writes[0]?.mergedFacts?.recentRoleTitle, "Software Engineer")
+  assert.ok(!("employerTags" in (writes[0]?.mergedFacts ?? {})), "no employer keys on failure")
+  assert.ok(events.includes("coresignal_mirror.employer_signals_error"))
+})
+
+test("runCoresignalExperiencesMirror — EMPTY employer derivation writes no employer keys (additive contract)", async () => {
+  const writes: Array<{ mergedFacts?: Record<string, unknown> }> = []
+  await runCoresignalExperiencesMirror(makeRecord(), "uid-emp-empty", {
+    findExistingForUser: async () => [],
+    mergeAndDetermine: async () => null, // fail-open merge → fallback facts only
+    deriveEmployerSignals: async () => ({}),
+    writeBoth: async (args) => {
+      writes.push(args as { mergedFacts?: Record<string, unknown> })
+    },
+    now: () => NOW,
+  })
+  const facts = writes[0]?.mergedFacts ?? {}
+  for (const k of [
+    "employerStages",
+    "employerTags",
+    "hasBigTechBackground",
+    "employerGrowthTier",
+    "founderRole",
+    "scopeOfOwnership",
+    "selectivitySignals",
+  ]) {
+    assert.ok(!(k in facts), `${k} must be ABSENT on an empty derivation`)
+  }
+})

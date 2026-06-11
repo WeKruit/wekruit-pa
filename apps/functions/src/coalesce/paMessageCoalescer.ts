@@ -187,6 +187,31 @@ export async function enqueueOrCoalesce(
         err: consumeErr instanceof Error ? consumeErr.message : String(consumeErr),
       })
     }
+    // 2026-06-10 trust audit (fix 4) — REVERT the `coalescing:true` mark written
+    // in step 2 above. With no Cloud Tasks task on the way, a row left
+    // coalescing:true is ORPHANED: onPaInbound permanently skips it, and if the
+    // webhook's direct runtime fallback ALSO fails (crash between our throw and
+    // its catch), the candidate's message dies silently forever. Setting
+    // coalescing:false + coalesceError restores it to the normal claimable shape
+    // (the recovery sweep / replay paths can pick it up). Double-processing is
+    // impossible from this flip alone: onPaInbound's onDocumentCreated trigger
+    // fired at CREATE time (an UPDATE never re-fires it), and the fired-buffer
+    // dedup (markFiredTransaction above) already consumed this turn.
+    try {
+      await deps.db.collection("pa-inbound-events").doc(msg.inboundEventId).set(
+        {
+          coalescing: false,
+          coalesceError: `enqueue_failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500),
+        },
+        { merge: true }
+      )
+    } catch (revertErr) {
+      log("[coalesce] enqueue FAILED and coalescing-revert FAILED", {
+        eventId: msg.inboundEventId,
+        userId: msg.userId,
+        err: revertErr instanceof Error ? revertErr.message : String(revertErr),
+      })
+    }
     // Caller should fall back to normal runtime path. Throw so the webhook can decide.
     log("[coalesce] enqueue FAILED — caller should fall back to runtime path", {
       taskName: outcome.nextTaskName,
@@ -314,7 +339,11 @@ async function markSyntheticInboundCompleted(
   deps: CoalescerDeps,
   eventId: string,
   input: {
-    routedTo: "prescreen" | "pii_confirm" | "claire_orchestrator"
+    routedTo:
+      | "prescreen"
+      | "pii_confirm"
+      | "claire_orchestrator"
+      | `stop_gate_${string}`
     userId: string
     turnSeq: number
   }
@@ -663,6 +692,56 @@ export async function processCoalescedTurn(
   } catch (err) {
     log("[coalesce] inbound-stamp-event FAILED (non-fatal)", {
       eventId: created.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // 3-pre. DETERMINISTIC SMS STOP/START GATE (Adam 2026-06-10, compliance).
+  // THE SEAM: earliest point on the COALESCED path with userId/sessionId/text —
+  // BEFORE prescreen routing (whose user-exit detection only PAUSES a screen),
+  // PII confirm, thin Claire, and the legacy orchestrator, so a "STOP" opts the
+  // candidate out everywhere, before any LLM call. Mirrors the direct broker
+  // seam in index.ts processBrokerImessageEvent. Exact whole-message keyword
+  // equality only; while doNotContact===true every non-START turn is swallowed.
+  try {
+    const { runStopGate } = await import("../claire-agent/stop-gate.js")
+    const stopGate = await runStopGate(
+      deps.db,
+      {
+        eventId: created.id,
+        userId,
+        sessionId,
+        toE164: fired.fromNumber,
+        text: fired.accumulatedBody,
+        inboundMessageHandle: fired.lastMessageId,
+      },
+      { log: (e, pl) => log(`coalesce.stop_gate.${e}`, pl ?? {}) },
+    )
+    if (stopGate.handled) {
+      await markSyntheticInboundCompleted(deps, created.id, {
+        routedTo: `stop_gate_${stopGate.action ?? "handled"}` as const,
+        userId,
+        turnSeq,
+      })
+      await Promise.allSettled(
+        fired.inboundEventIds.map((eventId) =>
+          deps.db.collection("pa-inbound-events").doc(eventId).set(
+            {
+              status: "coalesced",
+              coalesceTurnId: `${userId}__${turnSeq}`,
+              coalesceParentId: created.id,
+              routedTo: `stop_gate_${stopGate.action ?? "handled"}`,
+            },
+            { merge: true }
+          )
+        )
+      )
+      return { status: "fired", buffer: fired }
+    }
+  } catch (err) {
+    // runStopGate never throws by design; this guards the dynamic import only.
+    log("[coalesce] stop-gate FAILED (falling through)", {
+      userId,
       err: err instanceof Error ? err.message : String(err),
     })
   }

@@ -126,3 +126,32 @@ test("prescreen mode prompt instructs durable mid-screen preference capture via 
     "must scope the rule: screen answers are not preferences",
   )
 })
+
+// ── 2026-06-10 trust audit (fix 2a + fix 7) — prompt hard rules ───────────────
+
+test("DELIVERY carries the JOB-URL hard rule: never invent/alter URLs, omit when absent (fix 2a)", () => {
+  const head = buildClairePrompt({ mode: "triage", lang: "en" })
+  assert.ok(/JOB URLS ARE SACRED/.test(head), "the URL rule block is present")
+  assert.ok(
+    /NEVER invent, alter, shorten, or abbreviate a job URL/.test(head),
+    "no inventing/altering URLs",
+  )
+  assert.ok(/omit the link line/i.test(head), "no URL → omit the link line entirely")
+  assert.ok(head.includes("wekruit.com/j/1"), "names the live placeholder anti-example")
+  // Present in EVERY mode (DELIVERY is part of the static head).
+  for (const mode of ["onboarding", "prescreen"] as const) {
+    assert.ok(/JOB URLS ARE SACRED/.test(buildClairePrompt({ mode, lang: "en" })))
+  }
+})
+
+test("TRIAGE carries the never-re-ask rule for location/salary already on file (fix 7)", () => {
+  const head = buildClairePrompt({ mode: "triage", lang: "en" })
+  assert.ok(
+    /if CONTEXT already shows targetLocations \(or any saved location\) or a salary \(minSalary\), NEVER/.test(head),
+    "the hard never-re-ask rule is present",
+  )
+  assert.ok(
+    /Acknowledge what's on file/.test(head),
+    "instructs acknowledging instead of re-asking",
+  )
+})

@@ -3,8 +3,8 @@
  * `/admin/external-supply/jobs` and `/admin/external-supply/jobs/:companyId`.
  *
  * Operator entry point for **per-job candidate sourcing**:
- *   1. The bare `/jobs` route lists all known companies (from `pa-companies`)
- *      with the count of `pa-jobs` linked to each.
+ *   1. The bare `/jobs` route lists WeKruit-collab companies (from
+ *      `pa-companies`) with the count of collab `pa-jobs` linked to each.
  *   2. Drilling into a company shows that company's open jobs and surfaces a
  *      "Source candidates for this job" action on each row that opens the
  *      drag-drop wizard prefilled with `?companyId=...&jobId=...` so the
@@ -55,8 +55,8 @@ function AllCompanies() {
     void (async () => {
       try {
         const [cos, jobs] = await Promise.all([
-          listCompanies(200),
-          listJobs(500),
+          listCompanies(200, { collabOnly: true }),
+          listJobs(500, { collabOnly: true }),
         ])
         if (cancelled) return
         const counts: Record<string, number> = {}
@@ -140,7 +140,7 @@ function AllCompanies() {
                       ))}
                     </td>
                     <td style={{ padding: "8px 6px", textAlign: "right" }}>
-                      {jobsByCompany[c.companyId] ?? c.jobsCount ?? 0}
+                      {jobsByCompany[c.companyId] ?? 0}
                     </td>
                     <td style={{ padding: "8px 6px" }}>
                       <Link to={`/admin/external-supply/jobs/${c.companyId}`}>View jobs →</Link>
@@ -178,7 +178,7 @@ function CompanyJobs({ companyId }: { companyId: string }) {
       try {
         const [co, js, batchPage] = await Promise.all([
           getCompany(companyId),
-          listJobsByCompany(companyId, 500),
+          listJobsByCompany(companyId, 500, { collabOnly: true }),
           listBatches({ limit: 200 }),
         ])
         if (cancelled) return

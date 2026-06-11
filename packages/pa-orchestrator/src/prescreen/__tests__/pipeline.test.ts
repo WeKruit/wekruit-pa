@@ -1017,7 +1017,7 @@ test("Phase 76: confirmed hard-filter mismatch stops after one direct clarify", 
   assert.equal(second.state.currentQId, null)
   assert.equal(second.state.questions.location_alignment.finalS, 0.25)
   assert.equal(second.state.questions.location_alignment.finalC, 0.85)
-  assert.match(second.text, /WeKruit is reviewing/i)
+  assert.match(second.text, /reviews every screen personally/i)
   assert.doesNotMatch(second.text, /force-fit|help find jobs|proceed/i)
 })
 

@@ -46,13 +46,18 @@ function visibleSalaryRange(value: string | undefined): string | undefined {
  * runtime-approved outbox AFTER the terminal text.
  */
 export function composeLevel1Reveal(fields: Level1RevealFields, _lang: Lang): string {
-  const eta = fields.nextStepEta ?? "within 2-3 business days"
   const salaryRange = visibleSalaryRange(fields.salaryRange)
   const companyLine = fields.company ? `Employer: ${fields.company}` : ""
   const salaryLine = salaryRange ? `Salary range: ${salaryRange}` : ""
   const linkLine = fields.applyUrl ? `Job details: ${fields.applyUrl}` : ""
   const header = `Congrats — you've passed the initial screen for ${fields.jobTitle}.`
-  const footer = `The employer will follow up ${eta} — please watch for an SMS.`
+  // 2026-06-10 trust audit (fix 9) — never invent a timeline. An operator-configured
+  // nextStepEta (an intentional, job-specific promise) is honored verbatim; the
+  // DEFAULT footer makes no time promise and commits only to what we control:
+  // texting the candidate the moment it moves.
+  const footer = fields.nextStepEta
+    ? `The employer will follow up ${fields.nextStepEta} — please watch for an SMS.`
+    : "The hiring team is reviewing — I'll text you the moment it moves."
   return [header, companyLine, salaryLine, linkLine, footer].filter((l) => l.length > 0).join("\n")
 }
 

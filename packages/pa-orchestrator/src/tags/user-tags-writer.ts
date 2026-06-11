@@ -168,6 +168,12 @@ export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<s
 /**
  * Partial-update shape — any subset of `UserTags` keys plus optional
  * bookkeeping. Numeric fields, arrays, scalars all pass through untouched.
+ *
+ * Employer-history signals (2026-06-10 — employerStages / employerTags /
+ * hasBigTechBackground / employerGrowthTier / founderRole / scopeOfOwnership /
+ * selectivitySignals) ride this surface like any other key: the
+ * undefined-strip cleaner keeps booleans and nested objects intact, and each
+ * key is SHALLOW-REPLACED on write (no deep merge of scopeOfOwnership).
  */
 export type PartialUserTags = Partial<UserTags>
 

@@ -156,6 +156,11 @@ export { paOpenAiKeyHealth } from "./openai-key-health.js"
 // resolver from paBackfillMatchingJobsAtsUrl (cap 1000/run).
 export { paLivenessSweepDaily } from "./liveness-sweep.js"
 
+// 2026-06-10 trust audit (fixes 9+10) — daily 09:00 UTC: pendingReview >48h
+// SLA alarm (read-only + Slack) AND the canary-gated stalled-screen 24h nudge
+// (idempotent per session via `prescreen-nudge-<sessionId>`).
+export { paPrescreenReviewSlaDaily } from "./prescreen-review-sla.js"
+
 // 2026-05-27 — daily watchdog over the macmini → Firestore scrape pipeline.
 // Posts a Slack alert when the newest `matching-jobs.syncedAt` is older
 // than 24h (warn) or 48h (error). Audit trail in
@@ -1111,6 +1116,51 @@ async function processBrokerImessageEvent(
     },
     { merge: true }
   )
+
+  // ── DETERMINISTIC SMS STOP/START GATE (Adam 2026-06-10, compliance) ──────
+  // THE SEAM: this is the EARLIEST point on the direct broker path where userId,
+  // sessionId, toE164, and the inbound text all exist — BEFORE the prescreen
+  // trigger, the active-prescreen turn router (whose isUserExitPrescreenReply
+  // merely PAUSES a screen, it does not opt out), layoff/PII routing, thin
+  // Claire, and the legacy orchestrator. A "STOP" must win over ALL of those —
+  // a candidate mid-prescreen who texts STOP still opts out, before any LLM
+  // call. Exact whole-message keyword equality only (stop-gate.ts); anything
+  // longer ("stop sending me internships") falls through to the agent.
+  // While doNotContact===true, every non-START inbound is swallowed silently.
+  try {
+    const { runStopGate } = await import("./claire-agent/stop-gate.js")
+    const stopGate = await runStopGate(
+      db,
+      {
+        eventId: claimed.id,
+        userId: user.id,
+        sessionId: session.id,
+        toE164: payload.participant,
+        text: payload.text.trim(),
+        ...(typeof p.messageHandle === "string" ? { inboundMessageHandle: p.messageHandle } : {}),
+      },
+      { log: (e, pl) => logger.info(`[stop-gate][onPaInbound] ${e}`, pl ?? {}) },
+    )
+    if (stopGate.handled) {
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: `stop_gate_${stopGate.action ?? "handled"}`,
+        },
+        { merge: true }
+      )
+      return 1
+    }
+  } catch (err) {
+    // runStopGate never throws by design; this guards the dynamic import only.
+    logger.warn("[stop-gate][onPaInbound] gate FAILED — falling through", {
+      eventId: claimed.id,
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
 
   // Direct broker path can receive the same candidate trigger token as
   // Sendblue. Treat it as control-plane input here; never let it fall into

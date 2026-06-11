@@ -180,6 +180,81 @@ export function captureToolCalls(newItems: unknown): ClaireToolCall[] {
  */
 const RUN_TIMEOUT_MS = 100_000
 
+// ── 2026-06-10 trust audit (fix 6) — LLM-failure circuit breaker + escalating fallback copy ──
+//
+// (a) PER-INSTANCE breaker: 3 agent-run failures within 60s open the circuit; subsequent turns
+//     fast-fail straight to the fallback copy WITHOUT invoking the LLM until the window passes.
+//     INSTANCE-LOCAL by design: the counter is module state, so each Cloud Run instance trips
+//     independently (no cross-instance coordination — a provider outage trips every instance
+//     within a few turns anyway, and an instance-local breaker can never poison a healthy one).
+// (b) PER-USER escalation: the hiccup stamp persists on the pa-users doc; when the user's
+//     PREVIOUS turn also hiccupped (within HICCUP_ESCALATION_WINDOW_MS) they get honest
+//     "give me a few minutes" copy instead of the identical retry-bait.
+const CLAIRE_FAILURE_WINDOW_MS = 60_000
+const CLAIRE_FAILURE_THRESHOLD = 3
+const HICCUP_ESCALATION_WINDOW_MS = 10 * 60 * 1000
+
+export const CLAIRE_HICCUP_COPY = "sorry, that one hiccupped on my end — mind sending that again?"
+export const CLAIRE_HICCUP_ESCALATED_COPY =
+  "i'm having trouble on my end right now — give me a few minutes and try again? i'll be here."
+
+let claireRunFailureTimestamps: number[] = []
+
+function pruneClaireFailures(nowMs: number): void {
+  claireRunFailureTimestamps = claireRunFailureTimestamps.filter(
+    (t) => nowMs - t <= CLAIRE_FAILURE_WINDOW_MS,
+  )
+}
+
+/** Record one agent-run failure (exported for tests). */
+export function noteClaireRunFailure(nowMs: number = Date.now()): void {
+  claireRunFailureTimestamps.push(nowMs)
+  pruneClaireFailures(nowMs)
+}
+
+/** True when the per-instance breaker is OPEN (3+ failures in the last 60s). */
+export function isClaireCircuitOpen(nowMs: number = Date.now()): boolean {
+  pruneClaireFailures(nowMs)
+  return claireRunFailureTimestamps.length >= CLAIRE_FAILURE_THRESHOLD
+}
+
+/** Test hook — reset the per-instance breaker between cases. */
+export function resetClaireRunFailures(): void {
+  claireRunFailureTimestamps = []
+}
+
+/**
+ * Resolve the fallback copy for a failed turn AND persist the per-user hiccup
+ * stamp. Reads pa-users.claireHiccup.lastAt (one read, FAILURE path only — the
+ * happy path never pays it); if the previous hiccup landed within the
+ * escalation window, return the escalated copy. Never throws — any read/write
+ * error degrades to the base copy.
+ */
+export async function resolveHiccupFallbackCopy(
+  db: import("firebase-admin/firestore").Firestore,
+  userId: string,
+  nowMs: number,
+  log: (event: string, payload?: Record<string, unknown>) => void,
+): Promise<string> {
+  let escalated = false
+  const nowIso = new Date(nowMs).toISOString()
+  try {
+    const ref = db.collection("pa-users").doc(userId)
+    const snap = await ref.get()
+    const hiccup = (snap.exists ? (snap.data()?.claireHiccup as Record<string, unknown> | undefined) : undefined) ?? {}
+    const lastMs = typeof hiccup.lastAt === "string" ? Date.parse(hiccup.lastAt) : NaN
+    escalated = Number.isFinite(lastMs) && nowMs - lastMs <= HICCUP_ESCALATION_WINDOW_MS
+    const count = typeof hiccup.count === "number" && Number.isFinite(hiccup.count) ? hiccup.count : 0
+    await ref.set(
+      { claireHiccup: { lastAt: nowIso, count: count + 1 }, updatedAt: nowIso },
+      { merge: true },
+    )
+  } catch (e) {
+    log("claire_hiccup_stamp_failed", { userId, err: e instanceof Error ? e.message : String(e) })
+  }
+  return escalated ? CLAIRE_HICCUP_ESCALATED_COPY : CLAIRE_HICCUP_COPY
+}
+
 export interface BuildClaireAgentOptions {
   mode: ClaireMode
   lang: ClaireLang
@@ -868,6 +943,10 @@ export async function runClaireTurn(
     parts.push(
       "then i'll get to work matching you and pitching you straight to the hiring managers we've got connections with 🙌",
     )
+    // SMS compliance disclosure (Adam 2026-06-10 "Stop to stop"): the FIRST-contact
+    // message carries the opt-out line. Only this cold opener — not every chat reply.
+    // The deterministic keyword gate lives in claire-agent/stop-gate.ts.
+    parts.push("reply STOP anytime to opt out.")
     const message = parts.join("\n\n")
     await deps.transport.sendText(message).catch((e) => log("offer_first.send_failed", { err: String(e) }))
     log("offer_first_kickoff_sent", {
@@ -994,6 +1073,13 @@ export async function runClaireTurn(
   // keeps the event loop alive after a fast turn (e.g. the anti-silence fallback re-entry, or a unit
   // test with an injected runAgent), needlessly delaying process exit.
   let runTimeout: ReturnType<typeof setTimeout> | undefined
+  // 2026-06-10 trust audit (fix 6a) — circuit OPEN (3 run failures in the last 60s on THIS
+  // instance) → fast-fail to the fallback copy immediately, no LLM call. Keeps a provider
+  // outage from burning 100s timeouts turn after turn while the candidate waits in silence.
+  if (isClaireCircuitOpen()) {
+    log("claire_circuit_fast_fail", { userId: input.userId })
+    bubbles = [await resolveHiccupFallbackCopy(deps.db, input.userId, Date.now(), log)]
+  } else
   try {
     const res = (await Promise.race([
       // maxTurns — cost guard against the unbounded agent loop (see
@@ -1045,7 +1131,11 @@ export async function runClaireTurn(
       userId: input.userId,
       err: e instanceof Error ? e.message : String(e),
     })
-    bubbles = ["sorry, that one hiccupped on my end — mind sending that again?"]
+    // 2026-06-10 trust audit (fix 6) — feed the per-instance breaker (guardrail trips above
+    // RETURN before this, so only real run/LLM failures count) + escalate the copy when the
+    // user's previous turn also hiccupped (no identical retry-bait twice in a row).
+    noteClaireRunFailure()
+    bubbles = [await resolveHiccupFallbackCopy(deps.db, input.userId, Date.now(), log)]
   }
 
   // DE-BLACKBOX FLUSH: the SDK's BatchTraceProcessor flushes on an unref'd 5s timer; a short CF
@@ -1267,9 +1357,27 @@ export async function runClaireTurn(
       // In that case send ONE plain deterministic bubble so the candidate ALWAYS hears back. Still inside
       // the loop-guard (this whole block runs at most once); fail-open on send error.
       if (!fallbackDelivered) {
-        const net = "hey! i'm here 👋 — what are you looking for? i can pull some roles or just chat through your search."
-        await ctx.transport.sendText(net).catch(() => {})
-        log("claire.anti_silence_fallback.hard_net_sent", { userId: input.userId })
+        // 2026-06-10 trust audit (fix 8, "prescreen owns the thread") — the generic cold opener
+        // must NEVER land mid-screen (live evidence: "what are you looking for?" fired between a
+        // prescreen opener and the Q1 answer, burying the screen). When the user has an OPEN
+        // prescreen work session (≤48h fresh), stay silent rather than derail it — the pending
+        // prescreen question is already on their screen. Check is fail-open (read error → send).
+        let openPrescreen = false
+        try {
+          const { userHasOpenPrescreen } = await import("@pa/job-rec")
+          openPrescreen = await userHasOpenPrescreen(deps.db, input.userId, Date.now(), (e, p) =>
+            log(e, p),
+          )
+        } catch {
+          openPrescreen = false
+        }
+        if (openPrescreen) {
+          log("claire.anti_silence_fallback.hard_net_suppressed_prescreen", { userId: input.userId })
+        } else {
+          const net = "hey! i'm here 👋 — what are you looking for? i can pull some roles or just chat through your search."
+          await ctx.transport.sendText(net).catch(() => {})
+          log("claire.anti_silence_fallback.hard_net_sent", { userId: input.userId })
+        }
       }
       // Surface BOTH the original (suppressed) turn's tool calls AND the fallback turn's — the
       // observability story is "what did Claire actually DO across this inbound" (the cast through

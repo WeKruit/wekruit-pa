@@ -166,6 +166,38 @@ export async function loadRecommendedJobStates(
   return out
 }
 
+/**
+ * 2026-06-10 trust audit (daily-cadence repeat guard) — live evidence: one user
+ * received the SAME jobId rec 3 days running. The V16 cascade only applies a
+ * SOFT previousRecommendationPenalty, so a strong job can keep out-ranking the
+ * penalty day after day. This pure helper turns the ledger into a HARD
+ * exclusion: any job whose `lastRecommendedAt` falls within the window (14d
+ * default) is dropped from the batch before composing.
+ */
+export const RECENT_RECOMMENDATION_EXCLUSION_MS = 14 * 24 * 60 * 60 * 1000
+
+export function excludeRecentlyRecommendedJobs<T extends { id: string }>(
+  jobs: T[],
+  states: Map<string, UserJobRecommendationState>,
+  nowMs: number,
+  windowMs: number = RECENT_RECOMMENDATION_EXCLUSION_MS,
+): { kept: T[]; excluded: T[] } {
+  const kept: T[] = []
+  const excluded: T[] = []
+  for (const job of jobs) {
+    const state = states.get(job.id)
+    const lastMs = state?.lastRecommendedAt ? Date.parse(state.lastRecommendedAt) : NaN
+    // Exclude when recommended within the window. A future-stamped row (clock
+    // skew vs the end-of-day batch clock) means "just recommended" → exclude too.
+    if (Number.isFinite(lastMs) && nowMs - lastMs <= windowMs) {
+      excluded.push(job)
+    } else {
+      kept.push(job)
+    }
+  }
+  return { kept, excluded }
+}
+
 export async function recordRecommendedJobs(
   db: Firestore,
   args: RecordRecommendedJobsArgs,

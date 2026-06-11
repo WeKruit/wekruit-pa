@@ -60,6 +60,21 @@ export function isCanaryUser(userId: string | null | undefined): boolean {
  * `isRampedToAll()` / `PA_ONBOARDING_RAMP_ALL`. To ramp the retention handoff, Adam adds a separate
  * env switch here (or widens CANARY_UIDS) — never swept live by the onboarding ramp.
  */
+/**
+ * DEDICATED gate for the STALLED-SCREEN 24h NUDGE (2026-06-10 trust audit, fix 10).
+ *
+ * NEW outbound behavior (a proactive message to a mid-screen candidate), so it must ship
+ * dev-cohort-only first. `isCanaryUser` cannot gate it: prod sets PA_ONBOARDING_RAMP_ALL=1,
+ * which makes `isCanaryUser` true for EVERYONE — a fresh proactive sender would mass-send on
+ * first deploy. Same reasoning + pattern as isPrescreenRetentionHandoffCanary below: keys on
+ * the static CANARY_UIDS dev cohort and DELIBERATELY ignores the onboarding ramp. To ramp,
+ * Adam sets PA_PRESCREEN_NUDGE_RAMP_ALL=1 (its own kill switch) or widens CANARY_UIDS.
+ */
+export function isPrescreenNudgeCanary(userId: string | null | undefined): boolean {
+  if (process.env.PA_PRESCREEN_NUDGE_RAMP_ALL === "1") return true
+  return typeof userId === "string" && CANARY_UIDS.has(userId)
+}
+
 export function isPrescreenRetentionHandoffCanary(userId: string | null | undefined): boolean {
   // RAMPED (Adam 2026-06-05 explicit "yes" — real affected users, e.g. Sai +18578918525, must get
   // the fix, not just dev phones). Uses a DEDICATED switch independent of the onboarding

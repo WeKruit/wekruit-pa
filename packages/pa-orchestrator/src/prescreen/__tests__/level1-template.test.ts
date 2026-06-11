@@ -36,14 +36,18 @@ describe("composeLevel1Reveal", () => {
     assert.match(text, /Senior Frontend Engineer/)
     assert.match(text, /Employer: Acme Robotics/)
     assert.match(text, /Salary range: \$100k-\$160k/)
-    assert.match(text, /within 2-3 business days/)
+    // 2026-06-10 trust audit (fix 9): default footer makes NO time promise.
+    assert.match(text, /I'll text you the moment it moves/)
+    assert.doesNotMatch(text, /business days/)
   })
 
   it("falls back gracefully when optional fields missing (en)", () => {
     const text = composeLevel1Reveal({ jobTitle: "SDE" }, "en")
     assert.match(text, /Congrats/)
     assert.match(text, /SDE/)
-    assert.match(text, /within 2-3 business days/)
+    // 2026-06-10 trust audit (fix 9): default footer makes NO time promise.
+    assert.match(text, /I'll text you the moment it moves/)
+    assert.doesNotMatch(text, /business days/)
     assert.doesNotMatch(text, /Employer:/)
     assert.doesNotMatch(text, /Salary range:/)
     assert.doesNotMatch(text, /Job details:/)
