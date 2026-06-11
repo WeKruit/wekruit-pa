@@ -34,6 +34,13 @@ export type AuditEventType =
   // avoid creating polluted pa-users rows. Email Apple ID support deferred
   // (GH #142).
   | "non_e164_sender_rejected"
+  // Email-sender resolution (SEV 2026-06-11) — Apple-ID email senders are no
+  // longer silently rejected. Resolved senders are rewritten onto their
+  // canonical pa-users phone; the others get a distinct audit + ops review
+  // item so a human sees them.
+  | "email_sender_resolved"
+  | "email_sender_resolved_no_phone"
+  | "email_sender_unresolved"
 
 export type AuditChannel =
   | "imessage_sendblue"

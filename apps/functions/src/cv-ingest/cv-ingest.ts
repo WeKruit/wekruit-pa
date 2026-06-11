@@ -1312,6 +1312,44 @@ export async function runUserTagsMerge(args: {
  * try/caught (and `runUserTagsMerge` itself swallows all errors), so it can be
  * fired-and-forgotten from a conversation turn without ever throwing upward.
  */
+/**
+ * Structural "is this actually a résumé?" gate for the CHAT-pasted-text enrich seam (BUG B fix,
+ * live 2026-06-11 RJcsA285Drcml1kTPZjI): the agent fed a candidate's INQUIRY about a job
+ * ("Invoko.ai Product Manager in San Francisco I got sent an email to interview…") into `cv_parse`,
+ * the parser obligingly fabricated a one-entry workHistory (title=Product Manager,
+ * company=invoko.ai, no dates, no skills, no education, yoe 0) and `reEnrichUserTagsFromParsedResume`
+ * ran the FULL CV merge — writing recentCompany/recentRoleTitle/workHistorySummary/yoeRange/
+ * careerStage as if the candidate WORKED at the company they were applying to (and stamping
+ * `lastUpdatedFromCv` although no résumé existed). Claire then told the user "i'm seeing you as a
+ * product manager at invoko.ai" and matching ran on fabricated employment.
+ *
+ * The guard is DETERMINISTIC and STRUCTURAL over the parser's typed output — it never inspects the
+ * raw text and classifies nothing text→enum (repo no-regex rule intact). A genuine résumé
+ * essentially always carries at least one of: a real skills list, an education entry, multiple work
+ * entries, or a dated/evidenced work entry. A conversational message mis-fed to the parser yields
+ * none of these (a single undated, bullet-less role with no skills/education — exactly the Avi
+ * shape). `description` is deliberately NOT counted as evidence: the parser stuffs the pasted chat
+ * prose into it, so it is the one field a fabricated entry reliably has.
+ */
+export function parsedResumeLooksLikeRealResume(
+  parsedV2: import("@pa/pa-resume-parser").ParsedResumeData,
+): boolean {
+  const wh = parsedV2.workHistory ?? []
+  const hasDatedOrEvidencedRole = wh.some(
+    (w) =>
+      Boolean((w.startDate ?? "").trim()) ||
+      Boolean((w.endDate ?? "").trim()) ||
+      (w.bullets?.length ?? 0) > 0 ||
+      (w.achievements?.length ?? 0) > 0,
+  )
+  return (
+    (parsedV2.skills?.length ?? 0) >= 3 ||
+    (parsedV2.education?.length ?? 0) > 0 ||
+    wh.length >= 2 ||
+    hasDatedOrEvidencedRole
+  )
+}
+
 export async function reEnrichUserTagsFromParsedResume(args: {
   db: Firestore
   userId: string
@@ -1339,6 +1377,20 @@ export async function reEnrichUserTagsFromParsedResume(args: {
   const mergeUserTagsFn =
     args.mergeUserTagsFn ?? ((input: UserTagsInput) => mergeUserTags(input) as Record<string, unknown>)
   const writeUserTags = args.writeUserTags ?? defaultWriteUserTags
+  // BUG B guard (2026-06-11): refuse to run the CV merge over a parse that does not structurally
+  // look like a résumé — a chat message mis-fed to cv_parse must NEVER write employment-identity
+  // fields (recentCompany / recentRoleTitle / workHistorySummary / yoeRange / careerStage) or stamp
+  // cv provenance. Skip loudly; the conversational turn proceeds unaffected (fire-and-forget seam).
+  if (!parsedResumeLooksLikeRealResume(args.parsedV2)) {
+    log("pa.cv_reenrich.skipped_not_resume_shaped", {
+      userId: args.userId,
+      workHistoryCount: args.parsedV2.workHistory?.length ?? 0,
+      skillsCount: args.parsedV2.skills?.length ?? 0,
+      educationCount: args.parsedV2.education?.length ?? 0,
+      totalYearsExperience: args.parsedV2.totalYearsExperience ?? null,
+    })
+    return
+  }
   try {
     const parsed = adaptV2ToStructuredCv(args.parsedV2)
     const sharedTopSkills = computeTopSkills({

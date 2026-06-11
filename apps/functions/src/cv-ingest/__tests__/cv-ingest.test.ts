@@ -8,6 +8,7 @@ import {
   computeTopSkills,
   runUserTagsMerge,
   reEnrichUserTagsFromParsedResume,
+  parsedResumeLooksLikeRealResume,
   type IngestCvDeps,
   type StructuredCv,
 } from "../cv-ingest.js"
@@ -1984,5 +1985,140 @@ describe("reEnrichUserTagsFromParsedResume — #3 conversational re-enrich hook 
         },
       })
     })
+  })
+
+  // ── BUG B (2026-06-11, live RJcsA285Drcml1kTPZjI): job-inquiry text mis-fed to cv_parse ──────────
+  // The agent passed a candidate's QUESTION about a job ("Invoko.ai Product Manager in San Francisco
+  // I got sent an email to interview…") into cv_parse as resumeText. The parser fabricated a
+  // one-entry workHistory (no dates, no bullets, no skills, no education, yoe 0) and this seam ran
+  // the FULL CV merge — writing recentCompany=invoko.ai / workHistorySummary / careerStage=mid_level
+  // / yoeRange=[0,0] as the user's EMPLOYMENT, and stamping lastUpdatedFromCv with no résumé on file.
+  // The structural guard (parsedResumeLooksLikeRealResume) must refuse the merge for that shape.
+  it("BUG B guard: an Avi-shaped job-inquiry parse (1 undated role, no skills/education) NEVER reaches the merge — no write, no embedding, skip log", async () => {
+    const { db } = makeFakeDb({ users: { u_avi: { tags: {} } } })
+    const events: string[] = []
+    let mergeCalled = false
+    let embeddingCalled = false
+    let writeCalled = false
+    await reEnrichUserTagsFromParsedResume({
+      db: db as Parameters<typeof reEnrichUserTagsFromParsedResume>[0]["db"],
+      userId: "u_avi",
+      // The fabricated shape observed live for RJcsA285Drcml1kTPZjI (parser output of his inquiry).
+      parsedV2: happyParsedV2({
+        fullName: "Avi Sardana",
+        email: null,
+        location: "San Francisco",
+        skills: [],
+        workHistory: [
+          {
+            title: "Product Manager",
+            company: "Invoko.ai",
+            location: "San Francisco",
+            startDate: null,
+            endDate: null,
+            currentRole: null,
+            // The parser stuffs the chat prose into description — deliberately NOT evidence.
+            description:
+              "I got sent an email to interview with Claire, created my profile and uploaded resume / info",
+            bullets: [],
+            achievements: [],
+          },
+        ],
+        education: [],
+        totalYearsExperience: 0,
+        parseConfidence: 0.6,
+        proposedTags: ["product_management_interviewing", "san_francisco_based"],
+      }),
+      nowIso: () => "2026-06-11T21:42:13.000Z",
+      log: (e) => events.push(e),
+      computeEmbedding: async () => {
+        embeddingCalled = true
+        return null
+      },
+      mergeUserTagsFn: () => ({ recentCompany: "invoko.ai" }),
+      mergeAndDetermine: async () => {
+        mergeCalled = true
+        return null
+      },
+      deriveEmployerSignals: async () => ({}),
+      writeUserTags: async () => {
+        writeCalled = true
+      },
+    })
+    assert.equal(writeCalled, false, "employment-identity fields must NOT be written from a job inquiry")
+    assert.equal(mergeCalled, false, "the merge-and-determine LLM must not even run")
+    assert.equal(embeddingCalled, false, "no embedding compute for a non-résumé")
+    assert.ok(
+      events.includes("pa.cv_reenrich.skipped_not_resume_shaped"),
+      `expected the structural-guard skip log; got ${JSON.stringify(events)}`,
+    )
+  })
+
+  it("BUG B guard control: a REAL résumé paste (dated role + skills) still merges (no false positive)", async () => {
+    const { db } = makeFakeDb({ users: { u_real: { tags: {} } } })
+    let writeCalled = false
+    await reEnrichUserTagsFromParsedResume({
+      db: db as Parameters<typeof reEnrichUserTagsFromParsedResume>[0]["db"],
+      userId: "u_real",
+      parsedV2: happyParsedV2(), // Tesla senior SWE, dated, bullets, 3 skills, yoe 6
+      nowIso: () => "2026-06-11T21:42:13.000Z",
+      log: () => {},
+      computeEmbedding: async () => null,
+      mergeUserTagsFn: () => ({ skills: [{ name: "typescript" }] }),
+      mergeAndDetermine: async () => null,
+      deriveEmployerSignals: async () => ({}),
+      writeUserTags: async () => {
+        writeCalled = true
+      },
+    })
+    assert.equal(writeCalled, true, "a genuine résumé parse must still flow through the merge")
+  })
+
+  it("BUG B guard edges: undated-but-bulleted single role passes; education-only passes; bare title@company list fails", () => {
+    // bulleted single role (real one-page résumés sometimes omit dates) → résumé-shaped
+    assert.equal(
+      parsedResumeLooksLikeRealResume(
+        happyParsedV2({
+          skills: [],
+          education: [],
+          totalYearsExperience: null,
+          workHistory: [
+            {
+              title: "SWE",
+              company: "Acme",
+              startDate: null,
+              endDate: null,
+              bullets: ["Shipped the checkout rewrite"],
+              achievements: [],
+            },
+          ],
+        }),
+      ),
+      true,
+    )
+    // education-only (new-grad résumé) → résumé-shaped
+    assert.equal(
+      parsedResumeLooksLikeRealResume(
+        happyParsedV2({
+          skills: [],
+          workHistory: [],
+          education: [{ school: "UCLA", degree: "BS Computer Science" }],
+        }),
+      ),
+      true,
+    )
+    // one bare title@company with nothing else (the inquiry shape) → NOT résumé-shaped
+    assert.equal(
+      parsedResumeLooksLikeRealResume(
+        happyParsedV2({
+          skills: [],
+          education: [],
+          workHistory: [
+            { title: "Product Manager", company: "Invoko.ai", bullets: [], achievements: [] },
+          ],
+        }),
+      ),
+      false,
+    )
   })
 })

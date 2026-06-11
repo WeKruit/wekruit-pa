@@ -17,7 +17,12 @@ export const DEV_BYPASS_PHONE = "+14243201960"
 const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
 type CandidatePhoneMatch = { id: string; data: Record<string, unknown> }
 
-function parsePrescreenCandidateId(text: string): string | null {
+/**
+ * Extract the userId from a `WeKruit_<jobId>_<userId>_Job` prescreen token.
+ * Exported (2026-06-11) so email-sender resolution reuses the EXACT parser
+ * this resolver already trusts for uid extraction — never a re-written regex.
+ */
+export function parsePrescreenCandidateId(text: string): string | null {
   const match = text.match(PRESCREEN_TOKEN_RE)
   const candidateId = match?.[2]?.trim()
   return candidateId || null

@@ -60,6 +60,43 @@ function hasRealUserText(t: string): boolean {
   return !MEDIA_PLACEHOLDER_BODIES.has(s.toLowerCase())
 }
 
+// ── IMAGE-ATTACHMENT DETECTION (BUG A fix, live 2026-06-11 RJcsA285Drcml1kTPZjI) ─────────────────────
+// A candidate sent a SCREENSHOT (IMG_7001.PNG) and the résumé-drop path claimed "reading through your
+// résumé now 📄", set enrichmentInFlight:true, then ingestCv's parsePdf failed on the PNG bytes →
+// `{ok:false, reason:"pdf_parse_failed"}` was only LOGGED → the user got SILENCE forever and the
+// in-flight marker stuck true (the resume_parse_completed re-entry — the only CLEAR site — never fires
+// on a failed parse). The Sendblue media URL carries the original FILENAME, so the extension is an
+// EXISTING structural signal (mime/filename branch, NOT content sniffing / NOT text→enum regex): branch
+// BEFORE making any résumé claim. ingestCv has no image/OCR path — parsing an image can never succeed.
+const IMAGE_ATTACHMENT_EXTENSIONS = [
+  ".png", ".jpg", ".jpeg", ".gif", ".heic", ".heif", ".webp", ".bmp", ".tiff", ".tif",
+] as const
+export function isImageAttachmentUrl(url: string): boolean {
+  const u = (url || "").trim()
+  if (!u) return false
+  let pathname: string
+  try {
+    pathname = new URL(u).pathname.toLowerCase()
+  } catch {
+    return false
+  }
+  return IMAGE_ATTACHMENT_EXTENSIONS.some((ext) => pathname.endsWith(ext))
+}
+
+/** Honest reply for an image-only drop — never pretend to read a résumé out of a screenshot. */
+export const IMAGE_ATTACHMENT_REPLY =
+  "heads up — that came through as an image, and i can't read those yet 😅 if it's your résumé, send the actual file (PDF) or a link to it. if you're showing me something on your screen, just tell me what it says and i'll help"
+
+/** Real reply when an attempted résumé ingest fails (instead of the old silent log-and-drop). */
+export const RESUME_INGEST_FAILURE_REPLY =
+  "hmm — that didn't read as a résumé on my side 😅 can you send the file itself (PDF) or a link to it? if you meant to share something else, just tell me what's up"
+
+// ingestCv reasons that ALREADY message the candidate themselves (enqueueLimitRejection's Claire-voice
+// rejection iMessage) — sending our fallback on top would double-text. Every OTHER failure reason
+// (download_failed / pdf_parse_failed / llm_parse_failed / firestore_write_failed / a throw) was
+// previously fully silent and gets the fallback reply.
+const SELF_MESSAGING_INGEST_REJECT_REASONS = new Set(["not_invited", "quota_exhausted", "pdf_too_large"])
+
 export interface MaybeThinClaireDeps {
   log?: (event: string, payload?: Record<string, unknown>) => void
   /**
@@ -211,6 +248,66 @@ export async function maybeRunThinClaire(
   const inboundMessageHandle =
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
 
+  // ── RÉSUMÉ-INGEST FAILURE HANDLER (BUG A fix, 2026-06-11) ───────────────────────────────────────────
+  // Shared by BOTH fire-and-forget ingest sites (merge-accept + immediate-ingest). A failed/empty parse
+  // must (1) ALWAYS clear the enrichmentInFlight marker — the resume_parse_completed re-entry (the normal
+  // CLEAR site) never fires on failure, so the marker otherwise sticks true and later turns keep saying
+  // "still pulling your info, one sec 🔎" — and (2) send the candidate a REAL reply instead of silence
+  // (unless ingestCv already messaged them via its own limit-rejection runtime event). try/finally
+  // semantics: the marker clear runs FIRST and unconditionally; the reply is best-effort after it.
+  const handleResumeIngestFailure = async (reason: string): Promise<void> => {
+    await clearEnrichmentInFlight(db, userId, new Date().toISOString()).catch(() => {})
+    if (SELF_MESSAGING_INGEST_REJECT_REASONS.has(reason) || !toE164) {
+      log("thin_claire.resume_ingest.failure_no_fallback", { eventId, userId, reason })
+      return
+    }
+    try {
+      const failTransport = createSendblueTransport({
+        db,
+        toE164: String(toE164),
+        inboundMessageHandle,
+        userId,
+        sessionId,
+        inboundEventId: eventId,
+        log,
+        ...(deps.dryRun ? { dryRun: true } : {}),
+      })
+      await failTransport.sendText(RESUME_INGEST_FAILURE_REPLY, { seq: 0 })
+      log("thin_claire.resume_ingest.fallback_sent", { eventId, userId, reason })
+    } catch (err) {
+      log("thin_claire.resume_ingest.fallback_send_failed", {
+        eventId,
+        userId,
+        reason,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+  /** Attach the failure handler to an ingest promise: {ok:false} AND throws both route through it. */
+  const withIngestFailureHandling = (chain: Promise<unknown>, site: string): Promise<unknown> =>
+    chain.then(
+      async (r) => {
+        log(`thin_claire.${site}.done`, { eventId, userId, result: r })
+        const ok = Boolean(r && typeof r === "object" && (r as { ok?: unknown }).ok === true)
+        if (!ok) {
+          const reason = String(
+            (r && typeof r === "object" ? (r as { reason?: unknown }).reason : undefined) ?? "unknown",
+          )
+          await handleResumeIngestFailure(reason)
+        }
+        return r
+      },
+      async (e) => {
+        log(`thin_claire.${site}.failed`, {
+          eventId,
+          userId,
+          err: e instanceof Error ? e.message : String(e),
+        })
+        await handleResumeIngestFailure("ingest_threw")
+        return undefined
+      },
+    )
+
   // ── MERGE-CONFIRM ACCEPT/DECLINE (Adam-LOCKED 2026-06-05) ──────────────────────────────────────────
   // A NEW/additional résumé on an EXISTING profile is a MERGE, not an overwrite — and Adam wants us to
   // ASK first. When a prior résumé drop staged `pa-cv-merge-pending/{userId}=awaiting_confirm` and sent
@@ -263,23 +360,18 @@ export async function maybeRunThinClaire(
             log,
             ...(deps.dryRun ? { dryRun: true } : {}),
           })
+          // BUG A fix (2026-06-11): route the settle through the shared failure handler so a failed
+          // merge-ingest clears enrichmentInFlight + replies, instead of the old log-only silence.
           void withProgressHeartbeat(
-            Promise.resolve(
-              runIngest(
-                { userId, mediaUrl: pending.mediaUrl, sessionId: pending.sessionId ?? sessionId },
-                { skipLimitEnforcement: true },
+            withIngestFailureHandling(
+              Promise.resolve(
+                runIngest(
+                  { userId, mediaUrl: pending.mediaUrl, sessionId: pending.sessionId ?? sessionId },
+                  { skipLimitEnforcement: true },
+                ),
               ),
-            )
-              .then((r) =>
-                log("thin_claire.merge_confirm.ingest_done", { eventId, userId, result: r }),
-              )
-              .catch((e) =>
-                log("thin_claire.merge_confirm.ingest_failed", {
-                  eventId,
-                  userId,
-                  err: e instanceof Error ? e.message : String(e),
-                }),
-              ),
+              "merge_confirm.ingest",
+            ),
             {
               send: (t) => hbTransport.sendStatus(t),
               message: PROGRESS_HEARTBEAT_COPY.resume,
@@ -431,6 +523,44 @@ export async function maybeRunThinClaire(
   // Fire-and-forget — a parse failure must never block the conversational turn.
   const inboundMediaUrl = typeof rawMeta.mediaUrl === "string" ? rawMeta.mediaUrl.trim() : ""
 
+  // ── IMAGE ATTACHMENT — never enters the résumé pipeline (BUG A fix, 2026-06-11) ────────────────────
+  // The filename extension on the Sendblue media URL is an existing structural signal: a .PNG/.JPG/etc
+  // can NEVER parse (ingestCv is parsePdf-only), so don't claim "reading your résumé", don't set the
+  // in-flight marker, don't fire ingestCv. Image-ONLY drop → deterministic honest reply + stop (mirrors
+  // the resume-ack shape). Image WITH a real caption → skip ingest, let the agent answer the text.
+  const mediaIsImageAttachment = Boolean(inboundMediaUrl) && isImageAttachmentUrl(inboundMediaUrl)
+  if (mediaIsImageAttachment) {
+    log("thin_claire.image_attachment.detected", { eventId, userId, mediaUrl: inboundMediaUrl })
+  }
+  if (mediaIsImageAttachment && !hasRealUserText(text) && toE164 && isCanaryUser(userId)) {
+    try {
+      const imgTransport = createSendblueTransport({
+        db,
+        toE164: String(toE164),
+        inboundMessageHandle,
+        userId,
+        sessionId,
+        inboundEventId: eventId,
+        log,
+        ...(deps.dryRun ? { dryRun: true } : {}),
+      })
+      await imgTransport.sendText(IMAGE_ATTACHMENT_REPLY, { seq: 0 })
+      await db
+        .collection(PA_COLLECTIONS.inboundEvents)
+        .doc(eventId)
+        .set({ status: "completed", handledBy: "thin_claire_image_attachment_ack" }, { merge: true })
+      log("thin_claire.image_attachment.ack_sent", { eventId, userId })
+      return true
+    } catch (err) {
+      // Fail-open: an ack error falls through to the agent path (still never the résumé pipeline).
+      log("thin_claire.image_attachment.ack_error", {
+        eventId,
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   // ── ADDITIONAL-RÉSUMÉ MERGE CONFIRM GATE (Adam-LOCKED 2026-06-05) ──────────────────────────────────
   // A NEW/additional résumé on an EXISTING profile must MERGE, not overwrite — and we ASK first. If the
   // candidate ALREADY has a prior (non-archived) parsed résumé (e.g. a Coresignal/LinkedIn mirror row),
@@ -443,7 +573,7 @@ export async function maybeRunThinClaire(
   // ONLY for the additional case. Trigger on MEDIA presence + no REAL text (so a "[attachment]" placeholder
   // body still fires it — the live 2026-06-05 bug was `!text.trim()` treating "[attachment]" as text).
   // Fail-open: a read error degrades to the immediate-ingest path.
-  if (inboundMediaUrl && !hasRealUserText(text) && toE164 && isCanaryUser(userId)) {
+  if (inboundMediaUrl && !mediaIsImageAttachment && !hasRealUserText(text) && toE164 && isCanaryUser(userId)) {
     try {
       if (await hasPriorParsedResume(db, userId)) {
         const nowIso = new Date().toISOString()
@@ -477,7 +607,7 @@ export async function maybeRunThinClaire(
     }
   }
 
-  if (inboundMediaUrl) {
+  if (inboundMediaUrl && !mediaIsImageAttachment) {
     // WS-1(b) ENRICHMENT-AWARENESS (Adam 2026-06-03): the résumé parse runs async (the
     // fire-and-forget ingestCv below) and only completes on the resume_parse_completed re-entry.
     // SET the durable in-flight marker NOW (best-effort, never blocks) so a SECOND inbound that
@@ -507,20 +637,18 @@ export async function maybeRunThinClaire(
         const { ingestCv } = await import("../cv-ingest/cv-ingest.js")
         return ingestCv(input, opts)
       })
-    const ingestChain = Promise.resolve(
-      runImmediateIngest(
-        { userId, mediaUrl: inboundMediaUrl, sessionId },
-        { skipLimitEnforcement: true },
+    // BUG A fix (2026-06-11): route the settle through the shared failure handler — a failed/empty
+    // parse must clear enrichmentInFlight + send a real reply instead of the old log-only silence
+    // (live: a screenshot ingested as a résumé died on parsePdf → silence + a forever-stuck marker).
+    const ingestChain = withIngestFailureHandling(
+      Promise.resolve(
+        runImmediateIngest(
+          { userId, mediaUrl: inboundMediaUrl, sessionId },
+          { skipLimitEnforcement: true },
+        ),
       ),
+      "resume_ingest",
     )
-      .then((r) => log("thin_claire.resume_ingest.done", { eventId, userId, result: r }))
-      .catch((e) =>
-        log("thin_claire.resume_ingest.failed", {
-          eventId,
-          userId,
-          err: e instanceof Error ? e.message : String(e),
-        })
-      )
     // PROGRESS HEARTBEAT (Adam 2026-06-06): same once-only nudge as the merge path. The résumé parse
     // is the proven-slow stage; if it overruns 30s send ONE "still reading…" before the pitch re-entry.
     // clearTimeout-on-settle keeps it strictly ahead of the result. Canary-only + needs a thread to reply to.
@@ -550,8 +678,9 @@ export async function maybeRunThinClaire(
   // connect LinkedIn" from the mid-parse empty context — live 2026-06-04). The refined pitch fires on
   // the resume_parse_completed re-entry (composePitchTurn). Canary-only. The ingestCv above already ran.
   // Trigger on MEDIA + no-real-text (a "[attachment]" placeholder body must still ack, not fall through
-  // to the deterministic "still pulling" mode-selector ack — the live 2026-06-05 bug).
-  if (inboundMediaUrl && !hasRealUserText(text) && toE164 && isCanaryUser(userId)) {
+  // to the deterministic "still pulling" mode-selector ack — the live 2026-06-05 bug). Image attachments
+  // never reach here (the image branch above replied honestly instead of claiming a résumé read).
+  if (inboundMediaUrl && !mediaIsImageAttachment && !hasRealUserText(text) && toE164 && isCanaryUser(userId)) {
     try {
       const ackTransport = createSendblueTransport({
         db,

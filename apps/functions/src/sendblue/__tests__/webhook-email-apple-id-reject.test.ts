@@ -1,21 +1,20 @@
 /**
- * Identity hardening 2026-05-20 — webhook rejects non-E.164 senders.
+ * Identity hardening 2026-05-20 — webhook gates non-E.164 senders.
  *
- * Sendblue accepts inbound iMessage from email-based Apple IDs (per
- * https://docs.sendblue.com/faq/) but the REST API has no documented
- * outbound path for email senders, and our identity layer assumes
- * `pa-users.phoneE164` is always a valid E.164 string. Without the
- * gate, an email-Apple-ID sender would create a polluted pa-users row
- * with `phoneE164: "user@icloud.com"`.
+ * REWORKED 2026-06-11 (email-sender SEV): email-Apple-ID senders are no
+ * longer silently rejected — they go through `resolveEmailSender` first.
+ * An UNRESOLVABLE email sender is still rejected with a 200, but with the
+ * distinct `email_sender_unresolved` audit (plus an ops review item) so a
+ * human sees it. The resolved/rewrite paths are covered by
+ * `webhook-email-sender-resolution.test.ts`; this file keeps the gate's
+ * boundary behavior:
  *
- * Email-Apple-ID support is deferred to https://github.com/WeKruit/wekruit-pa/issues/142.
- *
- * Verifies:
- *  1. `from_number: "user@icloud.com"` → 200 OK ignored, audit recorded,
+ *  1. `from_number: "user@icloud.com"` with no resolvable identity →
+ *     200 OK ignored (`email_sender_unresolved`), audit recorded,
  *     no pa-inbound-events row created.
- *  2. `from_number: "+15551234567"` (E.164) → 200 OK accepted, pa-inbound-events
- *     row created.
- *  3. `from_number: "1234"` (garbage / not E.164) → 200 OK ignored, audit recorded.
+ *  2. `from_number: "+15551234567"` (E.164) → 200 OK accepted, gate not fired.
+ *  3. `from_number: "1234"` (garbage / not E.164, not email) → 200 OK ignored,
+ *     `non_e164_sender_rejected` audit recorded.
  */
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
@@ -34,6 +33,7 @@ function makeFakeDb() {
   const rateLimit = new Map<string, DocData>()
   const rawWebhook: DocData[] = []
   const tapbacks: DocData[] = []
+  const conflicts = new Map<string, DocData>()
 
   function genericDocRef(store: Map<string, DocData>, id: string) {
     return {
@@ -81,6 +81,9 @@ function makeFakeDb() {
     "pa-outbound": { doc(id: string) { return genericDocRef(new Map(), id) }, where() { return { limit() { return this }, async get() { return { docs: [], empty: true, size: 0 } } } } },
     "pa-users": { doc(id: string) { return genericDocRef(new Map(), id) }, where() { return { limit() { return this }, async get() { return { docs: [], empty: true, size: 0 } } } } },
     "pa-candidate-handles": { doc(id: string) { return genericDocRef(new Map(), id) } },
+    // Email-sender resolution 2026-06-11 — unresolved senders write an ops
+    // review item here (idempotent, fail-soft).
+    "pa-candidate-identity-conflicts": { doc(id: string) { return genericDocRef(conflicts, id) } },
   }
   const db = {
     collection(name: string) {
@@ -93,7 +96,7 @@ function makeFakeDb() {
     },
   } as unknown as Parameters<typeof handleSendblueWebhook>[2]["db"]
 
-  return { db, inbound, audit }
+  return { db, inbound, audit, conflicts }
 }
 
 function sign(body: string, secret = SECRET): string {
@@ -129,9 +132,11 @@ describe("Identity hardening — Sendblue webhook rejects non-E.164 sender", () 
   beforeEach(() => { _clearFeatureFlagCache() })
   afterEach(() => { _clearFeatureFlagCache() })
 
-  it("rejects email-based Apple ID sender (from_number contains '@')", async () => {
-    const { db, inbound, audit } = makeFakeDb()
+  it("rejects UNRESOLVABLE email-based Apple ID sender with a visible audit + review item", async () => {
+    const { db, inbound, audit, conflicts } = makeFakeDb()
     const body = JSON.stringify({
+      // Token "abc123" is too short for the opener parsers and nothing in the
+      // fake db matches the email — every resolution arm misses.
       content: "Hello, WeKruit! abc123",
       from_number: "alice@icloud.com",
       to_number: "+14243201960",
@@ -146,12 +151,15 @@ describe("Identity hardening — Sendblue webhook rejects non-E.164 sender", () 
 
     assert.equal(res.statusCode, 200, "200 OK so Sendblue doesn't retry")
     const bodyOut = res.bodyOut as { ok: boolean; ignored?: string }
-    assert.equal(bodyOut.ignored, "non_e164_sender_rejected", "explicit ignore reason")
+    assert.equal(bodyOut.ignored, "email_sender_unresolved", "explicit ignore reason (no longer silent)")
     assert.equal(inbound.size, 0, "no pa-inbound-events row was created")
-    const rejected = audit.filter((a) => a.type === "non_e164_sender_rejected")
+    const rejected = audit.filter((a) => a.type === "email_sender_unresolved")
     assert.equal(rejected.length, 1, "audit row recorded once")
     assert.equal(rejected[0]!.fromNumber, "alice@icloud.com", "audit preserves raw sender for forensics")
-    assert.equal(rejected[0]!.reason, "email_apple_id", "audit reason classifies the format")
+    assert.equal(conflicts.size, 1, "ops review item written so a human sees the drop")
+    const item = [...conflicts.values()][0]!
+    assert.equal(item.kind, "email_sender_unresolved")
+    assert.equal(item.status, "open")
   })
 
   it("accepts E.164 sender (proves the gate isn't over-broad)", async () => {
