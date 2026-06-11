@@ -17,6 +17,7 @@
  */
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import { layoffSignupLoginPath } from "../lib/browser-identity.js"
 import "../styles/wekruit-tokens.css"
 
@@ -56,31 +57,32 @@ function isPreviewResponse(value: unknown): value is PreviewResponse {
 }
 
 function useLayoffPreview(): PreviewState {
-  const [state, setState] = useState<PreviewState>({ data: null, loading: true, error: null })
+  // Preview table — cached 1h so in-session navigation back to the layoff
+  // landing doesn't re-hit the CF. TanStack's signal preserves the old
+  // abort-on-unmount behavior; retry:false keeps the single-attempt error UI.
+  const query = useQuery({
+    queryKey: ["layoff-preview"],
+    queryFn: async ({ signal }) => {
+      const resp = await fetch(`${LAYOFF_PREVIEW_URL}?limit=9`, { signal })
+      if (!resp.ok) throw new Error(`preview_http_${resp.status}`)
+      const json = await resp.json()
+      if (!isPreviewResponse(json)) throw new Error("preview_bad_shape")
+      return json
+    },
+    staleTime: 60 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+    retry: false,
+  })
 
-  useEffect(() => {
-    const ac = new AbortController()
-    async function load() {
-      try {
-        const resp = await fetch(`${LAYOFF_PREVIEW_URL}?limit=9`, { signal: ac.signal })
-        if (!resp.ok) throw new Error(`preview_http_${resp.status}`)
-        const json = await resp.json()
-        if (!isPreviewResponse(json)) throw new Error("preview_bad_shape")
-        setState({ data: json, loading: false, error: null })
-      } catch (err) {
-        if (ac.signal.aborted) return
-        setState({
-          data: null,
-          loading: false,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    }
-    void load()
-    return () => ac.abort()
-  }, [])
-
-  return state
+  return {
+    data: query.data ?? null,
+    loading: query.isPending,
+    error: query.isError
+      ? query.error instanceof Error
+        ? query.error.message
+        : String(query.error)
+      : null,
+  }
 }
 
 function formatAgo(min: number): string {

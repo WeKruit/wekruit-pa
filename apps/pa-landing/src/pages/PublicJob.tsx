@@ -198,17 +198,12 @@ export default function PublicJob() {
   const { jobId } = useParams<{ jobId: string }>()
   const navigate = useNavigate()
   const publicJobId = useMemo(() => (jobId ? canonicalPublicJobId(jobId) : ""), [jobId])
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState<string | null>(null)
-  const [job, setJob] = useState<PaJobDoc | null>(null)
-  const [resolvedCompanyName, setResolvedCompanyName] = useState<string | null>(null)
   const [smsClicked, setSmsClicked] = useState(false)
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [loginPromptOpen, setLoginPromptOpen] = useState(false)
   const [loginEmail, setLoginEmail] = useState("")
   const [loginStatus, setLoginStatus] = useState<LoginStatus>("idle")
   const [loginError, setLoginError] = useState<string | null>(null)
-  const [resumeGate, setResumeGate] = useState<ResumeGateState>({ status: "idle" })
 
   const requestedUserId = useMemo(() => (publicJobId ? getOrCreateRequestedUserId(publicJobId) : ""), [publicJobId])
   const nextPath = useMemo(() => (publicJobId ? `/j/${publicJobId}` : "/"), [publicJobId])
@@ -274,70 +269,75 @@ export default function PublicJob() {
     }
   }, [])
 
+  // Job doc — cached 30m/2h so revisits (and back/forward navigation) don't
+  // re-read pa-jobs/{jobId}. retry:false keeps the original single-attempt
+  // semantics ("Job not found" / visibility errors render immediately).
+  const jobQuery = useQuery({
+    queryKey: ["public-job", publicJobId],
+    queryFn: async () => {
+      const snap = await getDoc(doc(db(), "pa-jobs", publicJobId))
+      if (!snap.exists()) throw new Error("Job not found")
+      const data = snap.data() as PaJobDoc
+      // Render when the job is publicly visible OR it is a WeKruit collaboration
+      // role (a surfaced partner-inventory job — its candidate page must render
+      // even if the publicVisible flag hasn't been stamped yet, matching the
+      // firestore.rules public-read condition so a surfaced collab link never
+      // shows "not publicly visible"/404).
+      const isCollabReadable = data.wekruitCollaborationStatus === "collaborated"
+      if (!data.publicVisible && !isCollabReadable) {
+        throw new Error("This job is not publicly visible.")
+      }
+      return data
+    },
+    enabled: Boolean(publicJobId),
+    staleTime: 30 * 60 * 1000,
+    gcTime: 2 * 60 * 60 * 1000,
+    retry: false,
+  })
+  const job: PaJobDoc | null = jobQuery.data ?? null
+  const loading = Boolean(publicJobId) && jobQuery.isLoading
+  const err = !publicJobId
+    ? "Missing job id"
+    : jobQuery.isError
+      ? jobQuery.error instanceof Error
+        ? jobQuery.error.message
+        : String(jobQuery.error)
+      : null
+
+  // Existing fallback for older public jobs that were seeded before
+  // companyName/company denormalization. Public rules may deny this read;
+  // the page still renders from job-level fields in that case (errors map
+  // to the same null fallback the old catch produced). Cached 24h.
+  const needsCompanyNameFallback = Boolean(
+    job && !job.prescreenConfig?.company && !job.companyName && !job.company && job.companyId,
+  )
+  const companyFallbackQuery = useQuery({
+    queryKey: ["pa-company-fallback", job?.companyId],
+    queryFn: async () => {
+      const companySnap = await getDoc(doc(db(), "pa-companies", job!.companyId!))
+      if (!companySnap.exists()) return null
+      const cd = companySnap.data() as { name?: string }
+      return typeof cd.name === "string" ? cd.name : null
+    },
+    enabled: needsCompanyNameFallback,
+    staleTime: 24 * 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+    retry: false,
+  })
+  const resolvedCompanyName: string | null =
+    (needsCompanyNameFallback ? companyFallbackQuery.data : null) ?? null
+
+  // Pre-auth pending-invite stamp — same write as before, decoupled from the
+  // job fetch so the cached-job path still records the invite intent.
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      if (!publicJobId) {
-        setErr("Missing job id")
-        setLoading(false)
-        return
-      }
-      try {
-        setLoading(true)
-        const snap = await getDoc(doc(db(), "pa-jobs", publicJobId))
-        if (cancelled) return
-        if (!snap.exists()) {
-          setErr("Job not found")
-          setLoading(false)
-          return
-        }
-        const data = snap.data() as PaJobDoc
-        // Render when the job is publicly visible OR it is a WeKruit collaboration
-        // role (a surfaced partner-inventory job — its candidate page must render
-        // even if the publicVisible flag hasn't been stamped yet, matching the
-        // firestore.rules public-read condition so a surfaced collab link never
-        // shows "not publicly visible"/404).
-        const isCollabReadable = data.wekruitCollaborationStatus === "collaborated"
-        if (!data.publicVisible && !isCollabReadable) {
-          setErr("This job is not publicly visible.")
-          setLoading(false)
-          return
-        }
-        setJob(data)
-        setResolvedCompanyName(null)
-        // Existing fallback for older public jobs that were seeded before
-        // companyName/company denormalization. Public rules may deny this read;
-        // the page still renders from job-level fields in that case.
-        if (!data.prescreenConfig?.company && !data.companyName && !data.company && data.companyId) {
-          try {
-            const companySnap = await getDoc(doc(db(), "pa-companies", data.companyId))
-            if (companySnap.exists()) {
-              const cd = companySnap.data() as { name?: string }
-              if (typeof cd.name === "string") setResolvedCompanyName(cd.name)
-            }
-          } catch {
-            // Keep the job-level fallback.
-          }
-        }
-        try {
-          await setDoc(doc(db(), "pa-prescreen-pending-invites", requestedUserId), {
-            jobId: publicJobId,
-            requestedUserId,
-            createdAt: new Date().toISOString(),
-          })
-        } catch {
-          // Pre-auth users may not write this doc; webhook-side resolution is still server-owned.
-        }
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [publicJobId, requestedUserId])
+    if (!publicJobId || !job) return
+    void setDoc(doc(db(), "pa-prescreen-pending-invites", requestedUserId), {
+      jobId: publicJobId,
+      requestedUserId,
+      createdAt: new Date().toISOString(),
+    }).catch(() => undefined)
+    // Pre-auth users may not write this doc; webhook-side resolution is still server-owned.
+  }, [job, publicJobId, requestedUserId])
 
   const companyJobsQuery = useQuery({
     queryKey: ["public-company-jobs", job?.companyId],
@@ -346,47 +346,54 @@ export default function PublicJob() {
     staleTime: 5 * 60 * 1000,
   })
 
-  async function refreshResumeGate() {
-    if (!user) {
-      setResumeGate({ status: "idle" })
-      return
-    }
-    setResumeGate({ status: "loading" })
-    try {
+  // Resume gate — ONE query (keyed by job + signed-in uid so a different
+  // account never reads a stale gate) instead of three independent callable
+  // fires on mount. The sign-in verify seam and the upload/refresh seams call
+  // `refetch()` explicitly; staleTime 5m dedupes everything else.
+  const resumeGateQuery = useQuery({
+    queryKey: ["resume-gate", publicJobId, user?.uid],
+    queryFn: async () => {
       const checkGate = httpsCallable<{ browserUid?: string | null }, ResumeGateResult>(
         functions(),
         "paCandidateResumeGateStatus"
       )
       const result = await checkGate({ browserUid: requestedUserId })
-      setResumeGate({ status: "ready", gate: result.data })
-    } catch (err) {
-      setResumeGate({ status: "error", message: err instanceof Error ? err.message : String(err) })
+      return result.data
+    },
+    enabled: Boolean(user),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  })
+  const refetchResumeGate = resumeGateQuery.refetch
+  const resumeGate: ResumeGateState = useMemo(() => {
+    if (!user) return { status: "idle" }
+    if (resumeGateQuery.isPending || (resumeGateQuery.isError && resumeGateQuery.isFetching)) {
+      return { status: "loading" }
     }
-  }
-
-  useEffect(() => {
-    if (!user) {
-      setResumeGate({ status: "idle" })
-      return
-    }
-    let cancelled = false
-    setResumeGate({ status: "loading" })
-    void (async () => {
-      try {
-        const checkGate = httpsCallable<{ browserUid?: string | null }, ResumeGateResult>(
-          functions(),
-          "paCandidateResumeGateStatus"
-        )
-        const result = await checkGate({ browserUid: requestedUserId })
-        if (!cancelled) setResumeGate({ status: "ready", gate: result.data })
-      } catch (err) {
-        if (!cancelled) setResumeGate({ status: "error", message: err instanceof Error ? err.message : String(err) })
+    if (resumeGateQuery.isError) {
+      return {
+        status: "error",
+        message:
+          resumeGateQuery.error instanceof Error
+            ? resumeGateQuery.error.message
+            : String(resumeGateQuery.error),
       }
-    })()
-    return () => {
-      cancelled = true
     }
-  }, [requestedUserId, user])
+    if (!resumeGateQuery.data) return { status: "loading" }
+    return { status: "ready", gate: resumeGateQuery.data }
+  }, [
+    user,
+    resumeGateQuery.isPending,
+    resumeGateQuery.isError,
+    resumeGateQuery.isFetching,
+    resumeGateQuery.error,
+    resumeGateQuery.data,
+  ])
+
+  function refreshResumeGate() {
+    if (!user) return
+    void refetchResumeGate()
+  }
 
   useEffect(() => {
     if (!user) return
@@ -400,12 +407,9 @@ export default function PublicJob() {
           navigate(`/onboarding?next=${encodeURIComponent(nextPath)}`, { replace: true })
           return
         }
-        const checkGate = httpsCallable<{ browserUid?: string | null }, ResumeGateResult>(
-          functions(),
-          "paCandidateResumeGateStatus"
-        )
-        const result = await checkGate({ browserUid: requestedUserId })
-        if (!cancelled) setResumeGate({ status: "ready", gate: result.data })
+        // Sign-in seam: verify may have completed intake/registration — pull a
+        // fresh gate (explicit refetch bypasses staleTime).
+        void refetchResumeGate()
       } catch (err) {
         if (!cancelled) {
           const message =
@@ -421,7 +425,7 @@ export default function PublicJob() {
     return () => {
       cancelled = true
     }
-  }, [navigate, nextPath, requestedUserId, user])
+  }, [navigate, nextPath, refetchResumeGate, user])
 
   useEffect(() => {
     const candidateId = resumeGate.status === "ready" ? resumeGate.gate.candidateId : null

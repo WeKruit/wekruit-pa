@@ -583,7 +583,9 @@ test("CandidatePortal pipeline stage filters avoid dead zero-count taps", () => 
 
 test("CandidatePortal /me surfaces role load failures instead of treating them as an empty pipeline", () => {
   assert.match(source, /reload: \(\) => void/)
-  assert.match(source, /const reload = useCallback\(\(\) => setTick\(\(n\) => n \+ 1\), \[\]\)/)
+  // reload is a real refetch of the cached candidate-matches query (was a
+  // tick-state re-run before the TanStack Query conversion).
+  assert.match(source, /const reload = useCallback\(\(\) => \{\s*void refetch\(\)\s*\}, \[refetch\]\)/)
   assert.match(source, /<MeRoleDashboardError message=\{matchesError\} onRetry=\{matchesState\.reload\} \/>/)
   assert.match(source, /function MeRoleDashboardError\(/)
   assert.match(source, /role="alert"/)

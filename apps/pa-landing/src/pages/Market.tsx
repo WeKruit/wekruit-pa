@@ -17,9 +17,14 @@
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { onAuthStateChanged, type User } from "firebase/auth"
-import { collection, getDocs, limit as fsLimit, query, where } from "firebase/firestore"
 import { useInfiniteQuery, useQuery, type InfiniteData } from "@tanstack/react-query"
-import { auth, db } from "../lib/firebase.js"
+import { auth } from "../lib/firebase.js"
+import {
+  PUBLIC_PA_JOBS_RAW_LIMIT,
+  PUBLIC_PA_JOBS_RAW_QUERY_KEY,
+  fetchPublicPaJobsRaw,
+  type PublicPaJobsRawRow,
+} from "../lib/public-jobs.js"
 import {
   Avatar,
   CandidateShell,
@@ -794,21 +799,22 @@ function useHuntingInfinite(filtersRaw: HuntingFilters) {
   })
 }
 
+// Module-level `select` (stable identity) so TanStack memoizes the mapping —
+// it reruns only when the cached raw rows actually change.
+function selectDirectLineJobs(rows: PublicPaJobsRawRow[]): DisplayJob[] {
+  const jobs = rows.map((row) => fromPaJob(row.id, row.data as PaJobDoc))
+  jobs.sort((a, b) => Number(b.via === "Direct line") - Number(a.via === "Direct line"))
+  return jobs
+}
+
 function useDirectLine() {
-  return useQuery<DisplayJob[], Error>({
-    queryKey: ["pa-jobs", "publicVisible"],
-    queryFn: async () => {
-      const qy = query(
-        collection(db(), "pa-jobs"),
-        where("publicVisible", "==", true),
-        fsLimit(48),
-      )
-      const snap = await getDocs(qy)
-      const jobs: DisplayJob[] = []
-      snap.forEach((doc) => jobs.push(fromPaJob(doc.id, doc.data() as PaJobDoc)))
-      jobs.sort((a, b) => Number(b.via === "Direct line") - Number(a.via === "Direct line"))
-      return jobs
-    },
+  // Shares the cached RAW pa-jobs snapshot with Landing's hero carousel
+  // (same key + fetcher, page-specific `select`) — landing → market
+  // navigation costs zero extra Firestore reads inside the 6h window.
+  return useQuery({
+    queryKey: PUBLIC_PA_JOBS_RAW_QUERY_KEY,
+    queryFn: () => fetchPublicPaJobsRaw(PUBLIC_PA_JOBS_RAW_LIMIT),
+    select: selectDirectLineJobs,
     // Direct Firestore read — keep it to at most one per 6h session window
     // so repeat /market visits don't burn a Firestore query each time.
     staleTime: OPEN_JOBS_STALE_TIME_MS,

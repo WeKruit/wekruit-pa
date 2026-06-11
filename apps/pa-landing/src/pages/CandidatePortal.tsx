@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
+import { useQuery } from "@tanstack/react-query"
 import { clearSsoCookie } from "../lib/cross-domain-sso.js"
 import { httpsCallable } from "firebase/functions"
 import { doc, getFirestore, onSnapshot } from "firebase/firestore"
@@ -253,32 +254,43 @@ type MatchesState = MatchesSnapshot & {
 }
 
 export function useCandidateMatches(enabled: boolean): MatchesState {
-  const [state, setState] = useState<MatchesSnapshot>({ status: "idle" })
-  const [tick, setTick] = useState(0)
-  const reload = useCallback(() => setTick((n) => n + 1), [])
+  // Auth-scoped cache key: /me, /me/profile and /me/matches each mount this
+  // hook, which used to fire `paCandidateListMatches` once per surface per
+  // visit. One TanStack Query entry keyed by the signed-in uid (a different
+  // account can never read a cached list) dedupes those to one call per 10m.
+  const [uid, setUid] = useState<string | null>(() => auth().currentUser?.uid ?? null)
+  useEffect(() => onAuthStateChanged(auth(), (user) => setUid(user?.uid ?? null)), [])
 
-  useEffect(() => {
-    if (!enabled) return
-    let cancelled = false
-    setState({ status: "loading" })
-    void (async () => {
-      try {
-        const listMatches = httpsCallable<{ limit: number }, CandidateMatchesResult>(
-          functions(),
-          "paCandidateListMatches",
-        )
-        const result = await listMatches({ limit: 25 })
-        if (!cancelled) setState({ status: "ready", matches: result.data.matches })
-      } catch (err) {
-        if (!cancelled) setState({ status: "error", message: matchesLoadErrorMessage(err) })
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [enabled, tick])
+  const query = useQuery({
+    queryKey: ["candidate-matches", uid],
+    queryFn: async () => {
+      const listMatches = httpsCallable<{ limit: number }, CandidateMatchesResult>(
+        functions(),
+        "paCandidateListMatches",
+      )
+      const result = await listMatches({ limit: 25 })
+      return result.data.matches
+    },
+    enabled: enabled && Boolean(uid),
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    retry: false,
+  })
+  const refetch = query.refetch
+  const reload = useCallback(() => {
+    void refetch()
+  }, [refetch])
 
-  return { ...state, reload }
+  const snapshot: MatchesSnapshot =
+    !enabled || !uid
+      ? { status: "idle" }
+      : query.isPending || (query.isError && query.isFetching)
+        ? { status: "loading" }
+        : query.isError
+          ? { status: "error", message: matchesLoadErrorMessage(query.error) }
+          : { status: "ready", matches: query.data ?? [] }
+
+  return { ...snapshot, reload }
 }
 
 // Translate raw Firebase callable errors (FirebaseError.code like

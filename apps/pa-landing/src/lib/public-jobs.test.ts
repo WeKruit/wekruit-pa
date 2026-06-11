@@ -22,3 +22,25 @@ test("toPublicJobOpening formats public job type before exposing it to candidate
   assert.match(source, /jobType: formatPublicJobType\(raw\.jobType \?\? raw\.prescreenConfig\?\.jobType\)/)
   assert.doesNotMatch(source, /jobType: raw\.jobType/)
 })
+
+test("Landing hero and Market direct line share ONE cached raw pa-jobs snapshot", () => {
+  // The raw 48-doc publicVisible read is the most expensive client fetch on
+  // the candidate site. Both surfaces must consume the SAME TanStack key +
+  // fetcher (each with its own `select`) so landing → market costs one read
+  // per 6h window instead of two.
+  assert.match(source, /export const PUBLIC_PA_JOBS_RAW_LIMIT = 48/)
+  assert.match(
+    source,
+    /export const PUBLIC_PA_JOBS_RAW_QUERY_KEY = \["pa-jobs-hero", PUBLIC_PA_JOBS_RAW_LIMIT\] as const/,
+  )
+
+  const landingSource = readFileSync(resolve(here, "../pages/Landing.tsx"), "utf8")
+  const marketSource = readFileSync(resolve(here, "../pages/Market.tsx"), "utf8")
+  for (const pageSource of [landingSource, marketSource]) {
+    assert.match(pageSource, /queryKey: PUBLIC_PA_JOBS_RAW_QUERY_KEY/)
+    assert.match(pageSource, /queryFn: \(\) => fetchPublicPaJobsRaw\(PUBLIC_PA_JOBS_RAW_LIMIT\)/)
+  }
+  // Neither page re-issues its own ad-hoc publicVisible getDocs read.
+  assert.doesNotMatch(landingSource, /getDocs\(/)
+  assert.doesNotMatch(marketSource, /getDocs\(/)
+})

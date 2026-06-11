@@ -67,6 +67,32 @@ interface RawPublicJob {
   }
 }
 
+/**
+ * Shared raw snapshot of publicly visible pa-jobs (one 48-doc Firestore read).
+ *
+ * Landing's hero carousel and Market's "Direct line" tab issue the exact same
+ * `publicVisible == true, limit 48` query but map the docs to different view
+ * shapes. Caching the RAW rows under one TanStack Query key lets both surfaces
+ * share a single read per 6h window (each applies its own `select`), instead
+ * of burning a 48-doc read on every homepage visit plus another on /market.
+ */
+export interface PublicPaJobsRawRow {
+  id: string
+  data: DocumentData
+}
+
+export const PUBLIC_PA_JOBS_RAW_LIMIT = 48
+export const PUBLIC_PA_JOBS_RAW_QUERY_KEY = ["pa-jobs-hero", PUBLIC_PA_JOBS_RAW_LIMIT] as const
+
+export async function fetchPublicPaJobsRaw(
+  maxJobs: number = PUBLIC_PA_JOBS_RAW_LIMIT,
+): Promise<PublicPaJobsRawRow[]> {
+  const snap = await getDocs(
+    query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), limit(maxJobs)),
+  )
+  return snap.docs.map((docSnap) => ({ id: docSnap.id, data: docSnap.data() }))
+}
+
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)

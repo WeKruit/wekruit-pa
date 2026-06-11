@@ -20,6 +20,7 @@
  */
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import { onAuthStateChanged, type User } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
 import { CandidateShell, Icon, PulseDot } from "./CandidateLogin.js"
@@ -97,7 +98,6 @@ const HOW_IT_WORKS_STEPS = [
 
 export default function AutoApplyBeta() {
   const [authUser, setAuthUser] = useState<User | null | "unknown">("unknown")
-  const [desktop, setDesktop] = useState<DesktopState>({ status: "loading" })
 
   useEffect(() => {
     let unsub = () => {}
@@ -109,30 +109,30 @@ export default function AutoApplyBeta() {
     return () => unsub()
   }, [])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    void (async () => {
-      try {
-        const res = await fetch(RELEASES_API_URL, {
-          signal: controller.signal,
-          headers: { Accept: "application/vnd.github+json" },
-        })
-        if (!res.ok) {
-          setDesktop({ status: "unavailable" })
-          return
-        }
-        const latest = parseGithubRelease((await res.json()) as Parameters<typeof parseGithubRelease>[0])
-        if (!latest) {
-          setDesktop({ status: "unavailable" })
-          return
-        }
-        setDesktop({ status: "ready", latest })
-      } catch {
-        if (!controller.signal.aborted) setDesktop({ status: "unavailable" })
-      }
-    })()
-    return () => controller.abort()
-  }, [])
+  // Latest desktop build — public GitHub API (rate-limited anonymously at
+  // 60 req/h/IP), so cache 2h. Any failure renders the same "unavailable"
+  // state as before; retry:false keeps the single-attempt behavior.
+  const releasesQuery = useQuery({
+    queryKey: ["desktop-releases"],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(RELEASES_API_URL, {
+        signal,
+        headers: { Accept: "application/vnd.github+json" },
+      })
+      if (!res.ok) throw new Error(`releases_http_${res.status}`)
+      const latest = parseGithubRelease((await res.json()) as Parameters<typeof parseGithubRelease>[0])
+      if (!latest) throw new Error("releases_unparsable")
+      return latest
+    },
+    staleTime: 2 * 60 * 60 * 1000,
+    gcTime: 2 * 60 * 60 * 1000,
+    retry: false,
+  })
+  const desktop: DesktopState = releasesQuery.isPending
+    ? { status: "loading" }
+    : releasesQuery.isError || !releasesQuery.data
+      ? { status: "unavailable" }
+      : { status: "ready", latest: releasesQuery.data }
 
   const latest = desktop.status === "ready" ? desktop.latest : null
   const releaseDate = latest ? formatReleaseDate(latest.releasedAt) : null
