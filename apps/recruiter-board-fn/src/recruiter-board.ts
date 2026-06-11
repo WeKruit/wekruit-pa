@@ -237,6 +237,7 @@ export interface PublicCollabJob {
   jobId: string
   title: string
   compSummary?: string
+  companyWebsite?: string
   jdBlocks: JdBlock[]
   recruiterBoard: RecruiterBoardPayload
   updatedAt: string | null
@@ -917,6 +918,17 @@ function extractJobUpdatedAt(
   return coerceToIso(rbUpdated) ?? coerceToIso(docData.updatedAt)
 }
 
+function normalizeCompanyId(raw: string): string {
+  if (typeof raw !== "string") return ""
+  const bounded = raw.slice(0, 200).toLowerCase()
+  const collapsed = bounded.replace(/[^a-z0-9]+/g, "-")
+  let start = 0
+  let end = collapsed.length
+  while (start < end && collapsed.charCodeAt(start) === 45) start++
+  while (end > start && collapsed.charCodeAt(end - 1) === 45) end--
+  return collapsed.slice(start, end).slice(0, 100)
+}
+
 export async function fetchCollabJobs(
   db: Firestore,
   options: FetchCollabJobsOptions = { isAdmin: false },
@@ -941,6 +953,7 @@ export async function fetchCollabJobs(
     .get()
 
   const allMatching: PublicCollabJob[] = []
+  const companyIdMap = new Map<string, string>()
   for (const doc of snap.docs) {
     const d = doc.data() as Record<string, unknown>
     const rb = d.recruiterBoard as RecruiterBoardPayload | undefined
@@ -963,10 +976,9 @@ export async function fetchCollabJobs(
       ? doc.id
       : (publicId ?? doc.id)
 
-    const recruiterBoardForCaller: RecruiterBoardPayload = options.isAdmin
-      ? rb
-      : { ...rb, label: anonymizeCompanyLabel(rb.label) }
+    const recruiterBoardForCaller: RecruiterBoardPayload = rb
 
+    const companyRaw = String(d.companyName ?? d.company ?? "")
     allMatching.push({
       jobId: jobIdForCaller,
       title: String(d.title ?? ""),
@@ -975,7 +987,33 @@ export async function fetchCollabJobs(
       recruiterBoard: recruiterBoardForCaller,
       updatedAt: updatedAtIso,
     })
+    const cid = normalizeCompanyId(companyRaw)
+    if (cid) companyIdMap.set(jobIdForCaller, cid)
   }
+
+  // Hydrate company website from pa-companies.
+  const uniqueCompanyIds = new Set(companyIdMap.values())
+  if (uniqueCompanyIds.size > 0) {
+    try {
+      const refs = Array.from(uniqueCompanyIds).map((id) => db.collection("pa-companies").doc(id))
+      const docs = await db.getAll(...refs)
+      const domainById = new Map<string, string>()
+      for (const d of docs) {
+        if (!d.exists) continue
+        const data = d.data() as Record<string, unknown> | undefined
+        const domain = typeof data?.domain === "string" ? data.domain.trim() : ""
+        if (domain) domainById.set(d.id, `https://${domain}`)
+      }
+      for (const job of allMatching) {
+        const cid = companyIdMap.get(job.jobId)
+        const website = cid ? domainById.get(cid) : undefined
+        if (website) job.companyWebsite = website
+      }
+    } catch (e) {
+      logger.warn("pa-companies hydration failed, continuing without websites", { error: String(e) })
+    }
+  }
+
   allMatching.sort((a, b) => a.recruiterBoard.sortOrder - b.recruiterBoard.sortOrder)
 
   const total = allMatching.length

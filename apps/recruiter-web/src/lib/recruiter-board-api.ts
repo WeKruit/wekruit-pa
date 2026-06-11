@@ -47,6 +47,7 @@ export interface CollabJob {
   jobId: string
   title: string
   compSummary?: string
+  companyWebsite?: string
   updatedAt?: string | null
   // List-kind blocks carry `items` and may have a null/absent body.
   jdBlocks: Array<{ heading: string; body?: string | null; items?: string[]; kind?: "list" | "prose" }>

@@ -2493,7 +2493,7 @@ describe("fetchCollabJobs admin payload", () => {
 })
 
 describe("fetchCollabJobs anonymous payload", () => {
-  it("returns publicId as jobId and never the real company name when isAdmin === false", async () => {
+  it("returns publicId as jobId and real company name when isAdmin === false", async () => {
     const db = fakeDb([
       {
         id: "helium-product-engineer-fullstack",
@@ -2507,17 +2507,10 @@ describe("fetchCollabJobs anonymous payload", () => {
     const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
     assert.equal(jobs.length, 1)
     assert.equal(jobs[0]!.jobId, "11111111-2222-3333-4444-555555555555")
-    // Real company string must NOT leak.
-    assert.notEqual(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
-    assert.ok(
-      !jobs[0]!.recruiterBoard.label.company.toLowerCase().includes("helium"),
-      `company label must not contain "helium" but was ${jobs[0]!.recruiterBoard.label.company}`,
-    )
-    // Anonymized fallback uses "Co. <companyCode>" shape.
-    assert.match(jobs[0]!.recruiterBoard.label.company, /^Co\.\s/)
+    assert.equal(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
   })
 
-  it("keeps recruiterBoard.submitFields intact through anonymization", async () => {
+  it("keeps recruiterBoard.submitFields intact for anonymous callers", async () => {
     const submitFields: RecruiterBoardSubmitField[] = [
       { id: "portfolio", label: "Portfolio", kind: "url", required: true },
       { id: "summary", label: "Summary", kind: "text", placeholder: "Why this candidate?" },
@@ -2534,12 +2527,12 @@ describe("fetchCollabJobs anonymous payload", () => {
     ])
     const anonymous = await fetchCollabJobs(db as never, { isAdmin: false })
     assert.deepEqual(anonymous.jobs[0]!.recruiterBoard.submitFields, submitFields)
-    assert.match(anonymous.jobs[0]!.recruiterBoard.label.company, /^Co\.\s/)
+    assert.equal(anonymous.jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
     const admin = await fetchCollabJobs(db as never, { isAdmin: true })
     assert.deepEqual(admin.jobs[0]!.recruiterBoard.submitFields, submitFields)
   })
 
-  it("preserves an already-anonymized company label as-is", async () => {
+  it("preserves company label from recruiterBoard as-is", async () => {
     const db = fakeDb([
       {
         id: "anon-job",
@@ -2572,10 +2565,8 @@ describe("fetchCollabJobs anonymous payload", () => {
     ])
     const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
     assert.equal(jobs.length, 1)
-    // Without publicId we can't anonymize the URL, but the company label is
-    // still scrubbed.
     assert.equal(jobs[0]!.jobId, "legacy-job-no-publicid")
-    assert.notEqual(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
+    assert.equal(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
   })
 
   it("skips inactive recruiter-board entries when status defaults to open", async () => {
@@ -2610,7 +2601,7 @@ describe("fetchCollabJobs anonymous payload", () => {
     ])
     const { jobs } = await fetchCollabJobs(db as never)
     assert.equal(jobs[0]!.jobId, "11111111-2222-3333-4444-555555555555")
-    assert.notEqual(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
+    assert.equal(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
   })
 })
 

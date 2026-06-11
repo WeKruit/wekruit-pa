@@ -691,7 +691,14 @@ export default function RoleSheetPage() {
       <main className="rs-shell">
         <div className="rs-topbar">
           <h1>{job.title}</h1>
-          <span className="rs-topbar__meta">{label.company} · {label.location}</span>
+          <span className="rs-topbar__meta">
+            {job.companyWebsite ? (
+              <a href={job.companyWebsite} target="_blank" rel="noopener noreferrer" className="rs-topbar__company-link">
+                {label.company} ↗
+              </a>
+            ) : label.company}
+            {" · "}{label.location}
+          </span>
           {job.compSummary && (
             <>
               <span className="rs-topbar__sep">·</span>

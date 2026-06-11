@@ -68,6 +68,15 @@
   color: #6a6a64;
   font-weight: 500;
 }
+.oj-card__company--link {
+  text-decoration: none;
+  color: #6a6a64;
+  transition: color 0.15s;
+}
+.oj-card__company--link:hover {
+  color: #9a4421;
+  text-decoration: underline;
+}
 
 .oj-card__meta {
   display: flex;

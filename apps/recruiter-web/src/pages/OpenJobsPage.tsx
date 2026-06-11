@@ -36,7 +36,19 @@ export default function OpenJobsPage() {
               <Link key={job.jobId} to={`/recruiters/job/${job.jobId}`} className="oj-card">
                 <div className="oj-card__header">
                   <h2>{job.title}</h2>
-                  <span className="oj-card__company">{job.recruiterBoard.label.company}</span>
+                  {job.companyWebsite ? (
+                    <a
+                      className="oj-card__company oj-card__company--link"
+                      href={job.companyWebsite}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {job.recruiterBoard.label.company} ↗
+                    </a>
+                  ) : (
+                    <span className="oj-card__company">{job.recruiterBoard.label.company}</span>
+                  )}
                 </div>
                 <div className="oj-card__meta">
                   <span>{job.recruiterBoard.label.location}</span>

@@ -29,6 +29,8 @@
 .rs-topbar .rs-back:hover { color: #1a1a1a; text-decoration: underline; }
 .rs-topbar h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
 .rs-topbar .rs-topbar__meta { color: #6a6a64; font-size: 13px; }
+.rs-topbar__company-link { color: #6a6a64; text-decoration: none; }
+.rs-topbar__company-link:hover { color: #9a4421; text-decoration: underline; }
 .rs-topbar .rs-topbar__sep { color: #c9c9c2; }
 
 /* ---- collapsible JD ------------------------------------------------------ */
