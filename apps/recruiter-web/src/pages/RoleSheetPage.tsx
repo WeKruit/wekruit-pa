@@ -27,6 +27,7 @@ import {
   type SubmissionChecklistValue,
 } from "../lib/recruiter-board-api.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
+import { SiteHeader } from "../components/SiteHeader.js"
 import { buildSubmissionStatusStepper, SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 
 const SHEET_DRAFT_KEY_PREFIX = "rs-draft-v1:"
@@ -669,10 +670,8 @@ export default function RoleSheetPage() {
   if (!session) {
     return (
       <div className="rs-page">
+        <SiteHeader />
         <main className="rs-shell">
-          <div className="rs-topbar">
-            <Link to="/recruiters/jobs" className="rs-back">← All roles</Link>
-          </div>
           <div className="rs-state">
             <p>Recruiter access is required before submitting candidates.</p>
             <Link to="/recruiters" className="rs-btn" style={{ textDecoration: "none" }}>Sign in</Link>
@@ -685,10 +684,8 @@ export default function RoleSheetPage() {
   if (!job) {
     return (
       <div className="rs-page">
+        <SiteHeader />
         <main className="rs-shell">
-          <div className="rs-topbar">
-            <Link to="/recruiters/jobs" className="rs-back">← All roles</Link>
-          </div>
           <div className="rs-state error">This role is not on the board anymore.</div>
         </main>
       </div>
@@ -703,10 +700,9 @@ export default function RoleSheetPage() {
 
   return (
     <div className="rs-page">
+      <SiteHeader />
       <main className="rs-shell">
         <div className="rs-topbar">
-          <Link to="/recruiters/jobs" className="rs-back">← All roles</Link>
-          <span className="rs-topbar__sep">·</span>
           <h1>{job.title}</h1>
           <span className="rs-topbar__meta">{label.company} · {label.location}</span>
           {job.compSummary && (

@@ -60,6 +60,7 @@ import {
 import { auth } from "../lib/firebase.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
+import { SiteHeader } from "../components/SiteHeader.js"
 import { SubmissionUpdatesToggle } from "../components/SubmissionUpdatesToggle.js"
 
 type RecruiterTab = "roles" | "submissions"
@@ -4136,13 +4137,7 @@ export function RecruiterAccessGate({
 
   return (
     <div className="rb-access">
-      <div className="rb-access__bar">
-        <Link to="/" className="rb-platform__brand">
-          <span className="rb-platform__logo">W</span>
-          <span><strong>WeKruit</strong><em>Recruiter</em></span>
-        </Link>
-        <a href="https://candidate.wekruit.com/" className="rb-access__link">Back to WeKruit</a>
-      </div>
+      <SiteHeader />
       <main className="rb-access__body">
         <section className="rb-access__copy">
           <p className="rb-overline">Invite only</p>

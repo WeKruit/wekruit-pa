@@ -1,0 +1,73 @@
+/* Shared site header — all recruiter-web pages */
+
+.sh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-bottom: 1px solid #e6e6e2;
+  background: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+}
+.sh * { box-sizing: border-box; }
+
+.sh__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+.sh__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: #3a2a1a;
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+}
+.sh__name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+.sh__sub {
+  font-weight: 400;
+  color: #8a8a82;
+  margin-left: 4px;
+  font-size: 12.5px;
+}
+
+.sh__nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sh__link {
+  font-size: 13px;
+  font-weight: 500;
+  color: #6a6a64;
+  text-decoration: none;
+  padding: 6px 14px;
+  border-radius: 7px;
+  transition: background 0.12s, color 0.12s;
+}
+.sh__link:hover { background: #f4f2ee; color: #1a1a1a; }
+.sh__link.is-active { color: #1a1a1a; font-weight: 600; background: #f4f2ee; }
+.sh__link--cta {
+  font-weight: 600;
+  color: #3a2a1a;
+  border: 1px solid #d4cfc5;
+  background: #fff;
+}
+.sh__link--cta:hover { background: #faf8f4; border-color: #b9b4a8; }
+
+@media (max-width: 640px) {
+  .sh { padding: 10px 14px; }
+  .sh__name { font-size: 14px; }
+  .sh__link { padding: 5px 10px; font-size: 12px; }
+}
