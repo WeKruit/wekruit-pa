@@ -3,9 +3,12 @@ import { createInboundEvent, enqueueOutbound, inboundEventDocId } from "@pa/pa-b
 
 // 2026-06-11 CORRECTED: 717 IS the live inbound number (243/243 real inbound
 // msgs in 48h arrive on it, incl. 28 brand-new contacts; 305 receives ZERO).
-// The earlier dead-number theory was wrong — the real fault is Sendblue-side
-// PARTIAL drops of new-contact messages to 717 (escalated to Sendblue).
-const WEKRUIT_SENDER = "+17174919939"
+// The earlier dead-number theory was wrong — the real fault was the webhook's
+// E.164 sender gate dropping Apple ID EMAIL senders (fixed in webhook.ts).
+// ALL pool numbers must be here — `from ∈ set` is the outbound-mirror fallback
+// when is_outbound is missing; a missing entry makes the recovery sweep treat
+// our own sends as candidate inbound. (TODO: derive from pa-config/sendblue-pool.)
+const WEKRUIT_SENDERS = new Set(["+17174919939", "+13054507715", "+16146202403"])
 const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
 const E164_RE = /^\+[1-9]\d{7,14}$/
 const RAW_COLLECTION = "pa-sendblue-webhook-raw"
@@ -327,7 +330,7 @@ function parseRawWebhookDoc(doc: { id: string; data: () => Record<string, unknow
   const from = cleanString(payload.from_number, 120)
   const to = cleanString(payload.to_number, 120)
   const content = cleanString(payload.content, 4_000) ?? ""
-  const outbound = payload.is_outbound === true || from === WEKRUIT_SENDER
+  const outbound = payload.is_outbound === true || (from !== null && WEKRUIT_SENDERS.has(from))
   const peer = outbound ? to : from
   if (!peer) return null
   const receivedAt = cleanString(data.receivedAt, 80) ?? timestampToIso(data.receivedAt) ?? ""
