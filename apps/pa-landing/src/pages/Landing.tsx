@@ -261,7 +261,6 @@ export default function Landing() {
                 { from: "user",   text: "Senior PM at an AI infra startup. NYC. $180k+." },
               ]}
             />
-            <HeroEvidencePacket />
             <div className="wk-hero__caption">
               <PulseDot size={6} />
               <span>Claire keeps the interview in iMessage.</span>
@@ -418,34 +417,6 @@ function AllianceBackedBadge() {
         <span className="wk-alliance-badge__label">Backed by <strong>Alliance</strong></span>
       </span>
     </a>
-  )
-}
-
-function HeroEvidencePacket() {
-  return (
-    <aside className="wk-hero-packet" aria-label="Sample Claire evidence packet">
-      <header className="wk-hero-packet__head">
-        <span className="wk-hero-packet__status">
-          <Icon name="check" size={12} stroke={2.2} />
-          Passed profile draft
-        </span>
-        <span className="wk-hero-packet__role">Senior PM · AI infra</span>
-      </header>
-      <div className="wk-hero-packet__grid">
-        <div className="wk-hero-packet__item">
-          <strong>Nearest proof</strong>
-          <span>AI workflow: 0 to 7 teams.</span>
-        </div>
-        <div className="wk-hero-packet__item">
-          <strong>Constraints</strong>
-          <span>NYC/remote · $180k+.</span>
-        </div>
-        <div className="wk-hero-packet__item wk-hero-packet__item--wide">
-          <strong>Share gate</strong>
-          <span>Employer share waits for candidate approval.</span>
-        </div>
-      </div>
-    </aside>
   )
 }
 
