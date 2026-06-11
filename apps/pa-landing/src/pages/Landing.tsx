@@ -8,14 +8,18 @@
  * Keeps the original Firebase fetch (pa-jobs collection) intact —
  * job cards are re-themed but use the same PublicJobListItem shape.
  */
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { Link } from "react-router-dom"
-import { collection, getDocs, limit, query, where } from "firebase/firestore"
-import { useQueryClient } from "@tanstack/react-query"
-import { db } from "../lib/firebase.js"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { trackEvent } from "../lib/analytics.js"
 import { formatPublicJobType } from "../lib/public-job-labels.js"
-import { listPublicJobOpenings } from "../lib/public-jobs.js"
+import {
+  PUBLIC_PA_JOBS_RAW_LIMIT,
+  PUBLIC_PA_JOBS_RAW_QUERY_KEY,
+  fetchPublicPaJobsRaw,
+  listPublicJobOpenings,
+  type PublicPaJobsRawRow,
+} from "../lib/public-jobs.js"
 import { openJobsEndpoint, OPEN_JOBS_STALE_TIME_MS, OPEN_JOBS_GC_TIME_MS } from "../lib/open-jobs.js"
 import {
   CandidateShell,
@@ -101,29 +105,37 @@ function normalizeJob(id: string, data: PublicJobListDoc): PublicJobListItem {
   }
 }
 
+// Module-level `select` so TanStack memoizes the derived array (a stable fn
+// identity means the mapping reruns only when the cached raw rows change).
+function selectHeroJobs(rows: PublicPaJobsRawRow[]): PublicJobListItem[] {
+  return rows
+    .map((row) => normalizeJob(row.id, row.data as PublicJobListDoc))
+    .sort((a, b) => `${a.company} ${a.title}`.localeCompare(`${b.company} ${b.title}`))
+}
+
 export default function Landing() {
-  const [state, setState] = useState<JobsState>({ status: "loading" })
   const queryClient = useQueryClient()
 
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const snap = await getDocs(
-          query(collection(db(), "pa-jobs"), where("publicVisible", "==", true), limit(48)),
-        )
-        const jobs: PublicJobListItem[] = snap.docs
-          .map((d) => normalizeJob(d.id, d.data() as PublicJobListDoc))
-          .sort((a, b) => `${a.company} ${a.title}`.localeCompare(`${b.company} ${b.title}`))
-        if (!cancelled) setState({ status: "ready", jobs })
-      } catch (err) {
-        if (!cancelled) {
-          setState({ status: "error", message: err instanceof Error ? err.message : String(err) })
+  // Hero carousel — was a raw getDocs on every homepage visit (48-doc read).
+  // Cached 6h/24h and shares its raw rows with Market's "Direct line" tab
+  // (same key + fetcher there, different `select`). retry:false keeps the
+  // original single-attempt → error-state behavior.
+  const heroQuery = useQuery({
+    queryKey: PUBLIC_PA_JOBS_RAW_QUERY_KEY,
+    queryFn: () => fetchPublicPaJobsRaw(PUBLIC_PA_JOBS_RAW_LIMIT),
+    select: selectHeroJobs,
+    staleTime: OPEN_JOBS_STALE_TIME_MS,
+    gcTime: OPEN_JOBS_GC_TIME_MS,
+    retry: false,
+  })
+  const state: JobsState = heroQuery.isPending
+    ? { status: "loading" }
+    : heroQuery.isError
+      ? {
+          status: "error",
+          message: heroQuery.error instanceof Error ? heroQuery.error.message : String(heroQuery.error),
         }
-      }
-    })()
-    return () => { cancelled = true }
-  }, [])
+      : { status: "ready", jobs: heroQuery.data ?? [] }
 
   // Hash anchor scroll. Triggered on:
   //   1. Initial mount when URL contains a hash (e.g. /#how from cross-route nav).

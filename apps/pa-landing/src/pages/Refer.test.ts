@@ -36,7 +36,8 @@ test("ReferPage avoids unsupported traction and payout-certainty claims", () => 
 test("ReferPage surfaces dashboard load failures instead of silently showing an empty ledger", () => {
   assert.match(source, /error: string \| null/)
   assert.match(source, /function referralDashboardErrorMessage/)
-  assert.match(source, /setError\(referralDashboardErrorMessage\(err\)\)/)
+  // Query errors map onto the same error copy (was setError(...) pre-TanStack).
+  assert.match(source, /referralDashboardErrorMessage\(query\.error\)/)
   assert.match(source, /function ReferralDashboardError\(/)
   assert.match(source, /role="alert"/)
   assert.match(source, /Your referral dashboard couldn&apos;t load/)
@@ -129,7 +130,7 @@ test("ReferPublicPage routes candidate-owner earning CTAs back to the referral d
   assert.match(source, /<Link to=\{secondaryHref\} className="wk-ref-public-cta__alt">/)
   assert.match(source, /\{secondaryLabel\}/)
   assert.match(source, /onClick=\{\(\) => navigate\(REFERRAL_DASHBOARD_LOGIN\)\}/)
-  assert.match(source, /if \(res\.valid\) rememberReferralSlug\(slug\)/)
+  assert.match(source, /if \(inviter\.valid\) rememberReferralSlug\(slug\)/)
   assert.doesNotMatch(source, /<Link to=\{inviter \? "\/login" : REFERRAL_DASHBOARD_LOGIN\} className="wk-ref-public-cta__alt">/)
   assert.doesNotMatch(source, /Sign up to start earning[\s\S]{0,180}navigate\("\/login"\)/)
 })

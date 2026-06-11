@@ -33,6 +33,7 @@ import {
   type ReactNode,
 } from "react"
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
 import { httpsCallable } from "firebase/functions"
 import { onAuthStateChanged } from "firebase/auth"
 import { auth, functions } from "../lib/firebase.js"
@@ -124,52 +125,43 @@ function useDashboard(): {
   error: string | null
   reload: () => void
 } {
-  const [data, setData] = useState<DashboardData>(MOCK_PREVIEW)
-  const [loading, setLoading] = useState(true)
-  const [signedIn, setSignedIn] = useState<boolean | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [tick, setTick] = useState(0)
+  // `undefined` = auth not yet resolved (signedIn: null), `null` = signed out.
+  const [uid, setUid] = useState<string | null | undefined>(
+    () => auth().currentUser?.uid ?? undefined,
+  )
+  useEffect(() => onAuthStateChanged(auth(), (user) => setUid(user?.uid ?? null)), [])
 
-  useEffect(() => {
-    let cancelled = false
-    const unsub = onAuthStateChanged(auth(), async (user) => {
-      if (!cancelled) {
-        setLoading(true)
-        setError(null)
-      }
-      if (!user) {
-        if (!cancelled) {
-          setSignedIn(false)
-          setData(MOCK_PREVIEW)
-          setError(null)
-          setLoading(false)
-        }
-        return
-      }
-      if (!cancelled) setSignedIn(true)
-      try {
-        const call = httpsCallable<unknown, DashboardData>(functions(), "paReferDashboardList")
-        const result = await call({})
-        if (!cancelled) {
-          setData(result.data ?? MOCK_PREVIEW)
-          setError(null)
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(referralDashboardErrorMessage(err))
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })
-    return () => {
-      cancelled = true
-      unsub()
-    }
-  }, [tick])
+  // Referral ledger — was an uncached callable on every /me/refer visit.
+  // Keyed by uid (auth-scoped) and cached 15m; `reload` is an explicit refetch.
+  const query = useQuery({
+    queryKey: ["refer-dashboard", uid],
+    queryFn: async () => {
+      const call = httpsCallable<unknown, DashboardData>(functions(), "paReferDashboardList")
+      const result = await call({})
+      return result.data ?? MOCK_PREVIEW
+    },
+    enabled: typeof uid === "string",
+    staleTime: 15 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    retry: false,
+  })
+  const refetch = query.refetch
+  const reload = useCallback(() => {
+    void refetch()
+  }, [refetch])
 
-  const reload = useCallback(() => setTick((n) => n + 1), [])
-  return { data, loading, signedIn, error, reload }
+  const signedIn = uid === undefined ? null : typeof uid === "string"
+  const fetching = typeof uid === "string" && (query.isPending || query.isFetching)
+  return {
+    data: query.data ?? MOCK_PREVIEW,
+    loading: uid === undefined || fetching,
+    signedIn,
+    error:
+      typeof uid === "string" && query.isError && !query.isFetching
+        ? referralDashboardErrorMessage(query.error)
+        : null,
+    reload,
+  }
 }
 
 function referralDashboardErrorMessage(err: unknown): string {
@@ -1180,25 +1172,26 @@ function ReferPublicCallout() {
 export function ReferPublicPage() {
   const params = useParams<{ slug?: string }>()
   const slug = params.slug ?? null
-  const [inviter, setInviter] = useState<{ name: string | null; valid: boolean } | null>(null)
 
+  // Slug → inviter display name. Slugs are effectively immutable, so cache
+  // 24h — repeat hits on the same /r/:slug link resolve without a callable.
+  // `resolveInviter` never throws (invalid → { name: null, valid: false }).
+  const inviterQuery = useQuery({
+    queryKey: ["refer-link", slug],
+    queryFn: () => resolveInviter(slug!),
+    enabled: Boolean(slug),
+    staleTime: 24 * 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+  })
+  const inviter = (slug ? inviterQuery.data : null) ?? null
+
+  // Side effect of resolution (was inline in the fetch): remember/clear the
+  // referral attribution slug. Idempotent — safe to rerun on cached data.
   useEffect(() => {
-    if (!slug) {
-      setInviter(null)
-      return
-    }
-    setInviter(null)
-    let cancelled = false
-    void resolveInviter(slug).then((res) => {
-      if (cancelled) return
-      setInviter(res)
-      if (res.valid) rememberReferralSlug(slug)
-      else clearReferralSlug(slug)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [slug])
+    if (!slug || !inviter) return
+    if (inviter.valid) rememberReferralSlug(slug)
+    else clearReferralSlug(slug)
+  }, [inviter, slug])
 
   const heroInviter = useMemo(() => {
     if (inviter?.valid) return inviter.name ?? "A WeKruit candidate"
