@@ -4069,6 +4069,8 @@ export function RecruiterAccessGate({
 }) {
   const [err, setErr] = useState<string | null>(initialError ?? null)
   const [busy, setBusy] = useState(false)
+  const [legalEntityName, setLegalEntityName] = useState("")
+  const [tosChecked, setTosChecked] = useState(false)
   const inviteEmailHint = inviteLink?.emailHint ?? ""
 
   useEffect(() => {
@@ -4077,6 +4079,10 @@ export function RecruiterAccessGate({
   }, [initialError])
 
   const completeGoogleClaim = async (fallbackPending: PendingRecruiterAccess, emailHint?: string) => {
+    if (!tosChecked) {
+      setErr("Please accept the Terms of Service to continue.")
+      return
+    }
     let claimEmail = ""
     try {
       if (auth().currentUser) await signOut(auth())
@@ -4089,6 +4095,8 @@ export function RecruiterAccessGate({
         name: pending.name || cleanRecruiterName(user.displayName ?? "") || "Recruiter",
         email: claimEmail,
         ...(pending.inviteCode ? { inviteCode: pending.inviteCode } : {}),
+        ...(legalEntityName.trim() ? { legalEntityName: legalEntityName.trim() } : {}),
+        tosAccepted: true,
       })
       clearPendingRecruiterAccess()
       onSessionClaimed(next)
@@ -4102,6 +4110,10 @@ export function RecruiterAccessGate({
 
   const submitSignIn = async (e: FormEvent) => {
     e.preventDefault()
+    if (!tosChecked) {
+      setErr("Please accept the Terms of Service to continue.")
+      return
+    }
     setBusy(true)
     setErr(null)
     const code = inviteLink?.code || ""
@@ -4162,8 +4174,32 @@ export function RecruiterAccessGate({
                 ? `This invite is for ${inviteEmailHint}. Sign in with that Google account.`
                 : "Access is by invitation — sign in with the email we invited."}
             </p>
+            <label className="rb-access__field">
+              <span className="rb-access__field-label">Agency / legal entity name <span className="rb-access__optional">(optional)</span></span>
+              <input
+                type="text"
+                className="rb-access__input"
+                placeholder="e.g. Acme Recruiting LLC"
+                value={legalEntityName}
+                onChange={(e) => setLegalEntityName(e.target.value)}
+                maxLength={300}
+              />
+            </label>
+            <label className="rb-access__tos">
+              <input
+                type="checkbox"
+                checked={tosChecked}
+                onChange={(e) => { setTosChecked(e.target.checked); if (e.target.checked) setErr(null) }}
+              />
+              <span>
+                I agree to the WeKruit{" "}
+                <a href="https://candidate.wekruit.com/legal" target="_blank" rel="noopener noreferrer">
+                  Recruiter Terms of Service
+                </a>
+              </span>
+            </label>
             {err && <p className="rb-access__err">{err}</p>}
-            <button className="rb-btn primary rb-btn--block" disabled={busy}>
+            <button className="rb-btn primary rb-btn--block" disabled={busy || !tosChecked}>
               {busy ? "Opening Google..." : "Continue with Google"}
             </button>
             <button type="button" className="rb-access__reset" disabled={busy} onClick={() => void clearStuckGoogleState()}>

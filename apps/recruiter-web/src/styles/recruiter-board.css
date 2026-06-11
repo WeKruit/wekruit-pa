@@ -2913,6 +2913,51 @@
   font-size: 13px;
 }
 
+.rb-access__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rb-access__field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1, #1a1a1a);
+}
+.rb-access__optional {
+  font-weight: 400;
+  color: var(--ink-2, #6a6a64);
+}
+.rb-access__input {
+  width: 100%;
+  border: 1px solid var(--border, #e0e0db);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  background: #fff;
+  color: var(--ink-1, #1a1a1a);
+}
+.rb-access__input:focus {
+  outline: none;
+  border-color: var(--ink-2, #8a8a82);
+}
+.rb-access__tos {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2, #3a3a36);
+  cursor: pointer;
+}
+.rb-access__tos input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.rb-access__tos a {
+  color: var(--accent, #9a4421);
+  text-decoration: underline;
+}
+
 .rb-access__reset {
   align-self: center;
   appearance: none;

@@ -288,6 +288,8 @@ export interface RecruiterProfilePublic {
   firebaseUid: string
   name: string
   email: string
+  legalEntityName?: string
+  tosAcceptedAt?: string
   notificationPreferences: RecruiterNotificationPreferences
   workspacePreferences: RecruiterWorkspacePreferences
 }
@@ -318,6 +320,8 @@ interface RecruiterAccessRegistrationInput {
   name: string
   email: string
   inviteCode: string
+  legalEntityName?: string
+  tosAccepted?: boolean
 }
 
 interface RecruiterFirebaseIdentity {
@@ -415,14 +419,18 @@ export function validateRecruiterRegistration(input: unknown):
   if (b.name.length > 200 || b.email.length > 320 || inviteCodeRaw.length > 80) {
     return { ok: false, reason: "input_too_long" }
   }
-  return {
-    ok: true,
-    value: {
-      name: b.name.trim(),
-      email: normalizeRecruiterEmail(b.email as string),
-      inviteCode: hasInviteCode ? normalizeRecruiterInviteCode(inviteCodeRaw) : "",
-    },
+  const legalEntityName = typeof b.legalEntityName === "string" ? b.legalEntityName.trim() : ""
+  if (legalEntityName.length > 300) {
+    return { ok: false, reason: "legal_entity_name_too_long" }
   }
+  const base: RecruiterAccessRegistrationInput = {
+    name: b.name.trim(),
+    email: normalizeRecruiterEmail(b.email as string),
+    inviteCode: hasInviteCode ? normalizeRecruiterInviteCode(inviteCodeRaw) : "",
+  }
+  if (legalEntityName) base.legalEntityName = legalEntityName
+  if (b.tosAccepted === true) base.tosAccepted = true
+  return { ok: true, value: base }
 }
 
 export function validateInviteCodeCreate(input: unknown):
@@ -725,11 +733,14 @@ export async function registerRecruiterAccess(
     throw new Error("email_mismatch")
   }
   const recruiterId = identity.uid
+  const tosAcceptedAt = input.tosAccepted ? new Date().toISOString() : undefined
   const recruiterBase: RecruiterProfilePublic = {
     recruiterId,
     firebaseUid: identity.uid,
     name: input.name,
     email: identity.email,
+    ...(input.legalEntityName ? { legalEntityName: input.legalEntityName } : {}),
+    ...(tosAcceptedAt ? { tosAcceptedAt } : {}),
     notificationPreferences: { newRolesEmail: true, submissionUpdatesEmail: true },
     workspacePreferences: { primaryRoleIds: [] },
   }
@@ -833,6 +844,8 @@ async function authenticateRecruiter(
     firebaseUid: identity.uid,
     name: String(data.name ?? ""),
     email,
+    ...(typeof data.legalEntityName === "string" ? { legalEntityName: data.legalEntityName } : {}),
+    ...(typeof data.tosAcceptedAt === "string" ? { tosAcceptedAt: data.tosAcceptedAt } : {}),
     notificationPreferences: readNotificationPreferences(data),
     workspacePreferences: readWorkspacePreferences(data),
   }
@@ -3700,8 +3713,14 @@ export const paRecruiterPreferencesUpdate = onRequest(
     const workspacePrefsBody = body.workspacePreferences && typeof body.workspacePreferences === "object"
       ? body.workspacePreferences as Record<string, unknown>
       : null
-    if (!prefsBody && !workspacePrefsBody) {
+    const legalEntityNameUpdate = typeof body.legalEntityName === "string" ? body.legalEntityName.trim() : undefined
+    const tosAcceptedUpdate = body.tosAccepted === true ? true : undefined
+    if (!prefsBody && !workspacePrefsBody && legalEntityNameUpdate === undefined && tosAcceptedUpdate === undefined) {
       res.status(400).json({ ok: false, reason: "missing_preferences_update" })
+      return
+    }
+    if (legalEntityNameUpdate !== undefined && legalEntityNameUpdate.length > 300) {
+      res.status(400).json({ ok: false, reason: "legal_entity_name_too_long" })
       return
     }
     const notificationPreferencesResult = prefsBody
@@ -3726,11 +3745,20 @@ export const paRecruiterPreferencesUpdate = onRequest(
       lastSeenAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     }
+    if (legalEntityNameUpdate !== undefined) updateDoc.legalEntityName = legalEntityNameUpdate
+    if (tosAcceptedUpdate) updateDoc.tosAcceptedAt = new Date().toISOString()
     await db.collection(RECRUITER_USERS_COLLECTION).doc(recruiter.recruiterId).set(updateDoc, { merge: true })
+    const updatedRecruiter = {
+      ...recruiter,
+      notificationPreferences,
+      workspacePreferences,
+      ...(legalEntityNameUpdate !== undefined ? { legalEntityName: legalEntityNameUpdate } : {}),
+      ...(tosAcceptedUpdate ? { tosAcceptedAt: new Date().toISOString() } : {}),
+    }
     res.set("Cache-Control", "private, max-age=0, no-store")
     res.status(200).json({
       ok: true,
-      recruiter: { ...recruiter, notificationPreferences, workspacePreferences },
+      recruiter: updatedRecruiter,
     })
   },
 )

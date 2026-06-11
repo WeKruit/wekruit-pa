@@ -148,6 +148,8 @@ export interface RecruiterProfile {
   firebaseUid: string
   name: string
   email: string
+  legalEntityName?: string
+  tosAcceptedAt?: string
   notificationPreferences?: {
     newRolesEmail?: boolean
     // Absent ⇒ true: status-update emails are opt-out.
@@ -456,6 +458,8 @@ export async function registerRecruiterAccess(input: {
   name: string
   email: string
   inviteCode?: string
+  legalEntityName?: string
+  tosAccepted?: boolean
 }): Promise<RecruiterSession> {
   const res = await fetch(RECRUITER_ACCESS_URL, {
     method: "POST",
