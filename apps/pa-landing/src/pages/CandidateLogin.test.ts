@@ -273,3 +273,23 @@ test("CandidateShell routes missing Claire-line states to a real profile action"
     /<Link[\s\S]*to="\/me\/profile#profile-corrections"[\s\S]*className="wk-sidenav__claire is-pending"[\s\S]*Update profile[\s\S]*Add context for Claire/,
   )
 })
+
+test("phone-link code submit never silently no-ops when state was reset mid-flow", () => {
+  // Guard failure with a typed code surfaces an explicit expiry error instead
+  // of doing nothing (which read as "it threw me back to the start").
+  assert.match(source, /That code session expired — tap 'Text me a code' to get a fresh one\./)
+  assert.match(source, /if \(phoneLinkCode\.trim\(\)\) \{/)
+})
+
+test("phone-link in-flight request survives a reload via sessionStorage", () => {
+  // Persisted with a 10-minute TTL when the code is sent…
+  assert.match(source, /PHONE_LINK_REQUEST_KEY\s*=\s*"pa_phone_link_request"/)
+  assert.match(source, /PHONE_LINK_REQUEST_TTL_MS\s*=\s*10 \* 60 \* 1000/)
+  assert.match(source, /rememberPhoneLinkRequest\(result\.requestId, result\.phoneMasked\)/)
+  // …rehydrated back onto the code-entry step on mount / sign-in resume…
+  assert.match(source, /function resumePhoneLinkRequestState\(\): PhoneLinkState \| null/)
+  assert.match(source, /resumePhoneLinkRequestState\(\) \?\?/)
+  // …and cleared on success and on close.
+  assert.match(source, /clearPhoneLinkIntent\(\)\s*\n\s*clearPhoneLinkRequest\(\)/)
+  assert.match(source, /function closePhoneLink\(\) \{[\s\S]*?clearPhoneLinkRequest\(\)[\s\S]*?\n  \}/)
+})

@@ -111,6 +111,67 @@ function clearPhoneLinkIntent(): void {
   }
 }
 
+// ── Phone-link in-flight request persistence ─────────────────────────────────
+// The code-sent requestId/phoneMasked pair survives a page reload or an
+// auth-driven remount so the user lands back on the code-entry step instead of
+// the start panel (mirrors the sessionStorage patterns in browser-identity.ts).
+
+const PHONE_LINK_REQUEST_KEY = "pa_phone_link_request"
+const PHONE_LINK_REQUEST_TTL_MS = 10 * 60 * 1000
+
+function rememberPhoneLinkRequest(requestId: string, phoneMasked: string): void {
+  try {
+    window.sessionStorage.setItem(
+      PHONE_LINK_REQUEST_KEY,
+      JSON.stringify({ requestId, phoneMasked, at: Date.now() }),
+    )
+  } catch {
+    // ignore private mode
+  }
+}
+
+function clearPhoneLinkRequest(): void {
+  try {
+    window.sessionStorage.removeItem(PHONE_LINK_REQUEST_KEY)
+  } catch {
+    // ignore private mode
+  }
+}
+
+function readPhoneLinkRequest(): { requestId: string; phoneMasked: string } | null {
+  try {
+    const raw = window.sessionStorage.getItem(PHONE_LINK_REQUEST_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { requestId?: unknown; phoneMasked?: unknown; at?: unknown }
+    if (typeof parsed.requestId !== "string" || !parsed.requestId) return null
+    if (typeof parsed.phoneMasked !== "string" || !parsed.phoneMasked) return null
+    if (typeof parsed.at !== "number" || Date.now() - parsed.at > PHONE_LINK_REQUEST_TTL_MS) {
+      clearPhoneLinkRequest()
+      return null
+    }
+    return { requestId: parsed.requestId, phoneMasked: parsed.phoneMasked }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Rehydrates a fresh (< 10 min) in-flight phone-link request as the code-entry
+ * state, or null when none is pending. Only meaningful for signed-in users —
+ * the verify callable needs an authed session.
+ */
+function resumePhoneLinkRequestState(): PhoneLinkState | null {
+  if (!auth().currentUser) return null
+  const pending = readPhoneLinkRequest()
+  if (!pending) return null
+  return {
+    status: "code_sent",
+    requestId: pending.requestId,
+    phoneMasked: pending.phoneMasked,
+    message: `Code sent to ${pending.phoneMasked}. Enter it here to connect this web account.`,
+  }
+}
+
 function readPhoneLinkIntentParam(searchParams: URLSearchParams): boolean {
   const value = searchParams.get("phoneLink")
   return value === "1" || value === "true"
@@ -1116,7 +1177,7 @@ export default function CandidateLogin() {
   const [phoneLinkCode, setPhoneLinkCode] = useState("")
   const [phoneLink, setPhoneLink] = useState<PhoneLinkState>(() =>
     phoneLinkIntentFromUrl || readPhoneLinkIntent()
-      ? {
+      ? resumePhoneLinkRequestState() ?? {
           status: auth().currentUser ? "ready" : "needs_auth",
           message: auth().currentUser
             ? "Enter the phone number you used with Claire."
@@ -1132,7 +1193,7 @@ export default function CandidateLogin() {
     setPhoneLinkMode(true)
     setPhoneLink((prev) =>
       prev.status === "idle" || prev.status === "needs_auth"
-        ? {
+        ? resumePhoneLinkRequestState() ?? {
             status: auth().currentUser ? "ready" : "needs_auth",
             message: auth().currentUser
               ? "Enter the phone number you used with Claire."
@@ -1149,7 +1210,10 @@ export default function CandidateLogin() {
         setPhoneLinkMode(true)
         setPhoneLink((prev) =>
           prev.status === "needs_auth" || prev.status === "idle"
-            ? { status: "ready", message: "Signed in. Enter the phone number you used with Claire." }
+            ? resumePhoneLinkRequestState() ?? {
+                status: "ready",
+                message: "Signed in. Enter the phone number you used with Claire.",
+              }
             : prev,
         )
       }
@@ -1164,7 +1228,12 @@ export default function CandidateLogin() {
     try {
       if (readPhoneLinkIntent()) {
         setPhoneLinkMode(true)
-        setPhoneLink({ status: "ready", message: "Signed in. Enter the phone number you used with Claire." })
+        setPhoneLink(
+          resumePhoneLinkRequestState() ?? {
+            status: "ready",
+            message: "Signed in. Enter the phone number you used with Claire.",
+          },
+        )
         setStatus("idle")
         return
       }
@@ -1339,6 +1408,7 @@ export default function CandidateLogin() {
 
   function closePhoneLink() {
     clearPhoneLinkIntent()
+    clearPhoneLinkRequest()
     setPhoneLinkMode(false)
     setPhoneLinkPhone("")
     setPhoneLinkCode("")
@@ -1359,6 +1429,7 @@ export default function CandidateLogin() {
         return
       }
       setPhoneLinkCode("")
+      rememberPhoneLinkRequest(result.requestId, result.phoneMasked)
       setPhoneLink({
         status: "code_sent",
         requestId: result.requestId,
@@ -1375,7 +1446,19 @@ export default function CandidateLogin() {
 
   async function onPhoneLinkVerify(e: FormEvent) {
     e.preventDefault()
-    if (phoneLink.status !== "code_sent" && phoneLink.status !== "verifying") return
+    if (phoneLink.status !== "code_sent" && phoneLink.status !== "verifying") {
+      // State was reset between code-send and submit (page reload or an
+      // auth-driven remount). If the user actually typed a code, never no-op
+      // silently — tell them what happened. With no code typed this is a
+      // genuinely impossible submit; keep the quiet early return.
+      if (phoneLinkCode.trim()) {
+        setPhoneLink({
+          status: "error",
+          message: "That code session expired — tap 'Text me a code' to get a fresh one.",
+        })
+      }
+      return
+    }
     const requestId = phoneLink.requestId
     const phoneMasked = phoneLink.phoneMasked
     setPhoneLink({
@@ -1395,6 +1478,7 @@ export default function CandidateLogin() {
         return
       }
       clearPhoneLinkIntent()
+      clearPhoneLinkRequest()
       clearRememberedLoginNext()
       setPhoneLink({
         status: "linked",
