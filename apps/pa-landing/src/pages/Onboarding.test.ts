@@ -53,3 +53,19 @@ test("generic onboarding does not inherit a stale remembered job return path", (
   assert.match(source, /const returnPath = useMemo\(\(\) => resolveExplicitOnboardingReturnPath\(searchParams\.get\("next"\)\), \[searchParams\]\)/)
   assert.doesNotMatch(source, /readRememberedReturnJobPath/)
 })
+
+test("transient verify failures keep the session and offer an inline retry", () => {
+  // Sign-out + bounce-to-login is gated on auth-class failures only.
+  assert.match(source, /shouldSignOutOnVerifyError/)
+  assert.match(source, /if \(shouldSignOutOnVerifyError\(err\)\) \{[\s\S]*await clearSsoCookie\(\)[\s\S]*await signOut\(auth\(\)\)[\s\S]*navigate\(`\/login\?next=\$\{encodeURIComponent\(loginNextPath\)\}`, \{ replace: true \}\)[\s\S]*\}/)
+  // No unconditional sign-out inside the catch: signOut appears only after the gate.
+  assert.doesNotMatch(
+    source,
+    /setIntakeChecked\(false\)\s*\n\s*try \{\s*\n\s*await clearSsoCookie\(\)/,
+  )
+  // Retry affordance re-runs the verify effect without destroying the session.
+  assert.match(source, /const \[verifyAttempt, setVerifyAttempt\] = useState\(0\)/)
+  assert.match(source, /setVerifyAttempt\(\(n\) => n \+ 1\)/)
+  assert.match(source, /Retry verification/)
+  assert.match(source, /\[authUser, loginNextPath, navigate, returnPath, source, verifyAttempt\]\)/)
+})

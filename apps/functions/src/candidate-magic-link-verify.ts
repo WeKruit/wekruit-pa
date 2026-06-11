@@ -386,6 +386,13 @@ export async function runCandidateMagicLinkVerify(
       claim.candidateId,
       userData,
     )
+    // Adam 2026-06-11: a phone-code-verified Claire thread IS proof of
+    // onboarding via chat — a resume must not gate the portal for those
+    // users. paCandidatePhoneLinkVerify writes phoneE164Source +
+    // phoneLinkedAt on success (identity/candidate-phone-link.ts).
+    const phoneLinkVerified =
+      userData.phoneE164Source === "phone_code_verified_claire_thread" ||
+      (typeof userData.phoneLinkedAt === "string" && userData.phoneLinkedAt.length > 0)
     const sender = await (deps.assignSenderNumber ?? assignCandidateSenderNumber)(
       deps.db,
       claim.candidateId,
@@ -400,7 +407,7 @@ export async function runCandidateMagicLinkVerify(
         intakeComplete,
         claireConversationStarted: claireStarted,
         hasResumeOnFile: resumeOnFile,
-        portalReady: claireStarted && resumeOnFile,
+        portalReady: claireStarted && (resumeOnFile || phoneLinkVerified),
         senderNumber: sender.senderNumber ?? null,
         senderGroupId: sender.senderGroupId ?? null,
         linkedinUrl: storedLinkedin,

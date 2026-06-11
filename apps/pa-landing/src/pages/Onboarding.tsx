@@ -23,7 +23,7 @@ import {
 import { resolveSource, SOURCE_RESOLVER_MARKER, stickSourceFromLoginNext, type SignupSource } from "../lib/source"
 import { auth } from "../lib/firebase.js"
 import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
-import { CandidateVerifyError, readStoredCandidateId, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
+import { CandidateVerifyError, readStoredCandidateId, shouldSignOutOnVerifyError, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 import { startCandidatePhoneLink, verifyCandidatePhoneLink } from "../lib/candidate-phone-link.js"
 import { buildHelloWekruitOpenerBody, buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
 import { canOpenImessageDeepLink } from "../lib/imessage-platform.js"
@@ -239,6 +239,9 @@ export default function Onboarding() {
   const [authUser, setAuthUser] = useState<User | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
+  // Bumped by the inline Retry button to re-run session verification after a
+  // transient (non-auth) failure without destroying the signed-in session.
+  const [verifyAttempt, setVerifyAttempt] = useState(0)
   const [profile, setProfile] = useState<Profile>({})
   const [stage, setStage] = useState<Stage>("intake")
   const [pendingForm, setPendingForm] = useState<Profile | null>(null)
@@ -303,20 +306,28 @@ export default function Onboarding() {
             err instanceof CandidateVerifyError ? err.message : "Sign-in verification failed. Try again."
           )
           setIntakeChecked(false)
-          try {
-            await clearSsoCookie()
-            await signOut(auth())
-          } catch {
-            // Login owns the next auth attempt.
+          if (shouldSignOutOnVerifyError(err)) {
+            // Auth-class failure (email_not_verified / missing_verified_email /
+            // not_signed_in / 401 / 403): the session itself is bad, so sign
+            // out and let /login own the next attempt.
+            try {
+              await clearSsoCookie()
+              await signOut(auth())
+            } catch {
+              // Login owns the next auth attempt.
+            }
+            navigate(`/login?next=${encodeURIComponent(loginNextPath)}`, { replace: true })
           }
-          navigate(`/login?next=${encodeURIComponent(loginNextPath)}`, { replace: true })
+          // Transient failure (network / 5xx / verify_failed): KEEP the
+          // session. The inline verifyError notice renders with a Retry
+          // button — destroying a valid session here was the login loop.
         }
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [authUser, loginNextPath, navigate, returnPath, source])
+  }, [authUser, loginNextPath, navigate, returnPath, source, verifyAttempt])
 
   if (!authReady || authUser === undefined) {
     return (
@@ -509,7 +520,21 @@ export default function Onboarding() {
                 )}
               </h1>
               {stage !== "dup-prompt" && <FlowProgress stage={stage} isJobInterview={isJobInterview} />}
-              {verifyError ? <StepNotice tone="error" text={verifyError} /> : null}
+              {verifyError ? (
+                <div>
+                  <StepNotice tone="error" text={verifyError} />
+                  <button
+                    type="button"
+                    className="wk-btn wk-btn--ghost wk-btn--sm"
+                    onClick={() => {
+                      setVerifyError(null)
+                      setVerifyAttempt((n) => n + 1)
+                    }}
+                  >
+                    Retry verification
+                  </button>
+                </div>
+              ) : null}
               {stage === "intake" && (
                 <p
                   style={{
