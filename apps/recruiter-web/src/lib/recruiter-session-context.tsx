@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
 import { auth } from "./firebase.js"
 import { redirectResultPromise } from "./auth-redirect-bootstrap.js"
+import { setAnalyticsUser } from "./analytics.js"
 import {
   getRecruiterProfile,
   isRecruiterProfileRejection,
@@ -101,6 +102,12 @@ export function RecruiterSessionProvider({ children }: { children: ReactNode }) 
       unsubscribe()
     }
   }, [retryToken])
+
+  // Canonical GA4 identity seam: every setSession (internal resolve + gate
+  // claims via context) lands in this state. Opaque recruiterId only (GA ToS).
+  useEffect(() => {
+    void setAnalyticsUser(session?.recruiterId ?? null)
+  }, [session?.recruiterId])
 
   return (
     <Ctx.Provider

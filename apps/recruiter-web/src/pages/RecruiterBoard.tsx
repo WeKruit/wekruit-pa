@@ -58,6 +58,7 @@ import {
   type RecruiterSubmissionItem,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
+import { trackEvent } from "../lib/analytics.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 import { SiteHeader } from "../components/SiteHeader.js"
@@ -4099,6 +4100,8 @@ export function RecruiterAccessGate({
         tosAccepted: true,
       })
       clearPendingRecruiterAccess()
+      void trackEvent("recruiter_session_started")
+      void trackEvent("login", { method: "recruiter_access" })
       onSessionClaimed(next)
     } catch (error) {
       clearPendingRecruiterAccess()

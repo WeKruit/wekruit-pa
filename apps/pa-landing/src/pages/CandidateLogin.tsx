@@ -25,6 +25,7 @@ import {
   type User,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
+import { trackEvent } from "../lib/analytics.js"
 import { clearSsoCookie } from "../lib/cross-domain-sso.js"
 import { redirectResultPromise, ssoBootstrapPromise } from "../lib/auth-redirect-bootstrap.js"
 import {
@@ -1275,6 +1276,7 @@ export default function CandidateLogin() {
         const linkedinPayload = takeLinkedinAuthPayload()
         if (linkedinPayload?.ok) {
           await signInWithCustomToken(auth(), linkedinPayload.customToken)
+          void trackEvent("login", { method: "linkedin" })
           if (!cancelled && auth().currentUser) await finishSignedIn()
           return
         }
@@ -1326,6 +1328,7 @@ export default function CandidateLogin() {
     void (async () => {
       try {
         await signInWithEmailLink(auth(), stored, window.location.href)
+        void trackEvent("login", { method: "magic_link" })
         window.localStorage.removeItem(EMAIL_STORAGE_KEY)
         if (!cancelled) await finishSignedIn()
       } catch (err) {
@@ -1349,6 +1352,7 @@ export default function CandidateLogin() {
       // origin (candidate.wekruit.com / layoff.wekruit.com).
       try {
         await signInWithPopup(auth(), createGoogleProvider())
+        void trackEvent("login", { method: "google" })
         setStatus("signing_in")
         await finishSignedIn()
       } catch (err) {
@@ -1375,11 +1379,13 @@ export default function CandidateLogin() {
       if (isCompletingLink) {
         setStatus("signing_in")
         await signInWithEmailLink(auth(), nextEmail, window.location.href)
+        void trackEvent("login", { method: "magic_link" })
         window.localStorage.removeItem(EMAIL_STORAGE_KEY)
         await finishSignedIn()
         return
       }
       setStatus("sending")
+      void trackEvent("magic_link_requested")
       rememberLoginNext(nextDest.to)
       rememberOnboardingIntentForPath(nextDest.to)
       await sendSignInLinkToEmail(auth(), nextEmail, {

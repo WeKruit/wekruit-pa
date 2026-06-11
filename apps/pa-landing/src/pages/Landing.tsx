@@ -13,6 +13,7 @@ import { Link } from "react-router-dom"
 import { collection, getDocs, limit, query, where } from "firebase/firestore"
 import { useQueryClient } from "@tanstack/react-query"
 import { db } from "../lib/firebase.js"
+import { trackEvent } from "../lib/analytics.js"
 import { formatPublicJobType } from "../lib/public-job-labels.js"
 import { listPublicJobOpenings } from "../lib/public-jobs.js"
 import { openJobsEndpoint, OPEN_JOBS_STALE_TIME_MS, OPEN_JOBS_GC_TIME_MS } from "../lib/open-jobs.js"
@@ -212,7 +213,7 @@ export default function Landing() {
               Claire starts the first interview; your passed profile carries the evidence.
             </p>
             <div className="wk-hero__cta">
-              <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
+              <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => void trackEvent("landing_cta_click", { cta: "hero_interview_claire" })}>
                 Interview with Claire
                 <Icon name="arrow-right" size={16} stroke={2} />
               </Link>

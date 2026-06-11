@@ -28,6 +28,7 @@ import {
   type SubmissionCandidateCells,
   type SubmissionChecklistValue,
 } from "../lib/recruiter-board-api.js"
+import { trackEvent } from "../lib/analytics.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import { SiteHeader } from "../components/SiteHeader.js"
 import { buildSubmissionStatusStepper, SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
@@ -543,6 +544,10 @@ export default function RoleSheetPage() {
     if (jobId) setAddDraft(loadAddRowDraft(jobId))
   }, [jobId])
 
+  useEffect(() => {
+    if (jobId) void trackEvent("role_sheet_viewed", { job_id: jobId })
+  }, [jobId])
+
   const changeAddDraft = (next: AddRowDraft) => {
     setAddDraft(next)
     if (jobId) saveAddRowDraft(jobId, next)
@@ -640,6 +645,7 @@ export default function RoleSheetPage() {
         setSubmitError(formatSubmitFailure(result.reason))
         return
       }
+      void trackEvent("submission_created", { job_id: job.jobId })
       await refreshSubmissions()
       setAddDraft(emptyAddRowDraft())
       clearAddRowDraft(jobId)

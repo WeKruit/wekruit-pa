@@ -26,6 +26,7 @@ import {
 import { doc, getDoc, setDoc } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
 import { auth, db, functions } from "../lib/firebase.js"
+import { trackEvent } from "../lib/analytics.js"
 import {
   CLAIM_EMAIL_KEY,
   GLOBAL_UID_KEY,
@@ -960,6 +961,7 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
     try {
       setStatus("uploading")
       setErrMsg(null)
+      void trackEvent("cv_upload_submitted", { job_id: jobId })
       const currentUser = auth().currentUser
       if (!currentUser) {
         setStatus("err")
