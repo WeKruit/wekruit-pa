@@ -1,0 +1,80 @@
+import { useEffect, useState } from "react"
+import { Link } from "react-router-dom"
+import { SiteHeader } from "../components/SiteHeader.js"
+import "../styles/open-jobs.css"
+import { fetchCollabJobs, type CollabJob } from "../lib/recruiter-board-api.js"
+
+export default function OpenJobsPage() {
+  const [jobs, setJobs] = useState<CollabJob[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchCollabJobs()
+      .then((list) => setJobs(list.filter((j) => j.recruiterBoard.active).sort((a, b) => a.recruiterBoard.sortOrder - b.recruiterBoard.sortOrder)))
+      .catch((e) => setError(String(e?.message ?? e)))
+  }, [])
+
+  return (
+    <div className="oj-page">
+      <SiteHeader />
+
+      <main className="oj-main">
+        <div className="oj-hero">
+          <h1>Open roles</h1>
+          <p>Browse active WeKruit collab roles. Sign in to submit candidates.</p>
+        </div>
+
+        {error && <p className="oj-error">Could not load jobs: {error}</p>}
+
+        {!jobs && !error && <p className="oj-loading">Loading roles…</p>}
+
+        {jobs && jobs.length === 0 && <p className="oj-empty">No open roles right now. Check back soon.</p>}
+
+        {jobs && jobs.length > 0 && (
+          <div className="oj-grid">
+            {jobs.map((job) => (
+              <Link key={job.jobId} to={`/recruiters/job/${job.jobId}`} className="oj-card">
+                <div className="oj-card__header">
+                  <h2>{job.title}</h2>
+                  {job.companyWebsite ? (
+                    <a
+                      className="oj-card__company oj-card__company--link"
+                      href={job.companyWebsite}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {job.recruiterBoard.label.company} ↗
+                    </a>
+                  ) : (
+                    <span className="oj-card__company">{job.recruiterBoard.label.company}</span>
+                  )}
+                </div>
+                <div className="oj-card__meta">
+                  <span>{job.recruiterBoard.label.location}</span>
+                  {job.compSummary && <span>{job.compSummary}</span>}
+                </div>
+                {job.recruiterBoard.label.pills.length > 0 && (
+                  <div className="oj-card__pills">
+                    {job.recruiterBoard.label.pills.map((pill, i) => (
+                      <span key={i} className={`oj-pill is-${pill.tone ?? "neutral"}`}>{pill.text}</span>
+                    ))}
+                  </div>
+                )}
+                <p className="oj-card__bet">{job.recruiterBoard.culture.bet}</p>
+                <div className="oj-card__checklist-summary">
+                  {job.recruiterBoard.checklist.groups.map((group) => (
+                    <span key={group.kind} className={`oj-chip is-${group.kind}`}>
+                      {group.kind === "hard" ? "Hard" : group.kind === "fit" ? "Fit" : group.kind === "bonus" ? "Bonus" : "Anti"} · {group.items.length}
+                    </span>
+                  ))}
+                </div>
+                <span className="oj-card__cta">View role brief →</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  )
+}

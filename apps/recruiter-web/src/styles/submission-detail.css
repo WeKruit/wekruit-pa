@@ -1,0 +1,176 @@
+.sd-page {
+  min-height: 100vh;
+  background: var(--wk-bg, #f7f7f8);
+  font-family: var(--wk-font, system-ui, -apple-system, sans-serif);
+}
+.sd-main {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+.sd-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.sd-back {
+  color: var(--wk-text-muted, #666);
+  text-decoration: none;
+  font-size: 14px;
+}
+.sd-back:hover { text-decoration: underline; }
+.sd-copy-btn {
+  background: var(--wk-surface, #fff);
+  border: 1px solid var(--wk-border, #ddd);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sd-copy-btn:hover { background: var(--wk-bg-hover, #f0f0f0); }
+.sd-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.sd-header h1 {
+  font-size: 22px;
+  margin: 0;
+}
+.sd-status {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--wk-badge-bg, #e8e8ea);
+  color: var(--wk-badge-text, #444);
+}
+.sd-status.is-submitted { background: #e0f0ff; color: #0066cc; }
+.sd-status.is-wekruit_interview { background: #e8f5e9; color: #1b5e20; }
+.sd-status.is-with_client { background: #fff3e0; color: #e65100; }
+.sd-status.is-hired { background: #c8e6c9; color: #1b5e20; }
+.sd-status.is-rejected { background: #fce4ec; color: #b71c1c; }
+.sd-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+@media (max-width: 640px) {
+  .sd-grid { grid-template-columns: 1fr; }
+}
+.sd-card {
+  background: var(--wk-surface, #fff);
+  border: 1px solid var(--wk-border, #e5e5e5);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.sd-card h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--wk-text-muted, #888);
+  margin: 0 0 10px;
+}
+.sd-card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 14px;
+}
+.sd-card dt {
+  color: var(--wk-text-muted, #888);
+  font-weight: 500;
+}
+.sd-card dd {
+  margin: 0;
+  word-break: break-word;
+}
+.sd-card dd a { color: var(--wk-link, #0066cc); }
+.sd-timeline ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.sd-timeline li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--wk-border-light, #f0f0f0);
+  font-size: 14px;
+}
+.sd-timeline li:last-child { border-bottom: none; }
+.sd-timeline span { color: var(--wk-text-muted, #888); font-size: 13px; }
+.sd-comments { margin-top: 8px; }
+.sd-muted { color: var(--wk-text-muted, #888); font-size: 14px; }
+.sd-comment {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--wk-border-light, #f0f0f0);
+}
+.sd-comment:last-of-type { border-bottom: none; }
+.sd-comment header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.sd-comment header strong { font-size: 14px; }
+.sd-comment header time { font-size: 12px; color: var(--wk-text-muted, #888); margin-left: auto; }
+.sd-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #111;
+  color: #fff;
+}
+.sd-comment p { margin: 0; font-size: 14px; line-height: 1.5; }
+.sd-comment-form {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sd-comment-form textarea {
+  border: 1px solid var(--wk-border, #ddd);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+.sd-comment-form button {
+  align-self: flex-end;
+  background: #111;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sd-comment-form button:disabled { opacity: 0.5; cursor: default; }
+.sd-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--wk-text-muted, #888);
+  font-size: 15px;
+}
+.sd-state.error { color: #b71c1c; }
+.sd-btn {
+  display: inline-block;
+  background: #111;
+  color: #fff;
+  border-radius: 6px;
+  padding: 10px 20px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+  margin-top: 12px;
+}

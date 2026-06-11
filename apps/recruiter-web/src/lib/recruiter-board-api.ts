@@ -26,6 +26,7 @@ export const RECRUITER_ROLE_QUESTIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterRol
 export const RECRUITER_ROLE_QUESTION_CREATE_URL = `${DEFAULT_BASE}/paRecruiterRoleQuestionCreate`
 export const RECRUITER_CANDIDATE_IDENTITY_CHECK_URL = `${DEFAULT_BASE}/paRecruiterCandidateIdentityCheck`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
+export const RECRUITER_SUBMISSION_GET_URL = `${DEFAULT_BASE}/paRecruiterSubmissionGet`
 export const RECRUITER_SUBMISSIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionsList`
 export const RECRUITER_SUBMISSION_UPDATE_URL = `${DEFAULT_BASE}/paRecruiterSubmissionUpdate`
 export const RECRUITER_SUBMISSION_COMMENTS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionCommentsList`
@@ -46,8 +47,10 @@ export interface CollabJob {
   jobId: string
   title: string
   compSummary?: string
+  companyWebsite?: string
   updatedAt?: string | null
-  jdBlocks: Array<{ heading: string; body: string; kind?: "list" | "prose" }>
+  // List-kind blocks carry `items` and may have a null/absent body.
+  jdBlocks: Array<{ heading: string; body?: string | null; items?: string[]; kind?: "list" | "prose" }>
   recruiterBoard: {
     active: boolean
     sortOrder: number
@@ -517,6 +520,27 @@ export async function fetchRecruiterSubmissions(): Promise<RecruiterSubmissionIt
     throw new Error(body.reason ?? `paRecruiterSubmissionsList HTTP ${res.status}`)
   }
   return body.submissions
+}
+
+export async function fetchRecruiterSubmission(submissionId: string): Promise<{
+  submission: RecruiterSubmissionItem
+  comments: Array<{ id: string; authorName: string; authorEmail?: string; message: string; by: "recruiter" | "wekruit"; at?: unknown }>
+}> {
+  const url = `${RECRUITER_SUBMISSION_GET_URL}?submissionId=${encodeURIComponent(submissionId)}`
+  const res = await fetch(url, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    submission?: RecruiterSubmissionItem
+    comments?: Array<{ id: string; authorName: string; authorEmail?: string; message: string; by: "recruiter" | "wekruit"; at?: unknown }>
+  }
+  if (!res.ok || !body.ok || !body.submission) {
+    throw new Error(body.reason ?? `paRecruiterSubmissionGet HTTP ${res.status}`)
+  }
+  return { submission: body.submission, comments: body.comments ?? [] }
 }
 
 export async function fetchRecruiterNotifications(): Promise<RecruiterNotificationItem[]> {

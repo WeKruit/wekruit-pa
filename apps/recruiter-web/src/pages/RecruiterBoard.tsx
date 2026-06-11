@@ -60,6 +60,7 @@ import {
 import { auth } from "../lib/firebase.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
+import { SiteHeader } from "../components/SiteHeader.js"
 import { SubmissionUpdatesToggle } from "../components/SubmissionUpdatesToggle.js"
 
 type RecruiterTab = "roles" | "submissions"
@@ -92,7 +93,7 @@ type RoleSort = typeof ROLE_SORTS[number]["id"]
 
 const APPROVED_ROLE_LIMIT = 10
 const PENDING_ROLE_APPLICATION_LIMIT = 3
-const SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
+const SINGLE_SUBMISSION_WEEKLY_LIMIT = 100
 const ROLE_PENDING_SUBMISSION_LIMIT = 5
 const WEEKLY_SUBMISSION_TARGET = 8
 const CALIBRATION_SLOT_LIMIT = 3
@@ -1139,12 +1140,12 @@ interface PendingRecruiterAccess {
   emailHint?: string
 }
 
-interface RecruiterInviteLink {
+export interface RecruiterInviteLink {
   code: string
   emailHint: string
 }
 
-function readRecruiterInviteLinkFromLocation(): RecruiterInviteLink | null {
+export function readRecruiterInviteLinkFromLocation(): RecruiterInviteLink | null {
   if (typeof window === "undefined") return null
   const params = new URLSearchParams(window.location.search)
   const code = cleanRecruiterInviteCode(params.get("code") ?? "")
@@ -1155,10 +1156,6 @@ function readRecruiterInviteLinkFromLocation(): RecruiterInviteLink | null {
   return { code, emailHint }
 }
 
-function maskRecruiterInviteCodeForDisplay(code: string): string {
-  if (code.length <= 6) return code
-  return `${code.slice(0, 3)}••••${code.slice(-3)}`
-}
 
 function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
   const readStored = (storage: Storage): PendingRecruiterAccess | null => {
@@ -1195,7 +1192,7 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
   }
 }
 
-function writePendingRecruiterAccess(inviteCode: string, name: string, emailHint?: string) {
+export function writePendingRecruiterAccess(inviteCode: string, name: string, emailHint?: string) {
   const payload = JSON.stringify({
     inviteCode,
     name,
@@ -1267,7 +1264,7 @@ function formatRecruiterAuthError(
               ? `No invitation found for ${invitedAddress}. Ask your WeKruit contact to invite this address, or retry with a different Google account.`
               : "No invitation found for this Google account. Ask your WeKruit contact to invite this address, or retry with a different Google account."
           }
-          return "That access code is invalid, expired, already bound to another recruiter, or does not match this Google account."
+          return "No valid invitation found for this Google account. Ask your WeKruit contact to send a new invite."
         }
         if (error.message) return error.message
       }
@@ -1383,7 +1380,6 @@ export default function RecruiterBoard() {
     }
     return (
       <RecruiterAccessGate
-        initialInviteCode={searchParams.get("accessCode")}
         inviteLink={inviteLink}
         onSessionClaimed={setSession}
       />
@@ -2305,9 +2301,9 @@ function buildRecruiterBusinessCenter(
     `Ready candidates: ${readyCandidates}`,
     `Tracked submissions: ${submissions.length}`,
     "",
-    "Please issue a fresh one-use recruiter access code for the new recruiter. Do not reuse or forward my code.",
+    "Please send an email invite to the new recruiter so they can sign in with their Google account.",
   ].join("\n")
-  const referralMailto = `mailto:admin1@wekruit.com?subject=${encodeURIComponent("Recruiter access code request")}&body=${encodeURIComponent(referralBrief)}`
+  const referralMailto = `mailto:admin1@wekruit.com?subject=${encodeURIComponent("Recruiter invite request")}&body=${encodeURIComponent(referralBrief)}`
 
   return {
     title,
@@ -2336,7 +2332,7 @@ function buildRecruiterBusinessCenter(
       {
         label: "Referral access",
         value: "Admin-issued",
-        body: "Each invite requires a fresh one-use code bound to the new recruiter's Firebase account.",
+        body: "Each invite is sent by email and bound to the new recruiter's Google account.",
         tone: "info",
       },
       {
@@ -2350,7 +2346,7 @@ function buildRecruiterBusinessCenter(
       {
         label: "Identity",
         value: session.recruiter.email,
-        body: "This account is bound to Firebase Auth and a consumed recruiter access code.",
+        body: "This account is bound to Firebase Auth via an email invitation.",
         tone: "success",
       },
       {
@@ -2369,8 +2365,8 @@ function buildRecruiterBusinessCenter(
       },
       {
         label: "Invite another recruiter",
-        value: "Fresh code required",
-        body: "Send the referral brief to WeKruit ops so the invitee gets their own one-use access code.",
+        value: "Email invite required",
+        body: "Send the referral brief to WeKruit ops so the invitee gets their own email invite.",
         tone: "info",
       },
     ],
@@ -3258,7 +3254,7 @@ function computeRecruiterEarningsMetrics(
       {
         label: "Account identity",
         value: "Verified",
-        body: "This recruiter workspace is bound to a Firebase account and one-use access code.",
+        body: "This recruiter workspace is bound to a Firebase account via email invitation.",
         tone: "success",
       },
       {
@@ -4062,24 +4058,17 @@ function RecruiterStatusLoading() {
   )
 }
 
-function RecruiterAccessGate({
+export function RecruiterAccessGate({
   initialError,
-  initialInviteCode,
   inviteLink,
   onSessionClaimed,
 }: {
   initialError?: string | null
-  initialInviteCode?: string | null
   inviteLink?: RecruiterInviteLink | null
   onSessionClaimed: (session: RecruiterSession) => void
 }) {
-  const normalizedInitialInviteCode = cleanRecruiterInviteCode(initialInviteCode ?? "")
-  const [recruiterName, setRecruiterName] = useState("")
-  const [inviteCode, setInviteCode] = useState(normalizedInitialInviteCode || inviteLink?.code || "")
   const [err, setErr] = useState<string | null>(initialError ?? null)
   const [busy, setBusy] = useState(false)
-  const [manualMode, setManualMode] = useState(Boolean(normalizedInitialInviteCode))
-  const linkMode = Boolean(inviteLink?.code) && !manualMode
   const inviteEmailHint = inviteLink?.emailHint ?? ""
 
   useEffect(() => {
@@ -4087,14 +4076,7 @@ function RecruiterAccessGate({
     if (initialError) setBusy(false)
   }, [initialError])
 
-  useEffect(() => {
-    if (normalizedInitialInviteCode) {
-      setInviteCode(normalizedInitialInviteCode)
-      setManualMode(true)
-    }
-  }, [normalizedInitialInviteCode])
-
-  const completeGoogleClaim = async (fallbackPending: PendingRecruiterAccess, inviteEmailHint?: string) => {
+  const completeGoogleClaim = async (fallbackPending: PendingRecruiterAccess, emailHint?: string) => {
     let claimEmail = ""
     try {
       if (auth().currentUser) await signOut(auth())
@@ -4113,74 +4095,28 @@ function RecruiterAccessGate({
     } catch (error) {
       clearPendingRecruiterAccess()
       await signOut(auth()).catch(() => undefined)
-      setErr(formatRecruiterAuthError(error, fallbackPending.emailHint || inviteEmailHint, { codeless: !fallbackPending.inviteCode, email: claimEmail }))
+      setErr(formatRecruiterAuthError(error, fallbackPending.emailHint || emailHint, { codeless: true, email: claimEmail }))
       setBusy(false)
     }
   }
 
-  const submit = async (e: FormEvent) => {
+  const submitSignIn = async (e: FormEvent) => {
     e.preventDefault()
-    const trimmedRecruiterName = cleanRecruiterName(recruiterName)
-    const trimmedInviteCode = cleanRecruiterInviteCode(inviteCode)
-    if (!trimmedRecruiterName) {
-      setErr("Enter your name before claiming recruiter access.")
-      return
-    }
-    if (!trimmedInviteCode) {
-      setErr("Enter your recruiter access code first.")
-      return
-    }
     setBusy(true)
     setErr(null)
+    const code = inviteLink?.code || ""
+    const hint = inviteLink?.emailHint || inviteEmailHint || undefined
     try {
-      writePendingRecruiterAccess(trimmedInviteCode, trimmedRecruiterName)
-      await completeGoogleClaim({ inviteCode: trimmedInviteCode, name: trimmedRecruiterName, createdAtMs: Date.now() })
-    } catch (error) {
-      clearPendingRecruiterAccess()
-      setErr(formatRecruiterAuthError(error))
-      setBusy(false)
-    }
-  }
-
-  // Invite-link one-click claim: no typing — the code came from the URL and the
-  // recruiter name comes from the Google displayName at claim time.
-  const submitInviteLink = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!inviteLink) return
-    setBusy(true)
-    setErr(null)
-    try {
-      writePendingRecruiterAccess(inviteLink.code, cleanRecruiterName(recruiterName), inviteLink.emailHint || undefined)
+      writePendingRecruiterAccess(code, "", hint)
       await completeGoogleClaim({
-        inviteCode: inviteLink.code,
-        name: cleanRecruiterName(recruiterName),
-        createdAtMs: Date.now(),
-        ...(inviteLink.emailHint ? { emailHint: inviteLink.emailHint } : {}),
-      }, inviteLink.emailHint || undefined)
-    } catch (error) {
-      clearPendingRecruiterAccess()
-      setErr(formatRecruiterAuthError(error, inviteLink.emailHint || undefined))
-      setBusy(false)
-    }
-  }
-
-  // Default codeless claim: invites are email-bound, so Google sign-in with the
-  // invited address is the whole gate — no name typing, no code typing.
-  const submitCodeless = async (e: FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    setErr(null)
-    try {
-      writePendingRecruiterAccess("", "", inviteEmailHint || undefined)
-      await completeGoogleClaim({
-        inviteCode: "",
+        inviteCode: code,
         name: "",
         createdAtMs: Date.now(),
-        ...(inviteEmailHint ? { emailHint: inviteEmailHint } : {}),
-      }, inviteEmailHint || undefined)
+        ...(hint ? { emailHint: hint } : {}),
+      }, hint)
     } catch (error) {
       clearPendingRecruiterAccess()
-      setErr(formatRecruiterAuthError(error, inviteEmailHint || undefined))
+      setErr(formatRecruiterAuthError(error, hint))
       setBusy(false)
     }
   }
@@ -4201,13 +4137,7 @@ function RecruiterAccessGate({
 
   return (
     <div className="rb-access">
-      <div className="rb-access__bar">
-        <Link to="/" className="rb-platform__brand">
-          <span className="rb-platform__logo">W</span>
-          <span><strong>WeKruit</strong><em>Recruiter</em></span>
-        </Link>
-        <a href="https://candidate.wekruit.com/" className="rb-access__link">Back to WeKruit</a>
-      </div>
+      <SiteHeader />
       <main className="rb-access__body">
         <section className="rb-access__copy">
           <p className="rb-overline">Invite only</p>
@@ -4215,7 +4145,7 @@ function RecruiterAccessGate({
           <p>
             Work released WeKruit collab roles with a private candidate bench,
             ownership checks, submission receipts, and status feedback tied to
-            the Google account that claims your code.
+            the Google account we invited.
           </p>
           <ul>
             <li>Role briefs show hard filters, calibration notes, and what to avoid.</li>
@@ -4224,71 +4154,12 @@ function RecruiterAccessGate({
           </ul>
         </section>
         <div className="rb-access__right-rail">
-          {linkMode && inviteLink ? (
-            <form className="rb-access__card" onSubmit={submitInviteLink}>
-              <span className="rb-access__badge">Registered recruiters only</span>
-              <h2>You're invited</h2>
-              <p className="rb-access__hint">
-                {inviteLink.emailHint
-                  ? `This invite is reserved for ${inviteLink.emailHint}. Sign in with that Google account to open your recruiter workspace — no code typing needed.`
-                  : "Your access code is already attached from the invite link. Continue with Google to open your recruiter workspace — no code typing needed."}
-              </p>
-              <p className="rb-access__hint">
-                Invite code <strong>{maskRecruiterInviteCodeForDisplay(inviteLink.code)}</strong>
-              </p>
-              {err && <p className="rb-access__err">{err}</p>}
-              <button className="rb-btn primary rb-btn--block" disabled={busy}>
-                {busy ? "Opening Google..." : "Continue with Google"}
-              </button>
-              <button type="button" className="rb-access__reset" disabled={busy} onClick={() => setManualMode(true)}>
-                Enter name and code manually
-              </button>
-            </form>
-          ) : manualMode ? (
-          <form className="rb-access__card" onSubmit={submit}>
-            <span className="rb-access__badge">Registered recruiters only</span>
-            <h2>Claim recruiter access</h2>
-            <p className="rb-access__hint">
-              Enter your name and the one-use code WeKruit issued, then choose the Google account it should bind to.
-            </p>
-            <label>
-              <span>Your name</span>
-              <input
-                value={recruiterName}
-                onChange={(e) => setRecruiterName(e.target.value)}
-                placeholder="Jane Recruiter"
-                autoComplete="name"
-                required
-              />
-            </label>
-            <label>
-              <span>Access code</span>
-              <input
-                value={inviteCode}
-                onChange={(e) => setInviteCode(cleanRecruiterInviteCode(e.target.value))}
-                placeholder="WK-XXXX-XXXX"
-                autoComplete="one-time-code"
-                required
-              />
-            </label>
-            {err && <p className="rb-access__err">{err}</p>}
-            <button className="rb-btn primary rb-btn--block" disabled={busy}>
-              {busy ? "Opening Google..." : "Continue with Gmail"}
-            </button>
-            <button type="button" className="rb-access__reset" disabled={busy} onClick={() => setManualMode(false)}>
-              Back to Google sign-in
-            </button>
-            <button type="button" className="rb-access__reset" disabled={busy} onClick={() => void clearStuckGoogleState()}>
-              Restart sign-in
-            </button>
-          </form>
-          ) : (
-          <form className="rb-access__card" onSubmit={submitCodeless}>
+          <form className="rb-access__card" onSubmit={submitSignIn}>
             <span className="rb-access__badge">Invite only</span>
-            <h2>Sign in to your recruiter workspace</h2>
+            <h2>{inviteLink ? "You're invited" : "Sign in to your recruiter workspace"}</h2>
             <p className="rb-access__hint">
               {inviteEmailHint
-                ? `This invite is reserved for ${inviteEmailHint}. Sign in with that Google account — no access code needed.`
+                ? `This invite is for ${inviteEmailHint}. Sign in with that Google account.`
                 : "Access is by invitation — sign in with the email we invited."}
             </p>
             {err && <p className="rb-access__err">{err}</p>}
@@ -4298,11 +4169,7 @@ function RecruiterAccessGate({
             <button type="button" className="rb-access__reset" disabled={busy} onClick={() => void clearStuckGoogleState()}>
               Try a different Google account
             </button>
-            <button type="button" className="rb-access__reset" disabled={busy} onClick={() => setManualMode(true)}>
-              Have an access code?
-            </button>
           </form>
-          )}
           <RecruiterAccessWorkspacePreview />
         </div>
       </main>
@@ -9142,6 +9009,14 @@ function SubmissionTable({
   onResendConfirmation: (submission: RecruiterSubmissionItem) => void
   resendingSubmissionId: string | null
 }) {
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const copyLink = (id: string) => {
+    const url = `${window.location.origin}/recruiters/submission/${encodeURIComponent(id)}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedId(id)
+      setTimeout(() => setCopiedId(null), 2000)
+    }).catch(() => {})
+  }
   return (
     <div className="rb-submissions-table-wrap">
       <table className="rb-submissions-table">
@@ -9182,9 +9057,13 @@ function SubmissionTable({
                 <td data-label="Last update">{formatActivityDate(submission.updatedAt ?? submission.createdAt)}</td>
                 <td data-label="Action">
                   <div className="rb-submissions-table__actions">
-                    {submission.inboundJobId || submission.jobId
-                      ? <Link to={`/recruiters/job/${submission.inboundJobId || submission.jobId}`}>Open sheet</Link>
-                      : <span>No role</span>}
+                    <Link to={`/recruiters/submission/${submissionReceiptId(submission)}`}>View</Link>
+                    <button type="button" onClick={() => copyLink(submissionReceiptId(submission))}>
+                      {copiedId === submissionReceiptId(submission) ? "Copied!" : "Copy link"}
+                    </button>
+                    {(submission.inboundJobId || submission.jobId) && (
+                      <Link to={`/recruiters/job/${submission.inboundJobId || submission.jobId}`}>Open sheet</Link>
+                    )}
                     {candidateConfirmationCanResend(submission) && (
                       <button
                         type="button"
@@ -10515,7 +10394,7 @@ function SettingsTab({
       </label>
       {err && <p className="rb-access__err">{err}</p>}
       <p className="rb-settings__note">
-        WeKruit issues recruiter access codes manually. Every code is one-use and binds to exactly one recruiter Firebase account.
+        WeKruit sends recruiter invitations by email. Each invite binds to exactly one Google account.
       </p>
     </section>
   )

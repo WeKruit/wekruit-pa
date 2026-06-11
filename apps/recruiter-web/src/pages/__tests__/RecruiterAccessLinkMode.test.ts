@@ -29,35 +29,30 @@ test("invite link persists code + email hint to the pending-claim slot before au
   assert.ok(captureIdx > 0 && captureIdx < gateIdx, "capture effect registers before the gate claim flow")
 })
 
-test("link mode renders a single-action gate with the code masked and no typing", () => {
-  const linkFormStart = source.indexOf("onSubmit={submitInviteLink}")
-  assert.ok(linkFormStart > 0, "link-mode form exists")
-  const linkFormEnd = source.indexOf("</form>", linkFormStart)
-  const linkFormSlice = source.slice(linkFormStart, linkFormEnd)
-  assert.match(linkFormSlice, /You're invited/)
-  assert.match(linkFormSlice, /Continue with Google/)
-  assert.match(linkFormSlice, /maskRecruiterInviteCodeForDisplay\(inviteLink\.code\)/)
-  assert.doesNotMatch(linkFormSlice, /<input/, "link mode has no text inputs")
-  assert.match(source, /\$\{code\.slice\(0, 3\)\}••••\$\{code\.slice\(-3\)\}/)
+test("invite link renders a single-action gate with no code shown and no typing", () => {
+  const formStart = source.indexOf("onSubmit={submitSignIn}")
+  assert.ok(formStart > 0, "sign-in form exists")
+  const formEnd = source.indexOf("</form>", formStart)
+  const formSlice = source.slice(formStart, formEnd)
+  assert.match(formSlice, /You're invited/)
+  assert.match(formSlice, /Continue with Google/)
+  assert.doesNotMatch(formSlice, /<input/, "gate has no text inputs")
+  assert.doesNotMatch(formSlice, /access code/i, "no access code language")
   const gateRenderCount = (source.match(/<RecruiterAccessGate/g) ?? []).length
   assert.equal(gateRenderCount, 1, "gate renders only on the no-session branch")
 })
 
-test("link-mode claim falls back to the Google displayName for the required name", () => {
+test("claim falls back to the Google displayName for the required name", () => {
   assert.match(source, /name: pending\.name \|\| cleanRecruiterName\(user\.displayName \?\? ""\) \|\| "Recruiter",/)
 })
 
 test("email mismatch shows the invite email hint with a usable retry", () => {
   assert.match(source, /if \(error\.message === "email_mismatch"\) \{/)
   assert.match(source, /`This invite is for \$\{inviteEmailHint\}\. Sign in with that Google account\.`/)
-  assert.match(source, /setErr\(formatRecruiterAuthError\(error, fallbackPending\.emailHint \|\| inviteEmailHint, \{ codeless: !fallbackPending\.inviteCode, email: claimEmail \}\)\)/)
-  assert.match(source, /setErr\(formatRecruiterAuthError\(error, inviteLink\.emailHint \|\| undefined\)\)/)
   assert.match(source, /if \(initialError\) setBusy\(false\)/, "claim rejection re-enables the gate button for retry")
 })
 
-test("manual name+code path stays available behind the access-code disclosure", () => {
-  assert.match(source, /const linkMode = Boolean\(inviteLink\?\.code\) && !manualMode/)
-  assert.match(source, /setManualMode\(true\)/)
-  assert.match(source, /writePendingRecruiterAccess\(trimmedInviteCode, trimmedRecruiterName\)/)
-  assert.match(source, /<span>Access code<\/span>/)
+test("no manual access code path exists", () => {
+  assert.doesNotMatch(source, /setManualMode/, "no manual mode")
+  assert.doesNotMatch(source, /<span>Access code<\/span>/, "no code input label")
 })

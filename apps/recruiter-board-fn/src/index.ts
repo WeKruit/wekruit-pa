@@ -47,6 +47,7 @@ export {
   paRecruiterSubmissionCommentNotify,
   paRecruiterSubmissionCommentsList,
   paRecruiterSubmissionFeedbackNotify,
+  paRecruiterSubmissionGet,
   paRecruiterSubmissionUpdate,
   paRecruiterSubmissionsList,
 } from "./recruiter-board.js"

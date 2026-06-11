@@ -76,6 +76,7 @@ const MAILGUN_API_KEY = defineSecret("MAILGUN_API_KEY")
 const MAILGUN_DOMAIN = defineSecret("MAILGUN_DOMAIN")
 const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
 const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
+const PA_ADMIN_TOKEN_SECRET = defineSecret("PA_ADMIN_TOKEN")
 const MAILGUN_SECRETS = [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION]
 const RECRUITER_PUBLIC_BASE_URL = "https://wekruit-recruiters.web.app"
 const RECRUITER_CANDIDATE_CONFIRM_URL =
@@ -115,6 +116,8 @@ async function hiringBoardAdminEmail(
   if (!auth || !auth.startsWith("Bearer ")) return null
   const token = auth.slice("Bearer ".length).trim()
   if (!token) return null
+  const adminToken = (process.env.PA_ADMIN_TOKEN ?? "").trim()
+  if (adminToken && token === adminToken) return "admin-cli@wekruit.com"
   const verify =
     verifyIdToken ??
     (async (t: string) => {
@@ -234,6 +237,7 @@ export interface PublicCollabJob {
   jobId: string
   title: string
   compSummary?: string
+  companyWebsite?: string
   jdBlocks: JdBlock[]
   recruiterBoard: RecruiterBoardPayload
   updatedAt: string | null
@@ -914,6 +918,17 @@ function extractJobUpdatedAt(
   return coerceToIso(rbUpdated) ?? coerceToIso(docData.updatedAt)
 }
 
+function normalizeCompanyId(raw: string): string {
+  if (typeof raw !== "string") return ""
+  const bounded = raw.slice(0, 200).toLowerCase()
+  const collapsed = bounded.replace(/[^a-z0-9]+/g, "-")
+  let start = 0
+  let end = collapsed.length
+  while (start < end && collapsed.charCodeAt(start) === 45) start++
+  while (end > start && collapsed.charCodeAt(end - 1) === 45) end--
+  return collapsed.slice(start, end).slice(0, 100)
+}
+
 export async function fetchCollabJobs(
   db: Firestore,
   options: FetchCollabJobsOptions = { isAdmin: false },
@@ -938,6 +953,7 @@ export async function fetchCollabJobs(
     .get()
 
   const allMatching: PublicCollabJob[] = []
+  const companyIdMap = new Map<string, string>()
   for (const doc of snap.docs) {
     const d = doc.data() as Record<string, unknown>
     const rb = d.recruiterBoard as RecruiterBoardPayload | undefined
@@ -960,10 +976,9 @@ export async function fetchCollabJobs(
       ? doc.id
       : (publicId ?? doc.id)
 
-    const recruiterBoardForCaller: RecruiterBoardPayload = options.isAdmin
-      ? rb
-      : { ...rb, label: anonymizeCompanyLabel(rb.label) }
+    const recruiterBoardForCaller: RecruiterBoardPayload = rb
 
+    const companyRaw = String(d.companyName ?? d.company ?? "")
     allMatching.push({
       jobId: jobIdForCaller,
       title: String(d.title ?? ""),
@@ -972,7 +987,33 @@ export async function fetchCollabJobs(
       recruiterBoard: recruiterBoardForCaller,
       updatedAt: updatedAtIso,
     })
+    const cid = normalizeCompanyId(companyRaw)
+    if (cid) companyIdMap.set(jobIdForCaller, cid)
   }
+
+  // Hydrate company website from pa-companies.
+  const uniqueCompanyIds = new Set(companyIdMap.values())
+  if (uniqueCompanyIds.size > 0) {
+    try {
+      const refs = Array.from(uniqueCompanyIds).map((id) => db.collection("pa-companies").doc(id))
+      const docs = await db.getAll(...refs)
+      const domainById = new Map<string, string>()
+      for (const d of docs) {
+        if (!d.exists) continue
+        const data = d.data() as Record<string, unknown> | undefined
+        const domain = typeof data?.domain === "string" ? data.domain.trim() : ""
+        if (domain) domainById.set(d.id, `https://${domain}`)
+      }
+      for (const job of allMatching) {
+        const cid = companyIdMap.get(job.jobId)
+        const website = cid ? domainById.get(cid) : undefined
+        if (website) job.companyWebsite = website
+      }
+    } catch (e) {
+      logger.warn("pa-companies hydration failed, continuing without websites", { error: String(e) })
+    }
+  }
+
   allMatching.sort((a, b) => a.recruiterBoard.sortOrder - b.recruiterBoard.sortOrder)
 
   const total = allMatching.length
@@ -1218,7 +1259,7 @@ export const paCollabJobsListSchema = onRequest(
 )
 
 export const paRecruiterInviteCodeCreate = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: [...MAILGUN_SECRETS, PA_ADMIN_TOKEN_SECRET] },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -3531,6 +3572,63 @@ export const paRecruiterRoleQuestionCreate = onRequest(
   },
 )
 
+export const paRecruiterSubmissionGet = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const submissionId = typeof req.query.submissionId === "string" ? req.query.submissionId.trim() : ""
+    if (!submissionId || submissionId.length > 200) {
+      res.status(400).json({ ok: false, reason: "missing_submission_id" })
+      return
+    }
+
+    const identity = await recruiterIdentityFromFirebaseBearer(req)
+    if (!identity) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+
+    const db = getFirestore()
+    try {
+      const snap = await db.collection(RECRUITER_SUBMISSIONS_COLLECTION).doc(submissionId).get()
+      if (!snap.exists) {
+        res.status(404).json({ ok: false, reason: "not_found" })
+        return
+      }
+      const data = snap.data() as Record<string, unknown>
+      const isAdmin = identity.email.endsWith(HIRING_BOARD_ADMIN_EMAIL_DOMAIN)
+      const isOwner = typeof data.recruiterId === "string" && data.recruiterId === identity.uid
+      if (!isAdmin && !isOwner) {
+        res.status(403).json({ ok: false, reason: "forbidden" })
+        return
+      }
+      const submission = publicRecruiterSubmission({ id: snap.id, data: () => snap.data() as Record<string, unknown> })
+      const comments = await db
+        .collection(RECRUITER_SUBMISSIONS_COLLECTION)
+        .doc(submissionId)
+        .collection("comments")
+        .orderBy("createdAt", "asc")
+        .limit(200)
+        .get()
+      const commentsList = comments.docs.map(publicRecruiterSubmissionComment)
+
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, submission, comments: commentsList })
+    } catch (err) {
+      logger.error("paRecruiterSubmissionGet_failed", { error: String(err), submissionId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
 export const paRecruiterSubmissionsList = onRequest(
   { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
   async (req, res) => {
@@ -4633,10 +4731,10 @@ export function composeRecruiterInviteEmail(
     "",
     `Accept your invite: ${acceptUrl}`,
     "",
-    "Sign in with Google using this email address and your workspace opens — no access code needed:",
+    "Sign in with Google using this email address and your workspace opens:",
     input.recruiterEmail,
     "",
-    `If the button doesn't work, use access code ${input.inviteCode} on the recruiter site.`,
+    "If the button doesn't work, go to the recruiter site and sign in with this Google account.",
     ...(expiresLine ? [expiresLine] : []),
     "After you sign in, your Google account becomes your recruiter account.",
   ].join("\n")
@@ -4644,8 +4742,8 @@ export function composeRecruiterInviteEmail(
     "<p>Hi there,</p>",
     "<p>WeKruit invited you to submit roles and candidates in the recruiter workspace.</p>",
     `<p><a href="${escapeHtml(acceptUrl)}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold">Accept your invite</a></p>`,
-    `<p>Sign in with Google as <b>${escapeHtml(input.recruiterEmail)}</b> and your workspace opens — no access code needed.</p>`,
-    `<p style="color:#666;font-size:12px">If the button doesn't work, use access code <code>${escapeHtml(input.inviteCode)}</code> on the recruiter site.${expiresLine ? ` ${escapeHtml(expiresLine)}` : ""} After you sign in, your Google account becomes your recruiter account.</p>`,
+    `<p>Sign in with Google as <b>${escapeHtml(input.recruiterEmail)}</b> and your workspace opens.</p>`,
+    `<p style="color:#666;font-size:12px">If the button doesn't work, go to the recruiter site and sign in with this Google account.${expiresLine ? ` ${escapeHtml(expiresLine)}` : ""} After you sign in, your Google account becomes your recruiter account.</p>`,
   ].join("")
   return { subject, text, html }
 }

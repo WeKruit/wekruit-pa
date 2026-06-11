@@ -29,6 +29,7 @@ import {
   type SubmissionChecklistValue,
 } from "../lib/recruiter-board-api.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
+import { SiteHeader } from "../components/SiteHeader.js"
 import { buildSubmissionStatusStepper, SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 
 const SHEET_DRAFT_KEY_PREFIX = "rs-draft-v1:"
@@ -693,31 +694,14 @@ export default function RoleSheetPage() {
     }
   }
 
-  if (error) return <div className="rs-page"><div className="rs-state error">Could not load: {error}</div></div>
-  if (!authReady) return <div className="rs-page"><div className="rs-state">Loading recruiter account…</div></div>
-  if (!session) {
-    return (
-      <div className="rs-page">
-        <main className="rs-shell">
-          <div className="rs-topbar">
-            <Link to="/recruiters" className="rs-back">← All roles</Link>
-          </div>
-          <div className="rs-state">
-            <p>Recruiter access is required before submitting candidates.</p>
-            <Link to="/recruiters" className="rs-btn" style={{ textDecoration: "none" }}>Enter access code</Link>
-          </div>
-        </main>
-      </div>
-    )
-  }
-  if (!jobs) return <div className="rs-page"><div className="rs-state">Loading…</div></div>
+  if (error) return <div className="rs-page"><SiteHeader /><div className="rs-state error">Could not load: {error}</div></div>
+  if (!authReady) return <div className="rs-page"><SiteHeader /><div className="rs-state">Loading recruiter account…</div></div>
+  if (!jobs) return <div className="rs-page"><SiteHeader /><div className="rs-state">Loading…</div></div>
   if (!job) {
     return (
       <div className="rs-page">
+        <SiteHeader />
         <main className="rs-shell">
-          <div className="rs-topbar">
-            <Link to="/recruiters" className="rs-back">← All roles</Link>
-          </div>
           <div className="rs-state error">This role is not on the board anymore.</div>
         </main>
       </div>
@@ -732,12 +716,18 @@ export default function RoleSheetPage() {
 
   return (
     <div className="rs-page">
+      <SiteHeader />
       <main className="rs-shell">
         <div className="rs-topbar">
-          <Link to="/recruiters" className="rs-back">← All roles</Link>
-          <span className="rs-topbar__sep">·</span>
           <h1>{job.title}</h1>
-          <span className="rs-topbar__meta">{label.company} · {label.location}</span>
+          <span className="rs-topbar__meta">
+            {job.companyWebsite ? (
+              <a href={job.companyWebsite} target="_blank" rel="noopener noreferrer" className="rs-topbar__company-link">
+                {label.company} ↗
+              </a>
+            ) : label.company}
+            {" · "}{label.location}
+          </span>
           {job.compSummary && (
             <>
               <span className="rs-topbar__sep">·</span>
@@ -752,7 +742,7 @@ export default function RoleSheetPage() {
             {job.jdBlocks.map((block, i) => (
               <section key={i}>
                 <h3>{block.heading}</h3>
-                {renderJdBody(block.body)}
+                {renderJdBody(block.body ?? "")}
               </section>
             ))}
             {job.recruiterBoard.interviewProcess && (
@@ -773,75 +763,84 @@ export default function RoleSheetPage() {
           </div>
         </details>
 
-        <div className="rs-legend">
-          {legendCounts.map((entry, i) => (
-            <span key={entry.kind}>
-              {i > 0 && <span aria-hidden="true"> · </span>}
-              <strong>{CHECKLIST_LEGEND_LABEL[entry.kind]} ({entry.count})</strong>
-            </span>
-          ))}
-          <span>— hover any column header for the full requirement.</span>
-        </div>
-
-        <div className="rs-table-wrap">
-          <table className="rs-sheet">
-            <thead>
-              <tr>
-                {CANDIDATE_COLUMNS.map((column) => (
-                  <th key={column.id} className={`rs-th rs-c-${column.id}`}>
-                    {column.label}{column.required ? " *" : ""}
-                  </th>
-                ))}
-                {checklistColumns.map((column) => (
-                  <th key={column.id} title={column.text} className={`rs-th rs-c-check is-${column.kind}`}>
-                    <span className={`rs-chip is-${column.kind}`}>{CHECKLIST_KIND_CHIP[column.kind]}</span>
-                    {checklistShortLabel(column.text)}
-                  </th>
-                ))}
-                {extraFieldDefs.map((field) => (
-                  <th key={field.id} className="rs-th rs-c-extra">
-                    {field.label}{field.required ? " *" : ""}
-                  </th>
-                ))}
-                <th className="rs-th rs-c-notes">Notes</th>
-                <th className="rs-th rs-c-status">Status</th>
-                <th className="rs-th rs-c-feedback">Feedback</th>
-                <th className="rs-th rs-c-thread" aria-label="Conversation">💬</th>
-                <th className="rs-th rs-c-action" aria-label="Row actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {roleSubmissions.map((row) => (
-                <SheetRow
-                  key={row.id}
-                  row={row}
-                  draft={rowDrafts[row.id] ?? null}
-                  checklistColumns={checklistColumns}
-                  extraFieldDefs={extraFieldDefs}
-                  comments={commentsByRow[row.id]}
-                  saving={savingRowId === row.id}
-                  jobId={job.jobId}
-                  onEdit={(mutate) => editRow(row, mutate)}
-                  onSave={() => void saveRow(row)}
-                  onOpenThread={() => openThread(row)}
-                />
+        {session ? (
+          <>
+            <div className="rs-legend">
+              {legendCounts.map((entry, i) => (
+                <span key={entry.kind}>
+                  {i > 0 && <span aria-hidden="true"> · </span>}
+                  <strong>{CHECKLIST_LEGEND_LABEL[entry.kind]} ({entry.count})</strong>
+                </span>
               ))}
-              <AddRow
-                draft={addDraft}
-                checklistColumns={checklistColumns}
-                extraFieldDefs={extraFieldDefs}
-                blockers={addBlockers}
-                ready={addRowReady}
-                submitting={submitting}
-                jobId={job.jobId}
-                onChange={changeAddDraft}
-                onSubmit={() => void submitAddRow()}
-              />
-            </tbody>
-          </table>
-        </div>
+              <span>— hover any column header for the full requirement.</span>
+            </div>
 
-        {submitError && <div className="rs-sheet-error">Submission failed: {submitError}</div>}
+            <div className="rs-table-wrap">
+              <table className="rs-sheet">
+                <thead>
+                  <tr>
+                    {CANDIDATE_COLUMNS.map((column) => (
+                      <th key={column.id} className={`rs-th rs-c-${column.id}`}>
+                        {column.label}{column.required ? " *" : ""}
+                      </th>
+                    ))}
+                    {checklistColumns.map((column) => (
+                      <th key={column.id} title={column.text} className={`rs-th rs-c-check is-${column.kind}`}>
+                        <span className={`rs-chip is-${column.kind}`}>{CHECKLIST_KIND_CHIP[column.kind]}</span>
+                        {checklistShortLabel(column.text)}
+                      </th>
+                    ))}
+                    {extraFieldDefs.map((field) => (
+                      <th key={field.id} className="rs-th rs-c-extra">
+                        {field.label}{field.required ? " *" : ""}
+                      </th>
+                    ))}
+                    <th className="rs-th rs-c-notes">Notes</th>
+                    <th className="rs-th rs-c-status">Status</th>
+                    <th className="rs-th rs-c-feedback">Feedback</th>
+                    <th className="rs-th rs-c-thread" aria-label="Conversation">💬</th>
+                    <th className="rs-th rs-c-action" aria-label="Row actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {roleSubmissions.map((row) => (
+                    <SheetRow
+                      key={row.id}
+                      row={row}
+                      draft={rowDrafts[row.id] ?? null}
+                      checklistColumns={checklistColumns}
+                      extraFieldDefs={extraFieldDefs}
+                      comments={commentsByRow[row.id]}
+                      saving={savingRowId === row.id}
+                      jobId={job.jobId}
+                      onEdit={(mutate) => editRow(row, mutate)}
+                      onSave={() => void saveRow(row)}
+                      onOpenThread={() => openThread(row)}
+                    />
+                  ))}
+                  <AddRow
+                    draft={addDraft}
+                    checklistColumns={checklistColumns}
+                    extraFieldDefs={extraFieldDefs}
+                    blockers={addBlockers}
+                    ready={addRowReady}
+                    submitting={submitting}
+                    jobId={job.jobId}
+                    onChange={changeAddDraft}
+                    onSubmit={() => void submitAddRow()}
+                  />
+                </tbody>
+              </table>
+            </div>
+
+            {submitError && <div className="rs-sheet-error">Submission failed: {submitError}</div>}
+          </>
+        ) : (
+          <div className="rs-auth-prompt">
+            <p>Sign in to submit candidates for this role.</p>
+            <Link to="/recruiters" className="rs-auth-prompt__link">Go to recruiter home →</Link>
+          </div>
+        )}
       </main>
 
       {threadRow && (
