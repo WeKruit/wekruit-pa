@@ -41,7 +41,7 @@ import {
 // 2026-06-10 trust audit — deterministic apply-URL plausibility gate + the
 // "prescreen owns the thread" guard (see rec-url-guard.ts / prescreen-guard.ts).
 import { isPlausibleAtsUrl } from "./rec-url-guard.js"
-import { userHasOpenPrescreen } from "./prescreen-guard.js"
+import { hasOpenPrescreenWorkSession, userHasOpenPrescreen } from "./prescreen-guard.js"
 import { buildRichMatchReason } from "./match-reason.js"
 import {
   buildJobCandidateText,
@@ -236,6 +236,13 @@ export type BatchOutcome = {
   cappedOut?: number
   /** 2026-06-10 trust audit — users skipped because an OPEN prescreen session owns the thread. */
   skippedActivePrescreen?: number
+  /**
+   * 2026-06-11 STOP compliance — users skipped because `pa-users.doNotContact
+   * === true` (deterministic SMS STOP gate). The batch's send seam (synthetic
+   * runtime event → Claire runtime → pa-outbound) does NOT pass through the
+   * inbound stop-gate, so this per-user gate is the rec path's suppression.
+   */
+  skippedDoNotContact?: number
   /** 2026-06-10 trust audit — jobs dropped because the same jobId was recommended within 14d. */
   repeatJobsExcluded?: number
   /** Resolved cadence (days) used this run — surfaced for observability. */
@@ -246,7 +253,11 @@ export type BatchOutcome = {
   cooldownMs?: number
 }
 
-const DEFAULT_USER_CAP = 100
+// 2026-06-11 — raised 100 → 300 so the widened cadence audience (auto-
+// provisioned profiles for every matched-ready user; see
+// audience-provision.ts) fits in one daily run. Prod fleet: ~215 users with
+// targetRoleFunction; 300 leaves headroom without unbounding the scan.
+const DEFAULT_USER_CAP = 300
 const DEFAULT_JOBS_PER_USER = 3
 
 
@@ -1270,10 +1281,15 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
   let errors = 0
   let skippedNotDue = 0
   let skippedCooldown = 0
+  let skippedDoNotContact = 0
 
   // Resolve per-user eligibility (feature flag → cross-system cooldown →
-  // cadence due-gate) up front.
+  // cadence due-gate → STOP suppression) up front.
   const dueUsers: Array<{ userId: string; fromNumber?: string }> = []
+  // ONE pa-users read per due user (2026-06-11): serves BOTH the deterministic
+  // doNotContact gate here AND the open-prescreen check in the send loop below
+  // (pure hasOpenPrescreenWorkSession over the cached doc — no second read).
+  const userDocByUser = new Map<string, Record<string, unknown> | null>()
   for (const doc of snap.docs) {
     const profileDoc = doc.data() as JobProfileDoc & {
       profile?: unknown
@@ -1314,6 +1330,34 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       skippedNotDue += 1
       continue
     }
+    // 2026-06-11 STOP compliance (Adam: "allow user to say Stop to stop") —
+    // deterministic doNotContact gate ON THE REC PATH. The batch's send seam
+    // (sendImessage → synthetic pa-inbound-events runtime event → onPaInbound
+    // → thin/legacy Claire → pa-outbound) never passes through the inbound
+    // stop-gate (claire-agent/stop-gate.ts fires only on candidate-initiated
+    // broker/coalescer turns), and neither the transport nor the outbox reads
+    // doNotContact — so this per-user check is the ONLY suppression on this
+    // path. Fail-SAFE: a pa-users read error skips the user this run (counted
+    // under errors); the cadence stamp is untouched so the next run retries.
+    try {
+      const userSnap = await deps.db.collection("pa-users").doc(userId).get()
+      const userData = userSnap.exists
+        ? ((userSnap.data() ?? {}) as Record<string, unknown>)
+        : null
+      if (userData?.doNotContact === true) {
+        skippedDoNotContact += 1
+        log("[job-rec-daily] skipped_do_not_contact", { userId })
+        continue
+      }
+      userDocByUser.set(userId, userData)
+    } catch (err) {
+      errors += 1
+      log("[job-rec-daily] user_suppression_read_failed_skipping", {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      continue
+    }
     dueUsers.push({ userId, fromNumber: deps.fromNumberForUser?.(userId) })
   }
 
@@ -1342,6 +1386,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     cappedOut,
     skippedNotDue,
     skippedCooldown,
+    skippedDoNotContact,
   })
 
   // Build a userId → doc map so the loop pulls profiles for scheduled users.
@@ -1361,11 +1406,16 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     try {
       // 2026-06-10 trust audit ("prescreen owns the thread") — a proactive rec
       // batch must NEVER land between a prescreen opener and the candidate's
-      // answer. ONE pa-users read; fail-open (read error → proceed as today).
+      // answer. Uses the pa-users doc already loaded by the suppression gate
+      // above (pure check, no second read); falls back to the one-read wrapper
+      // when the cache is somehow cold. Fail-open (read error → proceed).
+      const cachedUserDoc = userDocByUser.get(userId)
       if (
-        await userHasOpenPrescreen(deps.db, userId, nowMs, (event, payload) =>
-          log("[job-rec-daily]", event, payload ?? {}),
-        )
+        cachedUserDoc !== undefined
+          ? hasOpenPrescreenWorkSession(cachedUserDoc, nowMs)
+          : await userHasOpenPrescreen(deps.db, userId, nowMs, (event, payload) =>
+              log("[job-rec-daily]", event, payload ?? {}),
+            )
       ) {
         skippedActivePrescreen += 1
         log("[job-rec-daily] skipped_active_prescreen", { userId })
@@ -2408,6 +2458,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     errors,
     skippedNotDue,
     skippedCooldown,
+    skippedDoNotContact,
     cappedOut,
     skippedActivePrescreen,
     repeatJobsExcluded,

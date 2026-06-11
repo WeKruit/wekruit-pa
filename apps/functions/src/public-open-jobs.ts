@@ -576,6 +576,17 @@ interface SnapshotCacheEntry {
   rows: OpenJobRow[]
   scanned: number
   builtAt: number
+  /**
+   * TRUE catalog size (2026-06-11, Adam: "why do we only have 299 roles??") —
+   * Firestore count() aggregate over the base query (status=="active" for
+   * scraped / publicVisible==true for collab), computed ONCE per snapshot
+   * rebuild and cached here (same TTL). Approximate by design: the aggregate
+   * cannot apply the post-scan projection/freshness filters, so it slightly
+   * overcounts vs the browsable set — the response flags that via
+   * `totalIsApprox`. `null` when the aggregate read failed (fall back to the
+   * filtered in-snapshot count, the pre-2026-06-11 behavior).
+   */
+  catalogTotal: number | null
 }
 const SNAPSHOT_TTL_MS = 60_000
 const snapshotCache = new Map<string, SnapshotCacheEntry>()
@@ -588,6 +599,22 @@ export function _resetSnapshotCacheForTest(): void {
   snapshotCache.clear()
 }
 
+/**
+ * ONE count() aggregate per snapshot rebuild (NOT per request — the result
+ * lives in the snapshotCache entry). Fail-graceful: any error (no aggregate
+ * support, permission, transient) → null → callers fall back to the filtered
+ * in-snapshot count.
+ */
+async function countCatalog(q: Query): Promise<number | null> {
+  try {
+    const agg = await q.count().get()
+    const n = agg.data().count
+    return typeof n === "number" && Number.isFinite(n) ? n : null
+  } catch {
+    return null
+  }
+}
+
 async function loadScrapedSnapshot(
   scanCap: number,
   db: ReturnType<typeof getFirestore>,
@@ -597,12 +624,11 @@ async function loadScrapedSnapshot(
   const cached = snapshotCache.get(key)
   if (cached && now - cached.builtAt < SNAPSHOT_TTL_MS) return cached
 
-  const q: Query = db
-    .collection("matching-jobs")
-    .where("status", "==", "active")
-    .orderBy("firstSeenAt", "desc")
-    .limit(scanCap)
-  const snap = await q.get()
+  const base: Query = db.collection("matching-jobs").where("status", "==", "active")
+  const q: Query = base.orderBy("firstSeenAt", "desc").limit(scanCap)
+  // Scan + true-catalog count in parallel — the aggregate is one cheap read
+  // per snapshot rebuild and is what the /market "Tracked roles" badge shows.
+  const [snap, catalogTotal] = await Promise.all([q.get(), countCatalog(base)])
   const rows: OpenJobRow[] = []
   for (const doc of snap.docs) {
     const row = toOpenJobRow(doc.id, doc.data() as Record<string, unknown>, now)
@@ -614,7 +640,7 @@ async function loadScrapedSnapshot(
     return bm - am
   })
 
-  const entry: SnapshotCacheEntry = { rows, scanned: snap.size, builtAt: now }
+  const entry: SnapshotCacheEntry = { rows, scanned: snap.size, builtAt: now, catalogTotal }
   snapshotCache.set(key, entry)
   return entry
 }
@@ -632,11 +658,9 @@ async function loadCollabSnapshot(
   // (publicVisible, wekruitCollaborationStatus) is not guaranteed across
   // envs, so filter wekruitCollaborationStatus in memory after the
   // publicVisible query (cheap at this scale).
-  const q: Query = db
-    .collection("pa-jobs")
-    .where("publicVisible", "==", true)
-    .limit(scanCap)
-  const snap = await q.get()
+  const base: Query = db.collection("pa-jobs").where("publicVisible", "==", true)
+  const q: Query = base.limit(scanCap)
+  const [snap, catalogTotal] = await Promise.all([q.get(), countCatalog(base)])
 
   const rows: OpenJobRow[] = []
   const companyIds = new Set<string>()
@@ -671,7 +695,7 @@ async function loadCollabSnapshot(
     return bm - am
   })
 
-  const entry: SnapshotCacheEntry = { rows, scanned: snap.size, builtAt: now }
+  const entry: SnapshotCacheEntry = { rows, scanned: snap.size, builtAt: now, catalogTotal }
   snapshotCache.set(key, entry)
   return entry
 }
@@ -709,6 +733,8 @@ export async function runOpenJobs(
   rows: OpenJobRow[]
   scanned: number
   total: number
+  totalIsApprox: boolean
+  filteredTotal: number
   cached: boolean
   nextCursor: string | null
   hasMore: boolean
@@ -720,12 +746,14 @@ export async function runOpenJobs(
   // Walk the active set ordered by freshness. Bounded (~6500 active rows
   // for scraped, ~15 for collab). Scan cap scales with the page far edge
   // (offset+limit*6) so even tight pages still see enough rows to find
-  // matches. Floor 300, ceiling 800 for scraped; collab capped at 200.
+  // matches. Floor 300 for scraped; ceiling raised 800 → 2000 (2026-06-11)
+  // so deep cursor pagination can actually reach more of the ~6.5k catalog.
+  // Collab capped at 200.
   const window = params.offset + params.limit
   const SCAN_CAP =
     params.source === "collab"
       ? Math.min(200, Math.max(50, window * 4))
-      : Math.min(800, Math.max(300, window * 6))
+      : Math.min(2000, Math.max(300, window * 6))
   const cacheBefore = snapshotCache.get(cacheKey(params.source, SCAN_CAP))
   const cached = !!cacheBefore && now - cacheBefore.builtAt < SNAPSHOT_TTL_MS
 
@@ -750,12 +778,21 @@ export async function runOpenJobs(
     return bm - am
   })
 
-  const total = filtered.length
+  // `total` (2026-06-11) = TRUE catalog size from the cached count()
+  // aggregate, NOT the scan-bounded snapshot size — the /market badge was
+  // showing ~299 (SCAN_CAP floor) while the real active catalog is ~6.5k.
+  // Approximate: the aggregate can't apply the freshness/projection filters,
+  // hence `totalIsApprox`. Fallback to the filtered count when the aggregate
+  // read failed. `filteredTotal` keeps the exact browsable-within-snapshot
+  // count for clients that need precise offset paging.
+  const filteredTotal = filtered.length
   const paged = applyPagination(filtered, params)
   return {
     rows: paged.rows,
     scanned: snapshot.scanned,
-    total,
+    total: snapshot.catalogTotal ?? filteredTotal,
+    totalIsApprox: snapshot.catalogTotal !== null,
+    filteredTotal,
     cached,
     nextCursor: paged.nextCursor,
     hasMore: paged.hasMore,
@@ -909,6 +946,8 @@ export async function handleOpenJobsRequest(
       count: result.rows.length,
       scanned: result.scanned,
       total: result.total,
+      totalIsApprox: result.totalIsApprox,
+      filteredTotal: result.filteredTotal,
       offset: params.offset,
       limit: params.limit,
       hasMore: result.hasMore,

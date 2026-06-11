@@ -20,6 +20,7 @@ import {
   runDailyJobRecBatch,
   defaultUserEmbedFetcher,
   fetchTopKFromCluster,
+  provisionCadenceAudience,
 } from "@pa/job-rec"
 import { getFlag } from "@pa/pa-persistence"
 import { computeCvEmbedding } from "./lib/embeddings.js"
@@ -108,6 +109,19 @@ export const paJobRecDaily = onSchedule(
   async () => {
     const db = getFirestore()
     try {
+      // Audience widener pre-pass (2026-06-11, Adam: "every 2-3 days we should
+      // send some job matching to users") — auto-provision minimal ACTIVE
+      // pa-job-profiles rows for matched-ready users missing one (eligibility:
+      // tags.targetRoleFunction + phoneE164 + !doNotContact + no open
+      // prescreen). Idempotent (existing rows — incl. operator-paused — are
+      // never touched) and ramped (≤60 new rows/run → fleet phases in over ~4
+      // days). NEVER throws; the batch below always runs.
+      const provisionOutcome = await provisionCadenceAudience({
+        db,
+        log: (event, payload) => logger.info("[job-rec-daily][provision]", event, payload ?? {}),
+      })
+      logger.info("[job-rec-daily] audience_provision_complete", provisionOutcome)
+
       // Time-spread (2026-06-02) — build the cadence/jitter/pacing deps. Loads
       // the Sendblue pool for sticky from-number + per-group dailySendCap and
       // wires Cloud Tasks delayed-enqueue when its env is present. Fail-open:
