@@ -19,7 +19,11 @@
 import { z } from "zod"
 import type { QuestionType } from "../onboarding/question.js"
 
-export const PRESCREEN_REVIEW_PASS_THRESHOLD = 0.95
+// 2026-06-11 Adam: "make the evaluation for conversation lower to make it
+// smoother for users, like 0.75" — 0.95 failed a candidate who scored 0.90.
+// This is the FLOOR (the transform below maxes per-job thresholds up to it),
+// so lowering it lets per-job configs choose anything >= 0.75.
+export const PRESCREEN_REVIEW_PASS_THRESHOLD = 0.75
 
 // ────────────────────────────────────────────────────────────────────────────
 // Zod schemas

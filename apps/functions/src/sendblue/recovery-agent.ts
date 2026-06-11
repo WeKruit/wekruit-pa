@@ -1,7 +1,10 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent, enqueueOutbound, inboundEventDocId } from "@pa/pa-broker"
 
-const WEKRUIT_SENDER = "+17174919939"
+// 2026-06-11: +17174919939 is DEAD (no webhooks; 473 users black-holed their
+// prescreen strings into it). The live pool number is the sole active row in
+// pa-sendblue-numbers; keep this aligned with that pool.
+const WEKRUIT_SENDER = "+13054507715"
 const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
 const E164_RE = /^\+[1-9]\d{7,14}$/
 const RAW_COLLECTION = "pa-sendblue-webhook-raw"
