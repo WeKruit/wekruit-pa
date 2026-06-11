@@ -27,14 +27,15 @@ import {
   Icon,
   PulseDot,
 } from "./CandidateLogin.js"
+import { openJobsEndpoint, OPEN_JOBS_STALE_TIME_MS, OPEN_JOBS_GC_TIME_MS } from "../lib/open-jobs.js"
 
 // ────────────────────────────────────────────────────────────────────────────
-// Endpoint config
+// Endpoint config — same-origin /api/open-jobs Hosting rewrite (CDN-cached);
+// VITE_OPEN_JOBS_URL override + cloudfunctions.net dev fallback live in
+// lib/open-jobs.ts openJobsEndpoint().
 // ────────────────────────────────────────────────────────────────────────────
 
-const OPEN_JOBS_URL =
-  (import.meta.env.VITE_OPEN_JOBS_URL as string | undefined) ??
-  "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicOpenJobs"
+const OPEN_JOBS_URL = openJobsEndpoint()
 
 // ────────────────────────────────────────────────────────────────────────────
 // Hunting list — paPublicOpenJobs CF row + decode
@@ -774,6 +775,9 @@ function useHuntingInfinite(filtersRaw: HuntingFilters) {
       const nextOffset = lastPage.offset + lastPage.count
       return nextOffset < lastPage.total ? nextOffset : undefined
     },
+    // Feed refreshes ~daily — never refetch during in-session navigation.
+    staleTime: OPEN_JOBS_STALE_TIME_MS,
+    gcTime: OPEN_JOBS_GC_TIME_MS,
   })
 }
 
@@ -792,6 +796,10 @@ function useDirectLine() {
       jobs.sort((a, b) => Number(b.via === "Direct line") - Number(a.via === "Direct line"))
       return jobs
     },
+    // Direct Firestore read — keep it to at most one per 6h session window
+    // so repeat /market visits don't burn a Firestore query each time.
+    staleTime: OPEN_JOBS_STALE_TIME_MS,
+    gcTime: OPEN_JOBS_GC_TIME_MS,
   })
 }
 

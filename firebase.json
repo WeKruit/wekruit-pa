@@ -149,6 +149,11 @@
           "function": { "functionId": "paPublicOpenJobs", "region": "us-central1" }
         },
         {
+          "_comment": "Same-origin candidate open-jobs feed (Adam directive 2026-06-11: cache, don't hit the CF per visitor). Routing through Hosting puts the Firebase CDN in front of paPublicOpenJobs so its s-maxage=3600 + stale-while-revalidate=86400 success headers are honored at the edge — visitors are served cached JSON and the CF sees at most ~1 req/hour/POP. Must precede the SPA ** catch-all.",
+          "source": "/api/open-jobs",
+          "function": { "functionId": "paPublicOpenJobs", "region": "us-central1" }
+        },
+        {
           "_comment": "LinkedIn one-tap connect submit. The /connect-linkedin SPA page POSTs {token, linkedinUrl} here same-origin (candidate.wekruit.com); the CF links the LinkedIn handle, enriches by URL, emits the thin-pitch runtime event, and returns the sms: reroute. Must precede the SPA ** catch-all. The /connect-linkedin page route itself needs NO rewrite — served by index.html.",
           "source": "/_li/connect",
           "function": { "functionId": "paLinkedinConnectSubmit", "region": "us-central1" }

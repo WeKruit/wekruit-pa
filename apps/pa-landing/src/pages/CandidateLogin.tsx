@@ -499,6 +499,7 @@ export function CandidateShell({
           </Link>
           <AudienceToggle />
           <nav className="wk-nav" aria-label="Candidate navigation">
+            <Link to="/market" className="wk-nav__link">Browse roles</Link>
             <HowItWorksLink />
             <Link to="/refer" className="wk-nav__link">Earn $4k</Link>
             {!isAuthed ? <Link to="/me" className="wk-nav__link">My WeKruit</Link> : null}
