@@ -100,7 +100,7 @@ const fullRoutes = (
     <Route path="/r/:slug" element={<ReferPublicPage />} />
     <Route path="/me/refer" element={<ReferPage />} />
     <Route path="/connect-linkedin" element={<ConnectLinkedin />} />
-    <Route path="/docs/partner-api" element={<PartnerApiDoc />} />
+    <Route path="/docs/partner/:token" element={<PartnerApiDoc />} />
     <Route path="/recruiters" element={<RecruiterRedirect />} />
     <Route path="/recruiters/job/:jobId" element={<RecruiterRedirect />} />
     <Route path="*" element={<HomeLanding />} />

@@ -144,6 +144,11 @@
           "function": { "functionId": "paPartnerUsersApi", "region": "us-central1" }
         },
         {
+          "_comment": "Partner jobs feed — same CF as the public /open board; partners pass ?source=collab + X-WeKruit-Api-Key. Clean URL keeps both partner APIs under wekruit.com/api/v1/partner/*.",
+          "source": "/api/v1/partner/jobs",
+          "function": { "functionId": "paPublicOpenJobs", "region": "us-central1" }
+        },
+        {
           "_comment": "LinkedIn one-tap connect submit. The /connect-linkedin SPA page POSTs {token, linkedinUrl} here same-origin (candidate.wekruit.com); the CF links the LinkedIn handle, enriches by URL, emits the thin-pitch runtime event, and returns the sms: reroute. Must precede the SPA ** catch-all. The /connect-linkedin page route itself needs NO rewrite — served by index.html.",
           "source": "/_li/connect",
           "function": { "functionId": "paLinkedinConnectSubmit", "region": "us-central1" }
