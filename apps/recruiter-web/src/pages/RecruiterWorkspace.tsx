@@ -661,6 +661,7 @@ export default function RecruiterWorkspace() {
               <em>{recruiter.email}</em>
             </span>
           </div>
+          <Link to="/recruiters/jobs" className="rw-signout" style={{ textDecoration: "none", textAlign: "center" }}>Browse open roles</Link>
           <button type="button" className="rw-signout" onClick={handleSignOut}>Sign out</button>
         </div>
       </aside>

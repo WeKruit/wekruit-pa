@@ -671,7 +671,7 @@ export default function RoleSheetPage() {
       <div className="rs-page">
         <main className="rs-shell">
           <div className="rs-topbar">
-            <Link to="/recruiters" className="rs-back">← All roles</Link>
+            <Link to="/recruiters/jobs" className="rs-back">← All roles</Link>
           </div>
           <div className="rs-state">
             <p>Recruiter access is required before submitting candidates.</p>
@@ -687,7 +687,7 @@ export default function RoleSheetPage() {
       <div className="rs-page">
         <main className="rs-shell">
           <div className="rs-topbar">
-            <Link to="/recruiters" className="rs-back">← All roles</Link>
+            <Link to="/recruiters/jobs" className="rs-back">← All roles</Link>
           </div>
           <div className="rs-state error">This role is not on the board anymore.</div>
         </main>
@@ -705,7 +705,7 @@ export default function RoleSheetPage() {
     <div className="rs-page">
       <main className="rs-shell">
         <div className="rs-topbar">
-          <Link to="/recruiters" className="rs-back">← All roles</Link>
+          <Link to="/recruiters/jobs" className="rs-back">← All roles</Link>
           <span className="rs-topbar__sep">·</span>
           <h1>{job.title}</h1>
           <span className="rs-topbar__meta">{label.company} · {label.location}</span>
