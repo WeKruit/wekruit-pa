@@ -88,6 +88,43 @@ function prescreenQuestionLabel(qId: string): string {
 }
 
 /**
+ * EMPLOYER-BACKGROUND one-liner (Adam 2026-06-10) — render the derived employer-history quality
+ * signals from `pa-users.tags` (employer-signals.ts seam) as ONE plain-English context line, e.g.
+ * "EMPLOYER BACKGROUND: founder experience; big-tech employer history; growth-stage startup
+ * history; led team of 5; honors: Top 0.1% of 390K." Returns "" when no signals exist (legacy
+ * users) so the context block is byte-identical for them. Pure, display-only — never feeds
+ * matching (V16 consumption is a separate Adam-gated decision).
+ */
+export function renderEmployerBackgroundLine(tags: Record<string, unknown>): string {
+  const parts: string[] = []
+  if (tags.founderRole === true) parts.push("founder/0→1 experience")
+  if (tags.hasBigTechBackground === true) parts.push("big-tech employer history")
+  const tier = typeof tags.employerGrowthTier === "string" ? tags.employerGrowthTier : ""
+  if (tier === "growth") parts.push("growth-stage startup history")
+  else if (tier === "early_stage") parts.push("early-stage startup history")
+  else if (tier === "mature") parts.push("mature-company history")
+  const scope =
+    tags.scopeOfOwnership && typeof tags.scopeOfOwnership === "object" && !Array.isArray(tags.scopeOfOwnership)
+      ? (tags.scopeOfOwnership as Record<string, unknown>)
+      : null
+  if (scope) {
+    if (typeof scope.teamSize === "number" && Number.isFinite(scope.teamSize)) {
+      parts.push(`led team of ${scope.teamSize}`)
+    }
+    if (typeof scope.revenue === "string" && scope.revenue.trim()) parts.push(`owned ${scope.revenue.trim()}`)
+    if (typeof scope.users === "number" && Number.isFinite(scope.users)) {
+      parts.push(`work served ${scope.users} users`)
+    }
+  }
+  const honors = Array.isArray(tags.selectivitySignals)
+    ? (tags.selectivitySignals as unknown[]).filter((s): s is string => typeof s === "string" && Boolean(s.trim()))
+    : []
+  if (honors.length) parts.push(`honors: ${honors.slice(0, 2).join(", ")}`)
+  if (!parts.length) return ""
+  return `EMPLOYER BACKGROUND (derived from their employer history — use to personalize, never to gate): ${parts.join("; ")}.`
+}
+
+/**
  * Per-question borderline signals from `questions{}.scored.aggregate` (the `s`/ratio field).
  * Same shape the legacy `recentTerminalOutcomeExplanationText` computed — kept here so the honest
  * "you were close on X, weaker on Y" answer is computed ONCE for the thin agent. Pure read.
@@ -226,6 +263,24 @@ export async function buildCandidateContext(
     globalContextText = await loadGlobalContext(db, userId, opts?.toE164)
   } catch {
     /* fail-soft — partial context (no global) is still useful; never crash the turn */
+  }
+
+  // (1b) EMPLOYER BACKGROUND (Adam 2026-06-10) — append the derived employer-history one-liner
+  // when signals exist. Own fail-soft read (loadGlobalContext returns rendered text only); "" for
+  // legacy users keeps the block byte-identical. Display/personalization only — never a gate.
+  try {
+    const userSnap = await db.collection("pa-users").doc(userId).get()
+    const userData = (userSnap.data() ?? {}) as Record<string, unknown>
+    const tags =
+      userData.tags && typeof userData.tags === "object" && !Array.isArray(userData.tags)
+        ? (userData.tags as Record<string, unknown>)
+        : {}
+    const employerLine = renderEmployerBackgroundLine(tags)
+    if (employerLine) {
+      globalContextText = globalContextText ? `${globalContextText}\n${employerLine}` : employerLine
+    }
+  } catch {
+    /* fail-soft — the employer line is additive context, never crash the turn */
   }
 
   // (2) SESSIONS — ONE userId-only query; in-memory filter + structure.

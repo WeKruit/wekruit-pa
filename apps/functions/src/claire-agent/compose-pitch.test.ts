@@ -574,3 +574,41 @@ test("isValidComposedConfirmation: rejects a competing question and overlong tex
   assert.equal(isValidComposedConfirmation("did you want me to read it?"), false) // a question belongs in the closer
   assert.equal(isValidComposedConfirmation("x".repeat(200)), false)
 })
+
+// ---------------------------------------------------------------------------
+// Employer-history signals (Adam 2026-06-10) — buildPitchProfile carries the
+// pre-computed derived signals so the composer leads with founder/selectivity/
+// scope/big-tech proof deterministically. Strictly additive.
+// ---------------------------------------------------------------------------
+
+test("buildPitchProfile: attaches employerSignals from tags when present", () => {
+  const profile = buildPitchProfile({
+    displayName: "Adam Yang",
+    tags: {
+      recentRoleTitle: "Senior SWE",
+      recentCompany: "Stripe",
+      employerStages: ["series_b"],
+      employerTags: ["big_tech", "yc_alumni"],
+      hasBigTechBackground: true,
+      employerGrowthTier: "growth",
+      founderRole: true,
+      scopeOfOwnership: { teamSize: 5, revenue: "$2M ARR" },
+      selectivitySignals: ["Top 0.1% of 390K"],
+    },
+  })
+  assert.ok(profile.employerSignals, "employerSignals carried onto the profile")
+  assert.equal(profile.employerSignals!.founderRole, true)
+  assert.equal(profile.employerSignals!.hasBigTechBackground, true)
+  assert.equal(profile.employerSignals!.employerGrowthTier, "growth")
+  assert.deepEqual(profile.employerSignals!.employerTags, ["big_tech", "yc_alumni"])
+  assert.deepEqual(profile.employerSignals!.scopeOfOwnership, { teamSize: 5, revenue: "$2M ARR" })
+  assert.deepEqual(profile.employerSignals!.selectivitySignals, ["Top 0.1% of 390K"])
+})
+
+test("buildPitchProfile: NO employerSignals key for legacy users (no derived tags)", () => {
+  const profile = buildPitchProfile({
+    displayName: "Adam Yang",
+    tags: { recentRoleTitle: "Senior SWE", recentCompany: "Stripe", skills: [{ name: "python" }] },
+  })
+  assert.ok(!("employerSignals" in profile), "absent signals → key absent (legacy profile byte-identical)")
+})

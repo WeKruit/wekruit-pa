@@ -994,3 +994,40 @@ test("mergeUserTags: drops malformed preferenceHardness (invalid hardness value)
   })
   assert.equal(out.preferenceHardness, undefined)
 })
+
+// ---------------------------------------------------------------------------
+// Employer-history signals (Adam 2026-06-10) — schema accepts the optional
+// DERIVED-HISTORY fields and rejects off-vocab values; absence stays valid.
+// ---------------------------------------------------------------------------
+
+test("UserTagsSchema accepts the employer-history derived fields", () => {
+  const parsed = UserTagsSchema.safeParse({
+    skills: [],
+    industryEnum: ["tech_software"],
+    schemaVersion: 2,
+    employerStages: ["series_b", "ipo_public"],
+    employerTags: ["big_tech", "yc_alumni"],
+    hasBigTechBackground: true,
+    employerGrowthTier: "growth",
+    founderRole: true,
+    scopeOfOwnership: { teamSize: 5, revenue: "$2M ARR", users: 5000 },
+    selectivitySignals: ["Top 0.1% of 390K"],
+  })
+  assert.equal(parsed.success, true)
+  if (parsed.success) {
+    assert.deepEqual(parsed.data.employerStages, ["series_b", "ipo_public"])
+    assert.equal(parsed.data.hasBigTechBackground, true)
+    assert.equal(parsed.data.founderRole, true)
+    assert.deepEqual(parsed.data.scopeOfOwnership, { teamSize: 5, revenue: "$2M ARR", users: 5000 })
+  }
+})
+
+test("UserTagsSchema rejects off-vocab employerGrowthTier / employerStages", () => {
+  const base = { skills: [], industryEnum: ["tech_software"], schemaVersion: 2 }
+  assert.equal(UserTagsSchema.safeParse({ ...base, employerGrowthTier: "hyper_growth" }).success, false)
+  assert.equal(UserTagsSchema.safeParse({ ...base, employerStages: ["series_z"] }).success, false)
+  assert.equal(UserTagsSchema.safeParse({ ...base, scopeOfOwnership: { teamSize: -1 } }).success, false)
+  // partial scope is fine; absence of every employer field is fine (legacy docs unaffected).
+  assert.equal(UserTagsSchema.safeParse({ ...base, scopeOfOwnership: { teamSize: 3 } }).success, true)
+  assert.equal(UserTagsSchema.safeParse(base).success, true)
+})
