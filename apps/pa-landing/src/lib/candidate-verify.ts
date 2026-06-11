@@ -9,39 +9,27 @@ import { isLinkedInSignIn } from "./candidate-auth-provider.js"
 import { clearReferralSlug, readReferralSlug } from "./referral.js"
 import { resolveSource } from "./source.js"
 
+import {
+  CandidateVerifyError,
+  candidateVerifyErrorMessage,
+} from "./candidate-verify-error.js"
+
+export {
+  CandidateVerifyError,
+  candidateVerifyErrorMessage,
+  shouldSignOutOnVerifyError,
+} from "./candidate-verify-error.js"
+
 const DEFAULT_VERIFY_URL =
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paCandidateMagicLinkVerify"
 const VERIFY_URL = import.meta.env.VITE_CANDIDATE_MAGIC_LINK_VERIFY_URL || DEFAULT_VERIFY_URL
 const CANDIDATE_ID_KEY = "wkr_candidate_id"
-
-export class CandidateVerifyError extends Error {
-  readonly reason: string
-  readonly status: number
-
-  constructor(reason: string, status: number, message?: string) {
-    super(message ?? reason)
-    this.name = "CandidateVerifyError"
-    this.reason = reason
-    this.status = status
-  }
-}
 
 export function readStoredCandidateId(): string | null {
   try {
     return window.localStorage.getItem(CANDIDATE_ID_KEY)
   } catch {
     return null
-  }
-}
-
-export function candidateVerifyErrorMessage(reason: string): string {
-  switch (reason) {
-    case "email_not_verified":
-      return "Your email isn't verified yet. Check your inbox or try Google sign-in again."
-    case "missing_verified_email":
-      return "We couldn't read an email from your sign-in. Try another method."
-    default:
-      return "Sign-in verification failed. Please try again."
   }
 }
 

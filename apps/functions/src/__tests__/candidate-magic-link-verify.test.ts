@@ -548,6 +548,122 @@ test("runCandidateMagicLinkVerify reports claireConversationStarted from Claire 
   }
 })
 
+// ---------- Phone-code-verified Claire thread = portal-ready (2026-06-11) --
+
+test("runCandidateMagicLinkVerify reports portalReady for phone-linked Claire users without a resume", async () => {
+  // Adam 2026-06-11: a verified phone link to an existing Claire thread IS
+  // proof of onboarding via chat — a resume must not gate the portal.
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-claire", {
+    phoneE164: "+14155550100",
+    phoneE164Source: "phone_code_verified_claire_thread",
+    phoneLinkedAt: "2026-06-10T00:00:00.000Z",
+  })
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-claire" },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "firebase-claire",
+        email: "claire@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-claire",
+        authMapping: {
+          firebaseUid: "firebase-claire",
+          candidateId: "cand-claire",
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-claire",
+          kind: "email" as const,
+          handleHash: "hashhashhashhash",
+          source: "candidate" as const,
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-claire",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => true,
+      hasResumeOnFile: async () => false,
+    },
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.claireConversationStarted, true)
+    assert.equal(result.hasResumeOnFile, false)
+    assert.equal(result.portalReady, true)
+  }
+})
+
+test("runCandidateMagicLinkVerify keeps portalReady false for phone-linked users without Claire inbound", async () => {
+  // Phone link alone is not enough — readiness still requires the Claire
+  // conversation gate.
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-claire", {
+    phoneE164: "+14155550100",
+    phoneE164Source: "phone_code_verified_claire_thread",
+    phoneLinkedAt: "2026-06-10T00:00:00.000Z",
+  })
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-claire" },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "firebase-claire",
+        email: "claire@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-claire",
+        authMapping: {
+          firebaseUid: "firebase-claire",
+          candidateId: "cand-claire",
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-claire",
+          kind: "email" as const,
+          handleHash: "hashhashhashhash",
+          source: "candidate" as const,
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-claire",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-20T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.portalReady, false)
+  }
+})
+
 // ---------- Identity hardening 2026-05-21 (L1-entry gate) -----------------
 
 test("runCandidateMagicLinkVerify creates account for unknown email (magic-link is a first-class L1 entry)", async () => {

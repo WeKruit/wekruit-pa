@@ -3,8 +3,9 @@
  *
  * Adam directive 2026-05-16 — switched from a homegrown sessionStorage
  * stale-while-revalidate cache to TanStack Query. The QueryClient lives
- * at the root of pa-landing (`main.tsx`) with staleTime=5min + gcTime=10min,
- * which gives us:
+ * at the root of pa-landing (`main.tsx`); open-jobs queries override the
+ * defaults with staleTime=6h + gcTime=24h (Adam 2026-06-11 — the feed
+ * updates ~daily, in-session navigation must never refetch), which gives us:
  *   - dedup of concurrent identical requests (Tabs flipping between
  *     "Direct line" and "Hunting list" no longer double-fetch)
  *   - instant repaint on revisit during the same session
@@ -15,20 +16,37 @@
  *
  * Pagination is client-side reveal-on-demand: the CF returns up to 200
  * rows in one network round-trip (already cached by `loadSnapshot` +
- * CDN s-maxage=300); `useOpenJobsPage` slices that down to a windowed
+ * CDN s-maxage=3600); `useOpenJobsPage` slices that down to a windowed
  * view so the page paints fast and "Load more" is instant.
  */
 
 import { useMemo, useState } from "react"
 import { useQuery, type UseQueryResult } from "@tanstack/react-query"
 
-const FALLBACK_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicOpenJobs"
+// Direct CF URL — used only as the local-dev fallback (vite dev server has no
+// Firebase Hosting rewrite for /api/open-jobs) and as the VITE_OPEN_JOBS_URL
+// escape hatch. Production traffic goes same-origin through the Hosting
+// rewrite so the Firebase CDN honors the CF's s-maxage/stale-while-revalidate
+// headers and visitors stop hitting the function directly (Adam 2026-06-11).
+const CLOUD_FUNCTIONS_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicOpenJobs"
 
-function endpoint(): string {
+/** Same-origin Hosting rewrite → paPublicOpenJobs (see firebase.json pa-landing). */
+const SAME_ORIGIN_PATH = "/api/open-jobs"
+
+export function openJobsEndpoint(): string {
   const raw = import.meta.env.VITE_OPEN_JOBS_URL
   if (typeof raw === "string" && raw.trim().length > 0) return raw.trim()
-  return FALLBACK_URL
+  if (import.meta.env.DEV) return CLOUD_FUNCTIONS_URL
+  return SAME_ORIGIN_PATH
 }
+
+// The scrape pool refreshes ~daily, so a 6h client staleTime means at most
+// one network round-trip per session-ish window while in-session navigation
+// (landing → market → back) never refetches. gcTime 24h keeps the entry
+// alive across long browsing sessions. Mirrors the CDN policy on the CF
+// (s-maxage=3600, stale-while-revalidate=86400).
+export const OPEN_JOBS_STALE_TIME_MS = 6 * 60 * 60 * 1000
+export const OPEN_JOBS_GC_TIME_MS = 24 * 60 * 60 * 1000
 
 export interface OpenJobRow {
   id: string
@@ -81,7 +99,7 @@ function buildQuery(f: OpenJobsFilters): string {
 }
 
 async function fetchOpenJobsNetwork(filters: OpenJobsFilters): Promise<OpenJobRow[]> {
-  const url = `${endpoint()}?${buildQuery(filters)}`
+  const url = `${openJobsEndpoint()}?${buildQuery(filters)}`
   const r = await fetch(url, { method: "GET" })
   if (!r.ok) throw new Error(`open-jobs ${r.status}`)
   const body = (await r.json()) as OpenJobsResponse
@@ -123,6 +141,8 @@ export function useOpenJobs(filters: OpenJobsFilters = {}): UseQueryResult<OpenJ
   return useQuery({
     queryKey: queryKeyForFilters(filters),
     queryFn: () => fetchOpenJobsNetwork({ limit: 80, freshDays: 45, ...filters }),
+    staleTime: OPEN_JOBS_STALE_TIME_MS,
+    gcTime: OPEN_JOBS_GC_TIME_MS,
   })
 }
 

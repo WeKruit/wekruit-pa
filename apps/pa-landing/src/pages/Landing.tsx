@@ -16,6 +16,7 @@ import { db } from "../lib/firebase.js"
 import { trackEvent } from "../lib/analytics.js"
 import { formatPublicJobType } from "../lib/public-job-labels.js"
 import { listPublicJobOpenings } from "../lib/public-jobs.js"
+import { openJobsEndpoint, OPEN_JOBS_STALE_TIME_MS, OPEN_JOBS_GC_TIME_MS } from "../lib/open-jobs.js"
 import {
   CandidateShell,
   PulseDot,
@@ -162,23 +163,24 @@ export default function Landing() {
           remoteOnly: false, search: "",
         }],
         queryFn: async () => {
-          const url =
-            (import.meta.env.VITE_OPEN_JOBS_URL ??
-              "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicOpenJobs") +
-            "?limit=80&freshDays=45"
+          // Same-origin /api/open-jobs Hosting rewrite → CDN-cached CF
+          // (cloudfunctions.net fallback only in vite dev / env override).
+          const url = `${openJobsEndpoint()}?limit=80&freshDays=45`
           const r = await fetch(url)
           if (!r.ok) throw new Error(`open-jobs ${r.status}`)
           const body = (await r.json()) as { ok: boolean; rows: unknown[]; reason?: string }
           if (!body.ok) throw new Error(body.reason ?? "open-jobs failed")
           return body.rows
         },
-        staleTime: 5 * 60 * 1000,
+        staleTime: OPEN_JOBS_STALE_TIME_MS,
+        gcTime: OPEN_JOBS_GC_TIME_MS,
       })
       // Public WeKruit role briefs — pa-jobs publicVisible, reused by /market.
       void queryClient.prefetchQuery({
         queryKey: ["pa-jobs-public-openings", 24],
         queryFn: () => listPublicJobOpenings(24),
-        staleTime: 5 * 60 * 1000,
+        staleTime: OPEN_JOBS_STALE_TIME_MS,
+        gcTime: OPEN_JOBS_GC_TIME_MS,
       })
     }
     if (typeof win.requestIdleCallback === "function") {

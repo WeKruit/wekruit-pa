@@ -31,6 +31,25 @@
       ]
     },
     {
+      "_comment": "Referral attribution on signup — attachInviteeReferralOnSignup matches pending invites by invitee email + unclaimed, newest first. Missing index broke refer.attribution on every magic-link verify (2026-06-11).",
+      "collectionGroup": "pa-referrals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "inviteeEmail",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "inviteeUserId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "Candidate referral invite rate limit — paReferInviteSend counts inviter referrals created in the last 24h.",
       "collectionGroup": "pa-referrals",
       "queryScope": "COLLECTION",

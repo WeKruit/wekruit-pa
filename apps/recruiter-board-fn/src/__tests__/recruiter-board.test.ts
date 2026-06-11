@@ -15,6 +15,7 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import { logger } from "firebase-functions/v2"
 import * as recruiterBoardEntrypoint from "../index.js"
 import {
   addRecruiterSubmissionComment,
@@ -2579,10 +2580,6 @@ describe("fetchCollabJobs anonymous payload", () => {
           recruiterBoard: { ...sampleRecruiterBoard, active: false },
         }),
       },
-      {
-        id: "missing-rb",
-        data: () => ({ title: "y" }),
-      },
     ])
     assert.equal((await fetchCollabJobs(db as never, { isAdmin: false })).jobs.length, 0)
     assert.equal((await fetchCollabJobs(db as never, { isAdmin: true })).jobs.length, 0)
@@ -2602,6 +2599,131 @@ describe("fetchCollabJobs anonymous payload", () => {
     const { jobs } = await fetchCollabJobs(db as never)
     assert.equal(jobs[0]!.jobId, "11111111-2222-3333-4444-555555555555")
     assert.equal(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Synthesized default payload — collaborated docs with no recruiterBoard
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("fetchCollabJobs synthesized default payload", () => {
+  it("surfaces a collaborated doc missing recruiterBoard with a synthesized default", async () => {
+    const db = fakeDb([
+      {
+        id: "sekai-founding-engineer",
+        data: () => ({
+          title: "Founding Engineer",
+          companyName: "Sekai",
+          publicId: "pub-sekai-founding-engineer",
+        }),
+      },
+    ])
+    const { jobs, total } = await fetchCollabJobs(db as never, { isAdmin: false })
+    assert.equal(total, 1)
+    assert.equal(jobs.length, 1)
+    const job = jobs[0]!
+    assert.equal(job.jobId, "pub-sekai-founding-engineer")
+    assert.equal(job.title, "Founding Engineer")
+    assert.equal(job.recruiterBoard.active, true)
+    assert.equal(job.recruiterBoard.label.company, "Sekai")
+    assert.deepEqual(job.recruiterBoard.label.pills, [])
+    assert.deepEqual(job.recruiterBoard.checklist.groups, [])
+    assert.deepEqual(job.recruiterBoard.culture.bullets, [])
+  })
+
+  it("falls back to the `company` field for the synthesized label", async () => {
+    const db = fakeDb([
+      {
+        id: "hyde-job",
+        data: () => ({ title: "GTM Lead", company: "Hyde", publicId: "pub-hyde" }),
+      },
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
+    assert.equal(jobs.length, 1)
+    assert.equal(jobs[0]!.recruiterBoard.label.company, "Hyde")
+  })
+
+  it("sorts synthesized rows after explicitly-ordered rows", async () => {
+    const db = fakeDb([
+      {
+        id: "uncurated",
+        data: () => ({ title: "Uncurated", companyName: "Kapibala", publicId: "pub-uncurated" }),
+      },
+      {
+        id: "curated",
+        data: () => ({
+          title: "Curated",
+          publicId: "pub-curated",
+          recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 999 },
+        }),
+      },
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
+    assert.equal(jobs.length, 2)
+    assert.equal(jobs[0]!.jobId, "pub-curated")
+    assert.equal(jobs[1]!.jobId, "pub-uncurated")
+  })
+
+  it("keeps explicitly hidden rows hidden — synthesis never overrides active === false", async () => {
+    const db = fakeDb([
+      {
+        id: "deliberately-hidden",
+        data: () => ({
+          title: "Hidden",
+          publicId: "pub-hidden",
+          recruiterBoard: { ...sampleRecruiterBoard, active: false },
+        }),
+      },
+      {
+        id: "uncurated",
+        data: () => ({ title: "Visible", companyName: "WeKruit", publicId: "pub-visible" }),
+      },
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
+    assert.equal(jobs.length, 1)
+    assert.equal(jobs[0]!.jobId, "pub-visible")
+  })
+
+  it("does not surface synthesized rows in the filled (active === false) list", async () => {
+    const db = fakeDb([
+      {
+        id: "uncurated",
+        data: () => ({ title: "Visible", companyName: "WeKruit", publicId: "pub-visible" }),
+      },
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false, status: "filled" })
+    assert.equal(jobs.length, 0)
+  })
+
+  it("logs recruiter_board.synthesized_default_payload with count + ids", async () => {
+    const calls: Array<{ msg: string; meta: Record<string, unknown> }> = []
+    const original = logger.info
+    ;(logger as { info: unknown }).info = (msg: string, meta: Record<string, unknown>) => {
+      calls.push({ msg, meta })
+    }
+    try {
+      const db = fakeDb([
+        {
+          id: "sekai-founding-engineer",
+          data: () => ({ title: "Founding Engineer", companyName: "Sekai" }),
+        },
+        {
+          id: "curated",
+          data: () => ({
+            title: "Curated",
+            publicId: "pub-curated",
+            recruiterBoard: sampleRecruiterBoard,
+          }),
+        },
+      ])
+      await fetchCollabJobs(db as never, { isAdmin: true })
+    } finally {
+      ;(logger as { info: unknown }).info = original
+    }
+    const drift = calls.find((c) => c.msg === "recruiter_board.synthesized_default_payload")
+    assert.ok(drift, "expected recruiter_board.synthesized_default_payload log")
+    assert.equal(drift!.meta.count, 1)
+    assert.deepEqual(drift!.meta.ids, ["sekai-founding-engineer"])
   })
 })
 

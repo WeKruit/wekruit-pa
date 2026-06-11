@@ -931,6 +931,39 @@ function extractJobUpdatedAt(
   return coerceToIso(rbUpdated) ?? coerceToIso(docData.updatedAt)
 }
 
+/**
+ * Sort-order fallback for synthesized payloads. Large so un-curated rows
+ * always sort after every explicitly-ordered (seeded) row.
+ */
+const SYNTHESIZED_SORT_ORDER = 1_000_000
+
+/**
+ * pa-jobs docs flip to `wekruitCollaborationStatus === "collaborated"` before
+ * an operator curates a `recruiterBoard` payload. Those docs used to be
+ * silently dropped (`if (!rb) continue`), which made newly-collaborated jobs
+ * invisible on the recruiter board until someone hand-seeded a payload.
+ * Synthesize a minimal default instead: active, company label from the job
+ * doc, large sortOrder so curated rows keep their order. Docs explicitly
+ * marked `recruiterBoard.active === false` are untouched — a deliberate hide
+ * always wins over synthesis.
+ */
+function synthesizeRecruiterBoardPayload(d: Record<string, unknown>): RecruiterBoardPayload {
+  const company = String(d.companyName ?? d.company ?? "").trim()
+  const location = typeof d.location === "string" ? d.location.trim() : ""
+  return {
+    active: true,
+    sortOrder: SYNTHESIZED_SORT_ORDER,
+    label: {
+      company: company || "Collaborated company",
+      companyCode: "",
+      location,
+      pills: [],
+    },
+    culture: { bet: "", bullets: [] },
+    checklist: { groups: [] },
+  }
+}
+
 function normalizeCompanyId(raw: string): string {
   if (typeof raw !== "string") return ""
   const bounded = raw.slice(0, 200).toLowerCase()
@@ -967,10 +1000,12 @@ export async function fetchCollabJobs(
 
   const allMatching: PublicCollabJob[] = []
   const companyIdMap = new Map<string, string>()
+  const synthesizedIds: string[] = []
   for (const doc of snap.docs) {
     const d = doc.data() as Record<string, unknown>
-    const rb = d.recruiterBoard as RecruiterBoardPayload | undefined
-    if (!rb) continue
+    const storedRb = d.recruiterBoard as RecruiterBoardPayload | undefined
+    const rb: RecruiterBoardPayload = storedRb ?? synthesizeRecruiterBoardPayload(d)
+    if (!storedRb) synthesizedIds.push(doc.id)
     if (Boolean(rb.active) !== wantActive) continue
 
     const updatedAtIso = extractJobUpdatedAt(rb, d)
@@ -1012,6 +1047,16 @@ export async function fetchCollabJobs(
     })
     const cid = normalizeCompanyId(companyRaw)
     if (cid) companyIdMap.set(jobIdForCaller, cid)
+  }
+
+  // Drift visibility: un-curated collaborated jobs are now surfaced with a
+  // synthesized default payload. Log so ops can see which rows still need a
+  // real recruiterBoard payload.
+  if (synthesizedIds.length > 0) {
+    logger.info("recruiter_board.synthesized_default_payload", {
+      count: synthesizedIds.length,
+      ids: synthesizedIds,
+    })
   }
 
   // Hydrate company website from pa-companies.
