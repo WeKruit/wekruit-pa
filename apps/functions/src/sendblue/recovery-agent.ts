@@ -19,6 +19,8 @@ export type RecoverySweepResult = {
   needsOperatorReview: number
   skippedExisting: number
   errors: number
+  /** 2026-06-10 trust audit (fix 11) — unanswered-inbound ops-queue rows written this run. */
+  unansweredQueued?: number
 }
 
 export type StartPrescreenInput = {
@@ -141,7 +143,146 @@ export async function paConversationRecoverySweepHandler(
     else result.errors++
   }
 
+  // 2026-06-10 trust audit (fix 11) — unanswered-inbound ops queue. Fail-soft:
+  // an error here must never break the raw-webhook recovery above.
+  try {
+    result.unansweredQueued = await sweepUnansweredInboundForOperatorReview(deps)
+  } catch (err) {
+    log("[sendblue][recovery-agent] unanswered-inbound sweep failed (non-fatal)",
+      err instanceof Error ? err.message : String(err))
+    result.errors++
+  }
+
   return result
+}
+
+// ---------------------------------------------------------------------------
+// 2026-06-10 trust audit (fix 11) — unanswered-inbound ops queue.
+//
+// Detect users whose LATEST pa-inbound-events user message is >6h old with NO
+// assistant outbound (pa-outbound row) after it, and queue a
+// `needs_operator_review` pa-recovery-cases row — the existing operator-review
+// mechanism — rather than auto-sending anything. Deduped per
+// (userId, latest-inbound-id) via the deterministic case doc id, so each
+// stale inbound is queued exactly once no matter how many sweeps run.
+// ---------------------------------------------------------------------------
+
+const UNANSWERED_AFTER_MS = 6 * 60 * 60 * 1000
+const UNANSWERED_SCAN_LIMIT = 300
+const UNANSWERED_WRITE_CAP = 25
+
+function unansweredCaseId(userId: string, inboundEventId: string): string {
+  return `unanswered_${userId}_${inboundEventId}`
+}
+
+export async function sweepUnansweredInboundForOperatorReview(
+  deps: ConversationRecoveryDeps
+): Promise<number> {
+  const log = deps.log ?? console.log
+  const now = deps.now ?? (() => new Date())
+  const nowMs = now().getTime()
+
+  let docs: Array<{ id: string; data: () => Record<string, unknown> | undefined }>
+  try {
+    const snap = await deps.db
+      .collection(INBOUND_COLLECTION)
+      .orderBy("createdAt", "desc")
+      .limit(UNANSWERED_SCAN_LIMIT)
+      .get()
+    docs = snap.docs as typeof docs
+  } catch (err) {
+    log("[sendblue][recovery-agent] unanswered scan query failed", err instanceof Error ? err.message : String(err))
+    return 0
+  }
+
+  // Latest inbound per user (scan is createdAt-desc so first hit wins).
+  const latestByUser = new Map<string, { eventId: string; createdAt: string; data: Record<string, unknown> }>()
+  for (const doc of docs) {
+    const data = (doc.data() ?? {}) as Record<string, unknown>
+    const userId = typeof data.userId === "string" ? data.userId : ""
+    const createdAt = typeof data.createdAt === "string" ? data.createdAt : ""
+    if (!userId || !createdAt) continue
+    if (!latestByUser.has(userId)) latestByUser.set(userId, { eventId: doc.id, createdAt, data })
+  }
+
+  let queued = 0
+  for (const [userId, latest] of latestByUser) {
+    if (queued >= UNANSWERED_WRITE_CAP) break
+    const inboundMs = Date.parse(latest.createdAt)
+    if (!Number.isFinite(inboundMs) || nowMs - inboundMs <= UNANSWERED_AFTER_MS) continue
+
+    const caseId = unansweredCaseId(userId, latest.eventId)
+    // eslint-disable-next-line no-await-in-loop
+    const existing = await deps.db.collection(CASE_COLLECTION).doc(caseId).get()
+    if (existing.exists) continue
+
+    // Any pa-outbound row for this user created AT/after the inbound counts as
+    // an answer attempt (pending/sending included — the outbox owns delivery).
+    let answered = false
+    try {
+      let outDocs: Array<{ id: string; data: () => Record<string, unknown> | undefined }>
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const outSnap = await deps.db
+          .collection(OUTBOUND_COLLECTION)
+          .where("userId", "==", userId)
+          .orderBy("createdAt", "desc")
+          .limit(5)
+          .get()
+        outDocs = outSnap.docs as typeof outDocs
+      } catch {
+        // Composite index missing → single-field query, compare client-side.
+        // eslint-disable-next-line no-await-in-loop
+        const outSnap = await deps.db
+          .collection(OUTBOUND_COLLECTION)
+          .where("userId", "==", userId)
+          .limit(50)
+          .get()
+        outDocs = outSnap.docs as typeof outDocs
+      }
+      answered = outDocs.some((d) => {
+        const od = (d.data() ?? {}) as Record<string, unknown>
+        const createdAt = typeof od.createdAt === "string" ? od.createdAt : ""
+        return Boolean(createdAt) && createdAt >= latest.createdAt
+      })
+    } catch (err) {
+      log("[sendblue][recovery-agent] unanswered outbound check failed (skip user)", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+      continue
+    }
+    if (answered) continue
+
+    const text = typeof latest.data.body === "string" ? latest.data.body : ""
+    const phone = typeof latest.data.from === "string" ? latest.data.from : null
+    // eslint-disable-next-line no-await-in-loop
+    await deps.db.collection(CASE_COLLECTION).doc(caseId).set(
+      stripUndefined({
+        id: caseId,
+        className: "unanswered_inbound_needs_operator_review",
+        action: "none",
+        status: "needs_operator_review",
+        reason: "no_assistant_outbound_after_inbound_6h",
+        userId,
+        inboundEventId: latest.eventId,
+        latestInboundAt: latest.createdAt,
+        latestInboundText: text.slice(0, 500),
+        phone,
+        createdAt: now().toISOString(),
+        updatedAt: now().toISOString(),
+      }),
+      { merge: true }
+    )
+    queued++
+    log("[sendblue][recovery-agent] unanswered inbound queued for operator review", {
+      caseId,
+      userId,
+      inboundEventId: latest.eventId,
+      ageHours: Math.round(((nowMs - inboundMs) / 3_600_000) * 10) / 10,
+    })
+  }
+  return queued
 }
 
 function buildConversations(docs: Array<{ id: string; data: () => Record<string, unknown> }>): Map<string, Conversation> {

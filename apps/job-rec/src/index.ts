@@ -145,11 +145,26 @@ export {
   USER_JOB_RECOMMENDATIONS_COLLECTION,
   loadRecommendedJobStates,
   recordRecommendedJobs,
+  excludeRecentlyRecommendedJobs,
+  RECENT_RECOMMENDATION_EXCLUSION_MS,
 } from "./recommendation-state.js"
 export type {
   RecordRecommendedJobsArgs,
   UserJobRecommendationState,
 } from "./recommendation-state.js"
+
+// 2026-06-10 trust audit — deterministic apply-URL plausibility gate, shared by
+// find_match (apps/functions) and the daily batch path here. A job failing it
+// delivers WITHOUT the url line + logs `rec_url_dropped`.
+export { isPlausibleAtsUrl } from "./rec-url-guard.js"
+
+// 2026-06-10 trust audit — "prescreen owns the thread": proactive/generic
+// senders check the user's open prescreen work session before sending.
+export {
+  hasOpenPrescreenWorkSession,
+  userHasOpenPrescreen,
+  OPEN_PRESCREEN_WINDOW_MS,
+} from "./prescreen-guard.js"
 
 export {
   buildRecruiterAgent,

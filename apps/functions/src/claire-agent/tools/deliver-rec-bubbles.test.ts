@@ -130,3 +130,72 @@ test("deliverRecBubbles: empty rows → not delivered (agent narrates the no-mat
   assert.equal(out.delivered, false)
   assert.equal(sends.length, 0)
 })
+
+// ---------------------------------------------------------------------------
+// 2026-06-10 trust audit (fix 1) — mid-batch transport failures must degrade
+// truthfully, never throw out of deliverRecBubbles.
+// ---------------------------------------------------------------------------
+
+/** Transport whose sendText throws on the Nth call (1-based). */
+function makeFailingCtx(failOnCall: number) {
+  const sends: string[] = []
+  const logs: Array<{ event: string; payload?: Record<string, unknown> }> = []
+  let calls = 0
+  const ctx = {
+    userId: "u1",
+    log: (event: string, payload?: Record<string, unknown>) => logs.push({ event, payload }),
+    transport: {
+      async typing() {},
+      async sendText(text: string) {
+        calls += 1
+        if (calls === failOnCall) throw new Error("transport_down")
+        sends.push(text)
+      },
+    },
+  } as unknown as Parameters<typeof deliverRecBubbles>[0]
+  return { ctx, sends, logs }
+}
+
+const TWO_ROLE_RES: FindMatchResult = {
+  ok: true,
+  recCount: 2,
+  jobs: [OPEN_LINE, "Data Engineer @ Beta\nhttps://beta.example.com/apply/2"],
+  reason: null,
+  collab: [],
+}
+
+test("deliverRecBubbles: transport throws on 2nd call (first ROLE bubble) → no throw, delivered:false, deliver_failed logged", async () => {
+  // call 1 = intro (succeeds), call 2 = first role (fails) → ZERO role bubbles
+  // reached the candidate → delivered:false so the agent narrates the jobs itself.
+  const { ctx, sends, logs } = makeFailingCtx(2)
+  const out = await deliverRecBubbles(ctx, TWO_ROLE_RES)
+  assert.equal(out.delivered, false)
+  assert.equal(out.collabCount, 0)
+  assert.equal(sends.length, 1, "only the intro went out")
+  assert.ok(
+    logs.some((l) => l.event === "pa.claire.find_match.deliver_failed"),
+    "deliver_failed log emitted",
+  )
+  assert.ok(
+    !logs.some((l) => l.event === "pa.claire.find_match.deliver_partial"),
+    "not logged as partial — nothing job-shaped was delivered",
+  )
+})
+
+test("deliverRecBubbles: a LATER role send fails after one role delivered → delivered:true + deliver_partial logged", async () => {
+  // call 1 = intro, call 2 = role 1 (delivered), call 3 = role 2 (fails).
+  // One role already reached the candidate, so the agent must stay silent
+  // (a narration would duplicate it) → delivered:true, partial logged.
+  const { ctx, sends, logs } = makeFailingCtx(3)
+  const out = await deliverRecBubbles(ctx, TWO_ROLE_RES)
+  assert.equal(out.delivered, true)
+  assert.equal(sends.length, 2, "intro + first role went out")
+  const partial = logs.find((l) => l.event === "pa.claire.find_match.deliver_partial")
+  assert.ok(partial, "deliver_partial log emitted")
+  assert.equal(partial!.payload?.rolesSent, 1)
+  assert.equal(partial!.payload?.rolesTotal, 2)
+  assert.ok(
+    !logs.some((l) => l.event === "pa.claire.find_match.delivered"),
+    "the full-success log is NOT emitted on a partial",
+  )
+})

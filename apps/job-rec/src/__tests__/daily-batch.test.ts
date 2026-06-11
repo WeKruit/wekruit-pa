@@ -1206,7 +1206,9 @@ const h13Job = (over: Partial<MatchingJob> = {}): MatchingJob => ({
   salaryMax: over.salaryMax ?? null,
   salaryMin: null,
   locationRaw: over.locationRaw ?? "San Francisco, CA",
-  primaryUrl: over.primaryUrl ?? "https://j/1",
+  // 2026-06-10 trust audit: "https://j/1" (dot-less host) now fails the URL
+  // plausibility gate by design — use a real-shaped URL in the H13 fixtures.
+  primaryUrl: over.primaryUrl ?? "https://jobs.example.com/1",
   // iter34 sprint A.2 — forward atsApplyUrl override so URL-fallback tests
   // can exercise both paths. Default undefined matches legacy fixtures.
   atsApplyUrl: over.atsApplyUrl,
@@ -1231,7 +1233,7 @@ test("H13 variant B (CV-known, prefs-unknown) zh: opener names recentCompany + t
   assert.match(body, /Python/)
   assert.match(body, /没具体问过你想找啥|没问过/)
   // Per-job line still has bare URL on its own line
-  assert.match(body, /\nhttps:\/\/j\/1$/)
+  assert.match(body, /\nhttps:\/\/jobs\.example\.com\/1$/)
   // Per-job reason injected (skill exact match Python)
   assert.match(body, /Python 经验直接对得上/)
 })
@@ -1706,4 +1708,198 @@ test("Phase 42: explainer flag ON + LLM throws → fail-open keeps H13 heuristic
     false,
     "no cache write on LLM failure"
   )
+})
+
+// ---------------------------------------------------------------------------
+// 2026-06-10 trust audit — fix 12 (daily repeat guard) + fix 8 (prescreen owns
+// the thread) at the batch-driver level.
+// ---------------------------------------------------------------------------
+
+test("trust-audit fix 12: a job recommended yesterday is HARD-excluded from today's batch", async () => {
+  const mfs = new MockFirestore()
+  await seedUser(mfs, "u1", "+15551112222")
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    salaryMax: 200000,
+    locationRaw: "Remote",
+    primaryUrl: "https://jobs.example.com/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/4",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
+    requiredSkills: ["TypeScript", "React", "Node.js"],
+  })
+  // Ledger: j1 was recommended YESTERDAY (the same-job-3-days-running bug).
+  await mfs
+    .collection("pa-user-job-recommendations")
+    .doc("u1")
+    .collection("jobs")
+    .doc("j1")
+    .set({
+      userId: "u1",
+      jobId: "j1",
+      recommendationCount: 1,
+      lastRecommendedAt: "2026-04-30T00:00:00Z",
+    })
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 0, "the only candidate job is a 1-day-old repeat → no send")
+  assert.equal(out.repeatJobsExcluded, 1)
+  assert.equal(out.skippedNoJobs, 1)
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0, "no runtime handoff written")
+})
+
+test("trust-audit fix 12: a job recommended >14d ago is NOT excluded (window respected)", async () => {
+  const mfs = new MockFirestore()
+  await seedUser(mfs, "u1", "+15551112222")
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    salaryMax: 200000,
+    locationRaw: "Remote",
+    primaryUrl: "https://jobs.example.com/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/4",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
+    requiredSkills: ["TypeScript", "React", "Node.js"],
+  })
+  await mfs
+    .collection("pa-user-job-recommendations")
+    .doc("u1")
+    .collection("jobs")
+    .doc("j1")
+    .set({
+      userId: "u1",
+      jobId: "j1",
+      recommendationCount: 1,
+      lastRecommendedAt: "2026-04-01T00:00:00Z", // ~30d before the batch clock
+    })
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 1, "a >14d-old prior rec does not block")
+  assert.equal(out.repeatJobsExcluded, 0)
+})
+
+test("trust-audit fix 8: an OPEN prescreen work session suppresses the daily batch for that user", async () => {
+  const mfs = new MockFirestore()
+  await seedUser(mfs, "u1", "+15551112222", {
+    workSession: {
+      kind: "job_prescreen",
+      status: "active",
+      startedAt: "2026-04-30T20:00:00Z", // ~4h before the end-of-day batch clock
+      sessionId: "ps_1",
+      jobId: "job-x",
+    },
+  })
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    salaryMax: 200000,
+    locationRaw: "Remote",
+    primaryUrl: "https://jobs.example.com/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/4",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
+    requiredSkills: ["TypeScript", "React", "Node.js"],
+  })
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 0)
+  assert.equal(out.skippedActivePrescreen, 1)
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0, "no rec batch buries the open screen")
+})
+
+test("trust-audit fix 8: an ENDED prescreen work session does NOT suppress the batch", async () => {
+  const mfs = new MockFirestore()
+  await seedUser(mfs, "u1", "+15551112222", {
+    workSession: {
+      kind: "job_prescreen",
+      status: "ended",
+      boundary: "terminal",
+      endedAt: "2026-04-30T20:00:00Z",
+    },
+  })
+  await mfs.collection("pa-job-profiles").doc("u1").set({
+    userId: "u1",
+    profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
+    cvParsedAt: "2026-04-30T00:00:00Z",
+    lastJobBatchSentAt: null,
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc("j1").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    salaryMax: 200000,
+    locationRaw: "Remote",
+    primaryUrl: "https://jobs.example.com/1",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/4",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
+    requiredSkills: ["TypeScript", "React", "Node.js"],
+  })
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 1)
+  assert.equal(out.skippedActivePrescreen, 0)
 })

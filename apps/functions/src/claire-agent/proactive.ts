@@ -32,7 +32,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { readOutreachStopControl } from "@pa/pa-persistence"
-import { USER_JOB_RECOMMENDATIONS_COLLECTION } from "@pa/job-rec"
+import { USER_JOB_RECOMMENDATIONS_COLLECTION, userHasOpenPrescreen } from "@pa/job-rec"
 import type { ClaireTransport } from "./types.js"
 // NOTE: `agent.ts` (→ @openai/agents) is imported DYNAMICALLY inside
 // defaultComposeCopy only. The deterministic gate path (opt-out / cooldown /
@@ -105,6 +105,7 @@ export interface ProactiveTurnOutcome {
     | "duplicate"
     | "no_fresh_jobs"
     | "empty_copy"
+    | "active_prescreen"
     | "sent"
   outboundCount: number
 }
@@ -387,6 +388,15 @@ export async function runProactiveTurn(
   // GATE 2 — cooldown.
   if (await isWithinCooldown(db, userId, kind, nowMs, cooldownMs, log)) {
     return { sent: false, reason: "cooldown", outboundCount: 0 }
+  }
+
+  // GATE 2b — "prescreen owns the thread" (2026-06-10 trust audit, fix 8).
+  // A proactive push must never land between a prescreen opener and the
+  // candidate's answer (live evidence: rec batches buried the screen). ONE
+  // pa-users read over the workSession mirror; fail-open on read error.
+  if (await userHasOpenPrescreen(db, userId, nowMs, log)) {
+    log("pa.proactive.gate.active_prescreen", { userId, kind })
+    return { sent: false, reason: "active_prescreen", outboundCount: 0 }
   }
 
   // DEDUP (daily_job_rec only) — must run before claiming the key so a

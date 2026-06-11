@@ -187,6 +187,31 @@ export async function enqueueOrCoalesce(
         err: consumeErr instanceof Error ? consumeErr.message : String(consumeErr),
       })
     }
+    // 2026-06-10 trust audit (fix 4) — REVERT the `coalescing:true` mark written
+    // in step 2 above. With no Cloud Tasks task on the way, a row left
+    // coalescing:true is ORPHANED: onPaInbound permanently skips it, and if the
+    // webhook's direct runtime fallback ALSO fails (crash between our throw and
+    // its catch), the candidate's message dies silently forever. Setting
+    // coalescing:false + coalesceError restores it to the normal claimable shape
+    // (the recovery sweep / replay paths can pick it up). Double-processing is
+    // impossible from this flip alone: onPaInbound's onDocumentCreated trigger
+    // fired at CREATE time (an UPDATE never re-fires it), and the fired-buffer
+    // dedup (markFiredTransaction above) already consumed this turn.
+    try {
+      await deps.db.collection("pa-inbound-events").doc(msg.inboundEventId).set(
+        {
+          coalescing: false,
+          coalesceError: `enqueue_failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500),
+        },
+        { merge: true }
+      )
+    } catch (revertErr) {
+      log("[coalesce] enqueue FAILED and coalescing-revert FAILED", {
+        eventId: msg.inboundEventId,
+        userId: msg.userId,
+        err: revertErr instanceof Error ? revertErr.message : String(revertErr),
+      })
+    }
     // Caller should fall back to normal runtime path. Throw so the webhook can decide.
     log("[coalesce] enqueue FAILED — caller should fall back to runtime path", {
       taskName: outcome.nextTaskName,
