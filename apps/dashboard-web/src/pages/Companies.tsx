@@ -1,10 +1,10 @@
 /**
  * Phase A4 (WEK-yc) — `/admin/companies` CRUD.
  *
- * Lists `pa-companies` docs (centralized company directory) with inline edit
- * for `companyStage` (closed enum) and `companyTags` (open vocab, multi-pick
- * chips). Filters by stage, tag, and a "needs enrichment" toggle that
- * surfaces docs with no `enrichmentSource` OR `enrichedAt < now - 30d`.
+ * Lists `pa-companies` docs (centralized company directory). The default view
+ * is intentionally scoped to WeKruit-collab partners because this is the
+ * recruiter/source-candidates operating surface; operators can still switch to
+ * the full directory for maintenance.
  *
  * Inline edit writes `setDoc(..., { merge: true })` with `lastReviewedBy`
  * stamped from the current operator email — this sets the Phase A5
@@ -121,7 +121,7 @@ export function Companies() {
   const [stageFilter, setStageFilter] = useState<CompanyStage | "all">("all")
   const [tagFilters, setTagFilters] = useState<CompanyTag[]>([])
   const [needsEnrichment, setNeedsEnrichment] = useState(false)
-  const [collabFilter, setCollabFilter] = useState<CollabFilter>("all")
+  const [collabFilter, setCollabFilter] = useState<CollabFilter>("collab_only")
   const [jobsFilter, setJobsFilter] = useState<JobsFilter>("all")
   const [search, setSearch] = useState("")
 
@@ -155,24 +155,31 @@ export function Companies() {
     setHasMore(false)
     setSelected(new Set())
     try {
-      const constraints: QueryConstraint[] = [
-        orderBy("updatedAt", "desc"),
-        fsLimit(PAGE_SIZE),
-      ]
+      const constraints: QueryConstraint[] =
+        collabFilter === "collab_only"
+          ? [where("wekruitCollab", "==", true), fsLimit(PAGE_SIZE)]
+          : [orderBy("updatedAt", "desc"), fsLimit(PAGE_SIZE)]
       const snap = await getDocs(query(collection(db(), PA_COLLECTIONS.companies), ...constraints))
-      const next = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Partial<PaCompany>),
-      }))
+      const next = snap.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as Partial<PaCompany>),
+        }))
+        .sort((a, b) => {
+          if (collabFilter !== "collab_only") return 0
+          return String(a.displayName ?? a.normalizedName ?? a.id).localeCompare(
+            String(b.displayName ?? b.normalizedName ?? b.id),
+          )
+        })
       setRows(next)
-      setCursor(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1]! : null)
-      setHasMore(snap.docs.length === PAGE_SIZE)
+      setCursor(collabFilter === "collab_only" ? null : snap.docs.length > 0 ? snap.docs[snap.docs.length - 1]! : null)
+      setHasMore(collabFilter !== "collab_only" && snap.docs.length === PAGE_SIZE)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [collabFilter])
 
   useEffect(() => {
     void loadInitial()
@@ -333,7 +340,7 @@ export function Companies() {
       <PageHeader
         eyebrow="Phase A4 / Admin"
         title="Companies"
-        description={`Centralized company directory (pa-companies). Inline edit stage + tags. "Needs enrichment" surfaces docs with no source or stale beyond ${STALE_DAYS} days.`}
+        description={`WeKruit-collab company directory by default. Switch filters only for maintenance of the wider pa-companies corpus.`}
         actions={
           <div style={{ display: "flex", gap: 8 }}>
             <button type="button" onClick={() => setRefreshKey((n) => n + 1)} disabled={loading}>
@@ -614,7 +621,11 @@ export function Companies() {
 
       <Panel
         title="Companies"
-        eyebrow={`pa-companies · orderBy updatedAt desc · ${PAGE_SIZE}/page`}
+        eyebrow={
+          collabFilter === "collab_only"
+            ? "pa-companies · wekruitCollab == true"
+            : `pa-companies · orderBy updatedAt desc · ${PAGE_SIZE}/page`
+        }
         actions={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {bulkMsg ? (

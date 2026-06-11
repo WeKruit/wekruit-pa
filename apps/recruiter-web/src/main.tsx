@@ -13,6 +13,7 @@ const routes = (
   <Routes>
     <Route path="/" element={<Navigate to="/recruiters" replace />} />
     <Route path="/recruiters" element={<RecruiterBoard />} />
+    <Route path="/recruiters/jobs" element={<RecruiterBoard />} />
     <Route path="/recruiters/job/:jobId" element={<RoleSheetPage />} />
     <Route path="*" element={<Navigate to="/recruiters" replace />} />
   </Routes>
