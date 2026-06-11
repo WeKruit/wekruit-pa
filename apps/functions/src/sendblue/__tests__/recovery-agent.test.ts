@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 
 import { inboundEventDocId } from "@pa/pa-broker"
 
-import { paConversationRecoverySweepHandler } from "../recovery-agent.js"
+import { paConversationRecoverySweepHandler, sweepUnansweredInboundForOperatorReview } from "../recovery-agent.js"
 
 type DocData = Record<string, unknown>
 
@@ -420,5 +420,122 @@ describe("paConversationRecoverySweepHandler", () => {
 
     assert.equal(result.skippedExisting, 1)
     assert.equal(replayed, 0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2026-06-10 trust audit (fix 11) — unanswered-inbound ops queue.
+// ---------------------------------------------------------------------------
+
+describe("sweepUnansweredInboundForOperatorReview", () => {
+  const NOW = new Date("2026-06-10T12:00:00.000Z")
+  const HOUR = 60 * 60 * 1000
+  const iso = (msAgo: number) => new Date(NOW.getTime() - msAgo).toISOString()
+
+  it("queues a needs_operator_review case for a user whose latest inbound is >6h old with no outbound after — deduped on re-run", async () => {
+    const { db, stores } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_old: {
+          userId: "u-silent",
+          createdAt: iso(8 * HOUR),
+          body: "hey did my screen go through?",
+          from: "+15550001001",
+          status: "completed",
+        },
+        // a different user, answered: outbound exists after their inbound.
+        inb_answered: {
+          userId: "u-answered",
+          createdAt: iso(9 * HOUR),
+          body: "any update?",
+          from: "+15550001002",
+          status: "completed",
+        },
+      },
+      "pa-outbound": {
+        out_answered: {
+          userId: "u-answered",
+          createdAt: iso(7 * HOUR),
+          status: "sent",
+          body: "yes! here's the update",
+        },
+        // an OLD outbound for the silent user (BEFORE their inbound) does not count.
+        out_stale: {
+          userId: "u-silent",
+          createdAt: iso(20 * HOUR),
+          status: "sent",
+          body: "earlier message",
+        },
+      },
+    })
+
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+    })
+    assert.equal(queued, 1, "only the silent user is queued")
+
+    const cases = stores.get("pa-recovery-cases")!
+    const row = cases.get("unanswered_u-silent_inb_old") as DocData
+    assert.ok(row, "deterministic (userId, latest-inbound-id) case id")
+    assert.equal(row.className, "unanswered_inbound_needs_operator_review")
+    assert.equal(row.status, "needs_operator_review")
+    assert.equal(row.userId, "u-silent")
+    assert.equal(row.inboundEventId, "inb_old")
+    assert.equal(row.phone, "+15550001001")
+    assert.ok(!cases.has("unanswered_u-answered_inb_answered"), "answered user not queued")
+
+    // Dedup: second sweep writes nothing new.
+    const again = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+    })
+    assert.equal(again, 0, "dedup per (userId, latest-inbound-id)")
+  })
+
+  it("a RECENT latest inbound (<6h) is never queued, and the LATEST inbound wins over older ones", async () => {
+    const { db, stores } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_older: {
+          userId: "u-1",
+          createdAt: iso(10 * HOUR),
+          body: "first message",
+          from: "+15550001003",
+        },
+        inb_latest: {
+          userId: "u-1",
+          createdAt: iso(1 * HOUR),
+          body: "second message",
+          from: "+15550001003",
+        },
+      },
+    })
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+    })
+    assert.equal(queued, 0, "latest inbound is fresh → the user is not stale")
+    assert.equal((stores.get("pa-recovery-cases") ?? new Map()).size, 0)
+  })
+
+  it("the full sweep handler surfaces unansweredQueued and stays fail-soft", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_old: {
+          userId: "u-silent",
+          createdAt: iso(7 * HOUR),
+          body: "hello?",
+          from: "+15550001004",
+        },
+      },
+    })
+    const result = await paConversationRecoverySweepHandler({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+    })
+    assert.equal(result.unansweredQueued, 1)
   })
 })

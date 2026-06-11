@@ -33,7 +33,15 @@ import {
 // not yet been merged into the v1.6 single-source contract.
 import { queryMatchingJobsV16 } from "./tools/query-matching-jobs-v16.js"
 import { sendImessage } from "./tools/send-imessage.js"
-import { recordRecommendedJobs } from "./recommendation-state.js"
+import {
+  recordRecommendedJobs,
+  loadRecommendedJobStates,
+  excludeRecentlyRecommendedJobs,
+} from "./recommendation-state.js"
+// 2026-06-10 trust audit — deterministic apply-URL plausibility gate + the
+// "prescreen owns the thread" guard (see rec-url-guard.ts / prescreen-guard.ts).
+import { isPlausibleAtsUrl } from "./rec-url-guard.js"
+import { userHasOpenPrescreen } from "./prescreen-guard.js"
 import { buildRichMatchReason } from "./match-reason.js"
 import {
   buildJobCandidateText,
@@ -226,6 +234,10 @@ export type BatchOutcome = {
   skippedCooldown?: number
   /** Time-spread (2026-06-02) — due users deferred to next run (number at cap). */
   cappedOut?: number
+  /** 2026-06-10 trust audit — users skipped because an OPEN prescreen session owns the thread. */
+  skippedActivePrescreen?: number
+  /** 2026-06-10 trust audit — jobs dropped because the same jobId was recommended within 14d. */
+  repeatJobsExcluded?: number
   /** Resolved cadence (days) used this run — surfaced for observability. */
   cadenceDays?: number
   /** Resolved spread window (minutes) used this run. */
@@ -487,7 +499,10 @@ export function formatJobLine(job: MatchingJob): string {
       : ""
   // iter34 sprint A.2 — prefer real ATS apply URL; fall back to
   // primaryUrl (jobright.ai mirror) when ATS field is missing.
-  return `- ${titleCo}${loc}${sal}\n${job.atsApplyUrl ?? job.primaryUrl}`
+  // 2026-06-10 trust audit — both run through the plausibility gate; a job
+  // failing it delivers WITHOUT the url line.
+  const url = jobUrl(job)
+  return url ? `- ${titleCo}${loc}${sal}\n${url}` : `- ${titleCo}${loc}${sal}`
 }
 
 /** Compose the full daily-rec message body for a user. */
@@ -624,7 +639,11 @@ export function formatJobLineWithReason(
   const reason = llmReason || buildJobReason(job, ctx)
   const reasonSuffix = reason ? ` — ${reason}` : ""
   // iter34 sprint A.2 — same atsApplyUrl-preferred fallback as formatJobLine.
-  return `- ${titleCo}${loc}${sal}${reasonSuffix}\n${job.atsApplyUrl ?? job.primaryUrl}`
+  // 2026-06-10 trust audit — plausibility-gated; implausible → no url line.
+  const url = jobUrl(job)
+  return url
+    ? `- ${titleCo}${loc}${sal}${reasonSuffix}\n${url}`
+    : `- ${titleCo}${loc}${sal}${reasonSuffix}`
 }
 
 /** Lead-in length cap (chars). Bible v7.5 3-sentence ceiling. */
@@ -716,8 +735,19 @@ function hasConcreteJobRequirements(job: MatchingJob): boolean {
   return jobRequirementsLine(job).length > 0
 }
 
+/**
+ * 2026-06-10 trust audit — resolve a job's candidate-visible apply URL through
+ * the deterministic plausibility gate (rec-url-guard.ts). Prefers atsApplyUrl,
+ * falls back to primaryUrl; returns "" when NEITHER is plausible — callers then
+ * deliver the role WITHOUT the url line (a junk link burns more trust than no
+ * link). Callers in the batch loop log `rec_url_dropped` when this is empty.
+ */
 function jobUrl(job: MatchingJob): string {
-  return job.atsApplyUrl ?? job.primaryUrl
+  const ats = typeof job.atsApplyUrl === "string" ? job.atsApplyUrl.trim() : ""
+  if (isPlausibleAtsUrl(ats)) return ats
+  const primary = typeof job.primaryUrl === "string" ? job.primaryUrl.trim() : ""
+  if (isPlausibleAtsUrl(primary)) return primary
+  return ""
 }
 
 function buildDailyRuntimeContext(
@@ -758,6 +788,7 @@ function buildDailyRuntimeContext(
       "Write candidate-visible copy in English only.",
       "Use exactly the number of roles requested unless the user asked for a different count.",
       "For every role include title, company, URL, requirements, and reason.",
+      "NEVER invent, alter, shorten, or abbreviate a job URL — relay each role's url field VERBATIM. If a role's url is empty, omit the link line for that role entirely; never substitute a guessed or placeholder link.",
       "Do not expose internal labels, field names, ids, or scoring metadata.",
       "If a role has previouslyRecommended=true, say briefly that it may be a repeat and why it is still worth another look.",
       "If timing is awkward or the request should not send, respond __NO_SEND__.",
@@ -795,7 +826,9 @@ function composeDailyRecommendationMessage(jobs: MatchingJob[], ctx: DailyPushCo
     const repeat = job.previouslyRecommended === true
       ? "\nI may have shared this before, but it is worth another look because it still lines up."
       : ""
-    return `• ${title} @ ${company}${repeat}\n${url}\n${requirements}${reason ? `\nwhy: ${reason.replace(/^why\s*:\s*/i, "")}` : ""}`
+    // 2026-06-10 trust audit — jobUrl is plausibility-gated; when it returns ""
+    // the url line is OMITTED entirely (never a placeholder link).
+    return `• ${title} @ ${company}${repeat}${url ? `\n${url}` : ""}\n${requirements}${reason ? `\nwhy: ${reason.replace(/^why\s*:\s*/i, "")}` : ""}`
   })
   return [
     intro,
@@ -1318,11 +1351,26 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     if (d.userId) docByUser.set(d.userId, d)
   }
 
+  let skippedActivePrescreen = 0
+  let repeatJobsExcluded = 0
+
   for (const scheduledSend of plan.scheduled) {
     const userId = scheduledSend.userId
     const profileDoc = docByUser.get(userId)
     if (!profileDoc) continue
     try {
+      // 2026-06-10 trust audit ("prescreen owns the thread") — a proactive rec
+      // batch must NEVER land between a prescreen opener and the candidate's
+      // answer. ONE pa-users read; fail-open (read error → proceed as today).
+      if (
+        await userHasOpenPrescreen(deps.db, userId, nowMs, (event, payload) =>
+          log("[job-rec-daily]", event, payload ?? {}),
+        )
+      ) {
+        skippedActivePrescreen += 1
+        log("[job-rec-daily] skipped_active_prescreen", { userId })
+        continue
+      }
 
       // Stream F5 — normalize legacy + new-shape profiles to one filter set.
       const normalized = await normalizeDailyProfile({
@@ -2041,6 +2089,59 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       // ("core 缺 RAG"). Today the reasons go through the cross-encoder path.
       void weightedMatchExplanations
 
+      // 2026-06-10 trust audit (daily-cadence repeat guard) — HARD-exclude any
+      // job already recommended to this user within 14d. The V16 cascade only
+      // applies a SOFT previousRecommendationPenalty, so a strong job kept
+      // out-ranking it 3 days running (live evidence). Reads the SAME
+      // pa-user-job-recommendations ledger recordRecommendedJobs writes below.
+      // SKIPPED in fallbackMode — Variant D deliberately re-surfaces
+      // previously-shared roles and says so. Fail-open on ledger read error.
+      if (!fallbackMode && rankedJobs.length > 0) {
+        try {
+          const ledger = await loadRecommendedJobStates(
+            deps.db,
+            userId,
+            rankedJobs.map((j) => j.id),
+            (event, payload) => log("[job-rec-daily]", event, payload ?? {}),
+          )
+          const { kept, excluded } = excludeRecentlyRecommendedJobs(rankedJobs, ledger, nowMs)
+          if (excluded.length > 0) {
+            repeatJobsExcluded += excluded.length
+            log("[job-rec-daily] repeat_recs_excluded", {
+              userId,
+              excludedJobIds: excluded.map((j) => j.id),
+              windowDays: 14,
+            })
+            rankedJobs = kept
+          }
+          if (rankedJobs.length === 0) {
+            log("[job-rec-daily] skipping_all_jobs_recently_recommended", { userId })
+            skippedNoJobs += 1
+            continue
+          }
+        } catch (ledgerErr) {
+          log("[job-rec-daily] repeat_guard_read_failed", {
+            userId,
+            error: ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr),
+          })
+        }
+      }
+
+      // 2026-06-10 trust audit (rec-link integrity) — observability for the
+      // plausibility gate: any surviving job whose apply URL fails the gate
+      // will deliver WITHOUT a link (jobUrl() returns ""); log each drop.
+      for (const j of rankedJobs) {
+        if (!jobUrl(j)) {
+          log("rec_url_dropped", {
+            userId,
+            jobId: j.id,
+            atsApplyUrl: j.atsApplyUrl ?? null,
+            primaryUrl: j.primaryUrl ?? null,
+            path: "job_rec_daily_batch",
+          })
+        }
+      }
+
       // Stream H12 — dedupe near-identical JDs (same title+company across
       // cities) BEFORE final slice, so users don't get 3-job pushes that
       // collapse to 1 unique role × 3 cities. Keep the highest-ranked row
@@ -2308,6 +2409,8 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     skippedNotDue,
     skippedCooldown,
     cappedOut,
+    skippedActivePrescreen,
+    repeatJobsExcluded,
     cadenceDays,
     spreadWindowMinutes,
     cooldownMs,

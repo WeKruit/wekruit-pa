@@ -156,6 +156,11 @@ export { paOpenAiKeyHealth } from "./openai-key-health.js"
 // resolver from paBackfillMatchingJobsAtsUrl (cap 1000/run).
 export { paLivenessSweepDaily } from "./liveness-sweep.js"
 
+// 2026-06-10 trust audit (fixes 9+10) — daily 09:00 UTC: pendingReview >48h
+// SLA alarm (read-only + Slack) AND the canary-gated stalled-screen 24h nudge
+// (idempotent per session via `prescreen-nudge-<sessionId>`).
+export { paPrescreenReviewSlaDaily } from "./prescreen-review-sla.js"
+
 // 2026-05-27 — daily watchdog over the macmini → Firestore scrape pipeline.
 // Posts a Slack alert when the newest `matching-jobs.syncedAt` is older
 // than 24h (warn) or 48h (error). Audit trail in

@@ -1613,3 +1613,54 @@ describe("iter33 Bug 8: orchestratorDeps passed through claimAndProcessInboundEv
     assert.deepEqual(capturedDeps, {}, "absent orchestratorDeps falls back to {}")
   })
 })
+
+// ----------------- 2026-06-10 trust audit (fix 4): enqueue failure reverts the coalescing mark -----------------
+
+describe("paMessageCoalescer — trust audit fix 4: no orphaned coalescing:true row", () => {
+  it("enqueue throws → the inbound row ends NOT coalescing (coalesceError set) and the buffer is consumed", async () => {
+    const t0 = new Date("2026-06-10T12:00:00Z")
+    const tasks = new FakeTasks()
+    tasks.failNextEnqueue = true
+    const { deps, db } = buildDeps({ now: () => t0, tasks })
+
+    await assert.rejects(
+      enqueueOrCoalesce(deps, {
+        ...BASE_MSG,
+        messageHandle: "msg-1",
+        body: "hello, anyone there?",
+        inboundEventId: "inb_orphan_check",
+        receivedAt: t0.toISOString(),
+      }),
+      /fake_enqueue_fail/,
+      "the throw still propagates so the webhook runs its direct runtime fallback",
+    )
+
+    const stores = (db as ReturnType<typeof makeFakeDb>)._stores
+    const inbound = stores.get("pa-inbound-events")!.get("inb_orphan_check") as DocData
+    // The step-2 mark set coalescing:true; the failure path must REVERT it so the
+    // row is never permanently invisible to onPaInbound/recovery if the webhook
+    // fallback also dies.
+    assert.equal(inbound.coalescing, false, "coalescing mark reverted on enqueue failure")
+    assert.match(String(inbound.coalesceError ?? ""), /enqueue_failed/, "coalesceError recorded")
+
+    // Buffer is consumed (status=fired) — no stale pending turn to replay into
+    // the next answer, so the revert can never cause double-processing.
+    const buf = stores.get("pa-message-coalesce-buffer")!.get("u_adam__1") as DocData
+    assert.equal(buf.status, "fired")
+  })
+
+  it("a NORMAL enqueue leaves the row coalescing:true (happy path unchanged)", async () => {
+    const t0 = new Date("2026-06-10T12:00:00Z")
+    const { deps, db } = buildDeps({ now: () => t0 })
+    await enqueueOrCoalesce(deps, {
+      ...BASE_MSG,
+      messageHandle: "msg-1",
+      body: "hello",
+      inboundEventId: "inb_happy",
+      receivedAt: t0.toISOString(),
+    })
+    const inbound = (db as ReturnType<typeof makeFakeDb>)._stores.get("pa-inbound-events")!.get("inb_happy") as DocData
+    assert.equal(inbound.coalescing, true)
+    assert.equal(inbound.coalesceError, undefined)
+  })
+})

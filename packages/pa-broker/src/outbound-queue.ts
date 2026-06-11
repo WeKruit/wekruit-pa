@@ -20,6 +20,13 @@ export type EnqueueOutboundInput = {
   seq?: number
   /** Emit side already paced this bubble (typing+delay) → outbox skips its length-based dwell. */
   paced?: boolean
+  /**
+   * 2026-06-10 trust audit (fix 3) — INTENTIONAL repeat: bypasses the outbox
+   * duplicate-send guard (same user + identical body within 5min is otherwise
+   * skipped as `duplicate_skipped`). Producers that deliberately re-send the
+   * same copy (e.g. a re-poke) set this.
+   */
+  allowRepeat?: boolean
   idempotencyKey: string
   runtimeApproved?: true
   runtimeSource?: string
@@ -69,6 +76,7 @@ export async function enqueueOutbound(
     ...(input.mediaUrl ? { mediaUrl: input.mediaUrl } : {}),
     ...(typeof input.seq === "number" ? { seq: input.seq } : {}),
     ...(input.paced ? { paced: true } : {}),
+    ...(input.allowRepeat ? { allowRepeat: true } : {}),
     status: "pending",
     createdAt: now,
     idempotencyKey: input.idempotencyKey,

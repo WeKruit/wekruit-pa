@@ -408,7 +408,19 @@ export const MemoryEntrySchema = z.object({
 })
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>
 
-export const OutboundStatusSchema = z.enum(["pending", "sending", "sent", "failed"])
+// 2026-06-10 trust audit — widened with the terminal statuses the outbox has
+// been writing via merge-set (dead_letter, Stream H4) plus the new
+// duplicate_skipped (fix 3 dedup guard) and dead_letter_rate_limited (fix 5
+// consecutive-429 cap). Additive: existing rows/readers unaffected.
+export const OutboundStatusSchema = z.enum([
+  "pending",
+  "sending",
+  "sent",
+  "failed",
+  "dead_letter",
+  "duplicate_skipped",
+  "dead_letter_rate_limited",
+])
 export type OutboundStatus = z.infer<typeof OutboundStatusSchema>
 
 export const OutboundMessageSchema = z.object({
@@ -437,6 +449,12 @@ export const OutboundMessageSchema = z.object({
    */
   seq: z.number().int().nonnegative().optional(),
   paced: z.boolean().optional(),
+  /**
+   * 2026-06-10 trust audit (fix 3) — INTENTIONAL repeat: bypasses the outbox
+   * duplicate-send guard (identical body to the same user within 5min would
+   * otherwise terminal as `duplicate_skipped`).
+   */
+  allowRepeat: z.boolean().optional(),
   status: OutboundStatusSchema,
   createdAt: z.string(),
   createdBy: z.string().optional(),

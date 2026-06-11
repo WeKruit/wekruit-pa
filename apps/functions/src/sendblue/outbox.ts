@@ -30,6 +30,8 @@ import type { SendblueSendResponse } from "./types.js"
 import { getFlag, getDailyOutboundCount, incrementDailyOutbound } from "@pa/pa-persistence"
 import { recordAuditEvent } from "./audit.js"
 import { outboundExpiresAtTs } from "./ttl.js"
+import { createHash } from "node:crypto"
+import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
 
 const OUT = PA_COLLECTIONS.outbound
 
@@ -96,11 +98,99 @@ export type OutboxDeps = {
     db: Firestore,
     input: { scope: "global" }
   ) => Promise<{ paused: boolean; reason?: string }>
+  /** 2026-06-10 trust audit (fix 5) — Slack alert seam. Injected in tests; defaults to lib/slack-alert. */
+  postSlackAlert?: typeof defaultPostSlackAlert
 }
 
 const STALE_SENDING_MS = 10 * 60 * 1000 // 10 minutes
 const DEAD_LETTER_ATTEMPTS = 5
 const SWEEP_LIMIT = 20
+
+// ── 2026-06-10 trust audit (fix 3) — duplicate-send guard constants ─────────
+/** Window inside which an identical body to the same user is a duplicate. */
+const DUPLICATE_WINDOW_MS = 5 * 60 * 1000
+/** Recent-row scan size (single indexed query; hashes compared client-side). */
+const DUPLICATE_QUERY_LIMIT = 20
+/** Short acks ("ok", "got it 👍") legitimately repeat — never dedup them. */
+const DUPLICATE_MIN_BODY_LEN = 20
+
+// ── 2026-06-10 trust audit (fix 5) — 429 rate-limit handling ────────────────
+/** Consecutive HTTP-429 responses on one row before it dead-letters. */
+const RATE_LIMIT_DEAD_LETTER_AFTER = 3
+
+/** Stable content hash for the duplicate guard (trimmed body). */
+export function outboundBodyHash(body: string): string {
+  return createHash("sha256").update(body.trim(), "utf8").digest("hex")
+}
+
+/**
+ * 2026-06-10 trust audit (fix 3) — find a recently SENT row carrying the same
+ * userId + identical body within DUPLICATE_WINDOW_MS. Live evidence: identical
+ * bubbles delivered 2-6x within minutes (a full rec batch twice 1min apart; the
+ * same question 4x in 3min) — upstream producers raced past their idempotency
+ * keys, so the outbox is the last-line choke.
+ *
+ * Cheap by design: ONE query by userId ordered createdAt desc limit 20; body
+ * hashes compared client-side (no new composite index REQUIRED — when the
+ * (userId, createdAt) index is missing the orderBy query throws and we retry
+ * WITHOUT orderBy + sort client-side). FAIL-OPEN: any error returns null (the
+ * send proceeds as today).
+ */
+export async function findRecentDuplicateOutbound(
+  db: Firestore,
+  input: {
+    userId: string
+    body: string
+    excludeDocId: string
+    nowMs: number
+    log?: (...args: unknown[]) => void
+  }
+): Promise<{ docId: string } | null> {
+  const targetHash = outboundBodyHash(input.body)
+  type Row = { id: string; data: Record<string, unknown> }
+  let rows: Row[] = []
+  try {
+    let docs: Array<{ id: string; data: () => Record<string, unknown> | undefined }>
+    try {
+      const snap = await db
+        .collection(OUT)
+        .where("userId", "==", input.userId)
+        .orderBy("createdAt", "desc")
+        .limit(DUPLICATE_QUERY_LIMIT)
+        .get()
+      docs = snap.docs as typeof docs
+    } catch {
+      // Composite index missing → single-field query, sort client-side.
+      const snap = await db
+        .collection(OUT)
+        .where("userId", "==", input.userId)
+        .limit(DUPLICATE_QUERY_LIMIT * 3)
+        .get()
+      docs = [...(snap.docs as typeof docs)].sort((a, b) => {
+        const ta = String(a.data()?.createdAt ?? "")
+        const tb = String(b.data()?.createdAt ?? "")
+        return tb.localeCompare(ta)
+      })
+      docs = docs.slice(0, DUPLICATE_QUERY_LIMIT)
+    }
+    rows = docs.map((d) => ({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> }))
+  } catch (err) {
+    input.log?.("[sendblue][outbox] duplicate-guard query failed (fail-open)",
+      err instanceof Error ? err.message : String(err))
+    return null
+  }
+  for (const row of rows) {
+    if (row.id === input.excludeDocId) continue
+    const status = String(row.data.status ?? "")
+    if (status !== "sent" && status !== "delivered") continue
+    const createdMs = Date.parse(String(row.data.sentAt ?? row.data.createdAt ?? ""))
+    if (!Number.isFinite(createdMs) || input.nowMs - createdMs > DUPLICATE_WINDOW_MS) continue
+    const body = typeof row.data.body === "string" ? row.data.body : ""
+    if (!body) continue
+    if (outboundBodyHash(body) === targetHash) return { docId: row.id }
+  }
+  return null
+}
 
 /**
  * Stream H4 D4 — structured failure log for alert pipeline.
@@ -397,6 +487,42 @@ export async function paSendblueOutboxHandler(
     return
   }
 
+  // ---- 3b. Duplicate-send guard (2026-06-10 trust audit, fix 3) ----------
+  // Identical body to the same user within 5 minutes that already SENT →
+  // terminal status "duplicate_skipped", no POST. Rows explicitly marked
+  // `allowRepeat:true` bypass (intentional repeats), and short bodies
+  // (< 20 chars — acks like "ok") legitimately repeat. FAIL-OPEN on any
+  // query error so the guard can never block a legitimate send.
+  const allowRepeat = (data as { allowRepeat?: unknown }).allowRepeat === true
+  if (!allowRepeat && body.length >= DUPLICATE_MIN_BODY_LEN) {
+    const dup = await findRecentDuplicateOutbound(deps.db, {
+      userId,
+      body,
+      excludeDocId: docId,
+      nowMs: now().getTime(),
+      log,
+    })
+    if (dup) {
+      await ref.set(
+        {
+          status: "duplicate_skipped",
+          duplicateOfDocId: dup.docId,
+          updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
+        },
+        { merge: true }
+      )
+      log("pa.outbox.duplicate_skipped", {
+        docId,
+        userId,
+        duplicateOfDocId: dup.docId,
+        bodyHash: outboundBodyHash(body),
+        body_preview: body.slice(0, 120),
+      })
+      return
+    }
+  }
+
   // v2.0 S9 — marketplace outreach global stop gate. This only applies to
   // S6 marketplace outreach rows, identified by createOutreachIdempotencyKey().
   // A read failure fails closed before transcript append, typing, quota, or send.
@@ -674,6 +800,71 @@ export async function paSendblueOutboxHandler(
       })
       return
     }
+    // ---- 2026-06-10 trust audit (fix 5) — HTTP 429 rate-limit handling ----
+    // 429 rides SendblueServerError (sendblue-client treats it as transient).
+    // Track CONSECUTIVE 429s on the row; after 3 in a row, stop hammering the
+    // rate-limited account: terminal status "dead_letter_rate_limited" + a
+    // `pa.outbox.rate_capped` ERROR log + a fail-soft Slack alert.
+    const is429 =
+      (err instanceof SendblueServerError || err instanceof SendblueClientError) &&
+      err.status === 429
+    if (is429) {
+      const e = err as SendblueServerError
+      const prev = await ref.get()
+      const prevData = prev.data() as Record<string, unknown> | undefined
+      const prevAttempts = Number(prevData?.attemptCount ?? 0)
+      const consecutive429Count = Number(prevData?.consecutive429Count ?? 0) + 1
+      if (consecutive429Count >= RATE_LIMIT_DEAD_LETTER_AFTER) {
+        await ref.set(
+          {
+            status: "dead_letter_rate_limited",
+            error: `sendblue 429: ${e.message}`,
+            attemptCount: prevAttempts + 1,
+            consecutive429Count,
+            deadLetteredAt: now().toISOString(),
+            updatedAt: now().toISOString(),
+            expiresAtTs: outboundExpiresAtTs(now()),
+          },
+          { merge: true }
+        )
+        log("pa.outbox.rate_capped", {
+          severity: "ERROR",
+          docId,
+          userId,
+          consecutive429Count,
+          body_preview: body.slice(0, 120),
+        })
+        // Fail-soft Slack alert (helper skips silently when the webhook secret is unset).
+        try {
+          await (deps.postSlackAlert ?? defaultPostSlackAlert)({
+            level: "error",
+            title: "Sendblue rate-limit dead letter",
+            message: `pa-outbound row ${docId} hit ${consecutive429Count} consecutive 429s and was dead-lettered.`,
+            fields: [
+              { name: "userId", value: userId },
+              { name: "docId", value: docId },
+            ],
+          })
+        } catch {
+          /* alert is never load-bearing */
+        }
+        return
+      }
+      log("[sendblue][outbox] 429 — release for retry", { docId, consecutive429Count })
+      await ref.set(
+        {
+          status: "pending",
+          error: `sendblue 429: ${e.message}`,
+          attemptCount: prevAttempts + 1,
+          consecutive429Count,
+          ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}),
+          updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
+        },
+        { merge: true }
+      )
+      return
+    }
     if (err instanceof SendblueServerError) {
       log("[sendblue][outbox] 5xx/transient — release for retry", { docId, status: err.status, message: err.message })
       const prev = await ref.get()
@@ -683,6 +874,8 @@ export async function paSendblueOutboxHandler(
           status: "pending",
           error: `sendblue ${err.status}: ${err.message}`,
           attemptCount: prevAttempts + 1,
+          // A non-429 transient breaks the CONSECUTIVE-429 streak.
+          consecutive429Count: 0,
           ...(err.retryAfter ? { retryAfter: err.retryAfter } : {}),
           updatedAt: now().toISOString(),
           expiresAtTs: outboundExpiresAtTs(now()),

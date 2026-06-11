@@ -58,7 +58,7 @@ import { parseResumeText } from "@pa/pa-resume-parser"
 // single enrich path as an attachment (webhook Stream-D) / website upload — re-derive
 // role/careerStage/skills via the D8 sole writer — not just return parsed text to the LLM.
 import { reEnrichUserTagsFromParsedResume } from "../../cv-ingest/cv-ingest.js"
-import { queryMatchingJobsV16, recordRecommendedJobs } from "@pa/job-rec"
+import { queryMatchingJobsV16, recordRecommendedJobs, isPlausibleAtsUrl } from "@pa/job-rec"
 import type { FeedbackEvent } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
 // Rec-card image model (flag-gated, fail-open). `resolveRecCardMediaUrl` returns the Sendblue-acceptable
@@ -880,7 +880,17 @@ export function makeV16FindMatch(
         // candidate-page id. The old `wekruit.com/j/<publicId-UUID>` link 404'd because the page never maps
         // a publicId UUID → doc id (it isn't a doc id). Linking to `j.id` matches the two other builders
         // that already work (outreach/service.ts + partner-users-api.ts both use the pa-jobs doc id).
-        const url = isCollab ? `https://wekruit.com/j/${j.id}` : (j.atsApplyUrl ?? "").trim()
+        // 2026-06-10 trust audit (rec-link integrity) — the open-market apply URL runs through the
+        // deterministic plausibility gate (isPlausibleAtsUrl: http(s) + real dotted host + not a
+        // wekruit.com/j/<digits> placeholder + not on the junk host list). A job failing it delivers
+        // WITHOUT the url line (a junk link burns more trust than no link) + logs `rec_url_dropped`.
+        // The collab link is constructed deterministically from the pa-jobs doc id, never gated.
+        const rawUrl = (j.atsApplyUrl ?? "").trim()
+        const openMarketUrl = isPlausibleAtsUrl(rawUrl) ? rawUrl : ""
+        if (!isCollab && rawUrl && !openMarketUrl) {
+          log("rec_url_dropped", { userId, jobId: j.id, atsApplyUrl: rawUrl, path: "find_match" })
+        }
+        const url = isCollab ? `https://wekruit.com/j/${j.id}` : openMarketUrl
         const head = isCollab ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`
         const base = url ? `${head}\n${url}` : head
         // The trigger line is RELAYED VERBATIM by the agent (prompt rule) so the candidate can copy it.
@@ -1001,6 +1011,11 @@ export async function deliverRecBubbles(
           .map((text) => ({ text }))
   if (rows.length === 0) return { delivered: false, collabCount: 0 }
   const collab = (res.collab ?? []).filter((c) => c.prescreenReady)
+  // 2026-06-10 trust audit (fix 1) — count ROLE bubbles that actually reached the transport so a
+  // mid-batch send failure degrades correctly: if NO role bubble went out, delivered:false (the
+  // agent narrates the jobs itself); if SOME did, delivered:true (the agent must stay silent — a
+  // narration would duplicate the roles already on the candidate's screen) + a partial log.
+  let roleBubblesSent = 0
   try {
     // STRICT ORDER + EMIT-PACE (Adam 2026-06-04): intro → each role (in order) → prescreen offer LAST.
     //
@@ -1034,6 +1049,7 @@ export async function deliverRecBubbles(
           ? { seq: seq++, paced: true, mediaUrl: row.mediaUrl }
           : { seq: seq++, paced: true },
       )
+      roleBubblesSent++
       if (row.mediaUrl) withImage++
     }
     if (collab.length > 0) {
@@ -1048,6 +1064,18 @@ export async function deliverRecBubbles(
     })
     return { delivered: true, collabCount: collab.length }
   } catch (e) {
+    // PARTIAL delivery: ≥1 role bubble already reached the candidate, then a later send failed.
+    // Report delivered:true so the agent stays silent (a fresh narration would DUPLICATE the roles
+    // already delivered) — but log the partial loudly so ops sees the truncated batch.
+    if (roleBubblesSent > 0) {
+      ctx.log("pa.claire.find_match.deliver_partial", {
+        userId: ctx.userId,
+        rolesSent: roleBubblesSent,
+        rolesTotal: rows.length,
+        err: String(e),
+      })
+      return { delivered: true, collabCount: collab.length }
+    }
     ctx.log("pa.claire.find_match.deliver_failed", { userId: ctx.userId, err: String(e) })
     return { delivered: false, collabCount: 0 }
   }
@@ -1185,7 +1213,20 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
         // collab prescreen offer (the LLM kept dropping them). On success the agent MUST stay silent —
         // we return delivered:true and jobs:[] so it has nothing to re-list. Only when NOT delivered
         // (no match / error) does the agent narrate (the no-match clarifier).
-        const delivery = res.ok ? await deliverRecBubbles(ctx, res) : { delivered: false, collabCount: 0 }
+        //
+        // 2026-06-10 trust audit (fix 1) — deliverRecBubbles never throws by contract, but a delivery
+        // exception must STILL never escape into the outer catch (which returns the MATCHER error
+        // shape and reads as "matcher broke" when the matcher actually succeeded). Degrade to
+        // delivered:false so the agent narrates the jobs itself — never a silent turn.
+        const delivery = res.ok
+          ? await deliverRecBubbles(ctx, res).catch((deliverErr: unknown) => {
+              ctx.log("pa.claire.find_match.deliver_threw", {
+                userId: ctx.userId,
+                err: deliverErr instanceof Error ? deliverErr.message : String(deliverErr),
+              })
+              return { delivered: false, collabCount: 0 }
+            })
+          : { delivered: false, collabCount: 0 }
         return {
           ok: res.ok,
           recCount: res.recCount,
