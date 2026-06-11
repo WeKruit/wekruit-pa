@@ -667,20 +667,7 @@ export default function RoleSheetPage() {
 
   if (error) return <div className="rs-page"><div className="rs-state error">Could not load: {error}</div></div>
   if (!authReady) return <div className="rs-page"><div className="rs-state">Loading recruiter account…</div></div>
-  if (!session) {
-    return (
-      <div className="rs-page">
-        <SiteHeader />
-        <main className="rs-shell">
-          <div className="rs-state">
-            <p>Recruiter access is required before submitting candidates.</p>
-            <Link to="/recruiters" className="rs-btn" style={{ textDecoration: "none" }}>Sign in</Link>
-          </div>
-        </main>
-      </div>
-    )
-  }
-  if (!jobs) return <div className="rs-page"><div className="rs-state">Loading…</div></div>
+  if (!jobs) return <div className="rs-page"><SiteHeader /><div className="rs-state">Loading…</div></div>
   if (!job) {
     return (
       <div className="rs-page">
@@ -750,48 +737,57 @@ export default function RoleSheetPage() {
           <span>— hover any column header for the full requirement.</span>
         </div>
 
-        {roleSubmissions.length > 0 && (
-          <div className="rs-table-wrap">
-            <table className="rs-sheet">
-              <thead>
-                <tr>
-                  {KEY_TABLE_COLUMNS.map((column) => (
-                    <th key={column.id} className={`rs-th rs-c-${column.id}`}>
-                      {column.label}
-                    </th>
-                  ))}
-                  <th className="rs-th rs-c-status">Status</th>
-                  <th className="rs-th rs-c-feedback">Feedback</th>
-                  <th className="rs-th rs-c-thread" aria-label="Conversation">💬</th>
-                </tr>
-              </thead>
-              <tbody>
-                {roleSubmissions.map((row) => (
-                  <SheetRow
-                    key={row.id}
-                    row={row}
-                    comments={commentsByRow[row.id]}
-                    onOpenDetail={() => openThread(row)}
-                  />
-                ))}
-              </tbody>
-            </table>
+        {session ? (
+          <>
+            {roleSubmissions.length > 0 && (
+              <div className="rs-table-wrap">
+                <table className="rs-sheet">
+                  <thead>
+                    <tr>
+                      {KEY_TABLE_COLUMNS.map((column) => (
+                        <th key={column.id} className={`rs-th rs-c-${column.id}`}>
+                          {column.label}
+                        </th>
+                      ))}
+                      <th className="rs-th rs-c-status">Status</th>
+                      <th className="rs-th rs-c-feedback">Feedback</th>
+                      <th className="rs-th rs-c-thread" aria-label="Conversation">💬</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roleSubmissions.map((row) => (
+                      <SheetRow
+                        key={row.id}
+                        row={row}
+                        comments={commentsByRow[row.id]}
+                        onOpenDetail={() => openThread(row)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <AddCandidateForm
+              draft={addDraft}
+              checklistColumns={checklistColumns}
+              extraFieldDefs={extraFieldDefs}
+              blockers={addBlockers}
+              ready={addRowReady}
+              submitting={submitting}
+              jobId={job.jobId}
+              onChange={changeAddDraft}
+              onSubmit={() => void submitAddRow()}
+            />
+
+            {submitError && <div className="rs-sheet-error">Submission failed: {submitError}</div>}
+          </>
+        ) : (
+          <div className="rs-auth-prompt">
+            <p>Sign in to submit candidates for this role.</p>
+            <Link to="/recruiters" className="rs-btn" style={{ textDecoration: "none" }}>Sign in</Link>
           </div>
         )}
-
-        <AddCandidateForm
-          draft={addDraft}
-          checklistColumns={checklistColumns}
-          extraFieldDefs={extraFieldDefs}
-          blockers={addBlockers}
-          ready={addRowReady}
-          submitting={submitting}
-          jobId={job.jobId}
-          onChange={changeAddDraft}
-          onSubmit={() => void submitAddRow()}
-        />
-
-        {submitError && <div className="rs-sheet-error">Submission failed: {submitError}</div>}
       </main>
 
       {threadRow && (

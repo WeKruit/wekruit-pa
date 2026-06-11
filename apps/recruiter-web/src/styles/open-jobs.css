@@ -1,4 +1,4 @@
-/* Open jobs listing — full role details */
+/* Open jobs listing — grid of role summary cards */
 
 .oj-page {
   min-height: 100vh;
@@ -11,7 +11,7 @@
 .oj-page * { box-sizing: border-box; }
 
 .oj-main {
-  max-width: 800px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 32px 24px 80px;
 }
@@ -33,27 +33,33 @@
 .oj-error { color: #9a3b2a; }
 .oj-loading, .oj-empty { color: #8a8a82; font-size: 14px; }
 
-/* Single-column full-detail cards */
-.oj-list {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+.oj-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
 }
 
 .oj-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 22px 24px;
+  gap: 10px;
+  padding: 18px 20px;
   background: #fff;
   border: 1px solid #e6e6e2;
   border-radius: 12px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.oj-card:hover {
+  border-color: #c9c9c2;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
 .oj-card__header h2 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
   color: #1a1a1a;
   line-height: 1.3;
 }
@@ -67,7 +73,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
-  font-size: 13px;
+  font-size: 12.5px;
   color: #8a8a82;
 }
 
@@ -87,125 +93,39 @@
 .oj-pill.is-cool { background: #dde3e5; color: #4a5d6e; }
 .oj-pill.is-neutral { background: #efe4d4; color: #897462; }
 
-/* Culture */
-.oj-card__culture {
-  border-top: 1px solid #f0eeea;
-  padding-top: 12px;
-}
 .oj-card__bet {
   margin: 0;
-  font-size: 13.5px;
-  color: #3a3a36;
-  line-height: 1.5;
-  font-style: italic;
-}
-.oj-card__culture-list {
-  margin: 6px 0 0;
-  padding-left: 18px;
   font-size: 13px;
   color: #3a3a36;
+  line-height: 1.45;
 }
-.oj-card__culture-list li { margin-bottom: 2px; }
 
-/* JD blocks */
-.oj-card__jd {
-  border-top: 1px solid #f0eeea;
-  padding-top: 12px;
-}
-.oj-card__jd-block { margin-bottom: 10px; }
-.oj-card__jd-block:last-child { margin-bottom: 0; }
-.oj-card__jd-block h3 {
-  margin: 0 0 4px;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: #1a1a1a;
-}
-.oj-card__jd-block p {
-  margin: 0;
-  font-size: 13px;
-  color: #3a3a36;
-  line-height: 1.55;
-}
-.oj-card__jd-block ul {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-  color: #3a3a36;
-  line-height: 1.55;
-}
-.oj-card__jd-block li { margin-bottom: 2px; }
-
-/* Checklist */
-.oj-card__checklist {
-  border-top: 1px solid #f0eeea;
-  padding-top: 12px;
+.oj-card__checklist-summary {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.oj-card__check-group h4 {
-  margin: 0 0 4px;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.oj-card__check-heading.is-hard { color: #9a3b2a; }
-.oj-card__check-heading.is-fit { color: #4f6b3c; }
-.oj-card__check-heading.is-bonus { color: #4a5d6e; }
-.oj-card__check-heading.is-anti { color: #b57826; }
-.oj-card__check-group ul {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-  color: #3a3a36;
-  line-height: 1.55;
-}
-.oj-card__check-group li { margin-bottom: 2px; }
-
-/* Interview process */
-.oj-card__interview {
-  border-top: 1px solid #f0eeea;
-  padding-top: 12px;
-}
-.oj-card__interview h4 {
-  margin: 0 0 4px;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #6a6a64;
-}
-.oj-card__interview p {
-  margin: 0;
-  font-size: 13px;
-  color: #3a3a36;
-  line-height: 1.55;
-}
-
-/* CTA link */
-.oj-card__cta {
-  display: inline-flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+}
+.oj-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.oj-chip.is-hard { background: #fce4e4; color: #9a3b2a; }
+.oj-chip.is-fit { background: #e6e9d9; color: #4f6b3c; }
+.oj-chip.is-bonus { background: #dde3e5; color: #4a5d6e; }
+.oj-chip.is-anti { background: #f4e1c4; color: #b57826; }
+
+.oj-card__cta {
   font-size: 13px;
   font-weight: 600;
   color: #9a4421;
-  text-decoration: none;
-  padding: 8px 16px;
-  border: 1px solid #f0bfa0;
-  border-radius: 7px;
-  background: #fbe8da;
-  align-self: flex-start;
-  transition: background 0.12s, border-color 0.12s;
-}
-.oj-card__cta:hover {
-  background: #f7d5be;
-  border-color: #e0a07a;
+  margin-top: auto;
 }
 
 @media (max-width: 640px) {
   .oj-main { padding: 20px 14px 60px; }
   .oj-hero h1 { font-size: 22px; }
-  .oj-card { padding: 16px 16px; }
+  .oj-grid { grid-template-columns: 1fr; }
 }
