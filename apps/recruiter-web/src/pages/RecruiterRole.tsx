@@ -2212,7 +2212,20 @@ function buildRoleRewardCenter(input: {
 
 // Minimal Markdown → React renderer for jdBlocks.body. Supports `-` bullet
 // lists, blank-line paragraphs, and inline `**bold**` / `*em*` / `` `code` ``.
-function renderMarkdown(text: string): ReactNode[] {
+function renderMarkdown(text: string | null | undefined, items?: string[]): ReactNode[] {
+  // List-kind JD blocks arrive as { heading, items } with a null body.
+  if (typeof text !== "string" || !text.trim()) {
+    if (items && items.length) {
+      return [
+        <ul key={0}>
+          {items.map((item, i) => (
+            <li key={i}>{renderInline(item)}</li>
+          ))}
+        </ul>,
+      ]
+    }
+    return []
+  }
   const lines = text.split("\n")
   const out: ReactNode[] = []
   let listBuffer: string[] = []
@@ -2985,7 +2998,7 @@ export default function RecruiterRole() {
               {job.jdBlocks.map((block, i) => (
                 <section className="block" key={i}>
                   <h3>{block.heading}</h3>
-                  {renderMarkdown(block.body)}
+                  {renderMarkdown(block.body, block.items)}
                 </section>
               ))}
               {job.recruiterBoard.interviewProcess && (

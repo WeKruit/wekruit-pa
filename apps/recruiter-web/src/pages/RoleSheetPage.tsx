@@ -292,8 +292,8 @@ function extraFieldsPayload(draft: RowDraft, fields: RecruiterSubmitField[]): Re
   return out
 }
 
-function checklistShortLabel(text: string): string {
-  const words = text.trim().split(/\s+/)
+function checklistShortLabel(text: string | null | undefined): string {
+  const words = (text ?? "").trim().split(/\s+/).filter(Boolean)
   const head = words.slice(0, 4).join(" ")
   return words.length > 4 ? `${head}…` : head
 }
@@ -363,7 +363,20 @@ function formatSubmitFailure(reason?: string): string {
   return reason ?? "submission_failed"
 }
 
-function renderJdBody(text: string): ReactNode[] {
+function renderJdBody(text: string | null | undefined, items?: string[]): ReactNode[] {
+  // List-kind blocks arrive as { heading, items } with a null body.
+  if (typeof text !== "string" || !text.trim()) {
+    if (items && items.length) {
+      return [
+        <ul key={0}>
+          {items.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>,
+      ]
+    }
+    return []
+  }
   const out: ReactNode[] = []
   let listBuffer: string[] = []
   let key = 0
@@ -752,7 +765,7 @@ export default function RoleSheetPage() {
             {job.jdBlocks.map((block, i) => (
               <section key={i}>
                 <h3>{block.heading}</h3>
-                {renderJdBody(block.body)}
+                {renderJdBody(block.body, block.items)}
               </section>
             ))}
             {job.recruiterBoard.interviewProcess && (

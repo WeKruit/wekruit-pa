@@ -48,7 +48,8 @@ export interface CollabJob {
   title: string
   compSummary?: string
   updatedAt?: string | null
-  jdBlocks: Array<{ heading: string; body: string; kind?: "list" | "prose" }>
+  // List-kind blocks carry `items` and may have a null/absent body.
+  jdBlocks: Array<{ heading: string; body?: string | null; items?: string[]; kind?: "list" | "prose" }>
   recruiterBoard: {
     active: boolean
     sortOrder: number

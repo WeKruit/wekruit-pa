@@ -72,7 +72,7 @@ test("checklist-item columns are generated from the job checklist groups, hardâ†
   assert.match(source, /CHECKLIST_KIND_ORDER\.indexOf\(a\.kind\) - CHECKLIST_KIND_ORDER\.indexOf\(b\.kind\)/)
   assert.match(source, /groups\.flatMap\(\(group\) => group\.items\.map\(\(item\) => \(\{ id: item\.id, text: item\.text, kind: group\.kind \}\)\)\)/)
   // short header + full text on hover + group chip
-  assert.match(source, /function checklistShortLabel\(text: string\): string/)
+  assert.match(source, /function checklistShortLabel\(text: string \| null \| undefined\): string/)
   assert.match(source, /words\.slice\(0, 4\)\.join\(" "\)/)
   assert.match(source, /<th key=\{column\.id\} title=\{column\.text\} className=\{`rs-th rs-c-check is-\$\{column\.kind\}`\}>/)
   assert.match(source, /<span className=\{`rs-chip is-\$\{column\.kind\}`\}>\{CHECKLIST_KIND_CHIP\[column\.kind\]\}<\/span>/)
@@ -237,6 +237,17 @@ test("JD section is open by default above the sheet", () => {
   assert.ok(jdIdx >= 0 && tableIdx > jdIdx, "the sheet follows the JD")
   assert.match(source, /\{job\.jdBlocks\.map\(\(block, i\) => \(/)
   assert.match(source, /\{job\.recruiterBoard\.culture\.bullets\.map\(\(bullet, i\) => \(/)
+})
+
+test("JD list-kind blocks (null body + items[]) must not crash the sheet", () => {
+  // 2026-06-10 prod blank-page: jdBlocks like {heading, items} carry body:null â€”
+  // renderJdBody(null.split) crashed the whole route. Both shapes render.
+  assert.match(source, /function renderJdBody\(text: string \| null \| undefined, items\?: string\[\]\)/)
+  assert.match(source, /typeof text !== "string"/)
+  assert.match(source, /renderJdBody\(block\.body, block\.items\)/)
+  // checklist header labels tolerate missing text too
+  assert.match(source, /function checklistShortLabel\(text: string \| null \| undefined\)/)
+  assert.match(source, /\(text \?\? ""\)\.trim\(\)/)
 })
 
 test("legend strip summarizes checklist groups with hover guidance", () => {

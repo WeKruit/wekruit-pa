@@ -984,10 +984,15 @@ export default function RecruiterWorkspace() {
                       <summary>Full job description{ICONS.chevD}</summary>
                       <div className="rw-jd-body">
                         {selectedRole.jdBlocks.map((b, i) => (
-                          <p key={i} style={{ margin: i === 0 ? "12px 0 0" : "10px 0 0" }}>
+                          <div key={i} style={{ margin: i === 0 ? "12px 0 0" : "10px 0 0" }}>
                             {b.heading ? <strong style={{ display: "block", marginBottom: 2 }}>{b.heading}</strong> : null}
-                            {b.body}
-                          </p>
+                            {typeof b.body === "string" && b.body.trim() ? <p style={{ margin: 0 }}>{b.body}</p> : null}
+                            {b.items && b.items.length > 0 && (
+                              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                                {b.items.map((item, j) => <li key={j}>{item}</li>)}
+                              </ul>
+                            )}
+                          </div>
                         ))}
                       </div>
                     </details>
