@@ -29,6 +29,14 @@ import {
   type MergeAndDetermineResult,
   type SourceExperience,
 } from "./merge-experience-profile.js"
+// Employer-history quality signals (Adam 2026-06-10): pa-companies join + ownership extraction
+// over the merged timeline. ADDITIVE + fail-open (see employer-signals.ts).
+import {
+  deriveEmployerHistorySignals,
+  makeFirestoreCompanyLoader,
+  type EmployerHistoryRow,
+  type EmployerHistorySignals,
+} from "./employer-signals.js"
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
 const PA_USERS_COLLECTION = "pa-users"
@@ -406,6 +414,18 @@ export function buildParsedResumeDocFromRecord(
   }
 }
 
+/**
+ * D8 merge facts written under pa-users.tags by writeBoth. Extends the determined facts with the
+ * ADDITIVE employer-history signals (Adam 2026-06-10) — all optional; absent keys never clobber.
+ */
+export type MirrorMergedFacts = {
+  recentRoleTitle?: string
+  recentCompany?: string
+  careerStage?: string
+  yoeRange?: [number, number]
+  roleFunction?: string[]
+} & EmployerHistorySignals
+
 export interface MirrorDeps {
   /** Query existing parsedCandidateResumes rows for this user. */
   findExistingForUser?: (userId: string) => Promise<ExistingParsedResumeForMirror[]>
@@ -422,13 +442,7 @@ export interface MirrorDeps {
      * LinkedIn+résumé determination. When present, writeBoth MUST read+merge existing pa-users.tags and
      * write ONLY these keys (never clobber sibling tags). Absent on fail-open (leave existing tags).
      */
-    mergedFacts?: {
-      recentRoleTitle?: string
-      recentCompany?: string
-      careerStage?: string
-      yoeRange?: [number, number]
-      roleFunction?: string[]
-    }
+    mergedFacts?: MirrorMergedFacts
   }) => Promise<void>
   /**
    * Injectable unified merge+determine over (LinkedIn experiences, résumé experiences). Default = the
@@ -438,6 +452,12 @@ export interface MirrorDeps {
     linkedinExperiences: SourceExperience[]
     resumeExperiences: SourceExperience[]
   }) => Promise<MergeAndDetermineResult | null>
+  /**
+   * Injectable employer-history signals derivation (Adam 2026-06-10) over the merged timeline.
+   * Wired by makeFirestoreMirrorDeps (needs db for the pa-companies join); absent → skipped
+   * entirely (fail-open, nothing written). ADDITIVE: empty result writes nothing.
+   */
+  deriveEmployerSignals?: (rows: EmployerHistoryRow[]) => Promise<EmployerHistorySignals>
   now?: () => string
   log?: (event: string, fields?: Record<string, unknown>) => void
 }
@@ -494,15 +514,7 @@ export async function runCoresignalExperiencesMirror(
   // canonical set (replacing the LinkedIn-only highlights) + the facts under pa-users.tags. FAIL-OPEN:
   // null → keep the LinkedIn-only highlights and don't touch the facts (existing tags preserved).
   let experienceHighlights = linkedinOnlyHighlights
-  let mergedFacts:
-    | {
-        recentRoleTitle?: string
-        recentCompany?: string
-        careerStage?: string
-        yoeRange?: [number, number]
-        roleFunction?: string[]
-      }
-    | undefined
+  let mergedFacts: MirrorMergedFacts | undefined
   const linkedinSources: SourceExperience[] = (recordWithDescriptions.experience ?? [])
     .map((e) => toSourceFromLinkedin(e as unknown as Record<string, unknown>))
     .filter((s) => s.title || s.company)
@@ -551,6 +563,30 @@ export async function runCoresignalExperiencesMirror(
         deps.log?.("coresignal_mirror.facts_fallback", { userId, recentRoleTitle: current.title })
       }
     }
+
+    // EMPLOYER-HISTORY SIGNALS (Adam 2026-06-10) — derive the additive quality signals
+    // (employerStages / employerTags / hasBigTechBackground / employerGrowthTier / founderRole /
+    // scopeOfOwnership / selectivitySignals) from the merged timeline (or the raw source union when
+    // the merge failed open). FAIL-OPEN: any error logs + skips; an empty result writes NOTHING.
+    if (deps.deriveEmployerSignals) {
+      try {
+        const employerRows: EmployerHistoryRow[] =
+          merged && merged.mergedExperiences.length > 0
+            ? merged.mergedExperiences.map((e) => ({ ...e }))
+            : [...resumeSources, ...linkedinSources]
+        const signals = await deps.deriveEmployerSignals(employerRows)
+        const keys = Object.keys(signals ?? {})
+        if (keys.length > 0) {
+          mergedFacts = { ...(mergedFacts ?? {}), ...signals }
+          deps.log?.("coresignal_mirror.employer_signals", { userId, keys })
+        }
+      } catch (err) {
+        deps.log?.("coresignal_mirror.employer_signals_error", {
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
   }
 
   if (deps.writeBoth) {
@@ -578,8 +614,14 @@ export async function runCoresignalExperiencesMirror(
 // Default Firestore deps wrapper
 // ---------------------------------------------------------------------------
 
-export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findExistingForUser" | "writeBoth"> {
+export function makeFirestoreMirrorDeps(
+  db: Firestore,
+): Pick<MirrorDeps, "findExistingForUser" | "writeBoth" | "deriveEmployerSignals"> {
   return {
+    // Employer-history signals default (Adam 2026-06-10): real pa-companies join + gpt-5.4-mini
+    // ownership extraction. Lives in deps (not the pure runner) because the join needs db.
+    deriveEmployerSignals: (rows: EmployerHistoryRow[]) =>
+      deriveEmployerHistorySignals(rows, { getCompanyDocs: makeFirestoreCompanyLoader(db) }),
     findExistingForUser: async (userId: string) => {
       const snap = await db
         .collection(PARSED_RESUMES_COLLECTION)
@@ -666,6 +708,25 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
         // keep projectTagsToGlobalTags + the matcher's array-contains-any readers unchanged.
         if (mergedFacts.roleFunction && mergedFacts.roleFunction.length > 0) {
           tags.targetRoleFunction = mergedFacts.roleFunction
+        }
+        // EMPLOYER-HISTORY signals (Adam 2026-06-10) — additive derived-history keys; only the
+        // keys the derivation produced are written (absent keys never clobber existing values).
+        if (Array.isArray(mergedFacts.employerStages) && mergedFacts.employerStages.length > 0) {
+          tags.employerStages = mergedFacts.employerStages
+        }
+        if (Array.isArray(mergedFacts.employerTags) && mergedFacts.employerTags.length > 0) {
+          tags.employerTags = mergedFacts.employerTags
+        }
+        if (mergedFacts.hasBigTechBackground === true) tags.hasBigTechBackground = true
+        if (typeof mergedFacts.employerGrowthTier === "string") {
+          tags.employerGrowthTier = mergedFacts.employerGrowthTier
+        }
+        if (mergedFacts.founderRole === true) tags.founderRole = true
+        if (mergedFacts.scopeOfOwnership && Object.keys(mergedFacts.scopeOfOwnership).length > 0) {
+          tags.scopeOfOwnership = mergedFacts.scopeOfOwnership
+        }
+        if (Array.isArray(mergedFacts.selectivitySignals) && mergedFacts.selectivitySignals.length > 0) {
+          tags.selectivitySignals = mergedFacts.selectivitySignals
         }
         tags.lastUpdatedFromMergedExperience = nowIso
         userPatch.tags = tags

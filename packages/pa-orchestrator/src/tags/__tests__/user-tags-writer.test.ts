@@ -696,3 +696,80 @@ test("applyPartialUserTags: projectGlobalTags false writes only legacy tags", as
   assert.ok(data.tags.skills)
   assert.equal(data.globalTags, undefined)
 })
+
+// ---------------------------------------------------------------------------
+// Employer-history signals (Adam 2026-06-10) — boolean / nested-object / array
+// derived-history fields pass the cleaner intact and shallow-replace like every
+// other key. (The undefined-strip loop must NOT drop `false`-able booleans or
+// nested objects.)
+// ---------------------------------------------------------------------------
+
+test("applyPartialUserTags: boolean fields (hasBigTechBackground/founderRole) persist intact", async () => {
+  const ctx = makeDb({ "u-emp": { tags: { skills: [], schemaVersion: USER_TAGS_SCHEMA_VERSION } } })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-emp",
+    { hasBigTechBackground: true, founderRole: true },
+    { source: "migration", nowIso: "2026-06-10T00:00:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.mergedKeys?.sort(), ["founderRole", "hasBigTechBackground"])
+  const tags = (ctx.writes[0]!.data as { tags: Record<string, unknown> }).tags
+  assert.equal(tags.hasBigTechBackground, true)
+  assert.equal(tags.founderRole, true)
+})
+
+test("applyPartialUserTags: nested object (scopeOfOwnership) + arrays persist and shallow-replace", async () => {
+  const ctx = makeDb({
+    "u-emp2": {
+      tags: {
+        schemaVersion: USER_TAGS_SCHEMA_VERSION,
+        scopeOfOwnership: { teamSize: 2, revenue: "$1M ARR" },
+        selectivitySignals: ["old honor"],
+        employerTags: ["yc_alumni"],
+      },
+    },
+  })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-emp2",
+    {
+      scopeOfOwnership: { teamSize: 9 },
+      selectivitySignals: ["Top 0.1% of 390K"],
+      employerStages: ["series_b"],
+      employerGrowthTier: "growth",
+    },
+    { source: "migration", nowIso: "2026-06-10T00:00:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  const tags = (ctx.writes[0]!.data as { tags: Record<string, unknown> }).tags
+  // Shallow-replace like other keys: the NEW scope object wins wholesale (no deep merge of revenue).
+  assert.deepEqual(tags.scopeOfOwnership, { teamSize: 9 })
+  assert.deepEqual(tags.selectivitySignals, ["Top 0.1% of 390K"])
+  assert.deepEqual(tags.employerStages, ["series_b"])
+  assert.equal(tags.employerGrowthTier, "growth")
+  // Untouched sibling derived key survives the read-merge-write.
+  assert.deepEqual(tags.employerTags, ["yc_alumni"])
+})
+
+test("applyPartialUserTags: a partial WITHOUT employer keys never clobbers existing employer signals", async () => {
+  const ctx = makeDb({
+    "u-emp3": {
+      tags: {
+        schemaVersion: USER_TAGS_SCHEMA_VERSION,
+        hasBigTechBackground: true,
+        employerGrowthTier: "mature",
+      },
+    },
+  })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-emp3",
+    { targetLocations: ["new_york"] },
+    { source: "chat", nowIso: "2026-06-10T00:00:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  const tags = (ctx.writes[0]!.data as { tags: Record<string, unknown> }).tags
+  assert.equal(tags.hasBigTechBackground, true)
+  assert.equal(tags.employerGrowthTier, "mature")
+})
