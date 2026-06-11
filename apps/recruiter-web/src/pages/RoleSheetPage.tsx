@@ -847,7 +847,6 @@ export default function RoleSheetPage() {
           <button type="button" className="rs-drawer-scrim" aria-label="Close conversation" onClick={() => setThreadRowId(null)} />
           <DetailDrawer
             row={threadRow}
-            rowDraft={rowDrafts[threadRow.id] ?? null}
             checklistColumns={checklistColumns}
             extraFieldDefs={extraFieldDefs}
             comments={commentsByRow[threadRow.id] ?? []}
@@ -855,10 +854,6 @@ export default function RoleSheetPage() {
             error={commentsError}
             commentText={commentDraft}
             sending={commentSending}
-            saving={savingRowId === threadRow.id}
-            jobId={job.jobId}
-            onEdit={(mutate) => editRow(threadRow, mutate)}
-            onSave={() => void saveRow(threadRow)}
             onCommentChange={setCommentDraft}
             onSend={() => void sendComment()}
             onClose={() => setThreadRowId(null)}
@@ -1099,7 +1094,6 @@ function AddCandidateForm({
 
 function DetailDrawer({
   row,
-  rowDraft,
   checklistColumns,
   extraFieldDefs,
   comments,
@@ -1107,16 +1101,11 @@ function DetailDrawer({
   error,
   commentText,
   sending,
-  saving,
-  jobId,
-  onEdit,
-  onSave,
   onCommentChange,
   onSend,
   onClose,
 }: {
   row: RecruiterSubmissionItem
-  rowDraft: RowDraft | null
   checklistColumns: ChecklistColumn[]
   extraFieldDefs: RecruiterSubmitField[]
   comments: RecruiterSubmissionComment[]
@@ -1124,26 +1113,17 @@ function DetailDrawer({
   error: string | null
   commentText: string
   sending: boolean
-  saving: boolean
-  jobId: string
-  onEdit: (mutate: (draft: RowDraft) => RowDraft) => void
-  onSave: () => void
   onCommentChange: (value: string) => void
   onSend: () => void
   onClose: () => void
 }) {
   const model = buildSubmissionStatusStepper(row.status, row.requestedInfo)
-  const editable = rowIsEditable(row)
-  const dirty = rowDraft !== null
-  const view = rowDraft ?? draftFromSubmission(row)
+  const view = draftFromSubmission(row)
 
   const checklistByKind = CHECKLIST_KIND_ORDER.map((kind) => ({
     kind,
     items: checklistColumns.filter((c) => c.kind === kind),
   })).filter((g) => g.items.length > 0)
-
-  const setCell = (id: SheetCellId, value: string) =>
-    onEdit((d) => ({ ...d, cells: { ...d.cells, [id]: value } }))
 
   return (
     <aside className="rs-drawer" role="dialog" aria-label={`Details for ${row.candidate?.name ?? "candidate"}`}>
@@ -1169,24 +1149,12 @@ function DetailDrawer({
             {CANDIDATE_COLUMNS.map((column) => (
               <div key={column.id} className={`rs-drawer__field${column.id === "resume" ? " rs-drawer__field--resume" : ""}`}>
                 <label>{column.label}</label>
-                {column.id === "resume" ? (
-                  <ResumeCell
-                    value={view.cells.resume}
-                    fileName={view.resumeFileName}
-                    editable={editable}
-                    jobId={jobId}
-                    onChange={(url, name) =>
-                      onEdit((d) => ({ ...d, cells: { ...d.cells, resume: url }, resumeFileName: name }))
-                    }
-                  />
-                ) : editable ? (
-                  <input type="text" value={view.cells[column.id]} onChange={(e) => setCell(column.id, e.target.value)} />
-                ) : column.id === "linkedin" && view.cells.linkedin ? (
-                  (() => {
-                    const href = normalizeSheetUrl(view.cells.linkedin)
-                    return href ? <a className="rs-link-cell" href={href} target="_blank" rel="noopener noreferrer">{excerpt(view.cells.linkedin, 40)}</a> : <span>{view.cells.linkedin}</span>
-                  })()
-                ) : (
+                {(column.id === "linkedin" || column.id === "resume") && view.cells[column.id] ? (() => {
+                  const href = normalizeSheetUrl(view.cells[column.id])
+                  return href
+                    ? <a className="rs-link-cell" href={href} target="_blank" rel="noopener noreferrer">{excerpt(view.cells[column.id], 40)}</a>
+                    : <span>{view.cells[column.id]}</span>
+                })() : (
                   <span>{view.cells[column.id] || "—"}</span>
                 )}
               </div>
@@ -1205,26 +1173,9 @@ function DetailDrawer({
                   {group.items.map((item) => (
                     <div key={item.id} className="rs-add-form__check-row">
                       <span className="rs-add-form__check-text">{item.text}</span>
-                      {editable ? (
-                        <select
-                          aria-label={item.text}
-                          value={view.checklist[item.id] ?? ""}
-                          onChange={(e) =>
-                            onEdit((d) => ({
-                              ...d,
-                              checklist: { ...d.checklist, [item.id]: e.target.value as "" | SubmissionChecklistValue },
-                            }))
-                          }
-                        >
-                          {CHECKLIST_VALUE_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="rs-add-form__check-value">
-                          {CHECKLIST_VALUE_OPTIONS.find((o) => o.value === (view.checklist[item.id] ?? ""))?.label ?? "—"}
-                        </span>
-                      )}
+                      <span className="rs-add-form__check-value">
+                        {CHECKLIST_VALUE_OPTIONS.find((o) => o.value === (view.checklist[item.id] ?? ""))?.label ?? "—"}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1240,34 +1191,18 @@ function DetailDrawer({
               {extraFieldDefs.map((field) => (
                 <div key={field.id} className="rs-drawer__field">
                   <label>{field.label}</label>
-                  {editable ? (
-                    <input type="text" value={view.extraFields[field.id] ?? ""} onChange={(e) =>
-                      onEdit((d) => ({ ...d, extraFields: { ...d.extraFields, [field.id]: e.target.value } }))
-                    } />
-                  ) : (
-                    <span>{view.extraFields[field.id] || "—"}</span>
-                  )}
+                  <span>{view.extraFields[field.id] || "—"}</span>
                 </div>
               ))}
             </div>
           </section>
         )}
 
-        <section className="rs-drawer__section">
-          <h3>Notes</h3>
-          {editable ? (
-            <textarea rows={2} value={view.notes} onChange={(e) => onEdit((d) => ({ ...d, notes: e.target.value }))} />
-          ) : (
-            <p className="rs-drawer__note-text">{view.notes || "—"}</p>
-          )}
-        </section>
-
-        {editable && dirty && (
-          <div className="rs-drawer__save-bar">
-            <button type="button" className="rs-btn rs-btn--save" disabled={saving} onClick={onSave}>
-              {saving ? "Saving…" : "Save changes"}
-            </button>
-          </div>
+        {view.notes && (
+          <section className="rs-drawer__section">
+            <h3>Notes</h3>
+            <p className="rs-drawer__note-text">{view.notes}</p>
+          </section>
         )}
 
         <section className="rs-drawer__section rs-drawer__section--thread">

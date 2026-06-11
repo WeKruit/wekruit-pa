@@ -167,28 +167,20 @@ test("the blank row draft persists to localStorage per job", () => {
   assert.match(source, /jobId \? loadAddRowDraft\(jobId\) : emptyAddRowDraft\(\)/, "draft restores on first render")
 })
 
-test("editing a row exposes Save which PATCHes through paRecruiterSubmissionUpdate", () => {
-  const saveSlice = sliceBetween(source, "const saveRow = async", "const addBlockers =")
-  assert.match(saveSlice, /await updateRecruiterSubmission\(\{/)
-  assert.match(saveSlice, /submissionId: submissionApiId\(row\),/)
-  assert.match(saveSlice, /candidate: candidatePayload\(draft\),/)
-  assert.match(saveSlice, /checklist: checklistPayload\(draft\),/)
-  assert.match(saveSlice, /extraFields: extraFieldsPayload\(draft, extraFieldDefs\),/)
-  // Save only renders inside the detail drawer for a dirty editable row
+test("detail drawer is read-only; form handles all submission and editing", () => {
   const drawerSlice = sliceBetween(source, "function DetailDrawer(", "\n}\n")
-  assert.match(drawerSlice, /const editable = rowIsEditable\(row\)/)
-  assert.match(drawerSlice, /const dirty = rowDraft !== null/)
-  assert.match(drawerSlice, /editable && dirty &&/)
-  assert.match(drawerSlice, /\{saving \? "Saving…" : "Save changes"\}/)
+  assert.ok(!drawerSlice.includes("onEdit"), "drawer has no edit callback")
+  assert.ok(!drawerSlice.includes("onSave"), "drawer has no save callback")
+  assert.ok(!drawerSlice.includes("rs-drawer__save-bar"), "drawer has no save bar")
+  assert.ok(!drawerSlice.includes('<input type="text"'), "drawer has no text inputs")
+  assert.match(drawerSlice, /Candidate info/)
+  assert.match(drawerSlice, /Checklist/)
+  assert.match(drawerSlice, /Ask WeKruit/)
 })
 
-test("rows stay editable only while WeKruit owns them; locked rows render plain text", () => {
+test("EDITABLE_STATUSES is still declared for the add-form update path", () => {
   assert.match(source, /const EDITABLE_STATUSES = new Set\(\["submitted", "new", "reviewing", "wekruit_interview"\]\)/)
   assert.match(source, /return EDITABLE_STATUSES\.has\(row\.status \|\| "submitted"\)/)
-  // DetailDrawer uses editable to gate input vs span rendering
-  const drawerSlice = sliceBetween(source, "function DetailDrawer(", "\n}\n")
-  assert.match(drawerSlice, /const editable = rowIsEditable\(row\)/)
-  assert.match(drawerSlice, /editable \?/)
 })
 
 test("409 row_locked surfaces the pinned toast", () => {
