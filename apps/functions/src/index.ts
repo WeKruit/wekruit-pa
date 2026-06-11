@@ -161,6 +161,13 @@ export { paLivenessSweepDaily } from "./liveness-sweep.js"
 // (idempotent per session via `prescreen-nudge-<sessionId>`).
 export { paPrescreenReviewSlaDaily } from "./prescreen-review-sla.js"
 
+// 2026-06-11 incident class — daily 08:00 UTC channel canary: dead
+// senderNumber assignments vs the active pa-sendblue-numbers pool (the
+// +17174919939 silent-death detector), zero-active-pool CRITICAL, 24h
+// outbound failure pressure, and inbound-silence-while-sending CRITICAL.
+// READ-ONLY + Slack alerts (fail-soft when PA_SLACK_ALERT_WEBHOOK unset).
+export { paChannelHealthDaily } from "./channel-health.js"
+
 // 2026-05-27 — daily watchdog over the macmini → Firestore scrape pipeline.
 // Posts a Slack alert when the newest `matching-jobs.syncedAt` is older
 // than 24h (warn) or 48h (error). Audit trail in
