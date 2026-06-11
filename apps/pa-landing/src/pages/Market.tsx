@@ -65,9 +65,17 @@ interface OpenJobsResp {
   ok: boolean
   count: number
   scanned: number
+  /** TRUE (approx) catalog size from the server's count() aggregate (2026-06-11). */
   total: number
+  /** True when `total` came from the aggregate (catalog-wide, pre-filter). */
+  totalIsApprox?: boolean
+  /** Exact browsable count inside the server's filtered snapshot window. */
+  filteredTotal?: number
   offset: number
   limit: number
+  /** Forward-only cursor pagination — pass back as `cursor` for the next page. */
+  nextCursor: string | null
+  hasMore: boolean
   rows: OpenJobRow[]
   error?: string
 }
@@ -731,10 +739,13 @@ function huntingQueryKey(f: HuntingFilters): readonly unknown[] {
   ] as const
 }
 
-async function fetchOpenJobsPage(f: HuntingFilters, offset: number, signal?: AbortSignal): Promise<OpenJobsResp> {
+async function fetchOpenJobsPage(f: HuntingFilters, cursor: string, signal?: AbortSignal): Promise<OpenJobsResp> {
   const params = new URLSearchParams()
   params.set("limit", String(PAGE_SIZE))
-  params.set("offset", String(offset))
+  // Cursor pagination (2026-06-11) — `total` is now the catalog-wide aggregate
+  // count, so offset-vs-total math can no longer decide "is there more"; the
+  // server's nextCursor/hasMore contract does. Empty cursor = first page.
+  if (cursor) params.set("cursor", cursor)
   params.set("freshDays", "45")
   const fnTokens = [...f.fn].flatMap((l) => FN_TO_TOKENS[l] ?? [])
   const lvTokens = [...f.level].flatMap((l) => LEVEL_TO_TOKENS[l] ?? [])
@@ -768,14 +779,15 @@ function useHuntingInfinite(filtersRaw: HuntingFilters) {
     () => ({ ...filtersRaw, search: debouncedSearch }),
     [filtersRaw.fn, filtersRaw.level, filtersRaw.loc, filtersRaw.remoteOnly, debouncedSearch],
   )
-  return useInfiniteQuery<OpenJobsResp, Error, InfiniteData<OpenJobsResp>, readonly unknown[], number>({
+  return useInfiniteQuery<OpenJobsResp, Error, InfiniteData<OpenJobsResp>, readonly unknown[], string>({
     queryKey: huntingQueryKey(filters),
-    queryFn: ({ pageParam = 0, signal }) => fetchOpenJobsPage(filters, pageParam, signal),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage) => {
-      const nextOffset = lastPage.offset + lastPage.count
-      return nextOffset < lastPage.total ? nextOffset : undefined
-    },
+    queryFn: ({ pageParam = "", signal }) => fetchOpenJobsPage(filters, pageParam, signal),
+    initialPageParam: "",
+    // Server-driven paging: hasMore + nextCursor (2026-06-11). Never derive
+    // "more pages" from `total` — it is the catalog-wide aggregate count and
+    // exceeds the browsable snapshot, which would loop empty pages forever.
+    getNextPageParam: (lastPage) =>
+      lastPage.hasMore && lastPage.nextCursor ? lastPage.nextCursor : undefined,
     // Feed refreshes ~daily — never refetch during in-session navigation.
     staleTime: OPEN_JOBS_STALE_TIME_MS,
     gcTime: OPEN_JOBS_GC_TIME_MS,
@@ -851,6 +863,14 @@ export default function Market(): ReactNode {
     [hunting.data],
   )
   const huntingTotal = hunting.data?.pages[0]?.total ?? 0
+  // "Load more" remaining count must use the browsable (filtered-snapshot)
+  // total — `total` is now the catalog-wide aggregate and would overstate.
+  const lastHuntingPage = hunting.data?.pages[hunting.data.pages.length - 1]
+  const huntingMoreLeft = Math.max(
+    0,
+    (lastHuntingPage?.filteredTotal ?? huntingTotal) - huntingJobs.length,
+  )
+  const huntingLoadMoreLabel = huntingMoreLeft > 0 ? `Load more (${huntingMoreLeft} left)` : "Load more"
   const directJobs = direct.data ?? []
   const directSearch = directSearchQ.trim().toLowerCase()
   const filteredDirectJobs = useMemo(() => {
@@ -867,7 +887,13 @@ export default function Market(): ReactNode {
     : {
         eyebrow: "External roles · Claire is watching",
         title: <>Roles Claire is <em className="wk-accent">tracking</em>.</>,
-        lede: "Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected.",
+        // Signed-out visitors only browse the fresh slice — say plainly that
+        // signing in is how they get the FULL tracked catalog matched to them
+        // (Adam 2026-06-11: "make the wording clearer for them to log in to
+        // actually look at all the roles").
+        lede: isAuthed
+          ? "Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected."
+          : `Claire is tracking ${huntingTotal > 0 ? huntingTotal.toLocaleString() : "thousands of"} live roles. This page is the freshest slice — sign in and Claire matches the full set against your profile, so you see the roles that actually fit instead of a wall of listings.`,
       }
 
   const onOpenJob = useCallback((job: DisplayJob) => {
@@ -927,7 +953,11 @@ export default function Market(): ReactNode {
                 <h1 className="wk-market__h1">{trackedHead.title}</h1>
                 <p className="wk-market__lede">{trackedHead.lede}</p>
                 <div className="wk-market__actions" aria-label="Market primary actions">
-                  <a className="wk-btn wk-btn--primary" href="/me/profile#profile-corrections">Update role signals</a>
+                  {isAuthed ? (
+                    <a className="wk-btn wk-btn--primary" href="/me/profile#profile-corrections">Update role signals</a>
+                  ) : (
+                    <a className="wk-btn wk-btn--primary" href="/login?next=%2Fmarket">Sign in to see all your matches</a>
+                  )}
                   <button
                     type="button"
                     className="wk-btn wk-btn--secondary"
@@ -1019,7 +1049,7 @@ export default function Market(): ReactNode {
                               disabled={hunting.isFetchingNextPage}
                               onClick={() => { void hunting.fetchNextPage() }}
                             >
-                              {hunting.isFetchingNextPage ? "Loading…" : `Load more (${huntingTotal - huntingJobs.length} left)`}
+                              {hunting.isFetchingNextPage ? "Loading…" : huntingLoadMoreLabel}
                             </button>
                           </div>
                         ) : null}
@@ -1042,7 +1072,7 @@ export default function Market(): ReactNode {
                               disabled={hunting.isFetchingNextPage}
                               onClick={() => { void hunting.fetchNextPage() }}
                             >
-                              {hunting.isFetchingNextPage ? "Loading…" : `Load more (${huntingTotal - huntingJobs.length} left)`}
+                              {hunting.isFetchingNextPage ? "Loading…" : huntingLoadMoreLabel}
                             </button>
                           </div>
                         ) : null}

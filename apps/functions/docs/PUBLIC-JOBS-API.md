@@ -74,7 +74,9 @@ Filters compose with AND. Multi-value csv params compose with OR within the para
   "generatedAt": "2026-05-27T14:03:11.842Z",
   "count": 24,                     // rows in this page
   "scanned": 87,                   // docs scanned to build snapshot
-  "total": 41,                     // total after filters (this scan window)
+  "total": 41,                     // TRUE catalog size (count() aggregate over the base query)
+  "totalIsApprox": true,           // true when `total` is the aggregate (pre-filter, catalog-wide)
+  "filteredTotal": 41,             // exact match count inside this scan window (use for offset paging)
   "offset": 0,                     // legacy; reflects request param
   "limit": 24,
   "hasMore": true,
@@ -199,6 +201,13 @@ GET /paPublicOpenJobs?source=collab&limit=100&cursor=eyJ...
 ### Refresh (periodic)
 
 Restart from no cursor every 1-6 hours to catch new postings, retire deleted ones, and pick up updates. Cursors may **dangle** if the underlying doc rotates out of the active snapshot — in that case the API silently restarts from offset 0 (you'll see the same first page again). Always idempotently upsert by `id` on your side.
+
+### Paging signal
+
+`hasMore` + `nextCursor` are the ONLY paging signals. Do **not** derive "more
+pages" from `total` — since 2026-06-11 `total` is the catalog-wide count()
+aggregate (it exceeds the browsable scan window). `filteredTotal` is the exact
+in-window match count if you need offset math.
 
 ### Stable ordering
 

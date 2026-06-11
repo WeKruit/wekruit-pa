@@ -166,6 +166,20 @@ export {
   OPEN_PRESCREEN_WINDOW_MS,
 } from "./prescreen-guard.js"
 
+// 2026-06-11 (Adam: "every 2-3 days we should send some job matching to
+// users") — cadence-audience widener. Pre-pass that auto-provisions minimal
+// active pa-job-profiles rows for matched-ready users missing one. Wired in
+// apps/functions/src/job-rec-daily.ts before runDailyJobRecBatch.
+export {
+  provisionCadenceAudience,
+  AUDIENCE_PROVISION_SOURCE,
+  DEFAULT_PROVISION_CAP_PER_RUN,
+} from "./audience-provision.js"
+export type {
+  ProvisionAudienceDeps,
+  ProvisionAudienceOutcome,
+} from "./audience-provision.js"
+
 export {
   buildRecruiterAgent,
   buildRecruiterSystemPrompt,
