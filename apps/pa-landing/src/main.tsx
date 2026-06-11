@@ -21,6 +21,7 @@ import EmployerSignup from "./pages/EmployerSignup.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
 import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
 import AutoApplyBeta from "./pages/AutoApplyBeta.js"
+import PartnerApiDoc from "./pages/PartnerApiDoc.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -99,6 +100,7 @@ const fullRoutes = (
     <Route path="/r/:slug" element={<ReferPublicPage />} />
     <Route path="/me/refer" element={<ReferPage />} />
     <Route path="/connect-linkedin" element={<ConnectLinkedin />} />
+    <Route path="/docs/partner-api" element={<PartnerApiDoc />} />
     <Route path="/recruiters" element={<RecruiterRedirect />} />
     <Route path="/recruiters/job/:jobId" element={<RecruiterRedirect />} />
     <Route path="*" element={<HomeLanding />} />
