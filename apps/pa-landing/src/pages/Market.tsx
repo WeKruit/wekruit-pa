@@ -887,7 +887,13 @@ export default function Market(): ReactNode {
     : {
         eyebrow: "External roles · Claire is watching",
         title: <>Roles Claire is <em className="wk-accent">tracking</em>.</>,
-        lede: "Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected.",
+        // Signed-out visitors only browse the fresh slice — say plainly that
+        // signing in is how they get the FULL tracked catalog matched to them
+        // (Adam 2026-06-11: "make the wording clearer for them to log in to
+        // actually look at all the roles").
+        lede: isAuthed
+          ? "Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected."
+          : `Claire is tracking ${huntingTotal > 0 ? huntingTotal.toLocaleString() : "thousands of"} live roles. This page is the freshest slice — sign in and Claire matches the full set against your profile, so you see the roles that actually fit instead of a wall of listings.`,
       }
 
   const onOpenJob = useCallback((job: DisplayJob) => {
@@ -947,7 +953,11 @@ export default function Market(): ReactNode {
                 <h1 className="wk-market__h1">{trackedHead.title}</h1>
                 <p className="wk-market__lede">{trackedHead.lede}</p>
                 <div className="wk-market__actions" aria-label="Market primary actions">
-                  <a className="wk-btn wk-btn--primary" href="/me/profile#profile-corrections">Update role signals</a>
+                  {isAuthed ? (
+                    <a className="wk-btn wk-btn--primary" href="/me/profile#profile-corrections">Update role signals</a>
+                  ) : (
+                    <a className="wk-btn wk-btn--primary" href="/login?next=%2Fmarket">Sign in to see all your matches</a>
+                  )}
                   <button
                     type="button"
                     className="wk-btn wk-btn--secondary"
