@@ -38,6 +38,21 @@ function makeQueryFakeDb(
   )
   const usersMap = new Map<string, DocData>(Object.entries(users))
   const generic = new Map<string, Map<string, DocData>>()
+  // RULE 1 (2026-06-11) — the outbox requires prior-inbound evidence for the
+  // recipient handle. This suite's PEER (+15551234567) "texted in first".
+  generic.set(
+    "pa-inbound-events",
+    new Map([
+      [
+        "inb_seed",
+        {
+          userId: "u-1",
+          createdAt: new Date().toISOString(),
+          rawPayload: { kind: "imessage", participant: "+15551234567", fromNumber: "+15551234567" },
+        },
+      ],
+    ])
+  )
 
   function pickStore(coll: string): Map<string, DocData> {
     if (coll === "pa-outbound") return outbound
@@ -86,8 +101,18 @@ function makeQueryFakeDb(
         return q
       },
       async get() {
+        // Dotted-path support (e.g. "rawPayload.participant") for the RULE 1
+        // prior-inbound evidence queries.
+        const fieldOf = (d: DocData, path: string): unknown => {
+          let cur: unknown = d
+          for (const part of path.split(".")) {
+            if (!cur || typeof cur !== "object") return undefined
+            cur = (cur as Record<string, unknown>)[part]
+          }
+          return cur
+        }
         let rows = [...pickStore(coll).entries()].filter(([, d]) =>
-          filters.every(([f, v]) => d[f] === v)
+          filters.every(([f, v]) => fieldOf(d, f) === v)
         )
         if (orderField) {
           rows.sort(([, a], [, b]) => {

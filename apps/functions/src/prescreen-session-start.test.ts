@@ -102,6 +102,20 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
         docs.set(path, { exists: true, data: { ...prev.data, ...data } })
         sets.push({ path, data, options: { update: true } })
       },
+      // RULE 2 race-closer — create-if-absent (Firestore semantics: code 6
+      // ALREADY_EXISTS for the second writer) + delete, for the start lock.
+      async create(data: Record<string, unknown>) {
+        if (docs.get(path)?.exists) {
+          const err = new Error(`already-exists:${path}`) as Error & { code?: number }
+          err.code = 6
+          throw err
+        }
+        docs.set(path, { exists: true, data: { ...data } })
+        sets.push({ path, data, options: { create: true } })
+      },
+      async delete() {
+        docs.delete(path)
+      },
       async set(data: Record<string, unknown>, options?: unknown) {
         const prev = docs.get(path)
         const opts = options as { merge?: boolean; mergeFields?: string[] } | undefined
@@ -126,6 +140,9 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>>) {
       const query = {
         where(field: string, _op: string, value: unknown) {
           filters.push({ field, value })
+          return query
+        },
+        limit() {
           return query
         },
         async get() {
@@ -521,5 +538,186 @@ describe("defaultIsJobMatchedToUser — done-or-matched arms (Adam 2026-05-31)",
   it("missing ids → false", async () => {
     assert.equal(await defaultIsJobMatchedToUser(makeMatchFakeDb({}), "", "job-a"), false)
     assert.equal(await defaultIsJobMatchedToUser(makeMatchFakeDb({}), "u1", ""), false)
+  })
+})
+
+describe("runPreScreenForUser RULE 2 — never restart a completed screen (2026-06-11 incident)", () => {
+  const okSms = async ({ content }: { content: string }) => ({
+    status: "queued", from_number: null, number: "+13054507715", content, service: "iMessage", is_outbound: true,
+  })
+
+  it("existing TERMINAL session for (user, job) → already_completed, NO send, NO new session", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-done": { prescreenConfig },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "job-done",
+        terminal: "PASS",
+        currentQId: null,
+      },
+    })
+    let smsCount = 0
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-done",
+      userId: "u1",
+      toE164: "+13054507715",
+      // The live violation came through the recovery sweep, which bypasses the
+      // matched-gate — the terminal gate must run anyway.
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async (a) => { smsCount++; return okSms(a) },
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "already_completed")
+    assert.equal(result.sessionId, "ps_done", "returns the EXISTING terminal session id")
+    assert.equal(smsCount, 0, "sends NOTHING — no Q1 restart")
+    const created = [...docs.entries()].find(
+      ([path]) => path.startsWith("pa-prescreen-sessions/") && path !== "pa-prescreen-sessions/ps_done",
+    )
+    assert.equal(created, undefined, "no new session doc")
+    // The terminal session itself is untouched.
+    assert.equal(docs.get("pa-prescreen-sessions/ps_done")?.data.terminal, "PASS")
+  })
+
+  it("ops-VOIDED terminal session (voidedByOps) does NOT trip the gate — candidate never did that screen", async () => {
+    const { db } = makeFakeDb({
+      "pa-jobs/job-v": { prescreenConfig },
+      // The 2026-06-11 replay duplicates were voided as PAUSE+voidedByOps; the
+      // candidate never saw a question, so a fresh legit start must proceed.
+      "pa-prescreen-sessions/ps_voided": {
+        sessionId: "ps_voided",
+        userId: "u1",
+        jobId: "job-v",
+        terminal: "PAUSE",
+        voidedByOps: true,
+        currentQId: null,
+      },
+    })
+    let smsCount = 0
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-v",
+      userId: "u1",
+      toE164: "+13054507715",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async (a) => { smsCount++; return okSms(a) },
+    })
+    assert.equal(result.ok, true, "voided session must not block a real start")
+    assert.equal(smsCount, 1, "Q1 goes out for the real start")
+  })
+
+  it("ACTIVE (terminal null) session for the same job → existing new-work-session behavior unchanged", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-a": { prescreenConfig },
+      "pa-prescreen-sessions/ps_live": {
+        sessionId: "ps_live", userId: "u1", jobId: "job-a", terminal: null, currentQId: "role_fit",
+      },
+    })
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-a",
+      userId: "u1",
+      toE164: "+13054507715",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: okSms,
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.reason, "started")
+    // Old active session superseded (existing behavior preserved).
+    assert.equal(docs.get("pa-prescreen-sessions/ps_live")?.data.terminal, "PAUSE")
+  })
+
+  it("RACE: two concurrent starts for the same (user, job) → ONE session, ONE Q1; loser gets start_in_progress", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-race": { prescreenConfig },
+    })
+    let smsCount = 0
+    const slowSms = async (a: { content: string }) => {
+      smsCount++
+      // Keep the winner in-flight long enough that the loser hits the lock.
+      await new Promise((r) => setImmediate(r))
+      await new Promise((r) => setImmediate(r))
+      return okSms(a)
+    }
+    const startArgs = {
+      db,
+      jobId: "job-race",
+      userId: "u1",
+      toE164: "+13054507715",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: slowSms,
+    }
+    const [r1, r2] = await Promise.all([
+      runPreScreenForUser(startArgs),
+      runPreScreenForUser(startArgs),
+    ])
+    const winners = [r1, r2].filter((r) => r.ok)
+    const losers = [r1, r2].filter((r) => !r.ok)
+    assert.equal(winners.length, 1, "exactly one start wins")
+    assert.equal(losers.length, 1)
+    assert.equal(losers[0].reason, "start_in_progress")
+    assert.equal(smsCount, 1, "exactly one Q1 sent")
+    const sessions = [...docs.entries()].filter(
+      ([path, doc]) => path.startsWith("pa-prescreen-sessions/") && doc.exists,
+    )
+    assert.equal(sessions.length, 1, "exactly ONE session created")
+    // Lock released on completion of the winning start.
+    assert.equal(docs.get("pa-prescreen-sessions-lock/u1_job-race")?.exists ?? false, false, "lock deleted after start")
+  })
+
+  it("stale lock from a crashed start is taken over (start not wedged forever)", async () => {
+    const { db } = makeFakeDb({
+      "pa-jobs/job-stale": { prescreenConfig },
+      "pa-prescreen-sessions-lock/u1_job-stale": {
+        userId: "u1",
+        jobId: "job-stale",
+        sessionId: "ps_ghost",
+        createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(), // 10min ago > 3min stale window
+      },
+    })
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-stale",
+      userId: "u1",
+      toE164: "+13054507715",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: okSms,
+    })
+    assert.equal(result.ok, true, "stale lock must not block a fresh start")
+    assert.equal(result.reason, "started")
+  })
+
+  it("FRESH lock held by another start → start_in_progress with the holder's session id", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-held": { prescreenConfig },
+      "pa-prescreen-sessions-lock/u1_job-held": {
+        userId: "u1",
+        jobId: "job-held",
+        sessionId: "ps_holder",
+        createdAt: new Date().toISOString(),
+      },
+    })
+    let smsCount = 0
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-held",
+      userId: "u1",
+      toE164: "+13054507715",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async (a) => { smsCount++; return okSms(a) },
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "start_in_progress")
+    assert.equal(result.sessionId, "ps_holder")
+    assert.equal(smsCount, 0)
+    const sessions = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/"))
+    assert.equal(sessions.length, 0, "no session created while the lock is held")
   })
 })

@@ -91,7 +91,25 @@ export interface RunPreScreenArgs {
 
 export interface RunPreScreenResult {
   ok: boolean
-  reason?: "config_missing" | "config_invalid" | "send_failed" | "started" | "resumed" | "not_matched"
+  reason?:
+    | "config_missing"
+    | "config_invalid"
+    | "send_failed"
+    | "started"
+    | "resumed"
+    | "not_matched"
+    /**
+     * RULE 2 (2026-06-11 incident) — a session for this (userId, jobId) already
+     * reached a non-null `terminal`. NEVER restart a completed screen; the
+     * returned sessionId is the EXISTING terminal session's id. Nothing is sent.
+     */
+    | "already_completed"
+    /**
+     * RULE 2 race-closer — another start for the same (userId, jobId) holds the
+     * in-flight lock right now (the 2026-06-11 sweep created 3 sessions in one
+     * run). Friendly no-op: the concurrent start owns Q1.
+     */
+    | "start_in_progress"
   sessionId: string
   firstQuestionSent?: boolean
 }
@@ -154,6 +172,143 @@ export async function defaultIsJobMatchedToUser(
 function deriveSessionId(jobId: string, userId: string, nowIso: string): string {
   const stamp = nowIso.replace(/[^0-9A-Za-z]/g, "")
   return `ps_${jobId}_${userId}_${stamp}`
+}
+
+/**
+ * RULE 2 (2026-06-11 incident) — find an existing session for this exact
+ * (userId, jobId) that already reached a non-null `terminal`. Same query shape
+ * as defaultIsJobMatchedToUser's "done it" arm (userId== && jobId== equality,
+ * no orderBy → no composite-index dependency). Bounded + filtered in memory.
+ * Fail-OPEN on read error (a transient Firestore blip must not block a legit
+ * start — the supersede query right after would throw anyway).
+ */
+const TERMINAL_SESSION_SCAN_LIMIT = 50
+
+async function findTerminalSessionForJob(
+  db: Firestore,
+  userId: string,
+  jobId: string,
+  log: (event: string, payload: Record<string, unknown>) => void,
+): Promise<{ id: string; terminal: string } | null> {
+  try {
+    const snap = await db
+      .collection("pa-prescreen-sessions")
+      .where("userId", "==", userId)
+      .where("jobId", "==", jobId)
+      .limit(TERMINAL_SESSION_SCAN_LIMIT)
+      .get()
+    for (const doc of snap.docs) {
+      const data = doc.data() ?? {}
+      // Ops-voided sessions (e.g. the 2026-06-11 replay duplicates) are not
+      // real completions — the candidate never did that screen. They must not
+      // trip the already_completed gate or the candidate gets told they
+      // finished a screen they never saw.
+      if (data.voidedByOps === true) continue
+      const terminal = data.terminal
+      if (terminal !== null && terminal !== undefined) {
+        return { id: doc.id, terminal: String(terminal) }
+      }
+    }
+    return null
+  } catch (err) {
+    log("prescreen.terminal_check_failed_open", {
+      userId,
+      jobId,
+      error: errorMessage(err),
+    })
+    return null
+  }
+}
+
+/**
+ * RULE 2 race-closer — deterministic in-flight start lock. The session id is
+ * timestamped (deriveSessionId), so two concurrent starts mint two different
+ * doc ids and `set()` can't collide; the lock doc
+ * `pa-prescreen-sessions-lock/<userId>_<jobId>` is `create()`-if-absent
+ * (atomic ALREADY_EXISTS on the second writer) and deleted when the start
+ * completes. A stale lock (crashed start, older than START_LOCK_STALE_MS) is
+ * taken over so a one-off crash can't wedge the pair forever.
+ */
+const PRESCREEN_START_LOCK_COLLECTION = "pa-prescreen-sessions-lock"
+const START_LOCK_STALE_MS = 3 * 60 * 1000
+
+type StartLockOutcome =
+  | { acquired: true }
+  | { acquired: false; holderSessionId?: string }
+
+async function acquirePrescreenStartLock(
+  db: Firestore,
+  args: { userId: string; jobId: string; sessionId: string; nowIso: string },
+  log: (event: string, payload: Record<string, unknown>) => void,
+): Promise<StartLockOutcome> {
+  const lockRef = db
+    .collection(PRESCREEN_START_LOCK_COLLECTION)
+    .doc(`${args.userId}_${args.jobId}`)
+  try {
+    await lockRef.create({
+      userId: args.userId,
+      jobId: args.jobId,
+      sessionId: args.sessionId,
+      createdAt: args.nowIso,
+    })
+    return { acquired: true }
+  } catch (err) {
+    const code = (err as { code?: number }).code
+    if (code !== 6 /* ALREADY_EXISTS */) {
+      // Lock infra error → fail-open (the lock is belt-and-braces on top of the
+      // terminal gate; never block a legit start on lock plumbing).
+      log("prescreen.start_lock_error_fail_open", {
+        userId: args.userId,
+        jobId: args.jobId,
+        error: errorMessage(err),
+      })
+      return { acquired: true }
+    }
+    try {
+      const snap = await lockRef.get()
+      const data = (snap.data() ?? {}) as { createdAt?: unknown; sessionId?: unknown }
+      const createdMs = Date.parse(String(data.createdAt ?? ""))
+      const fresh = Number.isFinite(createdMs) && Date.now() - createdMs < START_LOCK_STALE_MS
+      if (fresh) {
+        return {
+          acquired: false,
+          ...(typeof data.sessionId === "string" && data.sessionId
+            ? { holderSessionId: data.sessionId }
+            : {}),
+        }
+      }
+      // Stale lock from a crashed start → take over.
+      await lockRef.set({
+        userId: args.userId,
+        jobId: args.jobId,
+        sessionId: args.sessionId,
+        createdAt: args.nowIso,
+        takenOverAt: args.nowIso,
+      })
+      return { acquired: true }
+    } catch (readErr) {
+      log("prescreen.start_lock_read_error_fail_open", {
+        userId: args.userId,
+        jobId: args.jobId,
+        error: errorMessage(readErr),
+      })
+      return { acquired: true }
+    }
+  }
+}
+
+async function releasePrescreenStartLock(
+  db: Firestore,
+  args: { userId: string; jobId: string },
+): Promise<void> {
+  try {
+    await db
+      .collection(PRESCREEN_START_LOCK_COLLECTION)
+      .doc(`${args.userId}_${args.jobId}`)
+      .delete()
+  } catch {
+    /* best-effort — a leaked lock is reclaimed via START_LOCK_STALE_MS */
+  }
 }
 
 const MIN_PRESCREEN_PROBE_ROUNDS = 4
@@ -259,6 +414,24 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     }
   }
 
+  // 0.5 RULE 2 (2026-06-11 incident) — NEVER restart a completed screen. A
+  // session for this exact (userId, jobId) with a non-null terminal means the
+  // candidate already finished (or the screen was terminally closed): return
+  // the EXISTING session id and send NOTHING. Runs for EVERY caller — no
+  // bypass (the live violation came through the recovery sweep, which sets
+  // allowMatchedBypass=true). An ACTIVE (terminal null) session keeps the
+  // existing supersede/new-work-session behavior unchanged.
+  const completed = await findTerminalSessionForJob(args.db, args.userId, args.jobId, log)
+  if (completed) {
+    log("prescreen.already_completed", {
+      jobId: args.jobId,
+      userId: args.userId,
+      sessionId: completed.id,
+      terminal: completed.terminal,
+    })
+    return { ok: false, reason: "already_completed", sessionId: completed.id }
+  }
+
   // 1. Load config
   const jobSnap = await args.db.collection("pa-jobs").doc(args.jobId).get()
   const data = jobSnap.data()
@@ -293,6 +466,48 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     return { ok: false, reason: "config_invalid", sessionId }
   }
   const cfg: PrescreenConfig = parsed.config
+
+  // 1.5 RULE 2 race-closer (2026-06-11: one sweep run created THREE sessions
+  // for the same user) — deterministic in-flight lock on (userId, jobId),
+  // acquired right before the supersede+create block and released on
+  // completion of the start. The second concurrent start gets a friendly
+  // no-op instead of a duplicate session + duplicate Q1.
+  const lock = await acquirePrescreenStartLock(
+    args.db,
+    { userId: args.userId, jobId: args.jobId, sessionId, nowIso },
+    log,
+  )
+  if (!lock.acquired) {
+    log("prescreen.start_in_progress", {
+      jobId: args.jobId,
+      userId: args.userId,
+      holderSessionId: lock.holderSessionId ?? null,
+    })
+    return {
+      ok: false,
+      reason: "start_in_progress",
+      sessionId: lock.holderSessionId ?? sessionId,
+    }
+  }
+  try {
+    // RULE 2 existence re-check INSIDE the lock, right before the create — a
+    // concurrent start that won the race and already finished (terminal set)
+    // must not be restarted by us.
+    const completedInsideLock = await findTerminalSessionForJob(
+      args.db,
+      args.userId,
+      args.jobId,
+      log,
+    )
+    if (completedInsideLock) {
+      log("prescreen.already_completed", {
+        jobId: args.jobId,
+        userId: args.userId,
+        sessionId: completedInsideLock.id,
+        terminal: completedInsideLock.terminal,
+      })
+      return { ok: false, reason: "already_completed", sessionId: completedInsideLock.id }
+    }
 
   // 2. A new trigger starts a new job work-session. Durable candidate profile
   // stays global, but active prescreen conversation state must not leak across
@@ -445,6 +660,9 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     reason: "started",
     sessionId,
     firstQuestionSent: !args.suppressFirstQuestion,
+  }
+  } finally {
+    await releasePrescreenStartLock(args.db, { userId: args.userId, jobId: args.jobId })
   }
 }
 

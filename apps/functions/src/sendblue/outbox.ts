@@ -118,6 +118,131 @@ const DUPLICATE_MIN_BODY_LEN = 20
 /** Consecutive HTTP-429 responses on one row before it dead-letters. */
 const RATE_LIMIT_DEAD_LETTER_AFTER = 3
 
+// ── 2026-06-11 incident RULE 1 — never outbound to a never-inbound handle ───
+/**
+ * Dev phones with standing send authorization (Adam +14243201960, Noah
+ * +12154034668) — the ONLY phone-level exemption from the prior-inbound
+ * evidence gate. NO other bypass (not pa_operator_review, not admin).
+ */
+export const OUTBOX_INBOUND_EVIDENCE_EXEMPT_PHONES: ReadonlySet<string> = new Set([
+  "+14243201960",
+  "+12154034668",
+])
+
+/**
+ * Positive-evidence cache. A handle that EVER had inbound never loses that
+ * property, so caching `true` across invocations of the same container is
+ * always safe. Negatives are NOT cached (the user may text in seconds later).
+ */
+const priorInboundEvidenceCache = new Set<string>()
+export function _resetPriorInboundEvidenceCache(): void {
+  priorInboundEvidenceCache.clear()
+}
+
+/**
+ * RULE 1 evidence check (2026-06-11 incident — recovery sweep replayed old raw
+ * webhooks through new email-sender resolution and cold-opened users' profile
+ * `phoneE164` even though those owners only ever texted from Apple-ID EMAIL
+ * handles → `sendblue 400: INBOUND_ONLY_PLAN`, would be unsolicited cold texts
+ * on a richer plan).
+ *
+ * Evidence = ANY `pa-inbound-events` row whose sender handle equals the
+ * outbound recipient. The webhook writes the sender into
+ * `rawPayload.participant` (canonical, also the broker schema field) and
+ * `rawPayload.fromNumber` (Sendblue path); two limit-1 equality queries, no
+ * composite index needed. There is NO maintained user-doc verified-inbound
+ * marker (grepped phoneVerifiedAt / firstInboundAt — none exists), so the
+ * events query is the single arm.
+ *
+ * FAIL-OPEN ONLY ON QUERY ERROR (matches the duplicate-guard convention —
+ * most outbox traffic is replies; blocking every send during a Firestore blip
+ * is worse than the rare unsolicited send). An EMPTY result is a hard block.
+ */
+export async function hasPriorInboundEvidence(
+  db: Firestore,
+  toHandle: string,
+  log: (...args: unknown[]) => void
+): Promise<{ ok: boolean; failOpen?: boolean }> {
+  if (priorInboundEvidenceCache.has(toHandle)) return { ok: true }
+  try {
+    for (const field of ["rawPayload.participant", "rawPayload.fromNumber"] as const) {
+      // eslint-disable-next-line no-await-in-loop
+      const snap = await db
+        .collection(PA_COLLECTIONS.inboundEvents)
+        .where(field, "==", toHandle)
+        .limit(1)
+        .get()
+      if (!snap.empty) {
+        priorInboundEvidenceCache.add(toHandle)
+        return { ok: true }
+      }
+    }
+    return { ok: false }
+  } catch (err) {
+    log("pa.outbox.inbound_evidence_check_failed (fail-open)", {
+      toHandle,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return { ok: true, failOpen: true }
+  }
+}
+
+function maskE164(value: string): string {
+  if (value.length <= 4) return "***"
+  return `${value.slice(0, 2)}***${value.slice(-4)}`
+}
+
+/**
+ * Idempotent ops review item for a RULE 1 block — same HITL collection +
+ * doc shape as the email-sender-resolution review items
+ * (`pa-candidate-identity-conflicts`, surfaced on /admin/identity-conflicts).
+ * Deterministic doc id per (userId, toE164) so repeated blocked rows for the
+ * same recipient collapse onto ONE open item. Fail-soft: never blocks the
+ * status write.
+ */
+export async function createOutboundBlockedReviewItem(
+  db: Firestore,
+  input: {
+    userId: string
+    toE164: string
+    outboundDocId: string
+    runtimeSource?: string
+    log?: (...args: unknown[]) => void
+  }
+): Promise<void> {
+  const log = input.log ?? (() => undefined)
+  try {
+    const conflictId = `identity_conflict_${createHash("sha256")
+      .update(`outbound_blocked_no_inbound|${input.userId}|${input.toE164}`, "utf8")
+      .digest("hex")
+      .slice(0, 32)}`
+    const ref = db.collection(PA_COLLECTIONS.candidateIdentityConflicts).doc(conflictId)
+    const existing = await ref.get()
+    if (existing.exists) return
+    await ref.set({
+      conflictId,
+      kind: "outbound_blocked_no_inbound",
+      status: "open",
+      handleKind: "phone",
+      ...(input.userId ? { primaryCandidateId: input.userId } : {}),
+      evidence: [
+        {
+          source: "system",
+          summary:
+            "Outbound blocked: recipient handle has no prior inbound message (RULE 1, 2026-06-11 incident)",
+          refId: input.outboundDocId,
+          ...(input.runtimeSource ? { meta: { runtimeSource: input.runtimeSource } } : {}),
+        },
+      ],
+      payloadRedacted: { toE164Masked: maskE164(input.toE164) },
+      createdAt: new Date().toISOString(),
+    })
+  } catch (err) {
+    log("[sendblue][outbox] blocked_no_inbound review item write failed (non-fatal)",
+      err instanceof Error ? err.message : String(err))
+  }
+}
+
 /** Stable content hash for the duplicate guard (trimmed body). */
 export function outboundBodyHash(body: string): string {
   return createHash("sha256").update(body.trim(), "utf8").digest("hex")
@@ -599,6 +724,51 @@ export async function paSendblueOutboxHandler(
         attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
         body,
         terminalStatus: "failed",
+      })
+      return
+    }
+  }
+
+  // ---- 4b. RULE 1 (2026-06-11 incident) — NEVER outbound to a handle that
+  // never sent us an inbound message. This is the outbox choke point: every
+  // candidate-facing send funnels through here, AFTER identity resolution and
+  // BEFORE any user-visible side effect (transcript append / typing / POST).
+  // Exactly two exemptions:
+  //   (a) dev phones (standing authorization);
+  //   (b) runtimeSource "pa_identity_notice" — direct replies into the thread
+  //       the inbound JUST arrived from (by construction the handle has
+  //       inbound, and the events row may not have committed yet).
+  // NO other bypass — not pa_operator_review, not admin.
+  const ruleOneDevPhoneExempt = OUTBOX_INBOUND_EVIDENCE_EXEMPT_PHONES.has(toPeer)
+  const ruleOneIdentityNoticeExempt =
+    String((data as { runtimeSource?: unknown }).runtimeSource ?? "") === "pa_identity_notice"
+  if (!ruleOneDevPhoneExempt && !ruleOneIdentityNoticeExempt) {
+    const evidence = await hasPriorInboundEvidence(deps.db, toPeer, log)
+    if (!evidence.ok) {
+      await ref.set(
+        {
+          status: "blocked_no_inbound",
+          error: "blocked: recipient handle has no prior inbound message (RULE 1)",
+          updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
+        },
+        { merge: true }
+      )
+      log("pa.outbox.blocked_no_inbound", {
+        severity: "ERROR",
+        docId,
+        userId,
+        toE164: toPeer,
+        runtimeSource: String((data as { runtimeSource?: unknown }).runtimeSource ?? ""),
+        idempotencyKey: typeof data.idempotencyKey === "string" ? data.idempotencyKey : null,
+        body_preview: body.slice(0, 120),
+      })
+      await createOutboundBlockedReviewItem(deps.db, {
+        userId,
+        toE164: toPeer,
+        outboundDocId: docId,
+        runtimeSource: typeof data.runtimeSource === "string" ? data.runtimeSource : undefined,
+        log,
       })
       return
     }
