@@ -25,6 +25,7 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
+import { trackEvent } from "../lib/analytics.js"
 
 // Same-origin Hosting rewrite → paLinkedinConnectSubmit (see firebase.json).
 const CONNECT_SUBMIT_URL = "/_li/connect"
@@ -122,6 +123,7 @@ export default function ConnectLinkedin() {
     }
     try {
       setStatus("submitting")
+      void trackEvent("linkedin_connect_submitted")
       const res = await fetch(CONNECT_SUBMIT_URL, {
         method: "POST",
         headers: { "content-type": "application/json" },

@@ -22,6 +22,7 @@ import {
 } from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, stickSourceFromLoginNext, type SignupSource } from "../lib/source"
 import { auth } from "../lib/firebase.js"
+import { trackEvent } from "../lib/analytics.js"
 import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
 import { CandidateVerifyError, readStoredCandidateId, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 import { startCandidatePhoneLink, verifyCandidatePhoneLink } from "../lib/candidate-phone-link.js"
@@ -423,6 +424,7 @@ export default function Onboarding() {
         browserUid: getBrowserUid(),
       })
       if (formData.resume?.file) {
+        void trackEvent("cv_upload_submitted")
         await uploadResumeForCandidate(res.candidateId, formData, sourceToUploadTag(source))
       }
       // No server-side SMS push here: the candidate opens iMessage and sends

@@ -25,6 +25,7 @@ import {
   type User,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
+import { trackEvent } from "../lib/analytics.js"
 import { clearSsoCookie } from "../lib/cross-domain-sso.js"
 import { redirectResultPromise, ssoBootstrapPromise } from "../lib/auth-redirect-bootstrap.js"
 import {
@@ -1310,6 +1311,7 @@ export default function CandidateLogin() {
         return
       }
       setStatus("sending")
+      void trackEvent("magic_link_requested")
       rememberLoginNext(nextDest.to)
       rememberOnboardingIntentForPath(nextDest.to)
       await sendSignInLinkToEmail(auth(), nextEmail, {

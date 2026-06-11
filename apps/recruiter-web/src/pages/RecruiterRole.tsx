@@ -43,6 +43,7 @@ import {
   type SubmissionResponse,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
+import { trackEvent } from "../lib/analytics.js"
 import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 import { buildCandidateProofPromptItems } from "./RecruiterRolePacket.helpers.js"
 
@@ -2836,6 +2837,7 @@ export default function RecruiterRole() {
         setSubmitError(formatSubmissionFailure(result.reason))
         return
       }
+      void trackEvent("submission_created", { job_id: job.jobId })
       setSubmission(result)
       if (selectedCandidate) {
         const submittedCandidate = {
