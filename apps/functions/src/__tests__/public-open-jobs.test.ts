@@ -537,6 +537,126 @@ describe("verifyCollabAuth", () => {
   })
 })
 
+// ============================================================ true catalog total (2026-06-11)
+
+describe("runOpenJobs true catalog total", () => {
+  /** Fake db with count() aggregate support + per-call instrumentation. */
+  function makeCountingDb(
+    docs: Array<{ id: string; data: Record<string, unknown> }>,
+    catalogCount: number | "throw",
+    counters: { scans: number; counts: number; lastLimit?: number }
+  ): unknown {
+    const q: Record<string, unknown> = {}
+    q.where = () => q
+    q.orderBy = () => q
+    q.limit = (n: number) => {
+      counters.lastLimit = n
+      return q
+    }
+    q.get = async () => {
+      counters.scans++
+      return { size: docs.length, docs: docs.map((d) => ({ id: d.id, data: () => d.data })) }
+    }
+    q.count = () => ({
+      get: async () => {
+        counters.counts++
+        if (catalogCount === "throw") throw new Error("aggregate_unavailable")
+        return { data: () => ({ count: catalogCount }) }
+      },
+    })
+    return { collection: () => q }
+  }
+
+  it("total = aggregate catalog count, NOT the scan-bounded snapshot size", async () => {
+    _resetSnapshotCacheForTest()
+    const counters = { scans: 0, counts: 0 }
+    const docs = [
+      { id: "j1", data: freshDoc() },
+      { id: "j2", data: freshDoc({ roleTitle: "Staff Engineer" }) },
+    ]
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = makeCountingDb(docs, 6500, counters) as any
+    const out = await runOpenJobs(parseQuery({}), { db, now: NOW })
+    assert.equal(out.total, 6500, "total must come from the count() aggregate")
+    assert.equal(out.totalIsApprox, true)
+    assert.equal(out.scanned, 2, "scanned stays the snapshot scan size")
+    assert.equal(out.filteredTotal, 2, "filteredTotal stays the browsable in-snapshot count")
+    assert.equal(out.rows.length, 2)
+  })
+
+  it("aggregate failure falls back to the filtered in-snapshot count (pre-change behavior)", async () => {
+    _resetSnapshotCacheForTest()
+    const counters = { scans: 0, counts: 0 }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = makeCountingDb([{ id: "j1", data: freshDoc() }], "throw", counters) as any
+    const out = await runOpenJobs(parseQuery({}), { db, now: NOW })
+    assert.equal(out.total, 1)
+    assert.equal(out.totalIsApprox, false)
+  })
+
+  it("aggregate is read ONCE per snapshot rebuild, not per request (cached with the snapshot)", async () => {
+    _resetSnapshotCacheForTest()
+    const counters = { scans: 0, counts: 0 }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = makeCountingDb([{ id: "j1", data: freshDoc() }], 6500, counters) as any
+    const a = await runOpenJobs(parseQuery({}), { db, now: NOW })
+    const b = await runOpenJobs(parseQuery({}), { db, now: NOW + 1000 })
+    assert.equal(counters.scans, 1)
+    assert.equal(counters.counts, 1, "one aggregate read across two requests within TTL")
+    assert.equal(a.total, 6500)
+    assert.equal(b.total, 6500)
+    assert.equal(b.cached, true)
+  })
+
+  it("scraped SCAN_CAP ceiling raised to 2000 (deep pages reach more of the catalog)", async () => {
+    _resetSnapshotCacheForTest()
+    const counters = { scans: 0, counts: 0, lastLimit: 0 }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = makeCountingDb([{ id: "j1", data: freshDoc() }], 6500, counters) as any
+    // window = offset(2000) + limit(200) → *6 = 13200 → ceiling 2000 (was 800).
+    await runOpenJobs(parseQuery({ offset: "2000", limit: "200" }), { db, now: NOW })
+    assert.equal(counters.lastLimit, 2000)
+  })
+
+  it("scraped SCAN_CAP floor stays 300", async () => {
+    _resetSnapshotCacheForTest()
+    const counters = { scans: 0, counts: 0, lastLimit: 0 }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = makeCountingDb([{ id: "j1", data: freshDoc() }], 6500, counters) as any
+    await runOpenJobs(parseQuery({ limit: "20" }), { db, now: NOW })
+    assert.equal(counters.lastLimit, 300)
+  })
+
+  it("handler response carries total/totalIsApprox/filteredTotal + unchanged cache header", async () => {
+    _resetSnapshotCacheForTest()
+    const counters = { scans: 0, counts: 0 }
+    const db = makeCountingDb([{ id: "j1", data: freshDoc() }], 6500, counters) as HandleOpenJobsDeps["db"]
+    const headers: Record<string, string> = {}
+    let statusCode = 0
+    let body: Record<string, unknown> = {}
+    const res = {
+      set: (k: string, v: string) => {
+        headers[k] = v
+      },
+      status: (c: number) => {
+        statusCode = c
+        return res
+      },
+      json: (b: unknown) => {
+        body = b as Record<string, unknown>
+      },
+      send: (_b: string) => {},
+    }
+    await handleOpenJobsRequest({ method: "GET", query: {}, headers: {} }, res, { db, now: NOW })
+    assert.equal(statusCode, 200)
+    assert.equal(body.total, 6500)
+    assert.equal(body.totalIsApprox, true)
+    assert.equal(body.filteredTotal, 1)
+    assert.equal(body.scanned, 1)
+    assert.equal(headers["Cache-Control"], SUCCESS_CACHE_CONTROL)
+  })
+})
+
 // ============================================================ handler caching
 
 describe("handleOpenJobsRequest cache headers", () => {

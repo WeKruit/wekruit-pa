@@ -335,6 +335,62 @@ test("cadence: defaults to 3 days / 120 min when flags unset", async () => {
 })
 
 // ---------------------------------------------------------------------------
+// 2026-06-11 STOP compliance — `pa-users.doNotContact === true` (written by
+// the deterministic SMS STOP gate) must make a cadence rec IMPOSSIBLE. The
+// batch's send seam (synthetic runtime event → Claire runtime) bypasses the
+// inbound stop-gate, so the batch's own per-user gate is the suppression.
+// ---------------------------------------------------------------------------
+
+test("doNotContact: opted-out user is NEVER sent — skipped, not stamped, zero runtime writes", async () => {
+  const mfs = new MockFirestore()
+  // Flag-on, cadence-due, deliverable in every other respect.
+  await seedDeliverableUser(mfs, "optedout", "+15551110030", null)
+  await mfs.collection("pa-users").doc("optedout").set(
+    { doNotContact: true, doNotContactAt: "2026-06-10T00:00:00Z", doNotContactSource: "sms_stop_keyword" },
+    { merge: true },
+  )
+  let scheduled = 0
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    scheduleSend: async () => {
+      scheduled += 1
+      return { ok: true }
+    },
+  })
+  assert.equal(out.skippedDoNotContact, 1)
+  assert.equal(out.delivered, 0)
+  assert.equal(scheduled, 0, "no send scheduled for an opted-out user")
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0, "no runtime handoff for an opted-out user")
+  // Cadence stamp untouched — an opt-out skip must not look like a send.
+  const prof = (await mfs.collection("pa-job-profiles").doc("optedout").get()).data()
+  assert.equal(prof?.lastJobBatchSentAt, null)
+})
+
+test("doNotContact: user who opted back in (doNotContact=false) still delivers", async () => {
+  const mfs = new MockFirestore()
+  await seedDeliverableUser(mfs, "optedin", "+15551110031", null)
+  await mfs.collection("pa-users").doc("optedin").set(
+    { doNotContact: false, doNotContactResumedAt: "2026-06-11T00:00:00Z" },
+    { merge: true },
+  )
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+  })
+  assert.equal(out.skippedDoNotContact, 0)
+  assert.equal(out.delivered, 1)
+})
+
+// ---------------------------------------------------------------------------
 // Cross-system rec cooldown (2026-06-02) — the daily batch must NOT pile recs
 // on top of a fresh live find_match send. Both systems stamp the SHARED
 // `lastAnyJobRecSentAt` marker; the batch reads it BEFORE compose/send.
