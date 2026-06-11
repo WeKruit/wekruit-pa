@@ -58,7 +58,7 @@ describe("loadPrescreenConfigForVoice — happy path", () => {
     assert.equal(out.version, 1)
     assert.equal(out.jobTitle, "Staff SWE")
     assert.equal(out.company, "Stripe")
-    assert.equal(out.threshold, 0.95)
+    assert.equal(out.threshold, 0.75)
     assert.equal(out.confidenceThreshold, 0.7)
     assert.equal(out.maxClarifyRounds, 2)
     assert.equal(out.voiceMode, "professional_prescreen")
@@ -149,7 +149,7 @@ describe("loadPrescreenConfigForVoice — partial doc", () => {
     assert.equal(out.questions.length, 1)
     // schema defaults must populate
     assert.equal(out.version, 1)
-    assert.equal(out.threshold, 0.95)
+    assert.equal(out.threshold, 0.75)
     assert.equal(out.confidenceThreshold, 0.7)
     assert.equal(out.maxClarifyRounds, 2)
     assert.equal(out.voiceMode, "professional_prescreen")

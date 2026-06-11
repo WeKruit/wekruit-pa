@@ -64,16 +64,19 @@ test("Phase 78: parsePrescreenConfig applies defaults", () => {
     ],
   }
   const cfg = parsePrescreenConfig(minimal)
-  assert.equal(cfg.threshold, 0.95)
+  assert.equal(cfg.threshold, 0.75)
   assert.equal(cfg.confidenceThreshold, 0.7)
   assert.equal(cfg.maxClarifyRounds, 2)
   assert.equal(cfg.voiceMode, "professional_prescreen")
   assert.equal(cfg.questions[0].weight, 1.0)
 })
 
-test("Phase 78: parsePrescreenConfig normalizes legacy lenient thresholds to strict review floor", () => {
+test("Phase 78: parsePrescreenConfig normalizes legacy lenient thresholds to the review floor (0.75 — Adam 2026-06-11)", () => {
   const cfg = parsePrescreenConfig({ ...validConfig, threshold: 0.65 })
-  assert.equal(cfg.threshold, 0.95)
+  assert.equal(cfg.threshold, 0.75)
+  // per-job configs may still choose stricter than the floor
+  const strict = parsePrescreenConfig({ ...validConfig, threshold: 0.9 })
+  assert.equal(strict.threshold, 0.9)
 })
 
 test("Phase 78: parsePrescreenConfig treats blank optional Level 1 fields as absent", () => {
