@@ -102,7 +102,10 @@ export const paJobRecDaily = onSchedule(
     region: "us-central1",
     schedule: "every day 09:00",
     timeZone: "America/Los_Angeles",
-    memory: "512MiB",
+    // 2026-06-11: 512MiB OOM'd mid-batch on the first widened-audience run
+    // (each user's V16 pass scans ~3k jobs; USER_CAP now 300). 2GiB gives the
+    // batch headroom; timeout stays 540s (the run died on memory, not time).
+    memory: "2GiB",
     timeoutSeconds: 540,
     retryCount: 0,
   },
