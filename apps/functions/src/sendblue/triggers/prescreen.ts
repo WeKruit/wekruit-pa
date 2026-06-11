@@ -31,6 +31,9 @@ export const PRESCREEN_IDENTITY_CONFLICT_NOTICE =
   "This interview link is already tied to a different phone/account. If this is you, continue from that message thread, or reopen the job page and use the phone you want Claire to text."
 export const PRESCREEN_ACCESS_ISSUE_NOTICE =
   "I can't start this WeKruit interview from this phone yet. Reopen the job page from the phone you want Claire to text, or continue in the original Claire thread."
+/** RULE 2 (2026-06-11) — friendly status line instead of restarting a completed screen. */
+export const PRESCREEN_ALREADY_COMPLETED_NOTICE =
+  "You've already completed this screen — it's with the team for review. I'll text you as soon as there's an update."
 
 /** Per-pair idempotency window. */
 export const PRESCREEN_IDEMPOTENCY_WINDOW_MS = 60 * 60 * 1000 // 60 minutes
@@ -388,6 +391,53 @@ export class PrescreenTrigger implements Trigger {
             correlationId: ctx.messageHandle,
           })
           return { kind: "handled", action: "prescreen_config_missing" }
+        }
+        if (runResult.reason === "already_completed") {
+          // RULE 2 (2026-06-11) — the (userId, jobId) pair already has a
+          // terminal session. No new session, no Q1; reply with a friendly
+          // status line on the same notice seam the identity-conflict path
+          // uses (runtimeSource pa_identity_notice → direct reply into the
+          // thread this inbound arrived from; idempotency keyed on the
+          // message handle so sweep replays of the SAME webhook collapse).
+          try {
+            await sendPrescreenAccessNotice(this.deps, {
+              targetUserId: sessionUserId,
+              jobId,
+              toE164: ctx.fromNumber,
+              ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
+              messageHandle,
+              content: PRESCREEN_ALREADY_COMPLETED_NOTICE,
+              conflictCode: "already_completed",
+            })
+          } catch (noticeErr) {
+            ctx.log("trigger.prescreen.already_completed_notice_failed", {
+              jobId,
+              userId: sessionUserId,
+              error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+            })
+          }
+          await this.deps.audit({
+            type: "trigger_notice",
+            trigger: "prescreen",
+            reason: "already_completed",
+            jobId,
+            userId: sessionUserId,
+            correlationId: ctx.messageHandle,
+          })
+          return { kind: "handled", action: "prescreen_already_completed" }
+        }
+        if (runResult.reason === "start_in_progress") {
+          // RULE 2 race-closer — a concurrent start owns the create and will
+          // send Q1. Friendly no-op (audit only, never a user-visible error).
+          await this.deps.audit({
+            type: "trigger_deduped",
+            trigger: "prescreen",
+            reason: "start_in_progress",
+            jobId,
+            userId: sessionUserId,
+            correlationId: ctx.messageHandle,
+          })
+          return { kind: "handled", action: "prescreen_start_in_progress" }
         }
         if (runResult.reason === "not_matched") {
           // MATCHED-GATE refusal (2026-05-31): the candidate sent a valid token for a

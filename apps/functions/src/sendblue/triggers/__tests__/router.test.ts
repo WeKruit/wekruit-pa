@@ -21,6 +21,7 @@ import {
   extractInitialPrescreenReply,
   PrescreenTrigger,
   PRESCREEN_ACCESS_ISSUE_NOTICE,
+  PRESCREEN_ALREADY_COMPLETED_NOTICE,
   PRESCREEN_IDEMPOTENCY_WINDOW_MS,
   PRESCREEN_IDENTITY_CONFLICT_NOTICE,
   TriggerRouter,
@@ -703,4 +704,33 @@ test("admin string-token start also forwards the bypass", async () => {
   assert.equal(r.kind, "handled")
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal((deps.runs[0] as { allowMatchedBypass?: boolean }).allowMatchedBypass, true)
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// RULE 2 (2026-06-11 incident) — already_completed / start_in_progress
+// ════════════════════════════════════════════════════════════════════════════
+
+test("RULE 2: runPreScreen already_completed → friendly status notice + handled (NO throw, NO restart)", async () => {
+  const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "user123" } })
+  deps.runPreScreen = async () => ({ ok: false, reason: "already_completed" })
+  const trig = new PrescreenTrigger(deps)
+  const outcome = await trig.handle(makeCtx("WeKruit_job1_user123_Job", { toNumber: "+17174919939" }))
+  assert.deepEqual(outcome, { kind: "handled", action: "prescreen_already_completed" })
+  // Friendly status line rides the same notice seam (pa_identity_notice).
+  assert.equal(deps.identityNotices.length, 1)
+  assert.equal(deps.identityNotices[0].conflictCode, "already_completed")
+  assert.equal(deps.identityNotices[0].content, PRESCREEN_ALREADY_COMPLETED_NOTICE)
+  assert.equal(deps.identityNotices[0].toE164, "+15551234", "reply goes to the inbound sender")
+  assert.equal(deps.identityNotices[0].fromNumber, "+17174919939", "same-thread reply line")
+  const notice = deps.audits.find((a) => a.type === "trigger_notice")
+  assert.equal(notice?.reason, "already_completed")
+})
+
+test("RULE 2: runPreScreen start_in_progress → handled no-op (concurrent start owns Q1)", async () => {
+  const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "user123" } })
+  deps.runPreScreen = async () => ({ ok: false, reason: "start_in_progress" })
+  const trig = new PrescreenTrigger(deps)
+  const outcome = await trig.handle(makeCtx("WeKruit_job1_user123_Job"))
+  assert.deepEqual(outcome, { kind: "handled", action: "prescreen_start_in_progress" })
+  assert.equal(deps.identityNotices.length, 0, "no user-visible message — the winner sends Q1")
 })

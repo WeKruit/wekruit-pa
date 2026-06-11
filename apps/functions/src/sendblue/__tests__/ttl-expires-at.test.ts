@@ -50,6 +50,25 @@ function makeFakeDb(initial: Record<string, DocData> = {}) {
 
   const db = {
     collection(name: string) {
+      // RULE 1 (2026-06-11) — the outbox requires prior-inbound evidence for
+      // the recipient handle; ALLOWED "texted in first" in this suite.
+      if (name === "pa-inbound-events") {
+        const evidenceDoc = {
+          id: "inb_seed",
+          data: () => ({
+            userId: "u-ttl",
+            createdAt: new Date().toISOString(),
+            rawPayload: { kind: "imessage", participant: "+15551234567", fromNumber: "+15551234567" },
+          }),
+        }
+        const q = {
+          doc(id: string) { return makeDocRef(name, id) },
+          where() { return q },
+          limit() { return q },
+          async get() { return { empty: false, docs: [evidenceDoc] } },
+        }
+        return q
+      }
       return {
         doc(id: string) { return makeDocRef(name, id) },
         add() { return Promise.resolve({ id: "x" }) },

@@ -163,6 +163,49 @@ export function decideBoundFromNumber(
   }
 }
 
+/**
+ * RULE 3 (2026-06-11 incident) — one user ↔ one Sendblue number; bind from the
+ * inbound thread. Live violation: a user texted IN on 717 (identity notices
+ * replied from 717), then a cold opener MINTED a fresh capacity-pick binding →
+ * went out from 614. One human, two numbers.
+ *
+ * Find the line the user's LATEST inbound message arrived ON
+ * (`pa-inbound-events` where userId ==, latest by createdAt in memory —
+ * equality-only query, no composite index; `rawPayload.toNumber` is the pool
+ * line that received it). Fail-soft undefined on any error → capacity pick.
+ */
+const INBOUND_THREAD_SCAN_LIMIT = 100
+
+export async function findLatestInboundThreadLine(
+  db: Firestore,
+  userId: string,
+  log?: (event: string, payload?: Record<string, unknown>) => void
+): Promise<string | undefined> {
+  try {
+    const snap = await db
+      .collection(PA_COLLECTIONS.inboundEvents)
+      .where("userId", "==", userId)
+      .limit(INBOUND_THREAD_SCAN_LIMIT)
+      .get()
+    let best: { createdAt: string; toNumber: string } | null = null
+    for (const doc of snap.docs) {
+      const data = (doc.data() ?? {}) as { createdAt?: unknown; rawPayload?: unknown }
+      const raw = (data.rawPayload ?? {}) as Record<string, unknown>
+      const toNumber = typeof raw.toNumber === "string" ? raw.toNumber.trim() : ""
+      if (!toNumber) continue
+      const createdAt = typeof data.createdAt === "string" ? data.createdAt : ""
+      if (!best || createdAt > best.createdAt) best = { createdAt, toNumber }
+    }
+    return best?.toNumber || undefined
+  } catch (err) {
+    log?.("sendblue.bind.inbound_thread_lookup_failed", {
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+    return undefined
+  }
+}
+
 export type ResolveBoundFromNumberOptions = {
   /**
    * Already-loaded user doc. Pass this on the send critical path (outbox.ts has
@@ -227,7 +270,33 @@ export async function resolveBoundFromNumber(
     }
   }
 
-  const decision = decideBoundFromNumber(pool, userId, user)
+  // ── RULE 3 (2026-06-11) — MINT arm: bind from the inbound thread FIRST. ──
+  // When the user has NO persisted binding, the line their latest inbound
+  // arrived on IS their thread — bind to it (when it's still an eligible pool
+  // line) BEFORE any capacity selection. Capacity pick is the fallback for
+  // users with no inbound evidence. Bound users never reach this (zero extra
+  // reads on the hot path); rebind-of-paused keeps capacity selection.
+  let decision: ReturnType<typeof decideBoundFromNumber> | null = null
+  const existingBound = cleanNumber(user?.senderNumber)
+  const isMintArm = !existingBound
+  if (isMintArm) {
+    const threadLine = await findLatestInboundThreadLine(db, userId, log)
+    if (threadLine && pool && isBoundNumberStillSelectable(pool, threadLine)) {
+      decision = {
+        fromNumber: threadLine,
+        groupId: groupIdForNumber(pool, threadLine),
+        source: "send_path_mint",
+        needsPersist: true,
+      }
+      log?.("sendblue.bind.mint_from_inbound_thread", { userId, fromNumber: threadLine })
+    }
+  }
+  if (!decision) {
+    decision = decideBoundFromNumber(pool, userId, user)
+    if (isMintArm && decision.needsPersist && decision.fromNumber) {
+      log?.("sendblue.bind.mint_by_capacity", { userId, fromNumber: decision.fromNumber })
+    }
+  }
 
   if (!decision.needsPersist || !decision.fromNumber) {
     return {
