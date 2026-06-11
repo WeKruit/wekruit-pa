@@ -28,6 +28,7 @@ import {
   PulseDot,
 } from "./CandidateLogin.js"
 import { openJobsEndpoint, OPEN_JOBS_STALE_TIME_MS, OPEN_JOBS_GC_TIME_MS } from "../lib/open-jobs.js"
+import { trackEvent } from "../lib/analytics.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Endpoint config — same-origin /api/open-jobs Hosting rewrite (CDN-cached);
@@ -870,10 +871,13 @@ export default function Market(): ReactNode {
       }
 
   const onOpenJob = useCallback((job: DisplayJob) => {
+    void trackEvent("select_content", { content_type: "job", item_id: job.id })
     if (!job.applyUrl) return
+    void trackEvent("job_apply_redirect", { job_id: job.id })
     window.open(job.applyUrl, "_blank", "noopener,noreferrer")
   }, [])
   const onTalkToClaire = useCallback((job: DisplayJob) => {
+    void trackEvent("job_talk_clicked", { job_id: job.id })
     window.location.assign(`/j/${job.id}`)
   }, [])
   const clearFilters = useCallback(() => {

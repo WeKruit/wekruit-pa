@@ -4101,6 +4101,7 @@ export function RecruiterAccessGate({
       })
       clearPendingRecruiterAccess()
       void trackEvent("recruiter_session_started")
+      void trackEvent("login", { method: "recruiter_access" })
       onSessionClaimed(next)
     } catch (error) {
       clearPendingRecruiterAccess()

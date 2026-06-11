@@ -5,6 +5,7 @@ import {
   type Unsubscribe,
 } from "firebase/auth"
 import { auth } from "./firebase.js"
+import { trackEvent } from "./analytics.js"
 
 /**
  * Cross-domain SSO client for *.wekruit.com.
@@ -79,6 +80,7 @@ export async function bootstrapSsoFromCookie(): Promise<User | null> {
     const body = (await res.json()) as { customToken?: string }
     if (!body.customToken) return null
     const cred = await signInWithCustomToken(auth(), body.customToken)
+    void trackEvent("login", { method: "sso" })
     return cred.user
   } catch {
     return null

@@ -67,3 +67,20 @@ export async function trackEvent(name: string, params?: Record<string, unknown>)
     // Analytics failures (ad blockers, offline gtag) must never surface.
   }
 }
+
+/**
+ * Attach/clear the GA4 user identity. GA ToS: `uid` MUST be an opaque internal
+ * id (recruiterId) — never email, phone, name, or LinkedIn URL. Same rule for
+ * `props` values. Fire-and-forget, same never-throw contract as trackEvent.
+ */
+export async function setAnalyticsUser(uid: string | null, props?: Record<string, string>): Promise<void> {
+  try {
+    const analytics = await initAnalytics()
+    if (!analytics) return
+    const { setUserId, setUserProperties } = await import("firebase/analytics")
+    setUserId(analytics, uid)
+    if (props) setUserProperties(analytics, props)
+  } catch {
+    // Swallow everything — identity tagging must never break an auth flow.
+  }
+}
