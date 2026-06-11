@@ -65,7 +65,7 @@
       ],
       "redirects": [
         {
-          "_comment": "v1.9 hotfix 2026-05-13 — candidate routes moved to pa-landing site (Adam: 'c端都在这个上面'). Maps to candidate.wekruit.com (Cloudflare CNAME). 301 from admin domain so stale-bookmark /j/:jobId hits land on the correct customer site.",
+          "_comment": "v1.9 hotfix 2026-05-13 \u2014 candidate routes moved to pa-landing site (Adam: 'c\u7aef\u90fd\u5728\u8fd9\u4e2a\u4e0a\u9762'). Maps to candidate.wekruit.com (Cloudflare CNAME). 301 from admin domain so stale-bookmark /j/:jobId hits land on the correct customer site.",
           "source": "/j/:rest*",
           "destination": "https://candidate.wekruit.com/j/:rest*",
           "type": 301
@@ -73,17 +73,26 @@
       ],
       "rewrites": [
         {
-          "_comment": "Same-origin SSO proxy — see pa-landing block.",
+          "_comment": "Same-origin SSO proxy \u2014 see pa-landing block.",
           "source": "/_sso/login",
-          "function": { "functionId": "paSsoLogin", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoLogin",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/_sso/bootstrap",
-          "function": { "functionId": "paSsoBootstrap", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoBootstrap",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/_sso/logout",
-          "function": { "functionId": "paSsoLogout", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoLogout",
+            "region": "us-central1"
+          }
         },
         {
           "source": "**",
@@ -107,7 +116,7 @@
       ]
     },
     {
-      "_comment": "v1.9 hotfix 2026-05-13 — pa-landing upgraded from static-only to Vite SPA. Now serves ALL customer-facing surfaces (Adam directive: 'c端都在这个上面'): / → Landing (preserves iter33 black-gradient design), /legal → Privacy/Terms, /j/:jobId → PublicJob (pre-screen entry), /j/:jobId/cv → PublicJobCv (legacy back-compat). Default URL https://wekruit-pa-landing.web.app. Custom domains via Cloudflare CNAMEs: candidate.wekruit.com, pa.wekruit.com both point here.",
+      "_comment": "v1.9 hotfix 2026-05-13 \u2014 pa-landing upgraded from static-only to Vite SPA. Now serves ALL customer-facing surfaces (Adam directive: 'c\u7aef\u90fd\u5728\u8fd9\u4e2a\u4e0a\u9762'): / \u2192 Landing (preserves iter33 black-gradient design), /legal \u2192 Privacy/Terms, /j/:jobId \u2192 PublicJob (pre-screen entry), /j/:jobId/cv \u2192 PublicJobCv (legacy back-compat). Default URL https://wekruit-pa-landing.web.app. Custom domains via Cloudflare CNAMEs: candidate.wekruit.com, pa.wekruit.com both point here.",
       "target": "pa-landing",
       "public": "apps/pa-landing/dist",
       "ignore": [
@@ -137,39 +146,63 @@
         {
           "_comment": "iMessage-first QR onboarding entry. The printed QR encodes https://wekruit.com/start?c=<campaign>; this rewrite keeps the clean apex URL while the CF picks a capacity-aware Sendblue number and 302s to sms:<number>?body=Hello, WeKruit! <scanToken>. Must precede the SPA ** catch-all.",
           "source": "/start",
-          "function": { "functionId": "paQrStartRedirect", "region": "us-central1" }
+          "function": {
+            "functionId": "paQrStartRedirect",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/api/v1/partner/users",
-          "function": { "functionId": "paPartnerUsersApi", "region": "us-central1" }
+          "function": {
+            "functionId": "paPartnerUsersApi",
+            "region": "us-central1"
+          }
         },
         {
-          "_comment": "Partner jobs feed — same CF as the public /open board; partners pass ?source=collab + X-WeKruit-Api-Key. Clean URL keeps both partner APIs under wekruit.com/api/v1/partner/*.",
+          "_comment": "Partner jobs feed \u2014 same CF as the public /open board; partners pass ?source=collab + X-WeKruit-Api-Key. Clean URL keeps both partner APIs under wekruit.com/api/v1/partner/*.",
           "source": "/api/v1/partner/jobs",
-          "function": { "functionId": "paPublicOpenJobs", "region": "us-central1" }
+          "function": {
+            "functionId": "paPublicOpenJobs",
+            "region": "us-central1"
+          }
         },
         {
-          "_comment": "Same-origin candidate open-jobs feed (Adam directive 2026-06-11: cache, don't hit the CF per visitor). Routing through Hosting puts the Firebase CDN in front of paPublicOpenJobs so its s-maxage=3600 + stale-while-revalidate=86400 success headers are honored at the edge — visitors are served cached JSON and the CF sees at most ~1 req/hour/POP. Must precede the SPA ** catch-all.",
+          "_comment": "Same-origin candidate open-jobs feed (Adam directive 2026-06-11: cache, don't hit the CF per visitor). Routing through Hosting puts the Firebase CDN in front of paPublicOpenJobs so its s-maxage=3600 + stale-while-revalidate=86400 success headers are honored at the edge \u2014 visitors are served cached JSON and the CF sees at most ~1 req/hour/POP. Must precede the SPA ** catch-all.",
           "source": "/api/open-jobs",
-          "function": { "functionId": "paPublicOpenJobs", "region": "us-central1" }
+          "function": {
+            "functionId": "paPublicOpenJobs",
+            "region": "us-central1"
+          }
         },
         {
-          "_comment": "LinkedIn one-tap connect submit. The /connect-linkedin SPA page POSTs {token, linkedinUrl} here same-origin (candidate.wekruit.com); the CF links the LinkedIn handle, enriches by URL, emits the thin-pitch runtime event, and returns the sms: reroute. Must precede the SPA ** catch-all. The /connect-linkedin page route itself needs NO rewrite — served by index.html.",
+          "_comment": "LinkedIn one-tap connect submit. The /connect-linkedin SPA page POSTs {token, linkedinUrl} here same-origin (candidate.wekruit.com); the CF links the LinkedIn handle, enriches by URL, emits the thin-pitch runtime event, and returns the sms: reroute. Must precede the SPA ** catch-all. The /connect-linkedin page route itself needs NO rewrite \u2014 served by index.html.",
           "source": "/_li/connect",
-          "function": { "functionId": "paLinkedinConnectSubmit", "region": "us-central1" }
+          "function": {
+            "functionId": "paLinkedinConnectSubmit",
+            "region": "us-central1"
+          }
         },
         {
           "_comment": "Same-origin SSO proxy. Cloud Functions live on cloudfunctions.net which is a different eTLD+1 from wekruit.com; browsers refuse to honor Set-Cookie Domain=.wekruit.com from a cross-site response. Routing /_sso/* through Firebase Hosting makes the SSO endpoints look like first-party wekruit.com URLs so the shared cookie can actually be written and read.",
           "source": "/_sso/login",
-          "function": { "functionId": "paSsoLogin", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoLogin",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/_sso/bootstrap",
-          "function": { "functionId": "paSsoBootstrap", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoBootstrap",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/_sso/logout",
-          "function": { "functionId": "paSsoLogout", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoLogout",
+            "region": "us-central1"
+          }
         },
         {
           "source": "**",
@@ -181,8 +214,24 @@
           "_comment": "Candidate SPA routes like /me and /j/:jobId must not cache the old HTML shell; otherwise Chrome can keep loading stale bundles after deploy.",
           "source": "**",
           "headers": [
-            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-            { "key": "X-Content-Type-Options", "value": "nosniff" }
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            }
+          ]
+        },
+        {
+          "_comment": "Dynamic API rewrites (open-jobs feed) ARE cacheable \u2014 override the SPA no-cache catch-all so the CDN honors the function's success policy. Later matching rule wins for the same key.",
+          "source": "/api/**",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
+            }
           ]
         }
       ]
@@ -204,15 +253,24 @@
       "rewrites": [
         {
           "source": "/_sso/login",
-          "function": { "functionId": "paSsoLogin", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoLogin",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/_sso/bootstrap",
-          "function": { "functionId": "paSsoBootstrap", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoBootstrap",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/_sso/logout",
-          "function": { "functionId": "paSsoLogout", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoLogout",
+            "region": "us-central1"
+          }
         },
         {
           "source": "**",
@@ -223,14 +281,20 @@
         {
           "source": "**",
           "headers": [
-            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-            { "key": "X-Content-Type-Options", "value": "nosniff" }
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            }
           ]
         }
       ]
     },
     {
-      "_comment": "layoff.wekruit.com → layoff-wekruit.web.app (Cloudflare CNAME). Thin shell — only three surfaces live here: / (cream LayoffLanding), /onboarding (candidate resume + SMS intake), /employer (employer signup → Mailgun → admin@wekruit). No cross-host redirects: layoff is intentionally a standalone product, not a funnel into candidate.wekruit.com. Adam directive 2026-05-18.",
+      "_comment": "layoff.wekruit.com \u2192 layoff-wekruit.web.app (Cloudflare CNAME). Thin shell \u2014 only three surfaces live here: / (cream LayoffLanding), /onboarding (candidate resume + SMS intake), /employer (employer signup \u2192 Mailgun \u2192 admin@wekruit). No cross-host redirects: layoff is intentionally a standalone product, not a funnel into candidate.wekruit.com. Adam directive 2026-05-18.",
       "target": "layoff",
       "public": "apps/pa-landing/dist",
       "ignore": [
@@ -241,15 +305,24 @@
       "rewrites": [
         {
           "source": "/_sso/login",
-          "function": { "functionId": "paSsoLogin", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoLogin",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/_sso/bootstrap",
-          "function": { "functionId": "paSsoBootstrap", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoBootstrap",
+            "region": "us-central1"
+          }
         },
         {
           "source": "/_sso/logout",
-          "function": { "functionId": "paSsoLogout", "region": "us-central1" }
+          "function": {
+            "functionId": "paSsoLogout",
+            "region": "us-central1"
+          }
         },
         {
           "source": "**",
@@ -260,8 +333,14 @@
         {
           "source": "**",
           "headers": [
-            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-            { "key": "X-Content-Type-Options", "value": "nosniff" }
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            },
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            }
           ]
         }
       ]
