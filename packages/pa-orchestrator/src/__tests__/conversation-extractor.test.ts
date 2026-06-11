@@ -605,3 +605,97 @@ describe("SOFT-vs-HARD preference capture", () => {
     assert.equal("preferenceHardness" in written, false)
   })
 })
+
+// ────────────────────────────────────────────────────────────────────────
+// BUG B (2026-06-11, live RJcsA285Drcml1kTPZjI): a candidate DESCRIBING a job he was applying to
+// ("Invoko.ai Product Manager in San Francisco I got sent an email to interview with Claire…") had
+// that job written into pa-users.tags as his EMPLOYMENT (recentCompany=invoko.ai,
+// workHistorySummary="product_manager @ invoko.ai", careerStage=mid_level, yoeRange=[0,0]).
+// Two invariants locked here:
+//   1. The extractor SCHEMA can never carry employment-identity fields — a model that fabricates
+//      them invalidates the WHOLE patch (strict) → zero writes (deterministic guard).
+//   2. The extractor PROMPT carries the explicit LLM-judgment instruction that a job being
+//      pursued/discussed is NOT evidence about the user (prompt contract).
+// ────────────────────────────────────────────────────────────────────────
+
+const AVI_INQUIRY_MESSAGE =
+  "Invoko.ai Product Manager in San Francisco I got sent an email to interview with Claire, " +
+  "created my profile and uploaded resume / info and sent the magic link to email and used that " +
+  "to send this message to you, do you have access to my profile?"
+
+describe("employment-identity protection (job-inquiry ≠ work history)", () => {
+  it("a patch fabricating employment-identity fields from the Avi inquiry is rejected WHOLE — no tag write, no memory write", async () => {
+    const deps = makeDeps()
+    // The exact fabrication shape observed live (employment-identity keys are NOT in the schema —
+    // .strict() must reject the whole patch rather than silently persisting any of it).
+    deps.llm = async () => ({
+      json: {
+        tagPatch: {
+          recentCompany: "invoko.ai",
+          recentRoleTitle: "product_manager",
+          workHistorySummary: "product_manager @ invoko.ai",
+          yoeRange: [0, 0],
+          careerStage: "mid_level",
+          targetRoleFunction: ["product_management"],
+        },
+        memoryEntities: [],
+        confidence: 0.95,
+        rationale: "user mentioned invoko.ai product manager",
+      },
+      modelUsed: "gpt-5.4-nano",
+      tokensIn: 900,
+      tokensOut: 90,
+      costUsd: 0.0004,
+    })
+    const out = await runExtraction(
+      makeReq({
+        recentMessages: [
+          { role: "user", body: AVI_INQUIRY_MESSAGE, createdAt: "2026-06-11T21:42:07.000Z" },
+        ],
+      }),
+      deps,
+    )
+    assert.equal(out.ran, false, "fabricated employment-identity patch must not run")
+    assert.equal(out.reason, "parse_error", "strict schema rejects unknown employment keys wholesale")
+    assert.equal(deps.__tagWrites.length, 0, "NO tag write may land from the fabricated patch")
+    assert.equal(deps.__memoryWrites.length, 0)
+  })
+
+  it("schema has NO employment-identity fields (recentCompany / recentRoleTitle / workHistorySummary / yoeRange are unparseable)", () => {
+    for (const key of ["recentCompany", "recentRoleTitle", "workHistorySummary", "yoeRange"]) {
+      const r = ConversationExtractResultSchema.safeParse({
+        tagPatch: { [key]: key === "yoeRange" ? [0, 0] : "anything" },
+        memoryEntities: [],
+        confidence: 0.9,
+        rationale: "",
+      })
+      assert.equal(r.success, false, `tagPatch.${key} must be rejected by the strict schema`)
+    }
+  })
+
+  it("prompt instructs the model that a job being asked about / applied to / interviewed for is NOT user evidence", () => {
+    const prompt = buildExtractorPrompt(
+      makeReq({
+        recentMessages: [
+          { role: "user", body: AVI_INQUIRY_MESSAGE, createdAt: "2026-06-11T21:42:07.000Z" },
+        ],
+      }),
+    )
+    assert.ok(
+      prompt.includes("ASKING ABOUT, APPLYING TO, INTERVIEWING FOR"),
+      "discussed-job carve-out missing from extractor prompt",
+    )
+    assert.ok(
+      prompt.includes("Never derive careerStage"),
+      "careerStage must be explicitly excluded from job-inquiry inference",
+    )
+    assert.ok(
+      prompt.includes("recentCompany, recentRoleTitle, workHistorySummary"),
+      "prompt must name the forbidden employment-history fields",
+    )
+    assert.ok(
+      prompt.includes("never transient process state"),
+      "relevantTags must exclude process-state tokens like <company>_interviewing",
+    )
+  })
+})

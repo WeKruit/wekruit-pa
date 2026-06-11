@@ -154,4 +154,12 @@ export type NormalizedInbound = {
   messageHandle: string
   isGroup: boolean
   service: SendblueService
+  /**
+   * Email-sender resolution (SEV 2026-06-11): when the wire `from_number` was
+   * an email-based Apple ID handle that resolved to a known candidate,
+   * `fromNumber`/`chatId` are REWRITTEN to the canonical pa-users phone and
+   * the original email handle is preserved here for audit (threaded into the
+   * pa-inbound-events rawPayload). Absent on normal E.164 senders.
+   */
+  rawSenderHandle?: string
 }

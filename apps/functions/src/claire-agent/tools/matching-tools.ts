@@ -343,6 +343,80 @@ export async function loadCandidateRoles(
   return [...byJob.values()]
 }
 
+/**
+ * The publicly-startable role payload for a NOT-YET-MATCHED candidate. `startText` is the SAME
+ * copy-paste "WeKruit_<jobId>_<userId>_Job" trigger that works for EVERYONE (PrescreenTrigger runs
+ * with allowMatchedBypass:true — the token's self-identity IS the auth; see
+ * prescreen-session-start.ts + index.ts ~1181). The agent only ever RELAYS a tool-built startText —
+ * it must never hand-compose one.
+ */
+export type PublicRoleStart = {
+  jobId: string
+  title: string
+  company: string
+  startText: string
+  pageUrl: string
+}
+
+type PublicJobHit = { jobId: string; title: string; company: string }
+
+const cleanStr = (v: unknown): string => (typeof v === "string" && v.trim() ? v.trim() : "")
+
+/** Project a pa-jobs doc to its candidate-facing { title, company } — same fallback chain as
+ * public-open-jobs.ts `toCollabJobRow` (title→jobTitle→prescreenConfig.jobTitle, etc.). */
+function publicJobHit(id: string, data: Record<string, unknown>): PublicJobHit {
+  const cfg = (data.prescreenConfig ?? {}) as Record<string, unknown>
+  return {
+    jobId: id,
+    title: cleanStr(data.title) || cleanStr(data.jobTitle) || cleanStr(cfg.jobTitle),
+    company:
+      cleanStr(data.companyName) || cleanStr(data.company) || cleanStr(data.employerName) || cleanStr(cfg.company),
+  }
+}
+
+/** Attach the copy-paste start trigger + public job-page URL to a resolved public job. */
+export function toPublicRoleStart(hit: PublicJobHit, userId: string): PublicRoleStart {
+  return {
+    ...hit,
+    startText: `WeKruit_${hit.jobId}_${userId}_Job`,
+    pageUrl: `https://wekruit.com/j/${hit.jobId}`,
+  }
+}
+
+/** Load ALL publicly-startable roles (pa-jobs where publicVisible == true — a small curated collab
+ * inventory, so load-and-filter-in-memory is fine). Fail-soft → []. */
+async function loadPublicJobs(db: Firestore, log: ClaireToolContext["log"]): Promise<PublicJobHit[]> {
+  try {
+    const snap = await db.collection("pa-jobs").where("publicVisible", "==", true).limit(200).get()
+    return snap.docs.map((doc) => publicJobHit(doc.id, doc.data() as Record<string, unknown>))
+  } catch (err) {
+    log("pa.claire.load_public_jobs_error", { error: err instanceof Error ? err.message : String(err) })
+    return []
+  }
+}
+
+/** Look up ONE pa-jobs doc by id. Returns null unless it exists AND publicVisible === true — a
+ * non-public job must NEVER be offered as startable. Fail-soft → null. */
+async function readPublicJob(
+  db: Firestore,
+  jobId: string,
+  log: ClaireToolContext["log"],
+): Promise<PublicJobHit | null> {
+  try {
+    const snap = await db.collection("pa-jobs").doc(jobId).get()
+    if (!snap.exists) return null
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    if (data.publicVisible !== true) return null
+    return publicJobHit(jobId, data)
+  } catch (err) {
+    log("pa.claire.read_public_job_error", {
+      jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
+
 /** Resolve the candidate's phone (E.164): ctx.toE164 first, else pa-users.phoneE164. "" when unknown. */
 async function resolveCandidatePhone(
   db: Firestore,
@@ -1564,17 +1638,39 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "a token in your own context — ALWAYS resolve via find_my_role first. reason 'not_matched' means " +
       "the jobId YOU passed isn't in their matched set (you likely guessed) — it does NOT mean the " +
       "candidate is unmatched. NEVER tell them they're 'not matched'; instead read the returned `roles` " +
-      "(their REAL matched roles) and ask which one they meant. Only point them to the website if `roles` " +
-      "is empty. Use ONLY when they clearly want to begin a role's screen.",
+      "(their REAL matched roles) and ask which one they meant. When `roles` is EMPTY and the jobId is a " +
+      "publicly-listed role, the return also carries `publicRole` (jobId/title/company/startText/pageUrl) — " +
+      "confirm that role with them, then relay its startText VERBATIM in its OWN bubble (pasting it back " +
+      "starts the screen for anyone); only point them to the website when there's no publicRole either. " +
+      "Use ONLY when they clearly want to begin a role's screen.",
     parameters: z.object({ jobId: z.string() }),
     async execute({ jobId }) {
       const cleanJobId = (jobId ?? "").trim()
       const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
       const role = roles.find((r) => r.jobId === cleanJobId)
       if (!role) {
-        // Matched-gate (by-name path): only a job in the candidate's matched/prescreened set is startable.
-        ctx.log("pa.claire.begin_collab_prescreen.not_matched", { userId: ctx.userId, jobId: cleanJobId, roleCount: roles.length })
-        return { ok: false, reason: "not_matched", roles: roles.map((r) => ({ jobId: r.jobId, company: r.company, title: r.title })) }
+        // Matched-gate (by-name path): only a job in the candidate's matched/prescreened set is startable
+        // CONVERSATIONALLY. But when the candidate has NO matched roles at all (employer-invited / cold —
+        // live 2026-06-09 Avi dead-end loop) and the jobId resolves to a PUBLIC pa-jobs role, return it as
+        // `publicRole` with the copy-paste startText that works for everyone (allowMatchedBypass — token
+        // self-identity is the auth) so the agent confirms + relays it instead of dead-ending.
+        let publicRole: PublicRoleStart | undefined
+        if (roles.length === 0 && cleanJobId) {
+          const hit = await readPublicJob(ctx.db, cleanJobId, ctx.log)
+          if (hit) publicRole = toPublicRoleStart(hit, ctx.userId)
+        }
+        ctx.log("pa.claire.begin_collab_prescreen.not_matched", {
+          userId: ctx.userId,
+          jobId: cleanJobId,
+          roleCount: roles.length,
+          publicRole: publicRole?.jobId ?? null,
+        })
+        return {
+          ok: false,
+          reason: "not_matched",
+          roles: roles.map((r) => ({ jobId: r.jobId, company: r.company, title: r.title })),
+          ...(publicRole ? { publicRole } : {}),
+        }
       }
       const toE164 = await resolveCandidatePhone(ctx.db, ctx.userId, ctx.toE164, ctx.log)
       if (!toE164) {
@@ -1676,6 +1772,67 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
         })
         return { ok: false, sessions: [], reason: "could not load prescreen status right now" }
       }
+    },
+  })
+
+  // ── 10b. get_public_role_start — startable PUBLIC role for an UNMATCHED candidate ──
+  // Live failure 2026-06-09 (Avi Sardana / hs-10996795-invoko-product-manager): an employer-invited
+  // candidate with 0 recs / 0 sessions said "start the Invoko pre-screen" and pasted the
+  // wekruit.com/j/<jobId> URL; Claire looped for 20 minutes asking HIM for a 'WeKruit_…_Job' line he
+  // never had and pointing him at a 'start' button that doesn't exist for connected users. The
+  // string-paste path works for EVERYONE (allowMatchedBypass — token self-identity is the auth), so
+  // when the candidate is NOT matched we resolve the PUBLIC job and hand THEM the exact startText.
+  // Job resolution (NOT tagging) — simple case-insensitive contains over the small publicVisible
+  // inventory, same style as check_prescreen_progress's query filter.
+  const getPublicRoleStart = tool({
+    name: "get_public_role_start",
+    description:
+      "Resolve a publicly-listed WeKruit collab role so an UNMATCHED candidate can start its pre-screen. " +
+      "Use when they clearly want to START a screen but find_my_role → no_match / begin_collab_prescreen → " +
+      "not_matched with an EMPTY roles list. Pass whatever they gave you: company and/or title from their " +
+      "words, or jobId from a wekruit.com/j/<jobId> link they pasted. kind='one' → CONFIRM the exact role " +
+      "with them first ('that's <title> @ <company> — want to start it now?'); AFTER they confirm, send the " +
+      "returned startText VERBATIM in its OWN bubble — they copy-paste it back and the screen starts (the " +
+      "paste works for everyone) — and mention pageUrl as the alternative way in. NEVER compose a " +
+      "'WeKruit_…_Job' token yourself — only ever relay this tool's startText. kind='ambiguous' → ASK which " +
+      "of the candidates they mean. kind='none' → no such public role exists; don't fabricate one.",
+    parameters: z.object({
+      company: z.string().nullable(),
+      title: z.string().nullable(),
+      jobId: z.string().nullable(),
+    }),
+    async execute({ company, title, jobId }) {
+      const wantJobId = (jobId ?? "").trim().toLowerCase()
+      const wantCompany = (company ?? "").trim().toLowerCase()
+      const wantTitle = (title ?? "").trim().toLowerCase()
+      const jobs = await loadPublicJobs(ctx.db, ctx.log)
+      // jobId (candidate-pasted /j/ URL) is the strongest signal → exact id match. Otherwise
+      // case-insensitive contains on company/title; no signal at all → list everything (ambiguous),
+      // so the agent can ask WHICH instead of dead-ending.
+      const hits = jobs.filter((j) => {
+        if (wantJobId) return j.jobId.toLowerCase() === wantJobId
+        if (wantCompany && !j.company.toLowerCase().includes(wantCompany)) return false
+        if (wantTitle && !j.title.toLowerCase().includes(wantTitle)) return false
+        return true
+      })
+      const kind = hits.length === 1 ? "one" : hits.length > 1 ? "ambiguous" : "none"
+      ctx.log("pa.claire.get_public_role_start", {
+        userId: ctx.userId,
+        company: company ?? null,
+        title: title ?? null,
+        jobId: jobId ?? null,
+        publicCount: jobs.length,
+        kind,
+      })
+      if (kind === "none") return { ok: true, kind: "none" }
+      if (kind === "ambiguous") {
+        return {
+          ok: true,
+          kind: "ambiguous",
+          candidates: hits.slice(0, 10).map((h) => ({ jobId: h.jobId, title: h.title, company: h.company })),
+        }
+      }
+      return { ok: true, kind: "one", ...toPublicRoleStart(hits[0]!, ctx.userId) }
     },
   })
 
@@ -1855,6 +2012,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     findMyRole,
     beginCollabPrescreen,
     checkPrescreenProgress,
+    getPublicRoleStart,
     cvParse,
   ]
 }

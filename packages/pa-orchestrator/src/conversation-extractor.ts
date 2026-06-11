@@ -399,6 +399,22 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     "  - Output ONLY new info (deltas). If `existingTags` already has a value, do NOT re-emit.",
     "  - Use the closed enums below; do NOT invent values.",
     "  - Skip ambiguous signals — emit only what the user clearly stated.",
+    // BUG B hardening (2026-06-11, live RJcsA285Drcml1kTPZjI): a candidate DESCRIBING a job they are
+    // applying to / interviewing for / asking about ("Invoko.ai Product Manager in San Francisco — I
+    // got sent an email to interview…") had that job written into their profile as if it were their
+    // own background. The distinction is LLM judgment (no regex): a job they are PURSUING is not a
+    // fact about them.
+    "  - A job the user is ASKING ABOUT, APPLYING TO, INTERVIEWING FOR, or was RECOMMENDED is NOT",
+    "    evidence about the user themselves. Never derive careerStage, industrySector, relevantTags,",
+    "    or any other field from the company / title / location of a role they are pursuing or",
+    "    discussing. ('I'm interviewing for the Invoko.ai Product Manager role' says NOTHING about",
+    "    their seniority, their industry history, or where they live.) Only an explicit statement of",
+    "    the user's OWN background or OWN preference counts.",
+    "  - You never emit employment-history fields (recentCompany, recentRoleTitle, workHistorySummary,",
+    "    yoeRange) — those come ONLY from a parsed résumé / LinkedIn, never from chat. They are not in",
+    "    the schema; emitting them invalidates the whole extraction.",
+    "  - relevantTags capture durable skills/interests — never transient process state (no",
+    "    '<company>_interviewing' / '<role>_applicant' style tokens).",
     "  - `confidence` is your overall belief in the extraction (0..1).",
     `  - If confidence < ${MIN_CONFIDENCE}, return empty tagPatch + empty memoryEntities.`,
     "  - For EVERY tagPatch field you emit, ALSO emit a matching memoryEntities row so",

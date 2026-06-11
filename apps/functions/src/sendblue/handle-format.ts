@@ -24,6 +24,15 @@ export function looksLikeEmail(value: string): boolean {
   return domain.includes(".")
 }
 
+/**
+ * Canonical form of an email-based Apple ID sender handle: trim + lowercase.
+ * No format validation here (classification stays in `looksLikeEmail`) —
+ * this is a normalizer, not a classifier.
+ */
+export function normalizeEmailHandle(value: string): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : ""
+}
+
 export type HandleFormat = "e164_phone" | "email_apple_id" | "unknown"
 
 export function classifyInboundSender(value: string): HandleFormat {

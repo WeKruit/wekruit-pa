@@ -38,7 +38,16 @@ import {
   normalizeSendblueInbound,
 } from "./normalize.js"
 import { recordAuditEvent, type AuditEventInput } from "./audit.js"
-import { classifyInboundSender } from "./handle-format.js"
+import { classifyInboundSender, normalizeEmailHandle } from "./handle-format.js"
+// SEV 2026-06-11 — Apple-ID EMAIL senders ("Start New Conversations From:
+// Apple ID" iPhones) were silently vaporized by the E.164 gate. Resolve them
+// to a known candidate + canonical phone instead of dropping.
+import {
+  bindEmailSenderHandle,
+  createEmailSenderReviewItem,
+  resolveEmailSender,
+  type EmailSenderResolution,
+} from "./email-sender-resolution.js"
 import { parseInboundTapback } from "./tapback-parser.js"
 // v1.8 Phase 77.2 — TriggerRouter table-driven dispatch for the new
 // pre-screen + compact triggers. Strangler step 2: ADDITIVE — runs before
@@ -673,13 +682,126 @@ export async function handleSendblueWebhook(
     }
   }
 
-  // ---- 3c1. E.164 sender gate (identity hardening 2026-05-20) -----------
-  // Sendblue accepts inbound from email-based Apple IDs (per FAQ) but the
-  // REST API has no outbound path for them, and our downstream identity
-  // layer assumes E.164. Reject non-E.164 senders before they pollute
-  // pa-users / pa-candidate-handles. Email Apple ID support: GH #142.
+  // ---- 3c1. Sender-format gate (2026-05-20 hardening, reworked 2026-06-11)
+  // Sendblue accepts inbound from email-based Apple IDs but its REST API has
+  // NO outbound path to email handles, and downstream identity assumes E.164.
+  // The original gate (GH #142) silently rejected EVERY email sender — by
+  // 2026-06-11 that had vaporized ~10 real candidates' prescreen triggers,
+  // verification codes, and follow-ups. New behavior for email senders:
+  // resolve to a known pa-users doc (uid token in text → existing email
+  // binding → pa-users email match) and REWRITE fromNumber/chatId onto the
+  // candidate's canonical phone so the EXISTING pipeline (triggers,
+  // rate-limit, typing hint, enqueue) runs unchanged and replies flow to the
+  // phone Sendblue CAN reach. Unresolvable senders are still rejected, but
+  // with a distinct audit + an ops review item instead of silence. The gate
+  // stays BEFORE rate-limit, which then keys on the canonical phone.
   const senderFormat = classifyInboundSender(normalized.fromNumber)
-  if (senderFormat !== "e164_phone") {
+  if (senderFormat === "email_apple_id") {
+    const emailHandle = normalizeEmailHandle(normalized.fromNumber)
+    let resolution: EmailSenderResolution | null = null
+    try {
+      resolution = await resolveEmailSender(deps.db, {
+        emailHandle,
+        text: normalized.text,
+        log,
+      })
+    } catch (err) {
+      // resolveEmailSender is fail-soft internally; belt + braces.
+      log("[sendblue][webhook] resolveEmailSender threw (treated as unresolved)",
+        err instanceof Error ? err.message : String(err))
+    }
+    if (resolution && resolution.phoneE164) {
+      // Resolved + reachable phone: bind the email→userId handle (idempotent,
+      // best-effort), audit, then rewrite onto the canonical phone and let the
+      // pipeline continue. Original email handle preserved as rawSenderHandle.
+      await bindEmailSenderHandle(deps.db, {
+        userId: resolution.userId,
+        emailHandle,
+        messageHandle: normalized.messageHandle,
+        method: resolution.method,
+        log,
+      })
+      await safeAudit(
+        deps,
+        {
+          type: "email_sender_resolved",
+          channel: "imessage_sendblue",
+          fromNumber: emailHandle,
+          correlationId: normalized.messageHandle,
+          payload: {
+            userId: resolution.userId,
+            method: resolution.method,
+            phoneE164: resolution.phoneE164,
+          },
+        },
+        log
+      )
+      normalized = {
+        ...normalized,
+        fromNumber: resolution.phoneE164,
+        chatId: `iMessage;-;${resolution.phoneE164}`,
+        rawSenderHandle: emailHandle,
+      }
+      log("[sendblue][webhook] email_sender_rewritten", {
+        userId: resolution.userId,
+        method: resolution.method,
+        correlationId: normalized.messageHandle,
+      })
+      // Fall through — downstream sees the canonical phone.
+    } else if (resolution) {
+      // Resolved but NO usable phone: bind + audit + ops review item, 200.
+      // We cannot reply on any channel (Sendblue can't send to the email).
+      await bindEmailSenderHandle(deps.db, {
+        userId: resolution.userId,
+        emailHandle,
+        messageHandle: normalized.messageHandle,
+        method: resolution.method,
+        log,
+      })
+      await safeAudit(
+        deps,
+        {
+          type: "email_sender_resolved_no_phone",
+          channel: "imessage_sendblue",
+          fromNumber: emailHandle,
+          correlationId: normalized.messageHandle,
+          payload: { userId: resolution.userId, method: resolution.method },
+        },
+        log
+      )
+      await createEmailSenderReviewItem(deps.db, {
+        kind: "email_sender_resolved_no_phone",
+        emailHandle,
+        messageHandle: normalized.messageHandle,
+        userId: resolution.userId,
+        log,
+      })
+      reply(res, 200, { ok: true, ignored: "email_sender_resolved_no_phone" })
+      return
+    } else {
+      // Unresolved: still reject, but VISIBLY — distinct audit + review item.
+      await safeAudit(
+        deps,
+        {
+          type: "email_sender_unresolved",
+          channel: "imessage_sendblue",
+          fromNumber: emailHandle,
+          reason: senderFormat,
+          correlationId: normalized.messageHandle,
+        },
+        log
+      )
+      await createEmailSenderReviewItem(deps.db, {
+        kind: "email_sender_unresolved",
+        emailHandle,
+        messageHandle: normalized.messageHandle,
+        log,
+      })
+      reply(res, 200, { ok: true, ignored: "email_sender_unresolved" })
+      return
+    }
+  } else if (senderFormat !== "e164_phone") {
+    // Neither E.164 nor email — keep the original defensive reject.
     await safeAudit(
       deps,
       {
@@ -1402,6 +1524,10 @@ export async function handleSendblueWebhook(
         service: normalized.service,
         // Preserve BrokerImessageEvent's canonical participant field.
         participant: normalized.fromNumber,
+        // Email-sender resolution (SEV 2026-06-11) — original wire sender when
+        // fromNumber was rewritten from an email Apple ID to the canonical
+        // phone. Absent on normal E.164 inbound.
+        ...(normalized.rawSenderHandle ? { rawSenderHandle: normalized.rawSenderHandle } : {}),
         // BUG #6 — surface attachment URL into rawPayload so the orchestrator
         // can fetch + ingest. Absent on text-only messages.
         ...(mediaUrl ? { mediaUrl, attachmentReceived: true } : {}),
