@@ -263,8 +263,10 @@ export default function App() {
           <Route path="/admin/recruiter-submissions" element={<RecruiterSubmissions section="submissions" />} />
           {/* v2.0 External Supply V1 — Wave D admin surfaces. */}
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
-          <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs />} />
-          <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs />} />
+          <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs mode="collab" />} />
+          <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs mode="collab" />} />
+          <Route path="/admin/external-supply/non-collab-jobs" element={<ExternalSupplyJobs mode="non_collab" />} />
+          <Route path="/admin/external-supply/non-collab-jobs/:companyId" element={<ExternalSupplyJobs mode="non_collab" />} />
           <Route path="/admin/jobs/new" element={<JobWorkspace createMode />} />
           <Route path="/admin/jobs/:jobId" element={<JobWorkspace />} />
           <Route path="/admin/external-supply/batches/new" element={<ExternalSupplyBatchNew />} />

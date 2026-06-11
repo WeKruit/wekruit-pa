@@ -3,8 +3,8 @@
  * `/admin/external-supply/jobs` and `/admin/external-supply/jobs/:companyId`.
  *
  * Operator entry point for **per-job candidate sourcing**:
- *   1. The bare `/jobs` route lists WeKruit-collab companies (from
- *      `pa-companies`) with the count of collab `pa-jobs` linked to each.
+ *   1. The bare `/jobs` routes list companies from the active `pa-jobs`
+ *      collaboration status, then join `pa-companies` for directory metadata.
  *   2. Drilling into a company shows that company's open jobs and surfaces a
  *      "Source candidates for this job" action on each row that opens the
  *      drag-drop wizard prefilled with `?companyId=...&jobId=...` so the
@@ -25,7 +25,6 @@ import {
 } from "../../components/ui.js"
 import {
   listBatches,
-  listCompanies,
   listJobs,
   listJobsByCompany,
   getCompany,
@@ -34,15 +33,54 @@ import {
 } from "../../lib/external-supply-client.js"
 import { deriveJobLifecycleDisplay } from "./Jobs.helpers.js"
 
-export function Jobs() {
-  const params = useParams<{ companyId?: string }>()
-  if (params.companyId) {
-    return <CompanyJobs companyId={params.companyId} />
-  }
-  return <AllCompanies />
+type JobsMode = "collab" | "non_collab"
+
+interface JobsProps {
+  mode?: JobsMode
 }
 
-function AllCompanies() {
+const MODE_COPY: Record<
+  JobsMode,
+  {
+    title: string
+    description: string
+    emptyTitle: string
+    emptyBody: string
+  }
+> = {
+  collab: {
+    title: "WeKruit-collab companies & jobs",
+    description: "Pick a collab company to view active roles and source candidates per job.",
+    emptyTitle: "No collab roles yet",
+    emptyBody: "Publish a pa-job with wekruitCollaborationStatus=collaborated to source candidates here.",
+  },
+  non_collab: {
+    title: "Non-collab companies & jobs",
+    description: "Review companies and open roles that are not marked as WeKruit collaborations.",
+    emptyTitle: "No non-collab roles yet",
+    emptyBody: "Publish a pa-job with wekruitCollaborationStatus=not_collaborated to review it here.",
+  },
+}
+
+function jobOptionsForMode(mode: JobsMode) {
+  return {
+    collaborationStatus: mode === "collab" ? "collaborated" : "not_collaborated",
+  } as const
+}
+
+function jobsBasePath(mode: JobsMode): string {
+  return mode === "collab" ? "/admin/external-supply/jobs" : "/admin/external-supply/non-collab-jobs"
+}
+
+export function Jobs({ mode = "collab" }: JobsProps) {
+  const params = useParams<{ companyId?: string }>()
+  if (params.companyId) {
+    return <CompanyJobs companyId={params.companyId} mode={mode} />
+  }
+  return <AllCompanies mode={mode} />
+}
+
+function AllCompanies({ mode }: { mode: JobsMode }) {
   const [companies, setCompanies] = useState<CompanyRow[]>([])
   const [jobsByCompany, setJobsByCompany] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
@@ -54,27 +92,24 @@ function AllCompanies() {
     setError(null)
     void (async () => {
       try {
-        const [cos, jobs] = await Promise.all([
-          listCompanies(200, { collabOnly: true }),
-          listJobs(500, { collabOnly: true }),
-        ])
+        const jobs = await listJobs(500, jobOptionsForMode(mode))
         if (cancelled) return
         const counts: Record<string, number> = {}
         for (const j of jobs) {
           if (!j.companyId) continue
           counts[j.companyId] = (counts[j.companyId] ?? 0) + 1
         }
-        const byId = new Map(cos.map((company) => [company.companyId, company]))
-        const missingIds = Object.keys(counts).filter((companyId) => !byId.has(companyId))
-        const missingCompanies = await Promise.all(missingIds.map((companyId) => getCompany(companyId)))
-        missingIds.forEach((companyId, index) => {
-          const company = missingCompanies[index]
-          byId.set(companyId, company ?? { companyId, displayName: companyId, wekruitCollab: true })
-        })
-        const activeCompanies = Object.keys(counts)
-          .map((companyId) => {
-            const company = byId.get(companyId) ?? { companyId, displayName: companyId }
-            return { ...company, wekruitCollab: true }
+        const companyIds = Object.keys(counts)
+        const companyDocs = await Promise.all(companyIds.map((companyId) => getCompany(companyId)))
+        if (cancelled) return
+        const activeCompanies = companyIds
+          .map((companyId, index) => {
+            const company = companyDocs[index]
+            return {
+              ...(company ?? { companyId, displayName: companyId }),
+              companyId,
+              wekruitCollab: mode === "collab",
+            }
           })
           .sort((a, b) =>
             String(a.displayName ?? a.name ?? a.companyId).localeCompare(
@@ -92,13 +127,17 @@ function AllCompanies() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [mode])
+
+  const copy = MODE_COPY[mode]
+  const basePath = jobsBasePath(mode)
+  const showCollabCompanyMetadata = mode === "collab"
 
   return (
     <div>
       <PageHeader
-        title="Companies & open jobs"
-        description="Pick a company to view its open jobs and source candidates per job."
+        title={copy.title}
+        description={copy.description}
         actions={
           <Link to="/admin/companies?create=1">Create company</Link>
         }
@@ -110,8 +149,8 @@ function AllCompanies() {
           <ErrorState message={error} />
         ) : companies.length === 0 ? (
           <EmptyState
-            title="No collab roles yet"
-            body="Publish a pa-job with wekruitCollaborationStatus=collaborated and a matching collab company to source candidates here."
+            title={copy.emptyTitle}
+            body={copy.emptyBody}
             action={<Link to="/admin/companies?create=1">Create company</Link>}
           />
         ) : (
@@ -119,9 +158,15 @@ function AllCompanies() {
             <thead>
               <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
                 <th style={{ padding: "8px 6px" }}>Company</th>
-                <th style={{ padding: "8px 6px", textAlign: "center", width: 90 }}>Collab</th>
+                <th style={{ padding: "8px 6px", textAlign: "center", width: 100 }}>Status</th>
                 <th style={{ padding: "8px 6px" }}>Domain</th>
                 <th style={{ padding: "8px 6px" }}>Industry</th>
+                {showCollabCompanyMetadata ? (
+                  <>
+                    <th style={{ padding: "8px 6px" }}>Stage</th>
+                    <th style={{ padding: "8px 6px" }}>Raised</th>
+                  </>
+                ) : null}
                 <th style={{ padding: "8px 6px", textAlign: "right" }}>Open jobs</th>
                 <th style={{ padding: "8px 6px" }}></th>
               </tr>
@@ -145,7 +190,7 @@ function AllCompanies() {
                       {isCollab ? (
                         <Badge tone="ok">✓ Collab</Badge>
                       ) : (
-                        <span style={{ color: "#cbd5e1", fontSize: 12 }}>—</span>
+                        <Badge tone="muted">Non-collab</Badge>
                       )}
                     </td>
                     <td style={{ padding: "8px 6px" }}>{c.domain ?? "—"}</td>
@@ -156,11 +201,17 @@ function AllCompanies() {
                         </Badge>
                       ))}
                     </td>
+                    {showCollabCompanyMetadata ? (
+                      <>
+                        <td style={{ padding: "8px 6px" }}>{formatCompanyStage(c.companyStage)}</td>
+                        <td style={{ padding: "8px 6px" }}>{formatFundingRaised(c)}</td>
+                      </>
+                    ) : null}
                     <td style={{ padding: "8px 6px", textAlign: "right" }}>
                       {jobsByCompany[c.companyId] ?? 0}
                     </td>
                     <td style={{ padding: "8px 6px" }}>
-                      <Link to={`/admin/external-supply/jobs/${c.companyId}`}>View jobs →</Link>
+                      <Link to={`${basePath}/${c.companyId}`}>View jobs →</Link>
                       {" · "}
                       <Link to={`/admin/jobs/new?companyId=${encodeURIComponent(c.companyId)}`}>Create job</Link>
                     </td>
@@ -175,7 +226,7 @@ function AllCompanies() {
   )
 }
 
-function CompanyJobs({ companyId }: { companyId: string }) {
+function CompanyJobs({ companyId, mode }: { companyId: string; mode: JobsMode }) {
   const [company, setCompany] = useState<CompanyRow | null>(null)
   const [jobs, setJobs] = useState<JobRow[]>([])
   // Map jobId → latest batch summary so we can render "Browse N candidates →"
@@ -195,7 +246,7 @@ function CompanyJobs({ companyId }: { companyId: string }) {
       try {
         const [co, js, batchPage] = await Promise.all([
           getCompany(companyId),
-          listJobsByCompany(companyId, 500, { collabOnly: true }),
+          listJobsByCompany(companyId, 500, jobOptionsForMode(mode)),
           listBatches({ limit: 200 }),
         ])
         if (cancelled) return
@@ -219,7 +270,7 @@ function CompanyJobs({ companyId }: { companyId: string }) {
     return () => {
       cancelled = true
     }
-  }, [companyId])
+  }, [companyId, mode])
 
   const sortedJobs = useMemo(
     () =>
@@ -230,7 +281,7 @@ function CompanyJobs({ companyId }: { companyId: string }) {
   return (
     <div>
       <PageHeader
-        title={company?.name ?? companyId}
+        title={company?.displayName ?? company?.name ?? companyId}
         description={`${jobs.length} job${jobs.length === 1 ? "" : "s"} indexed on pa-jobs · companyId=${companyId}`}
         actions={
           <Link to={`/admin/jobs/new?companyId=${encodeURIComponent(companyId)}`}>Create job</Link>
@@ -238,7 +289,7 @@ function CompanyJobs({ companyId }: { companyId: string }) {
       />
       <Panel>
         <div style={{ marginBottom: 12 }}>
-          <Link to="/admin/external-supply/jobs">← All companies</Link>
+          <Link to={jobsBasePath(mode)}>← All companies</Link>
         </div>
         {loading ? (
           <LoadingState label="Loading jobs..." />
@@ -246,8 +297,8 @@ function CompanyJobs({ companyId }: { companyId: string }) {
           <ErrorState message={error} />
         ) : sortedJobs.length === 0 ? (
           <EmptyState
-            title={company ? "No collab jobs yet" : `Company "${companyId}" is not in pa-companies`}
-            body="Publish a pa-job with this companyId and wekruitCollaborationStatus=collaborated to source candidates here."
+            title={company ? MODE_COPY[mode].emptyTitle : `Company "${companyId}" is not in pa-companies`}
+            body={`Publish a pa-job with this companyId and wekruitCollaborationStatus=${jobOptionsForMode(mode).collaborationStatus} to show it here.`}
             action={
               <Link to={`/admin/jobs/new?companyId=${encodeURIComponent(companyId)}`}>
                 Create the first job
@@ -362,6 +413,25 @@ function CompanyJobs({ companyId }: { companyId: string }) {
       </Panel>
     </div>
   )
+}
+
+function formatCompanyStage(stage: string | undefined): string {
+  if (!stage || stage === "unknown") return "—"
+  return stage.replaceAll("_", " ")
+}
+
+function formatFundingRaised(company: CompanyRow): string {
+  const rounds = company.fundingRounds ?? []
+  const total = rounds.reduce((sum, round) => {
+    return sum + (typeof round.amount === "number" ? round.amount : 0)
+  }, 0)
+  if (total > 0) {
+    return `$${total.toLocaleString(undefined, { maximumFractionDigits: 1 })}M`
+  }
+  const namedRounds = rounds
+    .map((round) => round.round)
+    .filter((round): round is string => typeof round === "string" && round.length > 0)
+  return namedRounds.length > 0 ? namedRounds.map((round) => round.replaceAll("_", " ")).join(", ") : "—"
 }
 
 function pageToneStyle(tone: "public" | "review" | "draft") {

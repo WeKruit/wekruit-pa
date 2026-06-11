@@ -1326,6 +1326,8 @@ export interface CompanyRow {
   websiteUrl?: string
   careersUrl?: string
   description?: string
+  companyStage?: string
+  fundingRounds?: CompanyFundingRoundRow[]
   /** A4.1 — WeKruit partnership flag. Auto-set when pa-jobs has any row
    *  pointing at this companyId (see unify-pa-companies-with-pa-jobs.mjs). */
   wekruitCollab?: boolean
@@ -1334,6 +1336,13 @@ export interface CompanyRow {
   jobsCount?: number
   /** A4.1 — canonical display name (prefer over `name` for new docs). */
   displayName?: string
+}
+
+export interface CompanyFundingRoundRow {
+  round?: string
+  amount?: number | null
+  date?: string
+  investors?: string[]
 }
 
 export interface JobRow {
@@ -1365,6 +1374,25 @@ function coerceCompanyRow(id: string, raw: unknown): CompanyRow {
   const o = (raw ?? {}) as Record<string, unknown>
   const strArr = (v: unknown) =>
     Array.isArray(v) ? (v.filter((x) => typeof x === "string") as string[]) : undefined
+  const fundingRounds = Array.isArray(o.fundingRounds)
+    ? o.fundingRounds
+        .map((round): CompanyFundingRoundRow | null => {
+          const r = (round ?? {}) as Record<string, unknown>
+          const amount =
+            r.amount === null
+              ? null
+              : typeof r.amount === "number"
+                ? r.amount
+                : undefined
+          return {
+            round: typeof r.round === "string" ? r.round : undefined,
+            amount,
+            date: typeof r.date === "string" ? r.date : undefined,
+            investors: strArr(r.investors),
+          }
+        })
+        .filter((round) => round !== null)
+    : undefined
   return {
     companyId: id,
     name: typeof o.name === "string" ? o.name : undefined,
@@ -1375,6 +1403,8 @@ function coerceCompanyRow(id: string, raw: unknown): CompanyRow {
     websiteUrl: typeof o.websiteUrl === "string" ? o.websiteUrl : undefined,
     careersUrl: typeof o.careersUrl === "string" ? o.careersUrl : undefined,
     description: typeof o.description === "string" ? o.description : undefined,
+    companyStage: typeof o.companyStage === "string" ? o.companyStage : undefined,
+    fundingRounds,
     wekruitCollab: o.wekruitCollab === true,
     jobsCount: typeof o.jobsCount === "number" ? o.jobsCount : undefined,
   }
@@ -1452,6 +1482,13 @@ export interface ListCompaniesOptions {
 
 export interface ListJobsOptions {
   collabOnly?: boolean
+  collaborationStatus?: "collaborated" | "not_collaborated"
+}
+
+function requestedCollaborationStatus(
+  opts: ListJobsOptions,
+): "collaborated" | "not_collaborated" | undefined {
+  return opts.collaborationStatus ?? (opts.collabOnly === true ? "collaborated" : undefined)
 }
 
 export async function listCompanies(
@@ -1517,8 +1554,9 @@ export async function listJobsByCompany(
   ]
   const snap = await getDocs(query(collection(db(), PA_COLLECTIONS.jobs), ...constraints))
   const rows = snap.docs.map((d) => coerceJobRow(d.id, d.data()))
-  return opts.collabOnly === true
-    ? rows.filter((job) => job.wekruitCollaborationStatus === "collaborated")
+  const collaborationStatus = requestedCollaborationStatus(opts)
+  return collaborationStatus
+    ? rows.filter((job) => job.wekruitCollaborationStatus === collaborationStatus)
     : rows
 }
 
@@ -1530,8 +1568,9 @@ export async function listJobs(
   // means some docs may lack it — getDocs without orderBy returns
   // doc-id order which is still useful.
   const constraints: QueryConstraint[] = [fsLimit(limit)]
-  if (opts.collabOnly === true) {
-    constraints.unshift(where("wekruitCollaborationStatus", "==", "collaborated"))
+  const collaborationStatus = requestedCollaborationStatus(opts)
+  if (collaborationStatus) {
+    constraints.unshift(where("wekruitCollaborationStatus", "==", collaborationStatus))
   }
   const snap = await getDocs(query(collection(db(), PA_COLLECTIONS.jobs), ...constraints))
   return snap.docs.map((d) => coerceJobRow(d.id, d.data()))
