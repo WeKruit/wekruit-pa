@@ -64,8 +64,25 @@ function AllCompanies() {
           if (!j.companyId) continue
           counts[j.companyId] = (counts[j.companyId] ?? 0) + 1
         }
-        setCompanies(cos)
+        const byId = new Map(cos.map((company) => [company.companyId, company]))
+        const missingIds = Object.keys(counts).filter((companyId) => !byId.has(companyId))
+        const missingCompanies = await Promise.all(missingIds.map((companyId) => getCompany(companyId)))
+        missingIds.forEach((companyId, index) => {
+          const company = missingCompanies[index]
+          byId.set(companyId, company ?? { companyId, displayName: companyId, wekruitCollab: true })
+        })
+        const activeCompanies = Object.keys(counts)
+          .map((companyId) => {
+            const company = byId.get(companyId) ?? { companyId, displayName: companyId }
+            return { ...company, wekruitCollab: true }
+          })
+          .sort((a, b) =>
+            String(a.displayName ?? a.name ?? a.companyId).localeCompare(
+              String(b.displayName ?? b.name ?? b.companyId),
+            ),
+          )
         setJobsByCompany(counts)
+        setCompanies(activeCompanies)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       } finally {
@@ -93,8 +110,8 @@ function AllCompanies() {
           <ErrorState message={error} />
         ) : companies.length === 0 ? (
           <EmptyState
-            title="No companies yet"
-            body="Seed a company doc to pa-companies (see apps/functions/scripts/seed-rain-xyz.ts as a template)."
+            title="No collab roles yet"
+            body="Publish a pa-job with wekruitCollaborationStatus=collaborated and a matching collab company to source candidates here."
             action={<Link to="/admin/companies?create=1">Create company</Link>}
           />
         ) : (
@@ -227,12 +244,10 @@ function CompanyJobs({ companyId }: { companyId: string }) {
           <LoadingState label="Loading jobs..." />
         ) : error ? (
           <ErrorState message={error} />
-        ) : !company ? (
-          <ErrorState message={`Company "${companyId}" not found in pa-companies.`} />
         ) : sortedJobs.length === 0 ? (
           <EmptyState
-            title="No jobs yet"
-            body="Seed jobs to pa-jobs with companyId pointing to this company."
+            title={company ? "No collab jobs yet" : `Company "${companyId}" is not in pa-companies`}
+            body="Publish a pa-job with this companyId and wekruitCollaborationStatus=collaborated to source candidates here."
             action={
               <Link to={`/admin/jobs/new?companyId=${encodeURIComponent(companyId)}`}>
                 Create the first job
