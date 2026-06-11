@@ -183,12 +183,6 @@ test("EDITABLE_STATUSES is still declared for the add-form update path", () => {
   assert.match(source, /return EDITABLE_STATUSES\.has\(row\.status \|\| "submitted"\)/)
 })
 
-test("409 row_locked surfaces the pinned toast", () => {
-  const saveSlice = sliceBetween(source, "const saveRow = async", "const addBlockers =")
-  assert.match(saveSlice, /e instanceof RecruiterApiError && e\.status === 409/)
-  assert.match(saveSlice, /showToast\("Row locked — candidate is with the client"\)/)
-})
-
 test("detail drawer shows: name header, stepper, needs-info banner, fields, checklist, conversation, send", () => {
   assert.match(source, /className="rs-thread-btn"/)
   const drawerSlice = sliceBetween(source, "function DetailDrawer(", "\n}\n")

@@ -16,9 +16,7 @@ import {
   fetchCollabJobs,
   fetchRecruiterSubmissionComments,
   fetchRecruiterSubmissions,
-  RecruiterApiError,
   submitRecruiterCandidate,
-  updateRecruiterSubmission,
   uploadResumeFile,
   validateResumeFile,
   type CollabJob,
@@ -512,8 +510,6 @@ export default function RoleSheetPage() {
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  const [rowDrafts, setRowDrafts] = useState<Record<string, RowDraft>>({})
-  const [savingRowId, setSavingRowId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<number | null>(null)
 
@@ -580,52 +576,12 @@ export default function RoleSheetPage() {
     toastTimer.current = window.setTimeout(() => setToast(null), 4200)
   }
 
-  const editRow = (row: RecruiterSubmissionItem, mutate: (draft: RowDraft) => RowDraft) => {
-    setRowDrafts((drafts) => {
-      const current = drafts[row.id] ?? draftFromSubmission(row)
-      return { ...drafts, [row.id]: mutate(current) }
-    })
-  }
-
   const refreshSubmissions = async () => {
     try {
       const rows = await fetchRecruiterSubmissions()
       setSubmissions(rows)
     } catch {
       // keep the stale rows rather than blanking the sheet
-    }
-  }
-
-  const saveRow = async (row: RecruiterSubmissionItem) => {
-    const draft = rowDrafts[row.id]
-    if (!draft || savingRowId) return
-    setSavingRowId(row.id)
-    try {
-      const updated = await updateRecruiterSubmission({
-        submissionId: submissionApiId(row),
-        candidate: candidatePayload(draft),
-        checklist: checklistPayload(draft),
-        extraFields: extraFieldsPayload(draft, extraFieldDefs),
-      })
-      setSubmissions((rows) => rows.map((r) => (r.id === row.id ? { ...r, ...updated, id: r.id } : r)))
-      setRowDrafts((drafts) => {
-        const { [row.id]: _dropped, ...rest } = drafts
-        return rest
-      })
-      showToast("Row saved.")
-    } catch (e) {
-      if (e instanceof RecruiterApiError && e.status === 409) {
-        showToast("Row locked — candidate is with the client")
-        setRowDrafts((drafts) => {
-          const { [row.id]: _dropped, ...rest } = drafts
-          return rest
-        })
-        void refreshSubmissions()
-      } else {
-        showToast(`Save failed: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    } finally {
-      setSavingRowId(null)
     }
   }
 
