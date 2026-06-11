@@ -30,6 +30,40 @@ body.apidoc-bg { background: #fff; }
   color: #1e293b;
   line-height: 1.6;
 }
+/* Hard reset against the landing global stylesheet (wekruit-tokens.css paints
+   every <code> cream-on-ink with padding, and all headings serif). This page
+   must be visually self-contained, so neutralize those globals in-scope and
+   re-declare the doc styles below with .apidoc-shell-prefixed specificity. */
+.apidoc-shell code, .apidoc-shell kbd, .apidoc-shell samp {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  font-family: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+.apidoc-shell h1, .apidoc-shell h2, .apidoc-shell h3 {
+  font-family: inherit;
+  letter-spacing: normal;
+}
+.apidoc-shell .apidoc-h1 { font-weight: 700; }
+.apidoc-shell .apidoc-h2 { font-weight: 700; }
+.apidoc-shell .apidoc-h3 { font-weight: 600; }
+.apidoc-shell .apidoc-endpoint code { color: #e2e8f0; background: transparent; padding: 0; }
+.apidoc-shell .apidoc-inline-code {
+  background: #f1f5f9;
+  border-radius: 4px;
+  padding: 0.12em 0.35em;
+  color: #be185d;
+}
+.apidoc-shell .apidoc-table code {
+  background: #f1f5f9;
+  border-radius: 3px;
+  padding: 0.1em 0.3em;
+  color: #be185d;
+  white-space: nowrap;
+}
+.apidoc-notfound h1 { font-family: system-ui, sans-serif; }
 .apidoc-nav {
   position: sticky;
   top: 0;
@@ -217,7 +251,14 @@ export default function PartnerApiDoc() {
 
   useEffect(() => {
     document.body.classList.add("apidoc-bg")
-    return () => { document.body.classList.remove("apidoc-bg") }
+    // tokens css paints <html> cream; overscroll/short pages would reveal it
+    // around this white page, so pin it white while mounted.
+    const prevHtmlBg = document.documentElement.style.backgroundColor
+    document.documentElement.style.backgroundColor = "#fff"
+    return () => {
+      document.body.classList.remove("apidoc-bg")
+      document.documentElement.style.backgroundColor = prevHtmlBg
+    }
   }, [])
 
   useEffect(() => {

@@ -15,6 +15,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { db } from "../lib/firebase.js"
 import { formatPublicJobType } from "../lib/public-job-labels.js"
 import { listPublicJobOpenings } from "../lib/public-jobs.js"
+import { openJobsEndpoint, OPEN_JOBS_STALE_TIME_MS, OPEN_JOBS_GC_TIME_MS } from "../lib/open-jobs.js"
 import {
   CandidateShell,
   PulseDot,
@@ -161,23 +162,24 @@ export default function Landing() {
           remoteOnly: false, search: "",
         }],
         queryFn: async () => {
-          const url =
-            (import.meta.env.VITE_OPEN_JOBS_URL ??
-              "https://us-central1-wekruit-5f89b.cloudfunctions.net/paPublicOpenJobs") +
-            "?limit=80&freshDays=45"
+          // Same-origin /api/open-jobs Hosting rewrite → CDN-cached CF
+          // (cloudfunctions.net fallback only in vite dev / env override).
+          const url = `${openJobsEndpoint()}?limit=80&freshDays=45`
           const r = await fetch(url)
           if (!r.ok) throw new Error(`open-jobs ${r.status}`)
           const body = (await r.json()) as { ok: boolean; rows: unknown[]; reason?: string }
           if (!body.ok) throw new Error(body.reason ?? "open-jobs failed")
           return body.rows
         },
-        staleTime: 5 * 60 * 1000,
+        staleTime: OPEN_JOBS_STALE_TIME_MS,
+        gcTime: OPEN_JOBS_GC_TIME_MS,
       })
       // Public WeKruit role briefs — pa-jobs publicVisible, reused by /market.
       void queryClient.prefetchQuery({
         queryKey: ["pa-jobs-public-openings", 24],
         queryFn: () => listPublicJobOpenings(24),
-        staleTime: 5 * 60 * 1000,
+        staleTime: OPEN_JOBS_STALE_TIME_MS,
+        gcTime: OPEN_JOBS_GC_TIME_MS,
       })
     }
     if (typeof win.requestIdleCallback === "function") {
@@ -261,7 +263,6 @@ export default function Landing() {
                 { from: "user",   text: "Senior PM at an AI infra startup. NYC. $180k+." },
               ]}
             />
-            <HeroEvidencePacket />
             <div className="wk-hero__caption">
               <PulseDot size={6} />
               <span>Claire keeps the interview in iMessage.</span>
@@ -418,34 +419,6 @@ function AllianceBackedBadge() {
         <span className="wk-alliance-badge__label">Backed by <strong>Alliance</strong></span>
       </span>
     </a>
-  )
-}
-
-function HeroEvidencePacket() {
-  return (
-    <aside className="wk-hero-packet" aria-label="Sample Claire evidence packet">
-      <header className="wk-hero-packet__head">
-        <span className="wk-hero-packet__status">
-          <Icon name="check" size={12} stroke={2.2} />
-          Passed profile draft
-        </span>
-        <span className="wk-hero-packet__role">Senior PM · AI infra</span>
-      </header>
-      <div className="wk-hero-packet__grid">
-        <div className="wk-hero-packet__item">
-          <strong>Nearest proof</strong>
-          <span>AI workflow: 0 to 7 teams.</span>
-        </div>
-        <div className="wk-hero-packet__item">
-          <strong>Constraints</strong>
-          <span>NYC/remote · $180k+.</span>
-        </div>
-        <div className="wk-hero-packet__item wk-hero-packet__item--wide">
-          <strong>Share gate</strong>
-          <span>Employer share waits for candidate approval.</span>
-        </div>
-      </div>
-    </aside>
   )
 }
 
