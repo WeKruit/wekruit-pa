@@ -39,6 +39,8 @@ const PITCH_SYSTEM = [
   "3) SENIORITY — infer from titles + durations: one of intern/new-grad, junior, mid-level, senior, staff/principal, lead/manager, founder. One short phrase.",
   "4) INDUSTRY & TRACK — their industry + current career track, then the ADJACENT tracks/titles you'd take them to. Keep it TIGHT. e.g. 'AI infra · backend/platform eng — also fits ML-platform, DevEx, or staff backend roles'.",
   "",
+  "PRE-COMPUTED EMPLOYER SIGNALS (when present): the profile may carry an `employerSignals` object derived ahead of time from the candidate's employer history (founderRole, selectivitySignals, scopeOfOwnership {teamSize/revenue/users}, hasBigTechBackground, employerGrowthTier, employerTags like big_tech / mag_7 / yc_alumni / unicorn). When it is present, TRUST it to pick the line-1 priority instead of guessing from raw text: founderRole=true → lead P1; selectivitySignals non-empty → those ARE the P2 honors (cite one near-verbatim); scopeOfOwnership numbers → real P3/P5 scope; hasBigTechBackground or a growth-tier/employerTags environment → the P4 brand/selectivity line. The signals choose WHICH proof leads — the cited facts themselves must still come from the profile; signals never justify inventing a metric, title, or employer.",
+  "",
   "RULES — never break:",
   "- MERGE multi-source history: the experienceHighlights are pulled from SEVERAL sources (LinkedIn, a Coresignal record, and the parsed résumé) and the SAME real role can appear MORE THAN ONCE under slightly different titles or with different detail (e.g. 'Software Engineer' and 'Senior Software Engineer' at the same company, or a résumé entry with bullets next to a description-less LinkedIn entry). They are the SAME PERSON's history — DETERMINE which entries refer to the same role and MERGE them: treat duplicates as one, combine their detail (use the résumé bullets/projects as the achievement source), and NEVER double-count a role for YOE or list the same role twice. Different roles at the same company over time stay separate.",
   "- Use ONLY facts in the provided profile. NEVER invent a metric, title, employer, promotion, number, or YOE.",
@@ -63,6 +65,22 @@ type Highlight = {
   companyIndustry?: string
 }
 
+/**
+ * Pre-computed employer-history quality signals (Adam 2026-06-10) read off `pa-users.tags`
+ * (written at the merge-experience seam — see external-supply/employer-signals.ts). When present
+ * they drive the line-1 priority pick (founder > selectivity > scope > big-tech/growth
+ * environment) instead of compose-time guessing. All optional; absent for legacy users.
+ */
+export type PitchEmployerSignals = {
+  employerStages?: string[]
+  employerTags?: string[]
+  hasBigTechBackground?: boolean
+  employerGrowthTier?: string
+  founderRole?: boolean
+  scopeOfOwnership?: { teamSize?: number; revenue?: string; users?: number }
+  selectivitySignals?: string[]
+}
+
 export type PitchProfile = {
   name: string
   recentRoleTitle: string | null
@@ -71,6 +89,8 @@ export type PitchProfile = {
   experienceHighlights: Highlight[]
   followers: number | null
   headline: string | null
+  /** Derived employer-history signals (see PitchEmployerSignals). Absent when not yet derived. */
+  employerSignals?: PitchEmployerSignals
   /**
    * IMPROVED-PITCH re-entry flag (Adam 2026-06-04): set when a résumé landed AFTER a first pitch already
    * ran and now carries real descriptions. The composer leans into the freshly-available technical
@@ -237,6 +257,33 @@ export function buildPitchProfile(
   const recentRoleTitle = freshRole?.title ? freshRole.title : str(tags.recentRoleTitle)
   const recentCompany = freshRole?.company ? freshRole.company : str(tags.recentCompany)
 
+  // EMPLOYER-HISTORY SIGNALS (Adam 2026-06-10) — surface the pre-computed derived-history tags
+  // (employer-signals.ts seam) so the composer leads with founder/selectivity/scope/big-tech proof
+  // deterministically instead of re-guessing per compose. Strictly additive: only keys present on
+  // tags are carried; legacy users (no signals) get no `employerSignals` key at all.
+  const employerSignals: PitchEmployerSignals = {}
+  const strArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && Boolean(s.trim())) : []
+  const employerStages = strArr(tags.employerStages)
+  if (employerStages.length) employerSignals.employerStages = employerStages
+  const employerTags = strArr(tags.employerTags)
+  if (employerTags.length) employerSignals.employerTags = employerTags
+  if (tags.hasBigTechBackground === true) employerSignals.hasBigTechBackground = true
+  if (typeof tags.employerGrowthTier === "string" && tags.employerGrowthTier.trim()) {
+    employerSignals.employerGrowthTier = tags.employerGrowthTier.trim()
+  }
+  if (tags.founderRole === true) employerSignals.founderRole = true
+  if (tags.scopeOfOwnership && typeof tags.scopeOfOwnership === "object" && !Array.isArray(tags.scopeOfOwnership)) {
+    const raw = tags.scopeOfOwnership as Record<string, unknown>
+    const scope: NonNullable<PitchEmployerSignals["scopeOfOwnership"]> = {}
+    if (typeof raw.teamSize === "number" && Number.isFinite(raw.teamSize)) scope.teamSize = raw.teamSize
+    if (typeof raw.revenue === "string" && raw.revenue.trim()) scope.revenue = raw.revenue.trim()
+    if (typeof raw.users === "number" && Number.isFinite(raw.users)) scope.users = raw.users
+    if (Object.keys(scope).length) employerSignals.scopeOfOwnership = scope
+  }
+  const selectivitySignals = strArr(tags.selectivitySignals)
+  if (selectivitySignals.length) employerSignals.selectivitySignals = selectivitySignals
+
   return {
     name: firstName,
     recentRoleTitle: recentRoleTitle || null,
@@ -245,6 +292,7 @@ export function buildPitchProfile(
     experienceHighlights,
     followers: followersRaw,
     headline: str(userDoc.linkedinHeadline) ?? str((userDoc.coresignal as { headline?: unknown })?.headline),
+    ...(Object.keys(employerSignals).length ? { employerSignals } : {}),
   }
 }
 

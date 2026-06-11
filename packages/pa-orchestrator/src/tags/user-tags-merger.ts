@@ -359,6 +359,71 @@ export const UserTagsSchema = z.object({
    */
   companyPositiveList: z.array(z.string()).max(30).optional(),
 
+  // ---- DERIVED EMPLOYER-HISTORY signals (2026-06-10) -------------------
+  // These are DERIVED-HISTORY quality signals (where the candidate HAS
+  // worked), NOT preferences. Do NOT confuse with the preference axes
+  // `companyStage` / `companySize` above (what the candidate WANTS) — the
+  // semantics are orthogonal and the preference fields are untouched.
+  // Written at the merge-experience seam (cv-ingest runUserTagsMerge +
+  // coresignal-experiences-mirror) by joining the merged employer timeline
+  // against `pa-companies/{id}` enrichment docs + one ownership/prestige
+  // LLM extraction. All optional; absent fields are never clobbered
+  // (empty derivations write NOTHING).
+  //
+  // CONSUMPTION: pitch composer + agent context ONLY. V16 matching does
+  // NOT read these fields — wiring them into scoring/weights is a separate
+  // Adam-gated decision (do not add them to query-matching-jobs without it).
+  /**
+   * Funding stages of companies in the candidate's employment HISTORY
+   * (canonical `COMPANY_STAGE_VOCAB` values from `pa-companies.companyStage`).
+   * Derived, multi-value. Distinct from the `companyStage` PREFERENCE field.
+   */
+  employerStages: z.array(z.enum(COMPANY_STAGE_VOCAB)).optional(),
+  /**
+   * Open-vocab company-tag tokens (union of `pa-companies.companyTags` for
+   * employers in the candidate's history — e.g. `big_tech`, `mag_7`,
+   * `yc_alumni`, `unicorn`). Cap 30 to keep overlap sets bounded. Derived;
+   * distinct from the `targetCompanyTags` PREFERENCE field.
+   */
+  employerTags: z.array(z.string()).max(30).optional(),
+  /**
+   * True when any employer in the candidate's history carries a
+   * `big_tech` / `mag_7` company tag. Derived-history boolean.
+   */
+  hasBigTechBackground: z.boolean().optional(),
+  /**
+   * Coarse growth-tier classification of the candidate's employer mix
+   * (see `deriveEmployerGrowthTier` in apps/functions
+   * external-supply/employer-signals.ts). Derived-history.
+   */
+  employerGrowthTier: z.enum(["early_stage", "growth", "mature", "unknown"]).optional(),
+  /**
+   * True when the candidate held a founder / co-founder / owner role in
+   * their history (LLM-extracted from merged experiences — no regex
+   * text→enum; see employer-signals.ts). Derived-history; distinct from
+   * `careerStage = "founder"` which is a seniority TARGET token.
+   */
+  founderRole: z.boolean().optional(),
+  /**
+   * Ownership scope EXPLICITLY present in the candidate's experience text
+   * (LLM-extracted, no inference): people managed / revenue owned / users
+   * served. All sub-fields optional.
+   */
+  scopeOfOwnership: z
+    .object({
+      teamSize: z.number().int().positive().optional(),
+      revenue: z.string().max(60).optional(),
+      users: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+  /**
+   * Honors / awards / selective-program strings EXPLICITLY present in the
+   * candidate's experience text (e.g. "Top 0.1% of 390K", "YC W23",
+   * "Forbes 30u30"). ≤10 entries, each ≤60 chars. LLM-extracted, never
+   * inferred. Derived-history.
+   */
+  selectivitySignals: z.array(z.string().max(60)).max(10).optional(),
+
   // ---- SOFT-vs-HARD preference model (2026-05-28) ---------------------
   /**
    * Per-axis hardness annotations (`hard` = dealbreaker → drop; `soft` =

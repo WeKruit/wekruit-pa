@@ -84,6 +84,14 @@ import {
   type MergeAndDetermineResult as MergeAndDetermineProfileResult,
   type SourceExperience as MergeSourceExperience,
 } from "../external-supply/merge-experience-profile.js"
+// Employer-history quality signals (Adam 2026-06-10): joins the merged timeline against
+// pa-companies enrichment + one ownership/prestige extraction. ADDITIVE + fail-open.
+import {
+  deriveEmployerHistorySignals,
+  makeFirestoreCompanyLoader,
+  type EmployerHistoryRow,
+  type EmployerHistorySignals,
+} from "../external-supply/employer-signals.js"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 import { computeResumeBaselineTagPatch } from "../lib/resume-baseline-tags.js"
 import {
@@ -986,6 +994,12 @@ export async function runUserTagsMerge(args: {
     linkedinExperiences: MergeSourceExperience[]
     resumeExperiences: MergeSourceExperience[]
   }) => Promise<MergeAndDetermineProfileResult | null>
+  /**
+   * Injectable employer-history signals derivation (Adam 2026-06-10). Default = the real
+   * pa-companies join + gpt-5.4-mini ownership extraction (employer-signals.ts). Tests stub it.
+   * ADDITIVE + FAIL-OPEN: an empty result writes nothing and the merge result is unaffected.
+   */
+  deriveEmployerSignals?: (rows: EmployerHistoryRow[]) => Promise<EmployerHistorySignals>
 }): Promise<void> {
   // 1. Read existing user doc — statedPreferences + preferredLang flow
   //    in from the chat-answers worker (separate write side).
@@ -1130,6 +1144,10 @@ export async function runUserTagsMerge(args: {
   //     `merged` (they OVERRIDE the résumé-only derivation). FAIL-OPEN: null → leave the résumé-only
   //     result untouched. Never throws (the whole runner already swallows errors).
   let mergedExperienceHighlights: Array<Record<string, unknown>> | undefined
+  // The employer-history derivation (step 2.6) prefers the LLM-merged canonical timeline; when the
+  // merge fails open it falls back to the union of raw source rows (same shape) so a résumé-only
+  // pass still carries company names to join on.
+  let employerRows: EmployerHistoryRow[] = []
   try {
     const linkedinHl = Array.isArray(userData?.experienceHighlights)
       ? (userData!.experienceHighlights as unknown[])
@@ -1144,6 +1162,7 @@ export async function runUserTagsMerge(args: {
       .filter((w): w is Record<string, unknown> => Boolean(w) && typeof w === "object")
       .map((w) => toSourceFromResume(w))
       .filter((s) => s.title || s.company)
+    employerRows = [...resumeSources, ...linkedinSources]
     if (linkedinSources.length > 0 || resumeSources.length > 0) {
       const merge = args.mergeAndDetermine ?? mergeAndDetermineProfile
       const tMerge0 = Date.now()
@@ -1156,6 +1175,8 @@ export async function runUserTagsMerge(args: {
         userId: args.userId,
       })
       if (determined && determined.mergedExperiences.length > 0) {
+        // The merged canonical timeline is the better employer-join input (deduped, recency-aware).
+        employerRows = determined.mergedExperiences.map((e) => ({ ...e }))
         mergedExperienceHighlights = determined.mergedExperiences.slice(0, 10).map((e) => {
           const out: Record<string, unknown> = {
             title: e.title,
@@ -1194,6 +1215,42 @@ export async function runUserTagsMerge(args: {
       error: err instanceof Error ? err.message : String(err),
     })
     mergedExperienceHighlights = undefined
+  }
+
+  // 2.6 EMPLOYER-HISTORY SIGNALS (Adam 2026-06-10) — join the merged timeline against
+  //     pa-companies enrichment (employerStages / employerTags / hasBigTechBackground /
+  //     employerGrowthTier) + ONE gpt-5.4-mini ownership extraction (founderRole /
+  //     scopeOfOwnership / selectivitySignals). ADDITIVE ONLY: empty derivation writes
+  //     NOTHING (absent fields untouched); FAIL-OPEN: any error logs + skips, the merge
+  //     result above is unaffected. Rides the SAME single tags write below.
+  try {
+    if (employerRows.length > 0) {
+      const derive =
+        args.deriveEmployerSignals ??
+        ((rows: EmployerHistoryRow[]) =>
+          deriveEmployerHistorySignals(rows, {
+            getCompanyDocs: makeFirestoreCompanyLoader(args.db),
+            log: args.log,
+          }))
+      const tEmp0 = Date.now()
+      const signals = await derive(employerRows)
+      args.log("pa.cv_ingest.timing", {
+        step: "employer_signals",
+        ms: Date.now() - tEmp0,
+        rows: employerRows.length,
+        userId: args.userId,
+      })
+      const keys = Object.keys(signals ?? {})
+      if (keys.length > 0) {
+        merged = { ...merged, ...signals }
+        args.log("pa.cv_user_tags.employer_signals", { userId: args.userId, keys })
+      }
+    }
+  } catch (err) {
+    args.log("pa.cv_user_tags.employer_signals_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
 
   // 3. Write `pa-users/{userId}.tags`. Merge:true preserves any tag
@@ -1273,6 +1330,8 @@ export async function reEnrichUserTagsFromParsedResume(args: {
   ) => Promise<void>
   /** Injectable unified merge+determine (default = the real gpt-5.4-mini call); tests stub it. */
   mergeAndDetermine?: Parameters<typeof runUserTagsMerge>[0]["mergeAndDetermine"]
+  /** Injectable employer-history signals derivation (default = the real join + extraction); tests stub it. */
+  deriveEmployerSignals?: Parameters<typeof runUserTagsMerge>[0]["deriveEmployerSignals"]
 }): Promise<void> {
   const nowIso = args.nowIso ?? (() => new Date().toISOString())
   const log = args.log ?? (() => undefined)
@@ -1326,6 +1385,7 @@ export async function reEnrichUserTagsFromParsedResume(args: {
       nowIso,
       log,
       ...(args.mergeAndDetermine ? { mergeAndDetermine: args.mergeAndDetermine } : {}),
+      ...(args.deriveEmployerSignals ? { deriveEmployerSignals: args.deriveEmployerSignals } : {}),
     })
     log("pa.cv_reenrich.ok", { userId: args.userId })
   } catch (err) {

@@ -1742,6 +1742,8 @@ describe("runUserTagsMerge — merge-determined roleFunction OVERRIDES the résu
         careerStage: "senior",
         roleFunction: ["software_engineering"],
       }),
+      // Hermetic: keep the (new, default-on) employer-signals derivation off the network in tests.
+      deriveEmployerSignals: async () => ({}),
       writeUserTags: async (_db, _uid, tags) => { captured = tags },
       nowIso: () => "2026-06-05T00:00:00.000Z",
       log: () => {},
@@ -1766,12 +1768,114 @@ describe("runUserTagsMerge — merge-determined roleFunction OVERRIDES the résu
       embedding: null,
       mergeUserTagsFn: () => ({ targetRoleFunction: ["data_analysis"] }),
       mergeAndDetermine: async () => null, // fail-open
+      // Hermetic: keep the (new, default-on) employer-signals derivation off the network in tests.
+      deriveEmployerSignals: async () => ({}),
       writeUserTags: async (_db, _uid, tags) => { captured = tags },
       nowIso: () => "2026-06-05T00:00:00.000Z",
       log: () => {},
     })
     assert.ok(captured)
     assert.equal(captured!.targetRoleFunction, undefined, "fail-open writes no role override (merge:true keeps existing)")
+  })
+})
+
+describe("runUserTagsMerge — employer-history signals ride the same tags write (Adam 2026-06-10)", () => {
+  const workHistory = [
+    { title: "Software Engineer", company: "Stripe", currentRole: true, bullets: ["Led a team of 5"] },
+  ]
+  it("derived signals land on the SAME written tags object (additive)", async () => {
+    const { db } = makeFakeDb({ users: { u_emp: {} } })
+    let captured: Record<string, unknown> | undefined
+    let sawRows: unknown[] = []
+    await runUserTagsMerge({
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
+      userId: "u_emp",
+      parsed: happyParsed(),
+      workHistory,
+      embedding: null,
+      mergeUserTagsFn: () => ({ skills: [{ name: "python" }] }),
+      mergeAndDetermine: async () => ({
+        mergedExperiences: [{ title: "Software Engineer", company: "Stripe", isCurrent: true }],
+      }),
+      deriveEmployerSignals: async (rows) => {
+        sawRows = rows
+        return {
+          employerStages: ["series_b"],
+          employerTags: ["unicorn"],
+          hasBigTechBackground: true,
+          employerGrowthTier: "growth",
+          founderRole: true,
+          scopeOfOwnership: { teamSize: 5 },
+          selectivitySignals: ["Top 0.1% of 390K"],
+        }
+      },
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-06-10T00:00:00.000Z",
+      log: () => {},
+    })
+    assert.ok(captured, "writeUserTags was called")
+    assert.equal(sawRows.length, 1, "derivation fed the MERGED canonical timeline")
+    assert.equal((sawRows[0] as Record<string, unknown>).company, "Stripe")
+    assert.deepEqual(captured!.employerStages, ["series_b"])
+    assert.deepEqual(captured!.employerTags, ["unicorn"])
+    assert.equal(captured!.hasBigTechBackground, true)
+    assert.equal(captured!.employerGrowthTier, "growth")
+    assert.equal(captured!.founderRole, true)
+    assert.deepEqual(captured!.scopeOfOwnership, { teamSize: 5 })
+    assert.deepEqual(captured!.selectivitySignals, ["Top 0.1% of 390K"])
+  })
+  it("EMPTY derivation writes NOTHING (no employer keys on the write)", async () => {
+    const { db } = makeFakeDb({ users: { u_emp_empty: {} } })
+    let captured: Record<string, unknown> | undefined
+    await runUserTagsMerge({
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
+      userId: "u_emp_empty",
+      parsed: happyParsed(),
+      workHistory,
+      embedding: null,
+      mergeUserTagsFn: () => ({ skills: [{ name: "python" }] }),
+      mergeAndDetermine: async () => null,
+      deriveEmployerSignals: async () => ({}),
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-06-10T00:00:00.000Z",
+      log: () => {},
+    })
+    assert.ok(captured)
+    for (const k of [
+      "employerStages",
+      "employerTags",
+      "hasBigTechBackground",
+      "employerGrowthTier",
+      "founderRole",
+      "scopeOfOwnership",
+      "selectivitySignals",
+    ]) {
+      assert.ok(!(k in captured!), `${k} must be ABSENT on an empty derivation`)
+    }
+  })
+  it("a THROWING derivation is fail-open: tags write still happens, unaffected", async () => {
+    const { db } = makeFakeDb({ users: { u_emp_throw: {} } })
+    let captured: Record<string, unknown> | undefined
+    const events: string[] = []
+    await runUserTagsMerge({
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
+      userId: "u_emp_throw",
+      parsed: happyParsed(),
+      workHistory,
+      embedding: null,
+      mergeUserTagsFn: () => ({ skills: [{ name: "python" }] }),
+      mergeAndDetermine: async () => null,
+      deriveEmployerSignals: async () => {
+        throw new Error("derivation down")
+      },
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-06-10T00:00:00.000Z",
+      log: (e) => events.push(e),
+    })
+    assert.ok(captured, "the tags write is unaffected by the employer-signals failure")
+    assert.ok((captured!.skills as unknown[]).length >= 1)
+    assert.ok(events.includes("pa.cv_user_tags.employer_signals_error"))
+    assert.ok(!("employerTags" in captured!))
   })
 })
 
@@ -1836,6 +1940,7 @@ describe("reEnrichUserTagsFromParsedResume — #3 conversational re-enrich hook 
         return null
       },
       mergeUserTagsFn: () => ({ skills: [{ name: "typescript" }], targetRoleFunction: ["data_analysis"] }),
+      deriveEmployerSignals: async () => ({}),
       mergeAndDetermine: async () => {
         mergeCalled = true
         return {
@@ -1873,6 +1978,7 @@ describe("reEnrichUserTagsFromParsedResume — #3 conversational re-enrich hook 
         computeEmbedding: async () => null,
         mergeUserTagsFn: () => ({ targetRoleFunction: ["software_engineering"] }),
         mergeAndDetermine: async () => null,
+        deriveEmployerSignals: async () => ({}),
         writeUserTags: async () => {
           throw new Error("simulated Firestore write failure")
         },
