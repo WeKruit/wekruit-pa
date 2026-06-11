@@ -979,12 +979,15 @@ export async function fetchCollabJobs(
     const recruiterBoardForCaller: RecruiterBoardPayload = rb
 
     const companyRaw = String(d.companyName ?? d.company ?? "")
+    const revealedBoard: RecruiterBoardPayload = companyRaw
+      ? { ...recruiterBoardForCaller, label: { ...recruiterBoardForCaller.label, company: companyRaw } }
+      : recruiterBoardForCaller
     allMatching.push({
       jobId: jobIdForCaller,
       title: String(d.title ?? ""),
       compSummary: typeof d.compSummary === "string" ? d.compSummary : undefined,
       jdBlocks: Array.isArray(d.jdBlocks) ? (d.jdBlocks as JdBlock[]) : [],
-      recruiterBoard: recruiterBoardForCaller,
+      recruiterBoard: revealedBoard,
       updatedAt: updatedAtIso,
     })
     const cid = normalizeCompanyId(companyRaw)
