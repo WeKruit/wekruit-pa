@@ -8,6 +8,9 @@ import {
   encodeCursor,
   formatComp,
   formatPostedAgo,
+  handleOpenJobsRequest,
+  SUCCESS_CACHE_CONTROL,
+  type HandleOpenJobsDeps,
   matchesFilters,
   parseQuery,
   runOpenJobs,
@@ -531,5 +534,125 @@ describe("verifyCollabAuth", () => {
   it("accepts second key in CSV", () => {
     const r = verifyCollabAuth("key_beta_secret", undefined, KEYS, ORIGINS)
     assert.equal(r.ok, true)
+  })
+})
+
+// ============================================================ handler caching
+
+describe("handleOpenJobsRequest cache headers", () => {
+  function makeFakeDb(docs: Array<{ id: string; data: Record<string, unknown> }>): unknown {
+    const q: Record<string, unknown> = {}
+    q.where = () => q
+    q.orderBy = () => q
+    q.limit = () => q
+    q.get = async () => ({ size: docs.length, docs: docs.map((d) => ({ id: d.id, data: () => d.data })) })
+    return { collection: () => q }
+  }
+
+  function makeThrowingDb(): unknown {
+    const q: Record<string, unknown> = {}
+    q.where = () => q
+    q.orderBy = () => q
+    q.limit = () => q
+    q.get = async () => {
+      throw new Error("firestore_unavailable")
+    }
+    return { collection: () => q }
+  }
+
+  interface FakeRes {
+    headers: Record<string, string>
+    statusCode: number | null
+    body: unknown
+    set(field: string, value: string): unknown
+    status(code: number): FakeRes
+    json(body: unknown): unknown
+    send(body: string): unknown
+  }
+
+  function makeRes(): FakeRes {
+    const res: FakeRes = {
+      headers: {},
+      statusCode: null,
+      body: null,
+      set(field: string, value: string) {
+        res.headers[field] = value
+        return res
+      },
+      status(code: number) {
+        res.statusCode = code
+        return res
+      },
+      json(body: unknown) {
+        res.body = body
+        return res
+      },
+      send(body: string) {
+        res.body = body
+        return res
+      },
+    }
+    return res
+  }
+
+  function makeReq(over: { method?: string; query?: Record<string, unknown>; headers?: Record<string, string | string[] | undefined> } = {}) {
+    return { method: over.method ?? "GET", query: over.query ?? {}, headers: over.headers ?? {} }
+  }
+
+  it("200 success sets the long-lived public CDN cache header", async () => {
+    _resetSnapshotCacheForTest()
+    const db = makeFakeDb([{ id: "j1", data: freshDoc() }]) as HandleOpenJobsDeps["db"]
+    const res = makeRes()
+    await handleOpenJobsRequest(makeReq(), res, { db, now: NOW })
+    assert.equal(res.statusCode, 200)
+    assert.equal((res.body as { ok: boolean }).ok, true)
+    assert.equal(res.headers["Cache-Control"], SUCCESS_CACHE_CONTROL)
+    assert.equal(
+      res.headers["Cache-Control"],
+      "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
+    )
+  })
+
+  it("500 error path stays no-store (never CDN-cached)", async () => {
+    _resetSnapshotCacheForTest()
+    const db = makeThrowingDb() as HandleOpenJobsDeps["db"]
+    const res = makeRes()
+    await handleOpenJobsRequest(makeReq(), res, { db, now: NOW })
+    assert.equal(res.statusCode, 500)
+    assert.equal((res.body as { ok: boolean }).ok, false)
+    assert.equal(res.headers["Cache-Control"], "no-store")
+  })
+
+  it("405 method_not_allowed stays no-store", async () => {
+    _resetSnapshotCacheForTest()
+    const res = makeRes()
+    await handleOpenJobsRequest(makeReq({ method: "POST" }), res, {})
+    assert.equal(res.statusCode, 405)
+    assert.equal(res.headers["Cache-Control"], "no-store")
+  })
+
+  it("collab auth failure stays no-store", async () => {
+    _resetSnapshotCacheForTest()
+    const res = makeRes()
+    await handleOpenJobsRequest(
+      makeReq({ query: { source: "collab", apiKey: "wrong_key" } }),
+      res,
+      { collabKeysCsv: "key_alpha_secret", collabOriginsCsv: "*" }
+    )
+    assert.equal(res.statusCode, 401)
+    assert.equal(res.headers["Cache-Control"], "no-store")
+  })
+
+  it("keeps CORS headers for cross-origin back-compat callers", async () => {
+    _resetSnapshotCacheForTest()
+    const db = makeFakeDb([{ id: "j1", data: freshDoc() }]) as HandleOpenJobsDeps["db"]
+    const res = makeRes()
+    await handleOpenJobsRequest(
+      makeReq({ headers: { origin: "https://candidate.wekruit.com" } }),
+      res,
+      { db, now: NOW }
+    )
+    assert.equal(res.headers["Access-Control-Allow-Origin"], "https://candidate.wekruit.com")
+    assert.equal(res.headers["Access-Control-Allow-Methods"], "GET,OPTIONS")
   })
 })

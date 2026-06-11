@@ -30,8 +30,12 @@
  *   the pattern of `paPublicCvIngest` at apps/functions/src/public-cv-ingest.ts.
  *
  * Cache contract (BOTH modes — partner MUST respect):
- *   Browser:    max-age=60
- *   CDN:        s-maxage=300, stale-while-revalidate=600
+ *   Browser:    max-age=300 (successful responses only)
+ *   CDN:        s-maxage=3600, stale-while-revalidate=86400 — the feed is
+ *               refreshed ~daily by the macmini scrape; Firebase Hosting's
+ *               CDN (via the /api/open-jobs rewrite on the pa-landing site)
+ *               absorbs visitor traffic so the CF is hit at most ~hourly
+ *               per edge POP. Error responses are ALWAYS no-store.
  *   In-memory:  60s LRU per (mode, scanCap) inside warm CF instance
  *   ETag:       sha1(rowIds + params) — 304 on If-None-Match match
  *
@@ -769,16 +773,156 @@ function setCors(res: { set: (k: string, v: string) => void }, origin: string | 
   res.set("Access-Control-Allow-Headers", "Content-Type,If-None-Match,X-WeKruit-Api-Key")
   res.set("Access-Control-Expose-Headers", "ETag,X-Cache,Last-Modified")
   res.set("Access-Control-Max-Age", "3600")
-  // Tiered caching to keep Firestore reads bounded under load:
-  //   - browser holds 60s (max-age)
-  //   - CDN (Cloud Run + Fastly fronting Firebase Hosting CFs) holds 5m
-  //     (s-maxage) and serves stale-while-revalidate for another 10m so a
-  //     cold instance never blocks user paint
-  //   - in-memory snapshot inside the CF instance (loadSnapshot, 60s TTL)
-  //     deduplicates Firestore reads across concurrent requests on the
-  //     same warm instance
-  res.set("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600")
+  // Default to no-store; the SUCCESS cache policy is applied only once the
+  // handler knows the response is a 200 ok:true (or a 304 revalidation of
+  // one). Errors — 405 / 401 / 403 / 503 / 500 — must never be CDN-cached:
+  // a partner who just fixed a typo'd API key, or a transient Firestore
+  // blip, would otherwise be stuck behind a poisoned edge entry for an hour.
+  res.set("Cache-Control", "no-store")
   res.set("Vary", "Accept-Encoding, Origin, X-WeKruit-Api-Key")
+}
+
+/**
+ * Cache policy for SUCCESSFUL responses only (Adam directive 2026-06-11:
+ * "this should be cache not read every time… user can update it every day
+ * once… not overloading our server"). Tiered:
+ *   - browser holds 5m (max-age) — in-session tab flips are free
+ *   - CDN (Firebase Hosting edge via the /api/open-jobs rewrite) holds 1h
+ *     (s-maxage) and may serve stale for a further 24h while revalidating
+ *     (stale-while-revalidate) so a cold CF instance never blocks paint.
+ *     The scrape pool refreshes ~daily, so 1h edge TTL ≈ near-zero visible
+ *     staleness while collapsing visitor traffic to ~1 CF hit/hour/POP.
+ *   - in-memory snapshot inside the CF instance (loadSnapshot, 60s TTL)
+ *     dedups Firestore reads across concurrent requests on a warm instance
+ */
+export const SUCCESS_CACHE_CONTROL =
+  "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
+
+// Minimal structural req/res shapes so the handler body is unit-testable
+// without standing up an Express/CF emulator. The firebase-functions
+// Request/Response satisfy these structurally.
+interface HandlerRequest {
+  method: string
+  query: Record<string, unknown>
+  headers: Record<string, string | string[] | undefined>
+}
+
+interface HandlerResponse {
+  set(field: string, value: string): unknown
+  status(code: number): HandlerResponse
+  json(body: unknown): unknown
+  send(body: string): unknown
+}
+
+export interface HandleOpenJobsDeps extends RunDeps {
+  /** Test override for PA_PUBLIC_COLLAB_API_KEYS secret. */
+  collabKeysCsv?: string
+  /** Test override for PA_PUBLIC_COLLAB_ORIGINS secret. */
+  collabOriginsCsv?: string
+}
+
+export async function handleOpenJobsRequest(
+  req: HandlerRequest,
+  res: HandlerResponse,
+  deps: HandleOpenJobsDeps = {}
+): Promise<void> {
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined
+  setCors(res, origin)
+  if (req.method === "OPTIONS") {
+    res.status(204).send("")
+    return
+  }
+  if (req.method !== "GET") {
+    res.status(405).json({ ok: false, reason: "method_not_allowed" })
+    return
+  }
+
+  try {
+    const params = parseQuery(req.query)
+
+    // Auth gate — collab mode only.
+    if (params.source === "collab") {
+      const apiKey =
+        (typeof req.query.apiKey === "string" ? req.query.apiKey : undefined) ??
+        (typeof req.headers["x-wekruit-api-key"] === "string"
+          ? (req.headers["x-wekruit-api-key"] as string)
+          : undefined)
+      const keysCsv = deps.collabKeysCsv ?? PA_PUBLIC_COLLAB_API_KEYS.value() ?? ""
+      const originsCsv = deps.collabOriginsCsv ?? PA_PUBLIC_COLLAB_ORIGINS.value() ?? ""
+      if (!keysCsv) {
+        res.status(503).json({
+          ok: false,
+          reason: "collab_mode_not_configured",
+          hint: "Set PA_PUBLIC_COLLAB_API_KEYS Firebase secret",
+        })
+        return
+      }
+      const auth = verifyCollabAuth(apiKey, origin, keysCsv, originsCsv)
+      if (!auth.ok) {
+        const status = auth.reason === "origin_not_allowed" ? 403 : 401
+        // Auth failures stay on the no-store default from setCors — a
+        // partner who was just issued a key, or just fixed a typo, must
+        // not be stalled behind a CDN-cached 401 against the same query.
+        // Diagnostic fingerprint for debugging client-side auth issues
+        // without leaking the full key. Logs the byte length, first 4 +
+        // last 4 chars, source (header vs query), and presence of common
+        // mangling signatures (whitespace, "Bearer " prefix).
+        const fp =
+          apiKey === undefined
+            ? "absent"
+            : `len=${apiKey.length} head=${apiKey.slice(0, 4)} tail=${apiKey.slice(-4)} ws=${/\s/.test(apiKey) ? "yes" : "no"} bearer=${apiKey.startsWith("Bearer ") ? "yes" : "no"}`
+        const src =
+          typeof req.query.apiKey === "string"
+            ? "query"
+            : typeof req.headers["x-wekruit-api-key"] === "string"
+              ? "header"
+              : "none"
+        console.warn(
+          `paPublicOpenJobs auth_fail reason=${auth.reason} src=${src} key_fp=${fp} origin=${origin ?? "absent"}`
+        )
+        res.status(status).json({ ok: false, reason: auth.reason })
+        return
+      }
+    }
+
+    const result = await runOpenJobs(params, deps)
+
+    // Success is now certain — apply the long-lived public cache policy.
+    // Covers both the 304 revalidation and the 200 ok:true body below.
+    // Every error path above/below keeps the no-store default from setCors.
+    res.set("Cache-Control", SUCCESS_CACHE_CONTROL)
+
+    const etag = computeEtag(result.rows, params)
+    res.set("ETag", etag)
+    const ifNoneMatch = typeof req.headers["if-none-match"] === "string" ? req.headers["if-none-match"] : undefined
+    if (ifNoneMatch && ifNoneMatch === etag) {
+      res.status(304).send("")
+      return
+    }
+
+    res.set("X-Cache", result.cached ? "HIT" : "MISS")
+    res.status(200).json({
+      ok: true,
+      apiVersion: API_VERSION,
+      source: params.source,
+      generatedAt: new Date().toISOString(),
+      count: result.rows.length,
+      scanned: result.scanned,
+      total: result.total,
+      offset: params.offset,
+      limit: params.limit,
+      hasMore: result.hasMore,
+      nextCursor: result.nextCursor,
+      cached: result.cached,
+      rows: result.rows,
+    })
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    // Errors are never cached — re-assert no-store in case the failure
+    // happened after the success header was already set (e.g. computeEtag).
+    res.set("Cache-Control", "no-store")
+    res.status(500).json({ ok: false, reason })
+  }
 }
 
 export const paPublicOpenJobs = onRequest(
@@ -798,95 +942,6 @@ export const paPublicOpenJobs = onRequest(
     secrets: [PA_PUBLIC_COLLAB_API_KEYS, PA_PUBLIC_COLLAB_ORIGINS],
   },
   async (req, res) => {
-    const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined
-    setCors(res, origin)
-    if (req.method === "OPTIONS") {
-      res.status(204).send("")
-      return
-    }
-    if (req.method !== "GET") {
-      res.status(405).json({ ok: false, reason: "method_not_allowed" })
-      return
-    }
-
-    try {
-      const params = parseQuery(req.query as Record<string, unknown>)
-
-      // Auth gate — collab mode only.
-      if (params.source === "collab") {
-        const apiKey =
-          (typeof req.query.apiKey === "string" ? req.query.apiKey : undefined) ??
-          (typeof req.headers["x-wekruit-api-key"] === "string"
-            ? (req.headers["x-wekruit-api-key"] as string)
-            : undefined)
-        const keysCsv = PA_PUBLIC_COLLAB_API_KEYS.value() ?? ""
-        const originsCsv = PA_PUBLIC_COLLAB_ORIGINS.value() ?? ""
-        if (!keysCsv) {
-          res.status(503).json({
-            ok: false,
-            reason: "collab_mode_not_configured",
-            hint: "Set PA_PUBLIC_COLLAB_API_KEYS Firebase secret",
-          })
-          return
-        }
-        const auth = verifyCollabAuth(apiKey, origin, keysCsv, originsCsv)
-        if (!auth.ok) {
-          const status = auth.reason === "origin_not_allowed" ? 403 : 401
-          // Never cache auth failures — partner may have just been issued a
-          // key, or just fixed a typo, and a CDN-cached 401 stalls them out
-          // for 5 minutes against the same query.
-          res.set("Cache-Control", "no-store")
-          // Diagnostic fingerprint for debugging client-side auth issues
-          // without leaking the full key. Logs the byte length, first 4 +
-          // last 4 chars, source (header vs query), and presence of common
-          // mangling signatures (whitespace, "Bearer " prefix).
-          const fp =
-            apiKey === undefined
-              ? "absent"
-              : `len=${apiKey.length} head=${apiKey.slice(0, 4)} tail=${apiKey.slice(-4)} ws=${/\s/.test(apiKey) ? "yes" : "no"} bearer=${apiKey.startsWith("Bearer ") ? "yes" : "no"}`
-          const src =
-            typeof req.query.apiKey === "string"
-              ? "query"
-              : typeof req.headers["x-wekruit-api-key"] === "string"
-                ? "header"
-                : "none"
-          console.warn(
-            `paPublicOpenJobs auth_fail reason=${auth.reason} src=${src} key_fp=${fp} origin=${origin ?? "absent"}`
-          )
-          res.status(status).json({ ok: false, reason: auth.reason })
-          return
-        }
-      }
-
-      const result = await runOpenJobs(params)
-
-      const etag = computeEtag(result.rows, params)
-      res.set("ETag", etag)
-      const ifNoneMatch = typeof req.headers["if-none-match"] === "string" ? req.headers["if-none-match"] : undefined
-      if (ifNoneMatch && ifNoneMatch === etag) {
-        res.status(304).send("")
-        return
-      }
-
-      res.set("X-Cache", result.cached ? "HIT" : "MISS")
-      res.status(200).json({
-        ok: true,
-        apiVersion: API_VERSION,
-        source: params.source,
-        generatedAt: new Date().toISOString(),
-        count: result.rows.length,
-        scanned: result.scanned,
-        total: result.total,
-        offset: params.offset,
-        limit: params.limit,
-        hasMore: result.hasMore,
-        nextCursor: result.nextCursor,
-        cached: result.cached,
-        rows: result.rows,
-      })
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
-      res.status(500).json({ ok: false, reason })
-    }
+    await handleOpenJobsRequest(req, res)
   }
 )

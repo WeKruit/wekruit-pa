@@ -20,7 +20,7 @@ import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import "../styles/wekruit-tokens.css"
 import { listPublicJobOpenings, type PublicJobOpening } from "../lib/public-jobs.js"
-import { useOpenJobs, humanizeToken, type OpenJobRow } from "../lib/open-jobs.js"
+import { useOpenJobs, humanizeToken, OPEN_JOBS_STALE_TIME_MS, OPEN_JOBS_GC_TIME_MS, type OpenJobRow } from "../lib/open-jobs.js"
 
 // ----------------------------------------------------------------- types --
 
@@ -277,6 +277,10 @@ export default function OpenJobs() {
   const directQuery = useQuery({
     queryKey: ["pa-jobs-public-openings", 24],
     queryFn: () => listPublicJobOpenings(24),
+    // Match the landing idle-prefetch (Landing.tsx) — feed updates ~daily,
+    // so a 6h staleTime makes tab flips and revisits zero-network.
+    staleTime: OPEN_JOBS_STALE_TIME_MS,
+    gcTime: OPEN_JOBS_GC_TIME_MS,
   })
   const error =
     huntQuery.isError ? (huntQuery.error instanceof Error ? huntQuery.error.message : String(huntQuery.error)) : null
