@@ -51,31 +51,28 @@ test("candidate columns are declared in the founder's sheet order", () => {
   assert.match(columnsSlice, /\{ id: "resume", label: "Resume", required: true \}/)
 })
 
-test("header row runs candidate cells → checklist → submit fields → Notes → Status → Feedback → 💬 → action", () => {
+test("compact table header shows key columns + Status + Feedback + 💬", () => {
   const head = sliceBetween(source, "<thead>", "</thead>")
   const order = [
-    head.indexOf("{CANDIDATE_COLUMNS.map"),
-    head.indexOf("{checklistColumns.map"),
-    head.indexOf("{extraFieldDefs.map"),
-    head.indexOf(">Notes</th>"),
+    head.indexOf("{KEY_TABLE_COLUMNS.map"),
     head.indexOf(">Status</th>"),
     head.indexOf(">Feedback</th>"),
     head.indexOf("💬</th>"),
-    head.indexOf('rs-c-action'),
   ]
   for (const idx of order) assert.ok(idx >= 0, "every column group renders a header")
   assert.deepEqual([...order].sort((a, b) => a - b), order, "header groups appear in the pinned order")
+  assert.ok(head.indexOf("{CANDIDATE_COLUMNS.map") < 0, "full CANDIDATE_COLUMNS not in compact header")
+  assert.ok(head.indexOf("{checklistColumns.map") < 0, "checklist not in compact header — moved to drawer")
 })
 
 test("checklist-item columns are generated from the job checklist groups, hard→fit→bonus→anti", () => {
   assert.match(source, /const CHECKLIST_KIND_ORDER: ChecklistKind\[\] = \["hard", "fit", "bonus", "anti"\]/)
   assert.match(source, /CHECKLIST_KIND_ORDER\.indexOf\(a\.kind\) - CHECKLIST_KIND_ORDER\.indexOf\(b\.kind\)/)
   assert.match(source, /groups\.flatMap\(\(group\) => group\.items\.map\(\(item\) => \(\{ id: item\.id, text: item\.text, kind: group\.kind \}\)\)\)/)
-  // short header + full text on hover + group chip
   assert.match(source, /function checklistShortLabel\(text: string \| null \| undefined\): string/)
   assert.match(source, /words\.slice\(0, 4\)\.join\(" "\)/)
-  assert.match(source, /<th key=\{column\.id\} title=\{column\.text\} className=\{`rs-th rs-c-check is-\$\{column\.kind\}`\}>/)
-  assert.match(source, /<span className=\{`rs-chip is-\$\{column\.kind\}`\}>\{CHECKLIST_KIND_CHIP\[column\.kind\]\}<\/span>/)
+  // checklist rendered in add form + detail drawer with kind chip (both use group.kind)
+  assert.match(source, /<span className=\{`rs-chip is-\$\{group\.kind\}`\}>\{CHECKLIST_KIND_CHIP\[group\.kind\]\}<\/span>/)
 })
 
 test("checklist cells are graded selects: — / Strong / Yes / Partial / No", () => {
@@ -87,15 +84,14 @@ test("checklist cells are graded selects: — / Strong / Yes / Partial / No", ()
   assert.match(source, /\{CHECKLIST_VALUE_OPTIONS\.map\(\(option\) => \(/)
 })
 
-test("the blank add row is always the last table row", () => {
-  const body = sliceBetween(source, "<tbody>", "</tbody>")
-  const rowsIdx = body.indexOf("{roleSubmissions.map((row) => (")
-  const addIdx = body.indexOf("<AddRow")
-  assert.ok(rowsIdx >= 0 && addIdx > rowsIdx, "AddRow renders after the real rows")
-  assert.match(source, /className="rs-row-add"/)
+test("the add-candidate form renders below the submissions table", () => {
+  const tableIdx = source.indexOf('<table className="rs-sheet">')
+  const formIdx = source.indexOf("<AddCandidateForm")
+  assert.ok(tableIdx >= 0 && formIdx > tableIdx, "AddCandidateForm renders after the table")
+  assert.match(source, /className="rs-add-form"/)
 })
 
-test("add row gates Submit on required identity URLs, required submit fields, and consent", () => {
+test("add form gates Submit on required identity URLs, required submit fields, and consent", () => {
   const blockersSlice = sliceBetween(source, "function addRowBlockers", "\nfunction ")
   assert.match(blockersSlice, /if \(!draft\.cells\.name\.trim\(\)\) blockers\.push\("Candidate name is required\."\)/)
   assert.match(blockersSlice, /if \(!email\) blockers\.push\("Candidate email is required\."\)/)
@@ -108,21 +104,20 @@ test("add row gates Submit on required identity URLs, required submit fields, an
   assert.match(blockersSlice, /if \(!draft\.consent\) blockers\.push\("Candidate consent is required\."\)/)
   assert.match(source, /const addRowReady = addBlockers\.length === 0/)
   assert.match(source, /disabled=\{!ready \|\| submitting\}/)
-  // the consent checkbox lives in the add row's action cell
-  const addRowSlice = sliceBetween(source, "function AddRow(", "\nfunction ThreadDrawer(")
-  assert.match(addRowSlice, /className="rs-consent"/)
-  assert.match(addRowSlice, /Candidate consented/)
+  const addFormSlice = sliceBetween(source, "function AddCandidateForm(", "\nfunction DetailDrawer(")
+  assert.match(addFormSlice, /className="rs-consent"/)
+  assert.match(addFormSlice, /has agreed to be submitted/)
 })
 
-test("disabled add-row submit explains the blocking fields inline", () => {
-  const addRowSlice = sliceBetween(source, "function AddRow(", "\nfunction ThreadDrawer(")
-  assert.match(addRowSlice, /const submitBlockerId = "rs-add-row-submit-blockers"/)
-  assert.match(addRowSlice, /aria-describedby=\{ready \? undefined : submitBlockerId\}/)
-  assert.match(addRowSlice, /role="status"/)
-  assert.match(addRowSlice, /aria-live="polite"/)
-  assert.match(addRowSlice, /Cannot submit yet/)
-  assert.match(addRowSlice, /blockers\.slice\(0, 4\)\.map/)
-  assert.match(addRowSlice, /Fix \{blockers\.length - 4\} more/)
+test("disabled add-form submit explains the blocking fields inline", () => {
+  const addFormSlice = sliceBetween(source, "function AddCandidateForm(", "\nfunction DetailDrawer(")
+  assert.match(addFormSlice, /const submitBlockerId = "rs-add-form-submit-blockers"/)
+  assert.match(addFormSlice, /aria-describedby=\{ready \? undefined : submitBlockerId\}/)
+  assert.match(addFormSlice, /role="status"/)
+  assert.match(addFormSlice, /aria-live="polite"/)
+  assert.match(addFormSlice, /Cannot submit yet/)
+  assert.match(addFormSlice, /blockers\.slice\(0, 4\)\.map/)
+  assert.match(addFormSlice, /Fix \{blockers\.length - 4\} more/)
   assert.match(css, /\.rs-submit-blockers/)
 })
 
@@ -158,9 +153,9 @@ test("submit success resets the blank row; failure keeps values with an inline e
   const clearIdx = submitSlice.indexOf("clearAddRowDraft(jobId)")
   assert.ok(failIdx >= 0 && returnIdx > failIdx, "failure path bails before any reset")
   assert.ok(refreshIdx > returnIdx && resetIdx > refreshIdx && clearIdx > resetIdx, "success refetches rows then resets the blank row")
-  const tableIdx = source.indexOf('<div className="rs-table-wrap">')
+  const formIdx = source.indexOf("<AddCandidateForm")
   const errorIdx = source.indexOf('{submitError && <div className="rs-sheet-error">')
-  assert.ok(tableIdx >= 0 && errorIdx > tableIdx, "inline submit error renders under the table")
+  assert.ok(formIdx >= 0 && errorIdx > formIdx, "inline submit error renders under the form")
 })
 
 test("the blank row draft persists to localStorage per job", () => {
@@ -179,19 +174,21 @@ test("editing a row exposes Save which PATCHes through paRecruiterSubmissionUpda
   assert.match(saveSlice, /candidate: candidatePayload\(draft\),/)
   assert.match(saveSlice, /checklist: checklistPayload\(draft\),/)
   assert.match(saveSlice, /extraFields: extraFieldsPayload\(draft, extraFieldDefs\),/)
-  // Save only renders for a dirty editable row
-  const rowSlice = sliceBetween(source, "function SheetRow(", "\nfunction AddRow(")
-  assert.match(rowSlice, /const dirty = draft !== null/)
-  assert.match(rowSlice, /\{editable \? \(\s*\n\s*dirty && \(/)
-  assert.match(rowSlice, /\{saving \? "Saving…" : "Save"\}/)
+  // Save only renders inside the detail drawer for a dirty editable row
+  const drawerSlice = sliceBetween(source, "function DetailDrawer(", "\n}\n")
+  assert.match(drawerSlice, /const editable = rowIsEditable\(row\)/)
+  assert.match(drawerSlice, /const dirty = rowDraft !== null/)
+  assert.match(drawerSlice, /editable && dirty &&/)
+  assert.match(drawerSlice, /\{saving \? "Saving…" : "Save changes"\}/)
 })
 
 test("rows stay editable only while WeKruit owns them; locked rows render plain text", () => {
   assert.match(source, /const EDITABLE_STATUSES = new Set\(\["submitted", "new", "reviewing", "wekruit_interview"\]\)/)
   assert.match(source, /return EDITABLE_STATUSES\.has\(row\.status \|\| "submitted"\)/)
-  const rowSlice = sliceBetween(source, "function SheetRow(", "\nfunction AddRow(")
-  assert.match(rowSlice, /if \(!editable\) \{/)
-  assert.match(rowSlice, /return value \|\| "—"/)
+  // DetailDrawer uses editable to gate input vs span rendering
+  const drawerSlice = sliceBetween(source, "function DetailDrawer(", "\n}\n")
+  assert.match(drawerSlice, /const editable = rowIsEditable\(row\)/)
+  assert.match(drawerSlice, /editable \?/)
 })
 
 test("409 row_locked surfaces the pinned toast", () => {
@@ -200,14 +197,16 @@ test("409 row_locked surfaces the pinned toast", () => {
   assert.match(saveSlice, /showToast\("Row locked — candidate is with the client"\)/)
 })
 
-test("💬 opens the thread drawer: name header, stepper, needs-info banner, conversation, send", () => {
-  assert.match(source, /className="rs-thread-btn" onClick=\{onOpenThread\}/)
-  const drawerSlice = sliceBetween(source, "function ThreadDrawer(", "\n}\n")
+test("detail drawer shows: name header, stepper, needs-info banner, fields, checklist, conversation, send", () => {
+  assert.match(source, /className="rs-thread-btn"/)
+  const drawerSlice = sliceBetween(source, "function DetailDrawer(", "\n}\n")
   assert.match(drawerSlice, /className="rs-drawer"/)
   assert.match(drawerSlice, /<h2>\{row\.candidate\?\.name \|\| "Candidate"\}<\/h2>/)
   assert.match(drawerSlice, /<SubmissionStatusStepper status=\{row\.status\} \/>/)
   assert.match(drawerSlice, /rs-drawer__banner/)
   assert.match(drawerSlice, /Needs more info/)
+  assert.match(drawerSlice, /Candidate info/)
+  assert.match(drawerSlice, /Checklist/)
   assert.match(drawerSlice, /is-\$\{comment\.by === "recruiter" \? "recruiter" : "wekruit"\}/)
   assert.match(drawerSlice, /\{sending \? "Sending…" : "Send"\}/)
   // comments load on open and refresh after send
@@ -221,7 +220,7 @@ test("💬 opens the thread drawer: name header, stepper, needs-info banner, con
 })
 
 test("Status and Feedback columns are read-only sheet cells", () => {
-  const rowSlice = sliceBetween(source, "function SheetRow(", "\nfunction AddRow(")
+  const rowSlice = sliceBetween(source, "function SheetRow(", "\nconst ADD_REQUIRED_COLUMNS")
   assert.match(rowSlice, /<td data-label="Status" className="rs-c-status rs-c-key">\{sheetStageLabel\(row\)\}<\/td>/)
   assert.match(rowSlice, /\{sheetFeedbackText\(row, comments\)\}/)
   // stage label comes from the pinned 4-step model, feedback falls back to em-dash
@@ -266,9 +265,11 @@ test("sheet header and first column are sticky; rows degrade to cards under 900p
   assert.match(css, /@media \(max-width: 899px\)/)
   assert.match(css, /content: attr\(data-label\);/)
   assert.match(css, /\.rs-sheet tr\.rs-row-real td\.rs-c-more \{ display: none; \}/)
-  // every body cell carries the data-label the card view reads
-  assert.match(source, /<td\s*\n\s*key=\{column\.id\}\s*\n\s*data-label=\{column\.label\}/)
+  // every body cell in SheetRow carries the data-label the card view reads
+  assert.match(source, /<td key=\{column\.id\} data-label=\{column\.label\}/)
   assert.match(source, /data-label="Status"/)
+  // submissions table only renders when there are existing submissions
+  assert.match(source, /roleSubmissions\.length > 0/)
 })
 
 test("banned legacy-page strings stay out of the sheet page", () => {

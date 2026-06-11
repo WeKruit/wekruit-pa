@@ -76,6 +76,8 @@ const CANDIDATE_COLUMNS: SheetColumn[] = [
   { id: "interviewAvailability", label: "Availability" },
 ]
 
+const KEY_TABLE_COLUMNS: SheetColumn[] = CANDIDATE_COLUMNS.filter((c) => c.key)
+
 type ChecklistKind = CollabJob["recruiterBoard"]["checklist"]["groups"][number]["kind"]
 
 const CHECKLIST_KIND_ORDER: ChecklistKind[] = ["hard", "fit", "bonus", "anti"]
@@ -796,63 +798,46 @@ export default function RoleSheetPage() {
           <span>— hover any column header for the full requirement.</span>
         </div>
 
-        <div className="rs-table-wrap">
-          <table className="rs-sheet">
-            <thead>
-              <tr>
-                {CANDIDATE_COLUMNS.map((column) => (
-                  <th key={column.id} className={`rs-th rs-c-${column.id}`}>
-                    {column.label}{column.required ? " *" : ""}
-                  </th>
+        {roleSubmissions.length > 0 && (
+          <div className="rs-table-wrap">
+            <table className="rs-sheet">
+              <thead>
+                <tr>
+                  {KEY_TABLE_COLUMNS.map((column) => (
+                    <th key={column.id} className={`rs-th rs-c-${column.id}`}>
+                      {column.label}
+                    </th>
+                  ))}
+                  <th className="rs-th rs-c-status">Status</th>
+                  <th className="rs-th rs-c-feedback">Feedback</th>
+                  <th className="rs-th rs-c-thread" aria-label="Conversation">💬</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roleSubmissions.map((row) => (
+                  <SheetRow
+                    key={row.id}
+                    row={row}
+                    comments={commentsByRow[row.id]}
+                    onOpenDetail={() => openThread(row)}
+                  />
                 ))}
-                {checklistColumns.map((column) => (
-                  <th key={column.id} title={column.text} className={`rs-th rs-c-check is-${column.kind}`}>
-                    <span className={`rs-chip is-${column.kind}`}>{CHECKLIST_KIND_CHIP[column.kind]}</span>
-                    {checklistShortLabel(column.text)}
-                  </th>
-                ))}
-                {extraFieldDefs.map((field) => (
-                  <th key={field.id} className="rs-th rs-c-extra">
-                    {field.label}{field.required ? " *" : ""}
-                  </th>
-                ))}
-                <th className="rs-th rs-c-notes">Notes</th>
-                <th className="rs-th rs-c-status">Status</th>
-                <th className="rs-th rs-c-feedback">Feedback</th>
-                <th className="rs-th rs-c-thread" aria-label="Conversation">💬</th>
-                <th className="rs-th rs-c-action" aria-label="Row actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {roleSubmissions.map((row) => (
-                <SheetRow
-                  key={row.id}
-                  row={row}
-                  draft={rowDrafts[row.id] ?? null}
-                  checklistColumns={checklistColumns}
-                  extraFieldDefs={extraFieldDefs}
-                  comments={commentsByRow[row.id]}
-                  saving={savingRowId === row.id}
-                  jobId={job.jobId}
-                  onEdit={(mutate) => editRow(row, mutate)}
-                  onSave={() => void saveRow(row)}
-                  onOpenThread={() => openThread(row)}
-                />
-              ))}
-              <AddRow
-                draft={addDraft}
-                checklistColumns={checklistColumns}
-                extraFieldDefs={extraFieldDefs}
-                blockers={addBlockers}
-                ready={addRowReady}
-                submitting={submitting}
-                jobId={job.jobId}
-                onChange={changeAddDraft}
-                onSubmit={() => void submitAddRow()}
-              />
-            </tbody>
-          </table>
-        </div>
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <AddCandidateForm
+          draft={addDraft}
+          checklistColumns={checklistColumns}
+          extraFieldDefs={extraFieldDefs}
+          blockers={addBlockers}
+          ready={addRowReady}
+          submitting={submitting}
+          jobId={job.jobId}
+          onChange={changeAddDraft}
+          onSubmit={() => void submitAddRow()}
+        />
 
         {submitError && <div className="rs-sheet-error">Submission failed: {submitError}</div>}
       </main>
@@ -860,14 +845,21 @@ export default function RoleSheetPage() {
       {threadRow && (
         <>
           <button type="button" className="rs-drawer-scrim" aria-label="Close conversation" onClick={() => setThreadRowId(null)} />
-          <ThreadDrawer
+          <DetailDrawer
             row={threadRow}
+            rowDraft={rowDrafts[threadRow.id] ?? null}
+            checklistColumns={checklistColumns}
+            extraFieldDefs={extraFieldDefs}
             comments={commentsByRow[threadRow.id] ?? []}
             loading={commentsLoading}
             error={commentsError}
-            draft={commentDraft}
+            commentText={commentDraft}
             sending={commentSending}
-            onDraftChange={setCommentDraft}
+            saving={savingRowId === threadRow.id}
+            jobId={job.jobId}
+            onEdit={(mutate) => editRow(threadRow, mutate)}
+            onSave={() => void saveRow(threadRow)}
+            onCommentChange={setCommentDraft}
             onSend={() => void sendComment()}
             onClose={() => setThreadRowId(null)}
           />
@@ -881,159 +873,44 @@ export default function RoleSheetPage() {
 
 function SheetRow({
   row,
-  draft,
-  checklistColumns,
-  extraFieldDefs,
   comments,
-  saving,
-  jobId,
-  onEdit,
-  onSave,
-  onOpenThread,
+  onOpenDetail,
 }: {
   row: RecruiterSubmissionItem
-  draft: RowDraft | null
-  checklistColumns: ChecklistColumn[]
-  extraFieldDefs: RecruiterSubmitField[]
   comments?: RecruiterSubmissionComment[]
-  saving: boolean
-  jobId: string
-  onEdit: (mutate: (draft: RowDraft) => RowDraft) => void
-  onSave: () => void
-  onOpenThread: () => void
+  onOpenDetail: () => void
 }) {
-  const editable = rowIsEditable(row)
-  const dirty = draft !== null
-  const view = draft ?? draftFromSubmission(row)
+  const view = cellsFromSubmission(row)
   const threadCount = comments?.length ?? (row.requestedInfo?.length || 0)
 
-  const setCell = (id: SheetCellId, value: string) =>
-    onEdit((d) => ({ ...d, cells: { ...d.cells, [id]: value } }))
-
-  const renderCandidateCell = (column: SheetColumn) => {
-    const value = view.cells[column.id]
-    if (column.id === "resume") {
-      return (
-        <ResumeCell
-          value={value}
-          fileName={view.resumeFileName}
-          editable={editable}
-          jobId={jobId}
-          onChange={(url, name) =>
-            onEdit((d) => ({ ...d, cells: { ...d.cells, resume: url }, resumeFileName: name }))
-          }
-        />
-      )
-    }
-    if (!editable) {
-      if (column.id === "linkedin" && value) {
-        const href = normalizeSheetUrl(value)
-        if (href) {
-          return (
-            <a className="rs-link-cell" href={href} target="_blank" rel="noopener noreferrer">
-              {excerpt(value, 40)}
-            </a>
-          )
-        }
-      }
-      return value || "—"
-    }
-    return (
-      <input
-        type="text"
-        aria-label={column.label}
-        value={value}
-        onChange={(e) => setCell(column.id, e.target.value)}
-      />
-    )
-  }
-
   return (
-    <tr className="rs-row-real">
-      {CANDIDATE_COLUMNS.map((column) => (
-        <td
-          key={column.id}
-          data-label={column.label}
-          className={`rs-c-${column.id} ${column.key ? "rs-c-key" : "rs-c-more"}${editable ? "" : " rs-c-locked"}`}
-        >
-          {renderCandidateCell(column)}
-        </td>
-      ))}
-      {checklistColumns.map((column) => (
-        <td key={column.id} data-label={checklistShortLabel(column.text)} className="rs-c-check rs-c-more" title={column.text}>
-          {editable ? (
-            <select
-              aria-label={column.text}
-              value={view.checklist[column.id] ?? ""}
-              onChange={(e) =>
-                onEdit((d) => ({
-                  ...d,
-                  checklist: { ...d.checklist, [column.id]: e.target.value as "" | SubmissionChecklistValue },
-                }))
-              }
-            >
-              {CHECKLIST_VALUE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+    <tr className="rs-row-real" onClick={onOpenDetail} style={{ cursor: "pointer" }}>
+      {KEY_TABLE_COLUMNS.map((column) => (
+        <td key={column.id} data-label={column.label} className={`rs-c-${column.id} rs-c-key`}>
+          {column.id === "name" ? (
+            <button type="button" className="rs-name-link" onClick={onOpenDetail}>{view[column.id] || "—"}</button>
           ) : (
-            CHECKLIST_VALUE_OPTIONS.find((option) => option.value === (view.checklist[column.id] ?? ""))?.label ?? "—"
+            view[column.id] || "—"
           )}
         </td>
       ))}
-      {extraFieldDefs.map((field) => (
-        <td key={field.id} data-label={field.label} className="rs-c-extra rs-c-more">
-          {editable ? (
-            <input
-              type="text"
-              aria-label={field.label}
-              value={view.extraFields[field.id] ?? ""}
-              onChange={(e) =>
-                onEdit((d) => ({ ...d, extraFields: { ...d.extraFields, [field.id]: e.target.value } }))
-              }
-            />
-          ) : (
-            view.extraFields[field.id] || "—"
-          )}
-        </td>
-      ))}
-      <td data-label="Notes" className="rs-c-notes rs-c-more">
-        {editable ? (
-          <input
-            type="text"
-            aria-label="Notes"
-            value={view.notes}
-            onChange={(e) => onEdit((d) => ({ ...d, notes: e.target.value }))}
-          />
-        ) : (
-          view.notes || "—"
-        )}
-      </td>
       <td data-label="Status" className="rs-c-status rs-c-key">{sheetStageLabel(row)}</td>
       <td data-label="Feedback" className="rs-c-feedback rs-c-key" title={sheetFeedbackText(row, comments)}>
         {sheetFeedbackText(row, comments)}
       </td>
       <td data-label="Conversation" className="rs-c-thread rs-c-key">
-        <button type="button" className="rs-thread-btn" onClick={onOpenThread}>
+        <button type="button" className="rs-thread-btn" onClick={(e) => { e.stopPropagation(); onOpenDetail() }}>
           💬{threadCount ? ` ${threadCount}` : ""}
         </button>
-      </td>
-      <td data-label="" className="rs-c-action rs-c-key">
-        {editable ? (
-          dirty && (
-            <button type="button" className="rs-btn rs-btn--save" disabled={saving} onClick={onSave}>
-              {saving ? "Saving…" : "Save"}
-            </button>
-          )
-        ) : (
-          <span title="Row locked — candidate is with the client">—</span>
-        )}
       </td>
     </tr>
   )
 }
 
-function AddRow({
+const ADD_REQUIRED_COLUMNS: SheetColumn[] = CANDIDATE_COLUMNS.filter((c) => c.required)
+const ADD_CONTEXT_COLUMNS: SheetColumn[] = CANDIDATE_COLUMNS.filter((c) => !c.required)
+
+function AddCandidateForm({
   draft,
   checklistColumns,
   extraFieldDefs,
@@ -1054,96 +931,145 @@ function AddRow({
   onChange: (draft: AddRowDraft) => void
   onSubmit: () => void
 }) {
-  const submitBlockerId = "rs-add-row-submit-blockers"
+  const [showContext, setShowContext] = useState(false)
+  const submitBlockerId = "rs-add-form-submit-blockers"
   const setCell = (id: SheetCellId, value: string) =>
     onChange({ ...draft, cells: { ...draft.cells, [id]: value } })
 
+  const checklistByKind = CHECKLIST_KIND_ORDER.map((kind) => ({
+    kind,
+    items: checklistColumns.filter((c) => c.kind === kind),
+  })).filter((g) => g.items.length > 0)
+
+  const contextFilled = ADD_CONTEXT_COLUMNS.some((c) => draft.cells[c.id].trim())
+
   return (
-    <tr className="rs-row-add">
-      {CANDIDATE_COLUMNS.map((column) => (
-        <td key={column.id} data-label={`${column.label}${column.required ? " *" : ""}`} className={`rs-c-${column.id}`}>
-          {column.id === "resume" ? (
-            <ResumeCell
-              value={draft.cells.resume}
-              fileName={draft.resumeFileName}
-              editable
-              jobId={jobId}
-              onChange={(url, name) =>
-                onChange({ ...draft, cells: { ...draft.cells, resume: url }, resumeFileName: name })
-              }
-            />
-          ) : (
-            <input
-              type="text"
-              aria-label={`New candidate ${column.label}`}
-              placeholder={column.id === "name" ? "Add a candidate…" : column.label}
-              value={draft.cells[column.id]}
-              onChange={(e) => setCell(column.id, e.target.value)}
-            />
-          )}
-        </td>
-      ))}
-      {checklistColumns.map((column) => (
-        <td key={column.id} data-label={checklistShortLabel(column.text)} className="rs-c-check" title={column.text}>
-          <select
-            aria-label={column.text}
-            value={draft.checklist[column.id] ?? ""}
-            onChange={(e) =>
-              onChange({
-                ...draft,
-                checklist: { ...draft.checklist, [column.id]: e.target.value as "" | SubmissionChecklistValue },
-              })
-            }
-          >
-            {CHECKLIST_VALUE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+    <div className="rs-add-form">
+      <h2 className="rs-add-form__title">Submit a candidate</h2>
+
+      <fieldset className="rs-add-form__section">
+        <legend>Candidate info</legend>
+        <div className="rs-add-form__grid">
+          {ADD_REQUIRED_COLUMNS.map((column) => (
+            <div key={column.id} className={`rs-add-form__field${column.id === "resume" ? " rs-add-form__field--resume" : ""}`}>
+              <label htmlFor={`add-${column.id}`}>{column.label} *</label>
+              {column.id === "resume" ? (
+                <ResumeCell
+                  value={draft.cells.resume}
+                  fileName={draft.resumeFileName}
+                  editable
+                  jobId={jobId}
+                  onChange={(url, name) =>
+                    onChange({ ...draft, cells: { ...draft.cells, resume: url }, resumeFileName: name })
+                  }
+                />
+              ) : (
+                <input
+                  id={`add-${column.id}`}
+                  type={column.id === "email" ? "email" : "text"}
+                  placeholder={column.label}
+                  value={draft.cells[column.id]}
+                  onChange={(e) => setCell(column.id, e.target.value)}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      </fieldset>
+
+      <details className="rs-add-form__details" open={showContext || contextFilled} onToggle={(e) => setShowContext((e.target as HTMLDetailsElement).open)}>
+        <summary>Additional details {contextFilled && <span className="rs-add-form__filled-dot" />}</summary>
+        <div className="rs-add-form__grid">
+          {ADD_CONTEXT_COLUMNS.map((column) => (
+            <div key={column.id} className="rs-add-form__field">
+              <label htmlFor={`add-${column.id}`}>{column.label}</label>
+              <input
+                id={`add-${column.id}`}
+                type="text"
+                placeholder={column.label}
+                value={draft.cells[column.id]}
+                onChange={(e) => setCell(column.id, e.target.value)}
+              />
+            </div>
+          ))}
+        </div>
+      </details>
+
+      {checklistByKind.length > 0 && (
+        <fieldset className="rs-add-form__section">
+          <legend>Checklist</legend>
+          {checklistByKind.map((group) => (
+            <div key={group.kind} className="rs-add-form__check-group">
+              <span className={`rs-chip is-${group.kind}`}>{CHECKLIST_KIND_CHIP[group.kind]}</span>
+              <span className="rs-add-form__check-label">{CHECKLIST_LEGEND_LABEL[group.kind]}</span>
+              <div className="rs-add-form__check-items">
+                {group.items.map((item) => (
+                  <div key={item.id} className="rs-add-form__check-row">
+                    <span className="rs-add-form__check-text">{item.text}</span>
+                    <select
+                      aria-label={item.text}
+                      value={draft.checklist[item.id] ?? ""}
+                      onChange={(e) =>
+                        onChange({
+                          ...draft,
+                          checklist: { ...draft.checklist, [item.id]: e.target.value as "" | SubmissionChecklistValue },
+                        })
+                      }
+                    >
+                      {CHECKLIST_VALUE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </fieldset>
+      )}
+
+      {extraFieldDefs.length > 0 && (
+        <fieldset className="rs-add-form__section">
+          <legend>Role-specific fields</legend>
+          <div className="rs-add-form__grid">
+            {extraFieldDefs.map((field) => (
+              <div key={field.id} className="rs-add-form__field">
+                <label htmlFor={`add-extra-${field.id}`}>{field.label}{field.required ? " *" : ""}</label>
+                <input
+                  id={`add-extra-${field.id}`}
+                  type="text"
+                  placeholder={field.placeholder || field.label}
+                  value={draft.extraFields[field.id] ?? ""}
+                  onChange={(e) => onChange({ ...draft, extraFields: { ...draft.extraFields, [field.id]: e.target.value } })}
+                />
+              </div>
             ))}
-          </select>
-        </td>
-      ))}
-      {extraFieldDefs.map((field) => (
-        <td key={field.id} data-label={`${field.label}${field.required ? " *" : ""}`} className="rs-c-extra">
-          <input
-            type="text"
-            aria-label={field.label}
-            placeholder={field.placeholder || field.label}
-            value={draft.extraFields[field.id] ?? ""}
-            onChange={(e) => onChange({ ...draft, extraFields: { ...draft.extraFields, [field.id]: e.target.value } })}
-          />
-        </td>
-      ))}
-      <td data-label="Notes" className="rs-c-notes">
-        <input
-          type="text"
-          aria-label="New candidate notes"
-          placeholder="Notes"
+          </div>
+        </fieldset>
+      )}
+
+      <fieldset className="rs-add-form__section">
+        <legend>Notes</legend>
+        <textarea
+          aria-label="Notes about this candidate"
+          placeholder="Anything else WeKruit should know about this candidate…"
           value={draft.notes}
+          rows={2}
           onChange={(e) => onChange({ ...draft, notes: e.target.value })}
         />
-      </td>
-      <td data-label="Status" className="rs-c-status">—</td>
-      <td data-label="Feedback" className="rs-c-feedback">—</td>
-      <td data-label="Conversation" className="rs-c-thread">—</td>
-      <td data-label="" className="rs-c-action">
-        <div className="rs-action-cell">
-          <label className="rs-consent" title="Required: the candidate agreed to be submitted for this role.">
-            <input
-              type="checkbox"
-              checked={draft.consent}
-              onChange={(e) => onChange({ ...draft, consent: e.target.checked })}
-            />
-            <span>Candidate consented</span>
-          </label>
-          <button
-            type="button"
-            className="rs-btn"
-            disabled={!ready || submitting}
-            aria-describedby={ready ? undefined : submitBlockerId}
-            onClick={onSubmit}
-          >
-            {submitting ? "Submitting…" : "Submit"}
-          </button>
-          {!ready && (
+      </fieldset>
+
+      <div className="rs-add-form__footer">
+        <label className="rs-consent">
+          <input
+            type="checkbox"
+            checked={draft.consent}
+            onChange={(e) => onChange({ ...draft, consent: e.target.checked })}
+          />
+          <span>This candidate has agreed to be submitted for this role</span>
+        </label>
+        <div className="rs-add-form__actions">
+          {!ready && blockers.length > 0 && (
             <div id={submitBlockerId} className="rs-submit-blockers" role="status" aria-live="polite">
               <strong>Cannot submit yet</strong>
               <ul>
@@ -1156,80 +1082,229 @@ function AddRow({
               </ul>
             </div>
           )}
+          <button
+            type="button"
+            className="rs-btn rs-btn--submit"
+            disabled={!ready || submitting}
+            aria-describedby={ready ? undefined : submitBlockerId}
+            onClick={onSubmit}
+          >
+            {submitting ? "Submitting…" : "Submit candidate"}
+          </button>
         </div>
-      </td>
-    </tr>
+      </div>
+    </div>
   )
 }
 
-function ThreadDrawer({
+function DetailDrawer({
   row,
+  rowDraft,
+  checklistColumns,
+  extraFieldDefs,
   comments,
   loading,
   error,
-  draft,
+  commentText,
   sending,
-  onDraftChange,
+  saving,
+  jobId,
+  onEdit,
+  onSave,
+  onCommentChange,
   onSend,
   onClose,
 }: {
   row: RecruiterSubmissionItem
+  rowDraft: RowDraft | null
+  checklistColumns: ChecklistColumn[]
+  extraFieldDefs: RecruiterSubmitField[]
   comments: RecruiterSubmissionComment[]
   loading: boolean
   error: string | null
-  draft: string
+  commentText: string
   sending: boolean
-  onDraftChange: (value: string) => void
+  saving: boolean
+  jobId: string
+  onEdit: (mutate: (draft: RowDraft) => RowDraft) => void
+  onSave: () => void
+  onCommentChange: (value: string) => void
   onSend: () => void
   onClose: () => void
 }) {
   const model = buildSubmissionStatusStepper(row.status, row.requestedInfo)
+  const editable = rowIsEditable(row)
+  const dirty = rowDraft !== null
+  const view = rowDraft ?? draftFromSubmission(row)
+
+  const checklistByKind = CHECKLIST_KIND_ORDER.map((kind) => ({
+    kind,
+    items: checklistColumns.filter((c) => c.kind === kind),
+  })).filter((g) => g.items.length > 0)
+
+  const setCell = (id: SheetCellId, value: string) =>
+    onEdit((d) => ({ ...d, cells: { ...d.cells, [id]: value } }))
+
   return (
-    <aside className="rs-drawer" role="dialog" aria-label={`Conversation about ${row.candidate?.name ?? "candidate"}`}>
+    <aside className="rs-drawer" role="dialog" aria-label={`Details for ${row.candidate?.name ?? "candidate"}`}>
       <header className="rs-drawer__head">
         <h2>{row.candidate?.name || "Candidate"}</h2>
         <button type="button" className="rs-drawer__close" aria-label="Close" onClick={onClose}>✕</button>
       </header>
-      <div className="rs-drawer__stepper">
-        <SubmissionStatusStepper status={row.status} />
-      </div>
-      {model.needsInfo && (
-        <div className="rs-drawer__banner">
-          <strong>Needs more info</strong>
-          {model.needsInfoMessage && <span> — {model.needsInfoMessage}</span>}
+
+      <div className="rs-drawer__body">
+        <div className="rs-drawer__stepper">
+          <SubmissionStatusStepper status={row.status} />
         </div>
-      )}
-      <div className="rs-drawer__messages">
-        {loading && <p className="rs-drawer__empty">Loading conversation…</p>}
-        {error && <p className="rs-drawer__empty">Could not load comments: {error}</p>}
-        {!loading && !error && comments.length === 0 && (
-          <p className="rs-drawer__empty">No messages yet — ask WeKruit anything about this candidate.</p>
-        )}
-        {comments.map((comment, i) => (
-          <div key={i} className={`rs-msg is-${comment.by === "recruiter" ? "recruiter" : "wekruit"}`}>
-            {comment.message}
-            <em>{comment.authorName || (comment.by === "recruiter" ? "You" : "WeKruit")}{comment.at ? ` · ${new Date(comment.at).toLocaleDateString()}` : ""}</em>
+        {model.needsInfo && (
+          <div className="rs-drawer__banner">
+            <strong>Needs more info</strong>
+            {model.needsInfoMessage && <span> — {model.needsInfoMessage}</span>}
           </div>
-        ))}
+        )}
+
+        <section className="rs-drawer__section">
+          <h3>Candidate info</h3>
+          <div className="rs-drawer__fields">
+            {CANDIDATE_COLUMNS.map((column) => (
+              <div key={column.id} className={`rs-drawer__field${column.id === "resume" ? " rs-drawer__field--resume" : ""}`}>
+                <label>{column.label}</label>
+                {column.id === "resume" ? (
+                  <ResumeCell
+                    value={view.cells.resume}
+                    fileName={view.resumeFileName}
+                    editable={editable}
+                    jobId={jobId}
+                    onChange={(url, name) =>
+                      onEdit((d) => ({ ...d, cells: { ...d.cells, resume: url }, resumeFileName: name }))
+                    }
+                  />
+                ) : editable ? (
+                  <input type="text" value={view.cells[column.id]} onChange={(e) => setCell(column.id, e.target.value)} />
+                ) : column.id === "linkedin" && view.cells.linkedin ? (
+                  (() => {
+                    const href = normalizeSheetUrl(view.cells.linkedin)
+                    return href ? <a className="rs-link-cell" href={href} target="_blank" rel="noopener noreferrer">{excerpt(view.cells.linkedin, 40)}</a> : <span>{view.cells.linkedin}</span>
+                  })()
+                ) : (
+                  <span>{view.cells[column.id] || "—"}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {checklistByKind.length > 0 && (
+          <section className="rs-drawer__section">
+            <h3>Checklist</h3>
+            {checklistByKind.map((group) => (
+              <div key={group.kind} className="rs-add-form__check-group">
+                <span className={`rs-chip is-${group.kind}`}>{CHECKLIST_KIND_CHIP[group.kind]}</span>
+                <span className="rs-add-form__check-label">{CHECKLIST_LEGEND_LABEL[group.kind]}</span>
+                <div className="rs-add-form__check-items">
+                  {group.items.map((item) => (
+                    <div key={item.id} className="rs-add-form__check-row">
+                      <span className="rs-add-form__check-text">{item.text}</span>
+                      {editable ? (
+                        <select
+                          aria-label={item.text}
+                          value={view.checklist[item.id] ?? ""}
+                          onChange={(e) =>
+                            onEdit((d) => ({
+                              ...d,
+                              checklist: { ...d.checklist, [item.id]: e.target.value as "" | SubmissionChecklistValue },
+                            }))
+                          }
+                        >
+                          {CHECKLIST_VALUE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="rs-add-form__check-value">
+                          {CHECKLIST_VALUE_OPTIONS.find((o) => o.value === (view.checklist[item.id] ?? ""))?.label ?? "—"}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
+        {extraFieldDefs.length > 0 && (
+          <section className="rs-drawer__section">
+            <h3>Role-specific fields</h3>
+            <div className="rs-drawer__fields">
+              {extraFieldDefs.map((field) => (
+                <div key={field.id} className="rs-drawer__field">
+                  <label>{field.label}</label>
+                  {editable ? (
+                    <input type="text" value={view.extraFields[field.id] ?? ""} onChange={(e) =>
+                      onEdit((d) => ({ ...d, extraFields: { ...d.extraFields, [field.id]: e.target.value } }))
+                    } />
+                  ) : (
+                    <span>{view.extraFields[field.id] || "—"}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section className="rs-drawer__section">
+          <h3>Notes</h3>
+          {editable ? (
+            <textarea rows={2} value={view.notes} onChange={(e) => onEdit((d) => ({ ...d, notes: e.target.value }))} />
+          ) : (
+            <p className="rs-drawer__note-text">{view.notes || "—"}</p>
+          )}
+        </section>
+
+        {editable && dirty && (
+          <div className="rs-drawer__save-bar">
+            <button type="button" className="rs-btn rs-btn--save" disabled={saving} onClick={onSave}>
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        )}
+
+        <section className="rs-drawer__section rs-drawer__section--thread">
+          <h3>Ask WeKruit</h3>
+          <div className="rs-drawer__messages">
+            {loading && <p className="rs-drawer__empty">Loading conversation…</p>}
+            {error && <p className="rs-drawer__empty">Could not load comments: {error}</p>}
+            {!loading && !error && comments.length === 0 && (
+              <p className="rs-drawer__empty">No messages yet — ask WeKruit anything about this candidate.</p>
+            )}
+            {comments.map((comment, i) => (
+              <div key={i} className={`rs-msg is-${comment.by === "recruiter" ? "recruiter" : "wekruit"}`}>
+                {comment.message}
+                <em>{comment.authorName || (comment.by === "recruiter" ? "You" : "WeKruit")}{comment.at ? ` · ${new Date(comment.at).toLocaleDateString()}` : ""}</em>
+              </div>
+            ))}
+          </div>
+          <form
+            className="rs-drawer__form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              onSend()
+            }}
+          >
+            <input
+              type="text"
+              aria-label="Message WeKruit"
+              placeholder="Write a message…"
+              value={commentText}
+              onChange={(e) => onCommentChange(e.target.value)}
+            />
+            <button type="submit" className="rs-btn" disabled={sending || !commentText.trim()}>
+              {sending ? "Sending…" : "Send"}
+            </button>
+          </form>
+        </section>
       </div>
-      <form
-        className="rs-drawer__form"
-        onSubmit={(e) => {
-          e.preventDefault()
-          onSend()
-        }}
-      >
-        <input
-          type="text"
-          aria-label="Message WeKruit"
-          placeholder="Write a message…"
-          value={draft}
-          onChange={(e) => onDraftChange(e.target.value)}
-        />
-        <button type="submit" className="rs-btn" disabled={sending || !draft.trim()}>
-          {sending ? "Sending…" : "Send"}
-        </button>
-      </form>
     </aside>
   )
 }
