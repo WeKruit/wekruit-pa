@@ -992,8 +992,15 @@ export async function fetchCollabJobs(
     const recruiterBoardForCaller: RecruiterBoardPayload = rb
 
     const companyRaw = String(d.companyName ?? d.company ?? "")
+    let revealedCompany = recruiterBoardForCaller.label.company
+    if (companyRaw) {
+      const oldLabel = recruiterBoardForCaller.label.company ?? ""
+      const sepIdx = oldLabel.indexOf(" · ")
+      const description = sepIdx >= 0 ? oldLabel.slice(sepIdx) : ""
+      revealedCompany = companyRaw + description
+    }
     const revealedBoard: RecruiterBoardPayload = companyRaw
-      ? { ...recruiterBoardForCaller, label: { ...recruiterBoardForCaller.label, company: companyRaw } }
+      ? { ...recruiterBoardForCaller, label: { ...recruiterBoardForCaller.label, company: revealedCompany } }
       : recruiterBoardForCaller
     allMatching.push({
       jobId: jobIdForCaller,
