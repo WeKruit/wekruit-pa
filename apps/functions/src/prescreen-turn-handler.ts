@@ -36,7 +36,8 @@ import {
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
 import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm.js"
-import { isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
+import { isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
+import { isStaleClosedPrescreenSession } from "./prescreen-staleness.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
@@ -1018,6 +1019,51 @@ export async function runPrescreenTurnIfActive(
         textSent: text,
       }
     }
+    // ── STALE-TIMEOUT PAUSE FOLLOW-UP (Adam 2026-06-12, Invoko PM live failure) ───────────────────
+    // A reply that lands shortly after a boundary=timeout / manual_review_required PAUSE must NOT get
+    // the retention prompt's matching offer ("I can help find jobs…") — that screen was closed by
+    // STALENESS, nothing was submitted, and the truthful next step is the restart path the expiry
+    // notice already promised. Universal (copy-accuracy/safety): replaces a state-contradicting offer.
+    if (lookup.terminal === "PAUSE" && isStaleClosedPrescreenSession(sessData)) {
+      const text = staleTimeoutFollowupText(args.lang ?? "en")
+      await sessionRef.collection("turns").add({
+        qId: "terminal",
+        reply: args.replyText,
+        action: {
+          kind: "post_terminal_followup",
+          terminal: lookup.terminal,
+          reason: "stale_timeout_pause_restart_offer",
+        },
+        ts: nowIso,
+      })
+      try {
+        await sendSms({
+          to: args.toE164,
+          content: text,
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_prescreen_runtime",
+          idempotencyKey: `prescreen_stale_timeout_followup:${lookup.sessionId}:${stablePrescreenSendKey(args.replyText, text)}`,
+        })
+        await sessionRef.set({ postTerminalFollowupAckAt: nowIso, updatedAt: nowIso }, { merge: true })
+      } catch (err) {
+        log("prescreen.turn.stale_timeout_followup_send_failed", {
+          sessionId: lookup.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      log("prescreen.turn.stale_timeout_followup_sent", {
+        sessionId: lookup.sessionId,
+        userId: args.userId,
+        terminal: lookup.terminal,
+      })
+      return {
+        handled: true,
+        sessionId: lookup.sessionId,
+        terminal: lookup.terminal,
+        textSent: text,
+      }
+    }
     const retention = sessData.postPrescreenRetention && typeof sessData.postPrescreenRetention === "object"
       ? sessData.postPrescreenRetention as Record<string, unknown>
       : null
@@ -1244,6 +1290,76 @@ export async function runPrescreenTurnIfActive(
   if (!cfgSnapshot?.questions) {
     log("prescreen.turn.no_config", { sessionId })
     return { handled: false }
+  }
+
+  // ── MID-SCREEN STATUS / IDENTITY QUESTIONS (Adam 2026-06-12, priority 1+2; isClaireEntryUxCanary) ──
+  // "is the screening over?" / "is this for the Invoko PM role?" mid-screen used to be fed to the
+  // judge and SCORED as evidence for the pending question (the G1 consumed-tangent hole). For the
+  // entry-UX cohort, answer these deterministically from session STATE (cfgSnapshot job title/company +
+  // the pending question), do NOT score, and continue the screen in the same reply — the screen keeps
+  // OWNERSHIP, no matching offer, no review claim. Non-canary keeps the legacy path byte-for-byte.
+  // Detection is deliberately narrow (short interrogatives that NAME the screen/role) so a real answer
+  // that merely contains a question mark never matches; any miss falls through to the normal pipeline.
+  if (isClaireEntryUxCanary(args.userId)) {
+    const statusKind = isPrescreenRoleIdentityQuestion(args.replyText)
+      ? ("role_identity" as const)
+      : isPrescreenScreenStatusQuestion(args.replyText)
+        ? ("screen_over" as const)
+        : null
+    if (statusKind) {
+      const activeQuestion = cfgSnapshot.questions.find((q) => q.qId === activeQId)
+      const pendingPrompt =
+        activeQuestion?.prompt?.[args.lang ?? "en"] ?? activeQuestion?.prompt?.en ?? ""
+      const cfgMeta = sessRaw.data()?.cfgSnapshot as Record<string, unknown> | undefined
+      const text = composePrescreenStatusAnswer({
+        kind: statusKind,
+        ...(typeof cfgMeta?.jobTitle === "string" && cfgMeta.jobTitle.trim()
+          ? { jobTitle: cfgMeta.jobTitle.trim() }
+          : {}),
+        ...(typeof cfgMeta?.company === "string" && cfgMeta.company.trim()
+          ? { company: cfgMeta.company.trim() }
+          : {}),
+        pendingPrompt,
+      })
+      const nowIso = new Date().toISOString()
+      await args.db
+        .collection("pa-prescreen-sessions")
+        .doc(sessionId)
+        .collection("turns")
+        .add({
+          qId: activeQId,
+          reply: args.replyText,
+          action: { kind: "status_answered", reason: statusKind },
+          ts: nowIso,
+        })
+      // Refresh updatedAt: a status question is real engagement — it must not bleed the expiry clock.
+      await args.db
+        .collection("pa-prescreen-sessions")
+        .doc(sessionId)
+        .set({ updatedAt: nowIso }, { merge: true })
+      try {
+        await sendSms({
+          to: args.toE164,
+          content: text,
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_prescreen_runtime",
+          idempotencyKey: `prescreen_status_answer:${sessionId}:${stablePrescreenSendKey(args.replyText, text)}`,
+        })
+      } catch (err) {
+        log("prescreen.turn.status_answer_send_failed", {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      log("prescreen.turn.status_question_answered", {
+        sessionId,
+        userId: args.userId,
+        kind: statusKind,
+        currentQId: activeQId,
+      })
+      return { handled: true, sessionId, terminal: null, textSent: text }
+    }
   }
 
   // USER-EXIT MEANING-EXTRACTION (canary, Adam 2026-06-05): `isUserExitPrescreenReply` is a REGEX that
@@ -1564,6 +1680,71 @@ function userExitSessionText(_lang: "zh" | "en"): string {
 
 function recentTerminalSessionText(lang: "zh" | "en", terminal?: string | null): string {
   return postPrescreenOnboardingPrompt(lang, terminal)
+}
+
+// STALE-TIMEOUT follow-up (Adam 2026-06-12): truthful state + the restart path. NEVER an
+// "under review" claim (nothing was submitted) and NEVER a matching offer in the same breath.
+function staleTimeoutFollowupText(_lang: "zh" | "en"): string {
+  return "that role screen timed out earlier, so i closed it — nothing went to the hiring team, and it's zero ding on you. reply \"restart screen\" and i'll start a fresh run for that role, or ask me anything else."
+}
+
+/**
+ * MID-SCREEN "is the screening over / are we done?" detector (Adam 2026-06-12 priority 2).
+ * Deliberately NARROW: a short interrogative that names the screen/interview (or the bare
+ * "are we done?" shapes) — a substantive ANSWER that merely contains a question mark must
+ * never match (it falls through to the judge). Intent ROUTING at a deterministic seam, not
+ * tagging — same class as the existing post-terminal intent helpers in this file.
+ */
+export function isPrescreenScreenStatusQuestion(reply: string): boolean {
+  const body = reply.trim()
+  if (!body || body.length > 200) return false
+  const lower = body.toLowerCase()
+  const asksQuestion = /[?？]/.test(body) || /^(is|are|was|am i|do i|how many)\b/.test(lower)
+  if (!asksQuestion) return false
+  if (
+    /\b(is|are)\s+(the\s+|this\s+|that\s+)?(screen(ing)?|interview|prescreen|pre-screen)\b[^.!?]*\b(over|done|finished|complete|completed|wrapped(\s+up)?)\b/.test(lower)
+  ) {
+    return true
+  }
+  if (/^(is\s+(it|this|that)\s+(over|done|finished)|are\s+we\s+(done|finished)|is\s+that\s+(it|all|everything|the\s+end)|was\s+that\s+(it|all|the\s+last\s+question))\b/.test(lower)) {
+    return true
+  }
+  return /\bhow\s+many\s+(more\s+)?questions?\b|\bquestions?\s+(are\s+)?left\b|\b(any|more)\s+questions?\s+(left|to\s+go)\b|\bis\s+(this|that)\s+the\s+last\s+question\b/.test(lower)
+}
+
+/**
+ * MID-SCREEN "is this for the <X> role? / which job is this for?" detector (Adam 2026-06-12
+ * priority 2 — the live "is this for Invoko PM?" shape). Same narrowness contract as above.
+ */
+export function isPrescreenRoleIdentityQuestion(reply: string): boolean {
+  const body = reply.trim()
+  if (!body || body.length > 200) return false
+  const lower = body.toLowerCase()
+  const asksQuestion = /[?？]/.test(body) || /^(is|was|which|what|who)\b/.test(lower)
+  if (!asksQuestion) return false
+  if (/^(is|was)\s+(this|that|it)\s+((screen|screening|interview|one)\s+)?for\b/.test(lower)) return true
+  if (/\b(what|which)\s+(role|job|position|company)\s+(is|was)\s+(this|that|it)\s+for\b/.test(lower)) return true
+  if (/\b(what|which)\s+(role|job|position|company)\s+am\s+i\s+(interviewing|screening|being\s+screened)\s+for\b/.test(lower)) return true
+  return /\bwho\s+is\s+this\s+(screen(ing)?|interview)\s+(for|with)\b/.test(lower)
+}
+
+/** State-accurate mid-screen status reply: truth + continue the screen (Adam priority 2 copy). */
+export function composePrescreenStatusAnswer(args: {
+  kind: "screen_over" | "role_identity"
+  jobTitle?: string
+  company?: string
+  pendingPrompt: string
+}): string {
+  const role = [args.jobTitle, args.company].filter(Boolean).join(" @ ") || "this role"
+  const pending = args.pendingPrompt.trim()
+  if (args.kind === "role_identity") {
+    return pending
+      ? `yep — this screen is for ${role}. ${pending}`
+      : `yep — this screen is for ${role}.`
+  }
+  return pending
+    ? `not yet — still a couple of questions to go for ${role}. next one: ${pending}`
+    : `not yet — almost there for ${role}.`
 }
 
 function recentTerminalCourtesyAckText(_lang: "zh" | "en"): string {

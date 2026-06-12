@@ -155,3 +155,27 @@ test("TRIAGE carries the never-re-ask rule for location/salary already on file (
     "instructs acknowledging instead of re-asking",
   )
 })
+
+// ── Adam 2026-06-12: prescreen ownership + state-accurate status copy ─────────────────────────────
+test("prescreen mode locks SCREEN OWNERSHIP — no matching offers / find_match before terminal", () => {
+  const prescreen = buildClairePrompt({ mode: "prescreen", lang: "en" })
+  assert.ok(/SCREEN OWNERSHIP/.test(prescreen), "prescreen mode must carry the ownership rule")
+  assert.ok(/MATCHING IS OFF WHILE THE SCREEN IS OPEN/.test(prescreen))
+  assert.ok(/NEVER ask 'want me to pull roles\?'/.test(prescreen))
+})
+
+test("prescreen mode answers status questions from state — not yet / confirm role, never under review", () => {
+  const prescreen = buildClairePrompt({ mode: "prescreen", lang: "en" })
+  assert.ok(/STATUS QUESTIONS MID-SCREEN/.test(prescreen))
+  assert.ok(/say NOT YET and continue with the pending/.test(prescreen))
+  assert.ok(/NEVER say a still-open screen is 'under review' or submitted/.test(prescreen))
+})
+
+test("triage status copy covers timed_out/paused and bans the words 'human review'", () => {
+  const triage = buildClairePrompt({ mode: "triage", lang: "en" })
+  assert.ok(/STATUS = timed_out/.test(triage))
+  assert.ok(/reply 'restart screen'/.test(triage))
+  assert.ok(/do NOT pivot that answer into a matching offer/.test(triage))
+  assert.ok(/STATUS = paused/.test(triage))
+  assert.ok(/NEVER use the words 'human review'/.test(triage))
+})

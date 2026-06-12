@@ -42,6 +42,7 @@ import {
   type JobRecommendationSource,
 } from "./job-rec-copy.js"
 import { isClaireEntryUxCanary } from "./claire-agent/canary.js"
+import { isStaleClosedPrescreenSession } from "./prescreen-staleness.js"
 
 export type PrescreenTerminalKind = "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
 const BETA_CANDIDATE_VISIBLE_LANG = "en" as const
@@ -339,7 +340,9 @@ async function defaultSendSms(args: {
   })
 }
 
-function hasResumeOrLinkedInProfileSignal(user: Record<string, unknown>): boolean {
+/** Résumé/LinkedIn-ish profile signal on the pa-users doc. Exported for the candidate-context
+ *  renderer (post-rejection "add your resume/LinkedIn" suggestion) so the two seams share ONE check. */
+export function hasResumeOrLinkedInProfileSignal(user: Record<string, unknown>): boolean {
   if (typeof user.latestResumeArtifactId === "string" && user.latestResumeArtifactId.trim()) return true
   if (typeof user.linkedinUrl === "string" && user.linkedinUrl.trim()) return true
   if (user.linkedinOauthLinked === true) return true
@@ -808,6 +811,16 @@ export async function runPrescreenTerminalAction(
   // Job recs are fired ASYNCHRONOUSLY after candidate completes the 3 PII Qs.
   // This way ALL engaged candidates leave their contact info before getting
   // recs (max funnel capture).
+  //
+  // STALE-CLOSED GUARD (Adam 2026-06-12, Invoko PM live failure +12026571666): a session whose
+  // workSession.boundary is "timeout"/"manual_review_required" (or terminalReason =
+  // expired_inactive_prescreen_session) reached terminal by STALENESS, not by a real outcome. The
+  // post-terminal auto-matching flow (preamble + PII + generateJobRecs + retention handoff offer)
+  // MUST NOT fire off it — the candidate gets the deterministic "timed out / restart screen" copy
+  // from the turn handler instead, and matching resumes only when THEY ask. Auto-recs stay gated to
+  // terminal IN {PASS, FAIL} AND a non-stale boundary. State writes above (outcome mark, memory,
+  // work-session end, pausedAt) are unaffected.
+  const staleClosed = isStaleClosedPrescreenSession(sessData)
   let piiStarted = false
   if (args.terminal === "PASS") {
     // LEVEL1-01..03: read level 1 fields + send reveal SMS
@@ -842,7 +855,19 @@ export async function runPrescreenTerminalAction(
     // employer, so do not immediately push unrelated job recommendations.
     piiStarted = await startPiiWithRecsChain(args, "pass", genJobRecs, log, { fireJobRecs: false })
   } else if (args.terminal === "FAIL") {
-    if (isClaireEntryUxCanary(args.userId)) {
+    if (staleClosed) {
+      // Stale boundary → no retention offer, no preamble, no PII→recs chain (see guard note above).
+      log("prescreen.terminal_action.stale_closed_matching_suppressed", {
+        sessionId: args.sessionId,
+        userId: args.userId,
+        terminal: args.terminal,
+        terminalReason: typeof sessData.terminalReason === "string" ? sessData.terminalReason : null,
+        boundary:
+          sessData.workSession && typeof sessData.workSession === "object"
+            ? ((sessData.workSession as Record<string, unknown>).boundary ?? null)
+            : null,
+      })
+    } else if (isClaireEntryUxCanary(args.userId)) {
       await sendDevRejectedRetentionHandoff({
         db: args.db,
         sessionId: args.sessionId,
@@ -873,7 +898,19 @@ export async function runPrescreenTerminalAction(
       piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log)
     }
   } else if (args.terminal === "HARD_STOP") {
-    if (isClaireEntryUxCanary(args.userId)) {
+    if (staleClosed) {
+      // Same stale-boundary suppression as FAIL: no retention offer, no PII chain.
+      log("prescreen.terminal_action.stale_closed_matching_suppressed", {
+        sessionId: args.sessionId,
+        userId: args.userId,
+        terminal: args.terminal,
+        terminalReason: typeof sessData.terminalReason === "string" ? sessData.terminalReason : null,
+        boundary:
+          sessData.workSession && typeof sessData.workSession === "object"
+            ? ((sessData.workSession as Record<string, unknown>).boundary ?? null)
+            : null,
+      })
+    } else if (isClaireEntryUxCanary(args.userId)) {
       await sendDevRejectedRetentionHandoff({
         db: args.db,
         sessionId: args.sessionId,

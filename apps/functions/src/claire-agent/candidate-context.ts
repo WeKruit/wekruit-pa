@@ -23,6 +23,8 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 import { loadGlobalContext } from "./agent.js"
+import { isStaleClosedPrescreenSession } from "../prescreen-staleness.js"
+import { hasResumeOrLinkedInProfileSignal } from "../prescreen-terminal-action.js"
 
 const PRESCREEN_SESSIONS = "pa-prescreen-sessions"
 
@@ -42,6 +44,9 @@ export interface CandidateScreenSession {
   weakestSignal?: { qLabel: string; ratio: number }
   /** terminalActionPendingReview === true: outcome is under WeKruit team review, never claim a decision. */
   pendingReview: boolean
+  /** Closed by STALENESS (boundary=timeout / expired_inactive_prescreen_session / manual_review_required):
+   *  NOTHING was submitted — never "under review", never an auto-matching trigger (Adam 2026-06-12). */
+  staleClosed: boolean
   /** postPrescreenRetention.stage (await_basic_onboarding / onboarding_started / …). */
   retentionStage: string | null
   endedAtMs: number | null
@@ -182,19 +187,25 @@ function toScreenSession(id: string, data: Record<string, unknown>): CandidateSc
     ...(strongest ? { strongestSignal: strongest } : {}),
     ...(weakest ? { weakestSignal: weakest } : {}),
     pendingReview: data.terminalActionPendingReview === true,
+    staleClosed: isStaleClosedPrescreenSession(data),
     retentionStage: typeof retention?.stage === "string" ? retention.stage : null,
     endedAtMs,
   }
 }
 
-/** Candidate-context label for a terminal, for the rendered block. */
-function terminalLabel(s: CandidateScreenSession): string {
+/** Candidate-context label for a terminal, for the rendered block. Exported for unit tests. */
+export function terminalLabel(s: CandidateScreenSession): string {
   if (s.terminal === null) return "in progress (not finished)"
   if (s.terminal === "PASS") return s.pendingReview ? "PASSED (under WeKruit team review - outcome not final)" : "passed"
   if (s.terminal === "PAUSE") {
+    // STALE-CLOSED (Adam 2026-06-12, Invoko PM live failure): a timeout/manual-review PAUSE never
+    // reached the team — the label must make "under review" inexpressible and name the restart path.
+    if (s.staleClosed) {
+      return "TIMED OUT (auto-closed after inactivity — NOT a rejection, NOT under review, nothing was submitted; they can reply 'restart screen' to start a fresh run)"
+    }
     return s.terminalReason === "user_exit"
-      ? "PAUSED (you stepped away mid-screen — not a rejection)"
-      : "PAUSED (not a rejection)"
+      ? "PAUSED (you stepped away mid-screen — not a rejection, not under review)"
+      : "PAUSED (not a rejection, not under review)"
   }
   return s.pendingReview ? "did not pass (under WeKruit team review - outcome not final)" : "did not pass"
 }
@@ -217,26 +228,93 @@ function renderScreenLine(s: CandidateScreenSession): string {
 /**
  * Render the model-ready candidate-context block (threaded into runClaireTurn.candidateContext).
  * Plain English; names the role + terminal + real reason + borderline gap; lists sibling screens so
- * the model knows the candidate has been screened for these roles and should match OTHER matching
- * roles. Returns "" when there are no screens (nothing to add this turn).
+ * the model knows the candidate has been screened for these roles. Returns "" when there are no
+ * screens (nothing to add this turn).
+ *
+ * STATE-AWARE DIRECTIVES (Adam 2026-06-12, Invoko PM live failure +12026571666):
+ *   - an ACTIVE screen OWNS the conversation: no matching offers until terminal;
+ *   - a STALE-CLOSED (timed-out) screen gets the 'restart screen' path, never a matching offer
+ *     in the same breath and NEVER an "under review" claim;
+ *   - matching is offered only AFTER a real terminal (PASS / FAIL / HARD_STOP, or a deliberate
+ *     user-exit pause);
+ *   - candidate copy never says "human review" — it is always the WeKruit team / hiring team.
+ *
+ * Exported for unit tests; `opts.profileSignalOnFile` threads the résumé/LinkedIn presence so a
+ * rejected candidate with nothing on file is asked to add it (so future collab roles can be pitched
+ * without repeating screens) before any rec offer.
  */
-function renderPrescreenContextText(screens: CandidateScreenSession[]): string {
+export function renderPrescreenContextText(
+  screens: CandidateScreenSession[],
+  opts?: { profileSignalOnFile?: boolean },
+): string {
   if (!screens.length) return ""
   const lines = screens.map(renderScreenLine)
   const anyPendingReview = screens.some((s) => s.pendingReview)
+  const activeScreen = screens.find((s) => s.terminal === null) ?? null
+  const mostRecentTerminal = screens.find((s) => s.terminal !== null) ?? null
+  const staleTimedOut = !activeScreen && mostRecentTerminal?.terminal === "PAUSE" && mostRecentTerminal.staleClosed
+  const rejectedTerminal =
+    !activeScreen &&
+    (mostRecentTerminal?.terminal === "FAIL" || mostRecentTerminal?.terminal === "HARD_STOP")
+  const realTerminal =
+    !activeScreen &&
+    mostRecentTerminal !== null &&
+    (mostRecentTerminal.terminal === "PASS" || rejectedTerminal || (mostRecentTerminal.terminal === "PAUSE" && !mostRecentTerminal.staleClosed))
+
+  const activeRoleLabel = activeScreen
+    ? [activeScreen.jobTitle, activeScreen.company].filter(Boolean).join(" @ ") || activeScreen.jobId || "this role"
+    : ""
+
   return [
     "PRIOR JOB SCREENS (most recent first):",
     ...lines,
+    // ── SCREEN OWNERSHIP: an active screen suspends matching entirely (Adam priority 1). ──
+    activeScreen
+      ? [
+          `AN ACTIVE SCREEN IS IN PROGRESS (${activeRoleLabel}) — the screen OWNS this conversation until it reaches a terminal.`,
+          "Do NOT offer job matching, do NOT call find_match, and do NOT ask 'want me to pull roles?' while it is open.",
+          "If they ask whether the screening is over: say not yet and continue with the pending question.",
+          `If they ask which role/company this screen is for: it is ${activeRoleLabel} — confirm that and continue the screen.`,
+          "A tangent question gets a brief answer, then return to the pending screen question.",
+        ].join(" ")
+      : "",
     "You have been screened for these roles before. A PAUSED or DID-NOT-PASS screen is for ONE job only —",
     "the candidate stays in the pool and can be matched to OTHER jobs. If the candidate asks why a screen",
     "paused or didn't pass, explain HONESTLY and kindly from the lines above (name what was strong, what",
     "was borderline, and that paused/not-passed is not a rejection) — NEVER invent a reason.",
+    // ── STATUS HONESTY (Adam priority 2): under-review claims must be grounded in pendingReview. ──
+    "STATUS HONESTY: ONLY a screen explicitly marked 'under WeKruit team review' above may be described as",
+    "being reviewed. A TIMED-OUT or PAUSED screen was NEVER submitted — never say it is under review,",
+    "submitted, or being looked at. Never use the words 'human review' with the candidate — say the",
+    "WeKruit team or the hiring team (the screen helps pitch them to the hiring manager).",
     anyPendingReview
-      ? "One outcome is still UNDER WEKRUIT TEAM REVIEW: do NOT claim a final decision (never say they passed or failed) - say the outcome is still being reviewed."
+      ? "One outcome is still UNDER WEKRUIT TEAM REVIEW: do NOT claim a final decision (never say they passed or failed) - say the WeKruit team is reviewing it and you'll text them the next step."
       : "",
-    "If the candidate states a target role, seniority, or constraint, CAPTURE it (record_onboarding_answer /",
-    "set_matching_preferences — map their words to the canonical enum yourself) and OFFER to find OTHER",
-    "matching roles (find_match). Do NOT re-pitch the paused job. Do not echo their answer back as the whole reply.",
+    // ── STALE TIMEOUT (Adam priorities 2+4): restart path, NO matching offer in the same turn. ──
+    staleTimedOut
+      ? [
+          "THEIR MOST RECENT SCREEN TIMED OUT (auto-closed from inactivity — see above). If they ask about it",
+          "or want to continue: tell them it timed out (zero ding on them) and they can reply 'restart screen'",
+          "to pick it back up fresh. Do NOT offer job matching or 'want me to pull roles?' on this turn, and do",
+          "NOT send recommendations off the back of the timeout — matching resumes only if THEY ask for roles.",
+        ].join(" ")
+      : "",
+    // ── MATCHING ONLY AFTER A REAL TERMINAL (Adam priority 3). ──
+    realTerminal && !staleTimedOut
+      ? [
+          "Their screens are settled (no active screen), so matching is back on the table. If the candidate",
+          "states a target role, seniority, or constraint, CAPTURE it (record_onboarding_answer /",
+          "set_matching_preferences — map their words to the canonical enum yourself) and OFFER to find OTHER",
+          "matching roles, framed naturally — e.g. 'I can use your resume/LinkedIn to find better-fit roles' —",
+          "then find_match on a yes. Do NOT re-pitch the paused/failed job. Do not echo their answer back as",
+          "the whole reply.",
+          rejectedTerminal && opts?.profileSignalOnFile === false
+            ? "They have NO resume or LinkedIn on file: before recommendations, suggest adding one so future collaboration roles can be pitched with their real background instead of repeating screens — then ask if they want recommendations."
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : "",
   ]
     .filter(Boolean)
     .join("\n")
@@ -268,9 +346,13 @@ export async function buildCandidateContext(
   // (1b) EMPLOYER BACKGROUND (Adam 2026-06-10) — append the derived employer-history one-liner
   // when signals exist. Own fail-soft read (loadGlobalContext returns rendered text only); "" for
   // legacy users keeps the block byte-identical. Display/personalization only — never a gate.
+  // (2026-06-12) The same read also derives `profileSignalOnFile` (résumé/LinkedIn presence) for the
+  // post-rejection "add your resume/LinkedIn" suggestion — shared check with the terminal action.
+  let profileSignalOnFile = true // fail-soft default: when the read fails, do NOT nag for a résumé
   try {
     const userSnap = await db.collection("pa-users").doc(userId).get()
     const userData = (userSnap.data() ?? {}) as Record<string, unknown>
+    profileSignalOnFile = hasResumeOrLinkedInProfileSignal(userData)
     const tags =
       userData.tags && typeof userData.tags === "object" && !Array.isArray(userData.tags)
         ? (userData.tags as Record<string, unknown>)
@@ -302,7 +384,7 @@ export async function buildCandidateContext(
   }
 
   const mostRecentTerminal = screens.find((s) => s.terminal !== null) ?? null
-  const prescreenContextText = renderPrescreenContextText(screens)
+  const prescreenContextText = renderPrescreenContextText(screens, { profileSignalOnFile })
 
   return { userId, globalContextText, screens, mostRecentTerminal, prescreenContextText }
 }

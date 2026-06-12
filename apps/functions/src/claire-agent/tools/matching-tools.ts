@@ -75,6 +75,7 @@ import {
 import type { ClaireToolContext, FindMatchResult } from "../types.js"
 import { runCandidatePrivacyRequest } from "../../production-hardening.js"
 import { runPreScreenForUser } from "../../prescreen-session-start.js"
+import { isStaleClosedPrescreenSession } from "../../prescreen-staleness.js"
 
 const PA_USERS_COLLECTION = "pa-users"
 const JOB_PROFILES_COLLECTION = "pa-job-profiles"
@@ -154,11 +155,14 @@ export interface CollabRole {
   industrySector?: string[]
   /**
    * Where this role is in the candidate's journey. `matched` = recommended, no screen yet.
-   * `under_review` = the screen reached a terminal but it's PENDING human (HITL) confirmation — it is
+   * `under_review` = the screen reached a terminal but it's PENDING operator confirmation — it is
    * NOT a real pass/fail until an operator COMMITS it in the dashboard, so the candidate must never be
-   * told they passed while under_review.
+   * told they passed while under_review. `timed_out` = the screen auto-closed from inactivity — NOTHING
+   * was submitted to the team, so it must NEVER be described as under review/submitted; the candidate
+   * can reply 'restart screen' to start a fresh run. `paused` = the candidate stepped away mid-screen
+   * (also never under review; they can pick it back up).
    */
-  status?: "passed" | "not_passed" | "in_progress" | "matched" | "under_review"
+  status?: "passed" | "not_passed" | "in_progress" | "matched" | "under_review" | "paused" | "timed_out"
 }
 
 /**
@@ -440,8 +444,17 @@ async function resolveCandidatePhone(
 }
 
 /** The candidate-facing progress status of a prescreen. `under_review` = a terminal verdict that is
- * still pending HITL confirmation (NOT a real pass/fail until an operator commits it). */
-export type PrescreenProgressStatus = "passed" | "not_passed" | "in_progress" | "under_review"
+ * still pending operator confirmation (NOT a real pass/fail until an operator commits it).
+ * `timed_out` = a PAUSE terminal whose cause was inactivity expiry (workSession.boundary "timeout" /
+ * terminalReason "expired_inactive_prescreen_session") — the screen auto-closed, NOTHING was submitted
+ * for review; `paused` = any other PAUSE (candidate stepped away). Neither is EVER "under review". */
+export type PrescreenProgressStatus =
+  | "passed"
+  | "not_passed"
+  | "in_progress"
+  | "under_review"
+  | "paused"
+  | "timed_out"
 
 /**
  * Map a stored prescreen-session terminal (PASS/FAIL/HARD_STOP/null) to the candidate-facing progress
@@ -484,6 +497,13 @@ export function prescreenStatusFromTerminal(
 export function prescreenStatusFromSession(session: Record<string, unknown> | undefined | null): PrescreenProgressStatus {
   const d = session ?? {}
   const review = (d.review ?? {}) as Record<string, unknown>
+  // PAUSE is a ROUTING terminal, not an outcome — and a TIMED-OUT pause is its own candidate-visible
+  // state (live failure 2026-06-12, +12026571666: a boundary=timeout PAUSE was narrated as "under
+  // review" — false, nothing was submitted). Map it here so every status reader (find_my_role,
+  // check_prescreen_progress) reports the truth instead of "in_progress" on a closed session.
+  if (typeof d.terminal === "string" && d.terminal.toUpperCase() === "PAUSE") {
+    return isStaleClosedPrescreenSession(d) ? "timed_out" : "paused"
+  }
   return prescreenStatusFromTerminal(d.terminal, {
     pendingReview: d.terminalActionPendingReview,
     reviewStatus: review.status,
@@ -1283,6 +1303,58 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           ok: res.ok,
           recCount: res.recCount,
         })
+        // ENTRY-UX PRD §2.7.1 + §3.2 — the candidate's "yes"/match request is CONSENT, and a tool
+        // must commit it durably: stamp the recommendation subscription on pa-job-profiles/{uid}
+        // (the exact row the daily cadence + set_daily_subscription read), with optedIn provenance
+        // Claire can read back later (§2.9.5 "can you keep sending matches?"). Before this, the
+        // "yes" wrote NOTHING — the subscription only materialized via the consent-blind cadence
+        // auto-provision. A PAUSED row stays paused (an ordinary "show me roles" must never
+        // silently re-enable a paused cadence — set_daily_subscription optedIn=true is the
+        // explicit re-enable). Fail-open: a stamp error never breaks find_match's RC2 contract.
+        if (res.ok) {
+          try {
+            const ts = ctx.nowIso()
+            const ref = ctx.db.collection(JOB_PROFILES_COLLECTION).doc(ctx.userId)
+            await ctx.db.runTransaction(async (tx) => {
+              const cur = await tx.get(ref)
+              const optIn = { optedIn: true, source: "candidate_match_request", at: ts }
+              if (cur.exists) {
+                const prev = cur.data() as { status?: unknown } | undefined
+                tx.set(
+                  ref,
+                  {
+                    userId: ctx.userId,
+                    recommendationOptIn: optIn,
+                    updatedAt: ts,
+                    ...(prev?.status === "paused" ? {} : { status: "active" }),
+                  },
+                  { merge: true },
+                )
+              } else {
+                tx.set(ref, {
+                  userId: ctx.userId,
+                  // Minimal "no preference" legacy profile shape — same as the cadence
+                  // auto-provision row: matching reads pa-users.tags (V16 cascade); this
+                  // payload only keeps the daily batch's corrupt-profile gate happy.
+                  profile: { industry: "any", sponsorship: "either", location: "", sizePreference: "either" },
+                  status: "active",
+                  recommendationOptIn: optIn,
+                  cvParsedAt: ts,
+                  createdAt: ts,
+                  updatedAt: ts,
+                  lastJobBatchSentAt: null,
+                  source: "candidate_match_request",
+                })
+              }
+            })
+            ctx.log("pa.claire.find_match.subscription_activated", { userId: ctx.userId })
+          } catch (subErr) {
+            ctx.log("pa.claire.find_match.subscription_stamp_failed", {
+              userId: ctx.userId,
+              error: subErr instanceof Error ? subErr.message.slice(0, 200) : String(subErr),
+            })
+          }
+        }
         // DETERMINISTIC delivery: when there are roles, the TOOL sends the role bubbles + the mandatory
         // collab prescreen offer (the LLM kept dropping them). On success the agent MUST stay silent —
         // we return delivered:true and jobs:[] so it has nothing to re-list. Only when NOT delivered
@@ -1496,8 +1568,12 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
   const setDailySubscription = tool({
     name: "set_daily_subscription",
     description:
-      "Opt the candidate IN or OUT of the daily job-recommendation text. Use when they say things like " +
-      "'send me daily roles' / 'yes keep them coming' (optedIn=true) or 'stop the daily texts' / 'pause those' (optedIn=false).",
+      "Opt the candidate IN or OUT of the ongoing job-recommendation texts. Use when they say things like " +
+      "'send me daily roles' / 'yes keep them coming' (optedIn=true) or 'stop the daily texts' / 'pause those' / " +
+      "'not now' / they DECLINE the matching offer after the pitch (optedIn=false). This records their consent " +
+      "durably — a declined offer must be written (optedIn=false) so the cadence never texts someone who said no. " +
+      "Also use it to ANSWER subscription-status questions ('are you still sending me matches?'): the result " +
+      "returns the current jobProfileStatus and recorded opt-in.",
     parameters: z.object({ optedIn: z.boolean() }),
     async execute({ optedIn }) {
       try {
@@ -1506,15 +1582,25 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
         await ctx.db.runTransaction(async (tx) => {
           const cur = await tx.get(ref)
           const status = optedIn ? "active" : "paused"
+          // §2.9.5 / §2.7.1 — record the consent itself (who opted in/out, when, via what path),
+          // not just the resulting status, so a later "can you keep sending matches?" reads a real
+          // record tied to the candidate's answer.
+          const optInRecord = { optedIn, source: "candidate_request", at: ts }
           if (cur.exists) {
-            tx.set(ref, { status, updatedAt: ts }, { merge: true })
+            tx.set(ref, { status, recommendationOptIn: optInRecord, updatedAt: ts }, { merge: true })
           } else {
             tx.set(ref, {
               userId: ctx.userId,
+              // Minimal "no preference" legacy profile shape (same as auto-provision) so a
+              // row created by a bare opt-in doesn't trip the batch's corrupt-profile gate.
+              profile: { industry: "any", sponsorship: "either", location: "", sizePreference: "either" },
               status,
+              recommendationOptIn: optInRecord,
+              cvParsedAt: ts,
               createdAt: ts,
               updatedAt: ts,
               lastJobBatchSentAt: null,
+              source: "candidate_request",
             })
           }
         })
@@ -1588,8 +1674,11 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "company', 'did I pass the fintech one?'). Compose a CANONICAL query from their words: roleFunction " +
       "(closed enum), company (free text), industrySector (closed enum) — map their meaning the same way " +
       "you'd tag a preference. Returns matched+prescreened roles RANKED by canonical fit, each with its " +
-      "status (passed / not_passed / in_progress / matched / under_review). under_review = the screen is " +
-      "submitted and awaiting WeKruit-team confirmation - it is NOT a pass; do NOT say they passed for it. " +
+      "status (passed / not_passed / in_progress / matched / under_review / paused / timed_out). " +
+      "under_review = the screen is submitted and awaiting WeKruit-team confirmation - it is NOT a pass; " +
+      "do NOT say they passed for it. timed_out = the screen auto-closed from inactivity - NOTHING was " +
+      "submitted, NEVER call it under review or submitted; tell them to reply 'restart screen' to pick it " +
+      "back up. paused = they stepped away mid-screen - also NOT under review; they can resume anytime. " +
       "kind='one' → the single best is theirs; " +
       "kind='ambiguous' → ASK which of the candidates they mean (never guess); kind='no_match' → they " +
       "haven't been matched to such a role, so guide them to the website to start a new one. Then use " +
@@ -1725,10 +1814,15 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "Look up the status of the candidate's pre-screens when they ask about their progress " +
       "('how did my screen go?', 'did I pass the Invoko one?', 'what's the status of my interviews?'). " +
       "Optional query = a company/title to filter to (e.g. 'Invoko'); omit to list all their screens. " +
-      "Returns each screen's company, title, and status (passed / not_passed / in_progress / under_review). " +
+      "Returns each screen's company, title, and status (passed / not_passed / in_progress / under_review / " +
+      "paused / timed_out). " +
       "under_review = the screen is SUBMITTED and awaiting WeKruit-team confirmation - it is NOT a pass yet; do " +
       "NOT tell the candidate they passed (or offer a confirmed next step) for an under_review screen; only " +
-      "a 'passed' status is a real, confirmed pass. READ-ONLY.",
+      "a 'passed' status is a real, confirmed pass. timed_out = the screen auto-closed from inactivity - " +
+      "NOTHING was submitted for review, so NEVER describe it as under review/submitted; say it timed out and " +
+      "they can reply 'restart screen' to pick it back up. paused = they stepped away mid-screen - also NOT " +
+      "under review; they can resume anytime. in_progress = the screen is STILL OPEN - say it's not finished " +
+      "yet and continue it; do NOT offer job matching for an in_progress screen. READ-ONLY.",
     parameters: z.object({ query: z.string().nullable() }),
     async execute({ query }) {
       try {

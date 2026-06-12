@@ -1959,3 +1959,300 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.handled, false)
   })
 })
+
+// ── Adam 2026-06-12: prescreen OWNERSHIP + state-accurate status copy ─────────────────────────────
+// Live failure (+12026571666 / wQfGZlttRQltMPv4NU6e / hs-10996795-invoko-product-manager): mid-screen
+// status questions were scored as answers, and a timed-out PAUSE got a matching offer + a false
+// "under review" claim. These tests lock the new deterministic layers.
+import {
+  composePrescreenStatusAnswer,
+  isPrescreenRoleIdentityQuestion,
+  isPrescreenScreenStatusQuestion,
+} from "./prescreen-turn-handler.js"
+
+const ENTRY_UX_CANARY_UID = "8fEwIduUrzxZsblHHsNz" // CANARY_UIDS dev cohort (env-independent)
+
+function seedInvokoActiveSession(userId: string, sessionId: string) {
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+  return {
+    [`pa-prescreen-sessions/${sessionId}`]: {
+      sessionId,
+      userId,
+      jobId: "hs-10996795-invoko-product-manager",
+      terminal: null,
+      currentQId: "q_consumer_product_experience",
+      createdAt: twoHoursAgo,
+      updatedAt: twoHoursAgo,
+      score: 0,
+      scoreMax: 3,
+      threshold: 0.65,
+      confidenceThreshold: 0.7,
+      maxClarifyRounds: 3,
+      qOrder: ["q_consumer_product_experience", "q_ship_taste"],
+      questions: {
+        q_consumer_product_experience: {
+          qId: "q_consumer_product_experience",
+          type: "MUST_HAVE",
+          weight: 2,
+          matchThreshold: 0.85,
+          clarifyRounds: 0,
+        },
+        q_ship_taste: {
+          qId: "q_ship_taste",
+          type: "MUST_HAVE",
+          weight: 1,
+          matchThreshold: 0.85,
+          clarifyRounds: 0,
+        },
+      },
+      workSession: { kind: "job_prescreen", status: "active", startedAt: twoHoursAgo, boundary: "trigger" },
+      cfgSnapshot: {
+        jobTitle: "Product Manager",
+        company: "Invoko",
+        questions: [
+          {
+            qId: "q_consumer_product_experience",
+            prompt: {
+              en: "Tell me about consumer product work you've done - what did you ship and what feedback did it drive?",
+              zh: "Tell me about consumer product work you've done - what did you ship and what feedback did it drive?",
+            },
+            clarifyPrompt: { en: "What did you ship?", zh: "What did you ship?" },
+            keywords: [{ keyword: "consumer_product_shipping", weight: 1 }],
+          },
+          {
+            qId: "q_ship_taste",
+            prompt: {
+              en: "How do you decide what to ship next when you have more ideas than time?",
+              zh: "How do you decide what to ship next when you have more ideas than time?",
+            },
+            clarifyPrompt: { en: "Smallest slice you shipped and why?", zh: "Smallest slice you shipped and why?" },
+            keywords: [{ keyword: "prioritization_taste", weight: 1 }],
+          },
+        ],
+      },
+    },
+  }
+}
+
+describe("mid-screen status/identity questions (isClaireEntryUxCanary)", () => {
+  it("answers 'is the screening over?' from state — not yet + pending question; nothing scored", async () => {
+    const { db, docs } = makeFakeDb(seedInvokoActiveSession(ENTRY_UX_CANARY_UID, "ps_invoko_status"))
+    const sent: string[] = []
+    let judgeCalled = false
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        judgeCalled = true
+        throw new Error("status question must not reach the judge")
+      },
+    }
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: ENTRY_UX_CANARY_UID,
+      toE164: "+14243201960",
+      replyText: "is the screening over?",
+      keywordSetCaller: caller,
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued" }
+      },
+    })
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, null)
+    assert.equal(judgeCalled, false)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0]!, /^not yet/)
+    assert.match(sent[0]!, /Product Manager @ Invoko/)
+    assert.match(sent[0]!, /consumer product work/)
+    // session still active on the SAME pending question — the screen kept ownership.
+    const session = docs.get("pa-prescreen-sessions/ps_invoko_status")?.data
+    assert.equal(session?.terminal, null)
+    assert.equal(session?.currentQId, "q_consumer_product_experience")
+    // no matching offer leaked into the reply.
+    assert.doesNotMatch(sent[0]!, /jobs|roles|matches/i)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_invoko_status/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.deepEqual(turnEntries[0]![1].data.action, { kind: "status_answered", reason: "screen_over" })
+  })
+
+  it("answers 'is this for the invoko PM role?' with the real role and continues the screen", async () => {
+    const { db, docs } = makeFakeDb(seedInvokoActiveSession(ENTRY_UX_CANARY_UID, "ps_invoko_identity"))
+    const sent: string[] = []
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        throw new Error("identity question must not reach the judge")
+      },
+    }
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: ENTRY_UX_CANARY_UID,
+      toE164: "+14243201960",
+      replyText: "is this for the invoko PM role?",
+      keywordSetCaller: caller,
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued" }
+      },
+    })
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0]!, /this screen is for Product Manager @ Invoko/)
+    assert.match(sent[0]!, /consumer product work/)
+    const session = docs.get("pa-prescreen-sessions/ps_invoko_identity")?.data
+    assert.equal(session?.currentQId, "q_consumer_product_experience")
+  })
+
+  it("non-canary user keeps the legacy path byte-for-byte (the reply is judged as before)", async () => {
+    const { db } = makeFakeDb(seedInvokoActiveSession("u1", "ps_invoko_legacy"))
+    const sent: string[] = []
+    let judgeCalled = false
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        judgeCalled = true
+        return {
+          perKeyword: [
+            { keyword: "consumer_product_shipping", match: 0.95, confidence: 0.9, evidence: "x", reasoning: "y" },
+          ],
+          summary: "ok",
+          answered: true,
+        }
+      },
+    }
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "is the screening over?",
+      keywordSetCaller: caller,
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued" }
+      },
+    })
+    assert.equal(result.handled, true)
+    assert.equal(judgeCalled, true, "legacy path still routes through the judge")
+  })
+
+  it("a real ANSWER containing a question mark falls through to the judge even for canary", async () => {
+    const { db } = makeFakeDb(seedInvokoActiveSession(ENTRY_UX_CANARY_UID, "ps_invoko_answerq"))
+    const sent: string[] = []
+    let judgeCalled = false
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        judgeCalled = true
+        return {
+          perKeyword: [
+            { keyword: "consumer_product_shipping", match: 0.95, confidence: 0.9, evidence: "x", reasoning: "y" },
+          ],
+          summary: "ok",
+          answered: true,
+        }
+      },
+    }
+    await runPrescreenTurnIfActive({
+      db,
+      userId: ENTRY_UX_CANARY_UID,
+      toE164: "+14243201960",
+      replyText: "I shipped a dealership PoS platform and drove the post-launch feedback loop. does that count as consumer product work?",
+      keywordSetCaller: caller,
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued" }
+      },
+    })
+    assert.equal(judgeCalled, true, "an answer with a trailing question must still be scored")
+  })
+
+  it("detectors: narrow shapes match, answers do not", () => {
+    assert.equal(isPrescreenScreenStatusQuestion("is the screening over?"), true)
+    assert.equal(isPrescreenScreenStatusQuestion("are we done?"), true)
+    assert.equal(isPrescreenScreenStatusQuestion("how many more questions?"), true)
+    assert.equal(isPrescreenScreenStatusQuestion("I completed the migration end to end."), false)
+    assert.equal(isPrescreenScreenStatusQuestion("I finished the rollout — is that the kind of example you want?"), false)
+    assert.equal(isPrescreenRoleIdentityQuestion("is this for the invoko PM role?"), true)
+    assert.equal(isPrescreenRoleIdentityQuestion("which job is this for?"), true)
+    assert.equal(isPrescreenRoleIdentityQuestion("I led the product launch for our dealership platform"), false)
+    const text = composePrescreenStatusAnswer({
+      kind: "screen_over",
+      jobTitle: "Product Manager",
+      company: "Invoko",
+      pendingPrompt: "Next question?",
+    })
+    assert.match(text, /not yet/)
+    assert.match(text, /Product Manager @ Invoko/)
+  })
+})
+
+describe("stale-timeout PAUSE follow-up (universal copy-accuracy)", () => {
+  it("answers a follow-up after a timed-out PAUSE with the restart path — never a matching offer", async () => {
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_timedout": {
+        sessionId: "ps_timedout",
+        userId: "u1",
+        jobId: "hs-10996795-invoko-product-manager",
+        terminal: "PAUSE",
+        terminalReason: "expired_inactive_prescreen_session",
+        currentQId: null,
+        updatedAt: fiveMinAgo,
+        workSession: { kind: "job_prescreen", status: "ended", endedAt: fiveMinAgo, boundary: "timeout" },
+        cfgSnapshot: { jobTitle: "Product Manager", company: "Invoko", questions: [] },
+      },
+      "pa-users/u1": { userId: "u1" },
+    })
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+12026571666",
+      replyText: "ok",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued" }
+      },
+    })
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, "PAUSE")
+    assert.equal(sent.length, 1)
+    assert.match(sent[0]!, /timed out/)
+    assert.match(sent[0]!, /restart screen/)
+    // NEVER the legacy matching offer, NEVER a review claim (nothing was submitted).
+    assert.doesNotMatch(sent[0]!, /help find jobs|meet your expectations|pull roles/i)
+    assert.doesNotMatch(sent[0]!, /review/i)
+    const session = docs.get("pa-prescreen-sessions/ps_timedout")?.data
+    assert.equal(typeof session?.postTerminalFollowupAckAt, "string")
+  })
+
+  it("a non-stale user-exit PAUSE keeps the existing retention prompt", async () => {
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    const { db } = makeFakeDb({
+      "pa-prescreen-sessions/ps_userexit": {
+        sessionId: "ps_userexit",
+        userId: "u1",
+        jobId: "job-x",
+        terminal: "PAUSE",
+        terminalReason: "user_exit",
+        currentQId: null,
+        updatedAt: fiveMinAgo,
+        workSession: { kind: "job_prescreen", status: "ended", endedAt: fiveMinAgo, boundary: "user_exit" },
+        cfgSnapshot: { jobTitle: "X", company: "Y", questions: [] },
+      },
+      "pa-users/u1": { userId: "u1" },
+    })
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "ok",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued" }
+      },
+    })
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    // Legacy retention flow still engages (here: 'ok' reads as a yes -> the post-screen onboarding
+    // bridge) — the stale-timeout suppression must NOT touch a deliberate user-exit pause.
+    assert.match(sent[0]!, /thanks for completing the screen/i)
+  })
+})

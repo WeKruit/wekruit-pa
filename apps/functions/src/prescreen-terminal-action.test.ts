@@ -481,6 +481,89 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
   })
 })
 
+describe("runPrescreenTerminalAction — stale-closed boundary guard (Adam 2026-06-12)", () => {
+  // A terminal whose session shows a timeout/manual-review boundary must NOT fire the
+  // post-terminal matching flow — no preamble, no PII chain, no recs, no retention-handoff
+  // offer (Invoko PM live failure +12026571666). State writes/stamps still happen.
+  it("suppresses preamble + PII + recs when a FAIL session closed by timeout boundary", async () => {
+    const docs = setupSession({
+      sessionId: "s3-stale",
+      jobId: "j3-stale",
+      prescreenConfig: { jobTitle: "Product Manager" },
+    })
+    docs.set("pa-prescreen-sessions/s3-stale", {
+      exists: true,
+      data: {
+        terminalReason: "expired_inactive_prescreen_session",
+        workSession: { kind: "job_prescreen", status: "ended", boundary: "timeout" },
+      },
+    })
+    const { db, updates } = makeFakeDb(docs)
+    const sent: string[] = []
+    const piiCaptures: Array<{ source: string; userId: string }> = []
+    let jobRecsCalled = false
+    const r = await runPrescreenTerminalAction({
+      db,
+      sessionId: "s3-stale",
+      terminal: "FAIL",
+      userId: "u",
+      jobId: "j3-stale",
+      toE164: "+1",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async (a) => {
+        sent.push(a.content)
+      },
+      startPii: fakePiiStart(piiCaptures),
+      generateJobRecs: async () => {
+        jobRecsCalled = true
+        return { ok: true, jobCount: 5 }
+      },
+    })
+    assert.deepEqual(sent, [], "stale-closed FAIL must send no preamble / offer")
+    assert.equal(piiCaptures.length, 0, "stale-closed FAIL must not start PII chain")
+    assert.equal(jobRecsCalled, false, "stale-closed FAIL must not fire job recs")
+    assert.equal(r.jobRecsFired, false)
+    assert.ok(updates.some((u) => "terminalActionFiredAt" in u.data), "idempotency stamp still written")
+  })
+
+  it("suppresses the dev rejected-retention handoff too when the boundary is manual_review_required", async () => {
+    const canaryUid = "8fEwIduUrzxZsblHHsNz"
+    const docs = setupSession({
+      sessionId: "s3-stale-dev",
+      jobId: "j3-stale-dev",
+      prescreenConfig: { jobTitle: "Product Manager" },
+    })
+    docs.set("pa-prescreen-sessions/s3-stale-dev", {
+      exists: true,
+      data: {
+        workSession: { kind: "job_prescreen", status: "ended", boundary: "manual_review_required" },
+      },
+    })
+    docs.set(`pa-users/${canaryUid}`, { exists: true, data: {} })
+    const { db } = makeFakeDb(docs)
+    const sent: string[] = []
+    const piiCaptures: Array<{ source: string; userId: string }> = []
+    await runPrescreenTerminalAction({
+      db,
+      sessionId: "s3-stale-dev",
+      terminal: "HARD_STOP",
+      userId: canaryUid,
+      jobId: "j3-stale-dev",
+      toE164: "+14243201960",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async (a) => {
+        sent.push(a.content)
+      },
+      startPii: fakePiiStart(piiCaptures),
+      generateJobRecs: async () => ({ ok: true, jobCount: 5 }),
+    })
+    assert.deepEqual(sent, [], "no retention-handoff offer off a manual-review-parked session")
+    assert.equal(piiCaptures.length, 0)
+  })
+})
+
 describe("runPrescreenTerminalAction — HARD_STOP branch (v1.9 hotfix)", () => {
   it("starts PII but does not send preamble or immediate job recs", async () => {
     const docs = setupSession({

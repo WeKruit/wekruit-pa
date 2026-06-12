@@ -49,3 +49,93 @@ test("renderEmployerBackgroundLine: growth tiers map to plain English; junk valu
   // booleans must be literal true (never truthy strings)
   assert.equal(renderEmployerBackgroundLine({ founderRole: "yes" }), "")
 })
+
+// ── Adam 2026-06-12: state-aware prescreen context directives (Invoko PM live failure) ───────────
+import { renderPrescreenContextText, terminalLabel, type CandidateScreenSession } from "./candidate-context.js"
+
+function screen(partial: Partial<CandidateScreenSession>): CandidateScreenSession {
+  return {
+    sessionId: "s",
+    jobId: "j",
+    terminal: null,
+    pendingReview: false,
+    staleClosed: false,
+    retentionStage: null,
+    endedAtMs: null,
+    ...partial,
+  }
+}
+
+test("renderPrescreenContextText: an ACTIVE screen owns the turn — no matching offer directive", () => {
+  const text = renderPrescreenContextText([
+    screen({ sessionId: "a", jobTitle: "Product Manager", company: "Invoko", terminal: null }),
+  ])
+  assert.match(text, /AN ACTIVE SCREEN IS IN PROGRESS \(Product Manager @ Invoko\)/)
+  assert.match(text, /Do NOT offer job matching/)
+  assert.match(text, /say not yet and continue with the pending question/)
+  assert.match(text, /it is Product Manager @ Invoko/)
+  // the post-terminal matching-offer directive must NOT render while a screen is open.
+  assert.doesNotMatch(text, /matching is back on the table/)
+})
+
+test("renderPrescreenContextText: a timed-out PAUSE gets the restart directive and NO matching offer", () => {
+  const text = renderPrescreenContextText([
+    screen({
+      sessionId: "t",
+      jobTitle: "Product Manager",
+      company: "Invoko",
+      terminal: "PAUSE",
+      terminalReason: "expired_inactive_prescreen_session",
+      staleClosed: true,
+      endedAtMs: 10,
+    }),
+  ])
+  assert.match(text, /TIMED OUT \(auto-closed after inactivity/)
+  assert.match(text, /THEIR MOST RECENT SCREEN TIMED OUT/)
+  assert.match(text, /reply 'restart screen'/)
+  assert.match(text, /Do NOT offer job matching or 'want me to pull roles\?'/)
+  assert.doesNotMatch(text, /matching is back on the table/)
+  // status honesty: never under review, never "human review".
+  assert.match(text, /never say it is under review/)
+  assert.match(text, /Never use the words 'human review'/)
+})
+
+test("renderPrescreenContextText: a settled FAIL re-enables the natural matching offer", () => {
+  const text = renderPrescreenContextText(
+    [
+      screen({
+        sessionId: "f",
+        jobTitle: "UI/UX Designer",
+        company: "Acme",
+        terminal: "FAIL",
+        endedAtMs: 10,
+      }),
+    ],
+    { profileSignalOnFile: true },
+  )
+  assert.match(text, /matching is back on the table/)
+  assert.match(text, /find OTHER/)
+  assert.match(text, /I can use your resume\/LinkedIn to find better-fit roles/)
+  assert.doesNotMatch(text, /They have NO resume or LinkedIn on file/)
+})
+
+test("renderPrescreenContextText: rejection with NO profile signal asks for resume/LinkedIn first", () => {
+  const text = renderPrescreenContextText(
+    [screen({ sessionId: "f", terminal: "HARD_STOP", endedAtMs: 10 })],
+    { profileSignalOnFile: false },
+  )
+  assert.match(text, /They have NO resume or LinkedIn on file/)
+  assert.match(text, /instead of repeating screens/)
+  assert.match(text, /ask if they want recommendations/)
+})
+
+test("terminalLabel: stale PAUSE is timed out / not under review; user-exit PAUSE stays paused", () => {
+  assert.match(
+    terminalLabel(screen({ terminal: "PAUSE", staleClosed: true })),
+    /TIMED OUT[\s\S]*NOT under review/i,
+  )
+  assert.match(
+    terminalLabel(screen({ terminal: "PAUSE", terminalReason: "user_exit" })),
+    /PAUSED[\s\S]*not under review/i,
+  )
+})

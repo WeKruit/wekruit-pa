@@ -128,8 +128,14 @@ export interface RunPreScreenResult {
 
 const USER_JOB_RECOMMENDATIONS_COLLECTION = "pa-user-job-recommendations"
 const PENDING_INVITES_COLLECTION = "pa-prescreen-pending-invites"
-const PROFILE_READINESS_HOLD_COPY =
-  "i'm still reading through your resume/experience so i can start this screen with the right context - one sec"
+/**
+ * ENTRY-UX PRD §2.6.3 — the readiness hold MUST offer a candidate-visible exit ("explicit
+ * safe-fallback continue"), not just the internal completion event / TTL self-heal. The copy
+ * advertises it; cutover's safe-fallback block and maybeHoldForProfileReadiness's
+ * second-attempt continue honor it. Exported so the sims/tests assert the shipped copy.
+ */
+export const PROFILE_READINESS_HOLD_COPY =
+  "i'm still reading through your resume/experience so i can start this screen with the right context - one sec. if you'd rather not wait, just reply and i'll start the screen right away"
 
 type PendingPrescreenStart = {
   status?: unknown
@@ -137,6 +143,7 @@ type PendingPrescreenStart = {
   toE164?: unknown
   sourceRequestedUserId?: unknown
   allowMatchedBypass?: unknown
+  resolvedAt?: unknown
 }
 
 /**
@@ -228,6 +235,13 @@ async function findTerminalSessionForJob(
       if (data.voidedByOps === true) continue
       const terminal = data.terminal
       if (terminal !== null && terminal !== undefined) {
+        // PAUSE is a ROUTING terminal, not a completion (Adam 2026-06-12 / audit G11): a timed-out
+        // or stepped-away screen is explicitly RESTARTABLE — expiredSessionText promises
+        // "reply 'restart screen' and i'll start a fresh run". Treating PAUSE as already_completed
+        // both blocked that promised restart AND sent the false "it's with the team for review"
+        // notice for a screen that was never submitted. PASS/FAIL/HARD_STOP still gate (RULE 2's
+        // actual target: never re-run a screen the candidate finished).
+        if (String(terminal).toUpperCase() === "PAUSE") continue
         return { id: doc.id, terminal: String(terminal) }
       }
     }
@@ -384,6 +398,37 @@ async function maybeHoldForProfileReadiness(args: {
   const user = (userSnap.exists ? userSnap.data() : {}) ?? {}
   if (!isEnrichmentInFlight(user)) return null
 
+  // SAFE-FALLBACK CONTINUE (ENTRY-UX PRD §2.6.3) — the FIRST start attempt during an enrichment
+  // window holds; a SECOND attempt for the SAME job while the hold is still waiting (a re-pasted
+  // trigger token, a retried start) is the candidate explicitly choosing not to wait. The hold copy
+  // advertises exactly this exit — honor it: resolve the pending start as a fallback-continue and
+  // let THIS start proceed to Q1 instead of holding again (the old one-shot hold silently stranded
+  // the candidate whenever the completion event was lost).
+  const existingPending = readPendingPrescreenStart(user as Record<string, unknown>)
+  if (
+    existingPending &&
+    existingPending.status === "waiting_profile" &&
+    existingPending.jobId === args.jobId
+  ) {
+    await userRef.set(
+      {
+        pendingPrescreenStart: {
+          ...existingPending,
+          status: "fallback_continue",
+          resolvedAt: args.nowIso,
+          updatedAt: args.nowIso,
+        },
+        updatedAt: args.nowIso,
+      },
+      { merge: true },
+    )
+    args.log("prescreen.profile_readiness_hold_safe_fallback_continue", {
+      userId: args.userId,
+      jobId: args.jobId,
+    })
+    return null
+  }
+
   const pendingStart = {
     status: "waiting_profile",
     reason: "enrichment_in_flight",
@@ -526,6 +571,82 @@ export async function resumePendingProfileReadinessPrescreenStart(args: {
     sessionId: result.sessionId,
   })
   return { attempted: true, result, jobId }
+}
+
+/**
+ * ENTRY-UX PRD §2.6.2 / §2.6.5 / §3 rule 6 — EVIDENCE-AWARE Q1.
+ *
+ * Before Q1, load the candidate's known evidence (the D8 single tag source: `pa-users.tags`,
+ * written by résumé parse / LinkedIn-Coresignal merge / conversation extraction) and ADAPT the role
+ * probe when evidence already exists: reference what Claire can already see (recent role @ company,
+ * top skills) and ask for additions / corrections / fresher details instead of starting from zero.
+ * A candidate with NO evidence on file gets the role's evidence probe directly (the §2.6.5 "if not"
+ * branch — the unchanged template).
+ *
+ * DETERMINISTIC composition (PRD §3 rule 3 — process integrity stays deterministic): structured
+ * field reads only, no LLM, no regex classification. Entry-UX-canary gated like the readiness hold;
+ * fail-open — any read error degrades to the template opener so Q1 is never blocked on evidence.
+ */
+export const PRESCREEN_EVIDENCE_ADDITIONS_ASK =
+  "Anything beyond what's already on your resume — fresh details, corrections, or additions — helps most."
+
+function evidenceSkillNames(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const names: string[] = []
+  for (const entry of raw) {
+    const name =
+      typeof entry === "string"
+        ? entry
+        : entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string"
+          ? (entry as { name: string }).name
+          : ""
+    const trimmed = name.trim()
+    if (trimmed) names.push(trimmed)
+    if (names.length >= 3) break
+  }
+  return names
+}
+
+async function composePrescreenOpener(args: {
+  db: Firestore
+  userId: string
+  company: string
+  jobTitle: string
+  firstQText: string
+  log: (event: string, payload: Record<string, unknown>) => void
+}): Promise<string> {
+  const base = `Hi — Claire from ${args.company}. Quick screen for ${args.jobTitle}.`
+  const fallback = `${base} ${args.firstQText}`
+  if (!isClaireEntryUxCanary(args.userId)) return fallback
+  try {
+    const snap = await args.db.collection("pa-users").doc(args.userId).get()
+    const user = (snap.exists ? snap.data() : {}) ?? {}
+    const tags =
+      user.tags && typeof user.tags === "object" && !Array.isArray(user.tags)
+        ? (user.tags as Record<string, unknown>)
+        : {}
+    const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "")
+    const role = str(tags.recentRoleTitle)
+    const company = str(tags.recentCompany)
+    const roleBit = role ? (company ? `${role} at ${company}` : role) : company
+    const skills = evidenceSkillNames(tags.skills)
+    const skillsBit = skills.length > 0 ? skills.join(", ") : ""
+    const bits = [roleBit, skillsBit].filter(Boolean)
+    if (bits.length === 0) return fallback
+    const evidenceLine = `I've already been through your resume/profile — I can see ${bits.join(" and ")}, so we're not starting from zero.`
+    args.log("prescreen.evidence_aware_opener", {
+      userId: args.userId,
+      hasRole: Boolean(roleBit),
+      skillCount: skills.length,
+    })
+    return `${base} ${evidenceLine} ${args.firstQText} ${PRESCREEN_EVIDENCE_ADDITIONS_ASK}`
+  } catch (err) {
+    args.log("prescreen.evidence_opener_failed_open", {
+      userId: args.userId,
+      error: errorMessage(err),
+    })
+    return fallback
+  }
 }
 
 async function markSessionStartSendFailed(args: {
@@ -768,8 +889,18 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     },
   })
 
-  // 4. Send first question.
-  const opener = `Hi — Claire from ${cfg.company ?? "WeKruit"}. Quick screen for ${cfg.jobTitle}. ${firstQText}`
+  // 4. Send first question — evidence-aware when the candidate's profile already carries
+  // resume/LinkedIn evidence (PRD §2.6.2/§2.6.5: reference the covering evidence + ask for
+  // additions, never the zero-context template for a known candidate). Canary-gated + fail-open
+  // inside the composer; non-canary / no-evidence users keep the exact legacy template.
+  const opener = await composePrescreenOpener({
+    db: args.db,
+    userId: args.userId,
+    company: cfg.company ?? "WeKruit",
+    jobTitle: cfg.jobTitle,
+    firstQText,
+    log,
+  })
 
   // v1.9 hotfix 2026-05-13 — when the trigger was authorized via a
   // public-job-page pending-invite, attribute the session to the candidate's

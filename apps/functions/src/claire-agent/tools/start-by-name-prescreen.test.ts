@@ -388,3 +388,47 @@ test("check_prescreen_progress: fail-soft — db throws → ok:false, empty sess
   assert.equal(out.ok, false)
   assert.deepEqual(out.sessions, [])
 })
+
+// ── Adam 2026-06-12: PAUSE is a routing terminal — never "in_progress", never "under_review" ─────
+// Live failure (+12026571666): a boundary=timeout PAUSE was narrated as "under review". The session
+// mapper now distinguishes timed_out (staleness expiry / manual-review park) from paused (stepped away).
+test("prescreenStatusFromSession: timeout-expired PAUSE → timed_out (never under_review/in_progress)", () => {
+  assert.equal(
+    prescreenStatusFromSession({
+      terminal: "PAUSE",
+      terminalReason: "expired_inactive_prescreen_session",
+      workSession: { kind: "job_prescreen", status: "ended", boundary: "timeout" },
+    }),
+    "timed_out",
+  )
+  // boundary alone is enough (terminalReason missing on some legacy docs).
+  assert.equal(
+    prescreenStatusFromSession({ terminal: "PAUSE", workSession: { boundary: "timeout" } }),
+    "timed_out",
+  )
+  assert.equal(
+    prescreenStatusFromSession({ terminal: "PAUSE", workSession: { boundary: "manual_review_required" } }),
+    "timed_out",
+  )
+  // even a (mis)stamped pendingReview flag must NOT make a stale PAUSE read as under review.
+  assert.equal(
+    prescreenStatusFromSession({
+      terminal: "PAUSE",
+      terminalActionPendingReview: true,
+      workSession: { boundary: "timeout" },
+    }),
+    "timed_out",
+  )
+})
+
+test("prescreenStatusFromSession: user-exit PAUSE → paused", () => {
+  assert.equal(
+    prescreenStatusFromSession({
+      terminal: "PAUSE",
+      terminalReason: "user_exit",
+      workSession: { kind: "job_prescreen", status: "ended", boundary: "user_exit" },
+    }),
+    "paused",
+  )
+  assert.equal(prescreenStatusFromSession({ terminal: "PAUSE" }), "paused")
+})
