@@ -234,3 +234,43 @@ test("verify: email handle conflict → needs_review, NO repoint/merge", async (
   assert.equal(calls.repointed, 0, "must NOT repoint on a handle conflict")
   assert.equal(calls.merged, 0)
 })
+
+// ENTRY-UX-PRD §2.5.2 — phone bind replays the pending website-entry event.
+
+test("verify: ok → replays the pending website-entry event for the bound candidate", async () => {
+  const replayed: string[] = []
+  const { deps } = verifyDeps({
+    replayWebsiteEntry: async (phoneCandidateId: string) => {
+      replayed.push(phoneCandidateId)
+      return { emitted: true }
+    },
+  })
+  const res = await runConnectPhoneVerify({ code: "654321" }, AUTH, deps)
+  assert.deepEqual(res, { ok: true, candidateId: "cand_phone" })
+  assert.deepEqual(replayed, ["cand_phone"])
+})
+
+test("verify: replay failure never blocks the bind", async () => {
+  const { deps, calls } = verifyDeps({
+    replayWebsiteEntry: async () => {
+      throw new Error("replay boom")
+    },
+  })
+  const res = await runConnectPhoneVerify({ code: "654321" }, AUTH, deps)
+  assert.deepEqual(res, { ok: true, candidateId: "cand_phone" })
+  assert.equal(calls.merged, 1)
+})
+
+test("verify: bad code → no website-entry replay", async () => {
+  const replayed: string[] = []
+  const { deps } = verifyDeps({
+    verifyCode: async () => ({ ok: false, reason: "code_mismatch" }),
+    replayWebsiteEntry: async (id: string) => {
+      replayed.push(id)
+      return { emitted: true }
+    },
+  })
+  const res = await runConnectPhoneVerify({ code: "000000" }, AUTH, deps)
+  assert.deepEqual(res, { ok: false, reason: "code_mismatch" })
+  assert.equal(replayed.length, 0)
+})

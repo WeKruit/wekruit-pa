@@ -1288,11 +1288,26 @@ export async function handleSendblueWebhook(
       triggers,
       log: (event, payload) => log(`pa.trigger.${event}`, payload),
     })
-    const triggerNeedingEvidence = triggers.find((trigger) => {
-      if (trigger.name !== "prescreen" && trigger.name !== "apply") return false
-      return trigger.match(normalized.text)
-    })
-    if (triggerNeedingEvidence) {
+    // RULE-1 evidence (2026-06-12, trigger-evidence port + 11edbd4a consent
+    // model): trigger-handled inbounds early-return after dispatch and never
+    // reach the broker's pa-inbound-events persist — a brand-new contact whose
+    // FIRST message is a trigger string had ZERO inbound rows, so the outbox
+    // consent gate blocked our own Q1 (live victims 2026-06-12: +12063803389
+    // 00:58/00:59, +12026571666 restart 01:30, +16673698594 01:50 — all
+    // blocked_no_inbound, src pa_prescreen_runtime). ANY trigger match (not
+    // just prescreen/apply — layoff/compact pastes are real inbound too)
+    // records the evidence row BEFORE dispatch, because handlers enqueue the
+    // Q1 whose gate reads it. Consent semantics (11edbd4a): the row preserves
+    // the ACTUAL transport sender — `rawSenderHandle` plus
+    // `original.from_number` carry the email when an email-Apple-ID sender was
+    // rewritten onto the profile phone by email-sender resolution — so a
+    // phone-origin trigger counts as PHONE consent (Q1 to the phone passes)
+    // while an email-origin trigger counts as EMAIL consent only (Q1 to the
+    // phone stays blocked + review item; never cold-open a phone that didn't
+    // text us). Write failure stays a 500 (Sendblue retries; handlers are
+    // idempotent) — fail-soft would dispatch a Q1 the gate then blocks, which
+    // is the exact bug class this fixes.
+    if (router.matchesAny(normalized.text)) {
       try {
         const evidenceId = await createCompletedTriggerInboundEvidence(deps, {
           idempotencyKey: normalized.idempotencyKey,
@@ -1308,19 +1323,17 @@ export async function handleSendblueWebhook(
         })
         log("[sendblue][webhook] trigger inbound evidence created", {
           eventId: evidenceId,
-          trigger: triggerNeedingEvidence.name,
           handle: normalized.messageHandle,
         })
       } catch (err) {
         log("[sendblue][webhook] trigger inbound evidence failed", {
-          trigger: triggerNeedingEvidence.name,
           handle: normalized.messageHandle,
           error: err instanceof Error ? err.message : String(err),
         })
         reply(res, 500, {
           ok: false,
           error: "trigger_error",
-          action: `${triggerNeedingEvidence.name}_error`,
+          action: "trigger_error",
           reason: "trigger_inbound_evidence_failed",
         })
         return

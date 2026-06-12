@@ -14,6 +14,14 @@ test("PublicJobCv resume upload avoids internal configuration errors", () => {
   assert.match(source, /Resume upload is temporarily unavailable\. Message Claire and we'll attach it to this role\./)
 })
 
+test("PublicJobCv never dead-ends with the receipt script — routes into the job continuation CTA", () => {
+  // ENTRY-UX-PRD §1/§2.3.5: "Resume uploaded. You can close this tab." is the
+  // canonical banned receipt dead-end. Success must continue with Claire.
+  assert.doesNotMatch(source, /You can close this tab/)
+  assert.match(source, /navigate\(`\/j\/\$\{publicJobId\}`, \{ replace: true \}\)/)
+  assert.match(source, /continue with Claire/)
+})
+
 test("PublicJobCv resume upload avoids status-code and raw exception fallback errors", () => {
   assert.doesNotMatch(source, /Upload failed \(\$\{res\.status\}\)/)
   assert.doesNotMatch(source, /err instanceof Error \? err\.message : String\(err\)/)

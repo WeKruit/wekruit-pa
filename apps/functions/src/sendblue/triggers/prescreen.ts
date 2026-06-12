@@ -439,6 +439,25 @@ export class PrescreenTrigger implements Trigger {
           })
           return { kind: "handled", action: "prescreen_start_in_progress" }
         }
+        if (runResult.reason === "readiness_hold") {
+          // PRESCREEN PRE-START READINESS HOLD (ENTRY-UX PRD §2.6.3-4): résumé/LinkedIn enrichment is
+          // actively in flight, so runPreScreenForUser ALREADY sent the one-line readiness hold and
+          // recorded pendingPrescreenStart=waiting_profile — Q1 is DEFERRED, not lost: the
+          // resume_parse_completed completion event resumes the start and asks Q1 directly (no pitch).
+          // This is a successful handled outcome, NOT an error — before this branch existed the
+          // generic `throw` below crashed the trigger, cleared the idempotency stamp, AND left the
+          // candidate with a hold message followed by webhook retry chaos. Keep the idempotency stamp
+          // (a fresh paste is a new messageHandle, so a manual retry is never blocked).
+          await this.deps.audit({
+            type: "trigger_notice",
+            trigger: "prescreen",
+            reason: "readiness_hold",
+            jobId,
+            userId: sessionUserId,
+            correlationId: ctx.messageHandle,
+          })
+          return { kind: "handled", action: "prescreen_readiness_hold" }
+        }
         if (runResult.reason === "not_matched") {
           // MATCHED-GATE refusal (2026-05-31): the candidate sent a valid token for a
           // jobId never matched/pushed to them (foreign jobId from a /j/ URL or another

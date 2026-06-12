@@ -53,3 +53,105 @@ test("sourceForProfileCreate falls back to candidate for unknown strings", () =>
 test("sourceForProfileCreate falls back to candidate for undefined", () => {
   assert.equal(__test_sourceForProfileCreate(undefined), "candidate")
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENTRY-UX-PRD §2.3.2/§2.3.5 — website upload entry seam (Builder A).
+// public-cv-ingest runs cv-ingest with followupDeliveryMode:"none", so this
+// helper is the ONLY runtime-event producer for website resume uploads.
+// ─────────────────────────────────────────────────────────────────────────────
+import type { Firestore } from "firebase-admin/firestore"
+import { recordWebsiteEntryAfterPublicCvIngest } from "../public-cv-ingest.js"
+import type { RuntimeEventHandoffInput, RuntimeEventHandoffResult } from "../runtime-event-handoff.js"
+
+function fakeUsersDb(seed: Record<string, Record<string, unknown>>) {
+  const users = new Map(Object.entries(seed))
+  const db = {
+    collection: (path: string) => ({
+      doc: (id: string) => ({
+        get: async () => ({ id, exists: users.has(id), data: () => users.get(id) }),
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const prev = users.get(id) ?? {}
+          if (path !== "pa-users") throw new Error(`unexpected collection ${path}`)
+          users.set(id, opts?.merge ? { ...prev, ...data } : data)
+        },
+      }),
+    }),
+  } as unknown as Firestore
+  return { db, users }
+}
+
+test("recordWebsiteEntryAfterPublicCvIngest emits a per-parse flow with job context", async () => {
+  const { db, users } = fakeUsersDb({ "cand-up": { pitchedAt: "" } })
+  const calls: RuntimeEventHandoffInput[] = []
+  const out = await recordWebsiteEntryAfterPublicCvIngest({
+    db,
+    candidateId: "cand-up",
+    resumeId: "resume-77",
+    jobIdContext: "hs-555-job",
+    deps: {
+      isCanary: () => true,
+      enqueue: async (_db, input) => {
+        calls.push(input)
+        return { ok: true, eventId: "e", sessionId: "s", created: true } satisfies RuntimeEventHandoffResult
+      },
+    },
+  })
+  assert.equal(out?.emitted, true)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]!.idempotencyKey, "website-entry:cand-up:cv:resume-77")
+  assert.equal(calls[0]!.eventKind, "resume_parse_completed")
+  assert.equal(calls[0]!.context?.jobIdContext, "hs-555-job")
+  assert.equal(calls[0]!.context?.websiteEntry, true)
+  const cont = (users.get("cand-up")?.websiteEntry ?? {}) as Record<string, unknown>
+  assert.equal(cont.resumeStatus, "parsed")
+  assert.equal(cont.source, "public_cv_ingest")
+})
+
+test("recordWebsiteEntryAfterPublicCvIngest with no routable phone leaves a pendingEmit continuation", async () => {
+  const { db, users } = fakeUsersDb({ "cand-nophone": {} })
+  const out = await recordWebsiteEntryAfterPublicCvIngest({
+    db,
+    candidateId: "cand-nophone",
+    resumeId: "resume-1",
+    deps: {
+      isCanary: () => true,
+      enqueue: async () => ({ ok: false, reason: "user_not_routable" }),
+    },
+  })
+  assert.equal(out?.emitted, false)
+  assert.equal(out?.pendingEmit, true)
+  const cont = (users.get("cand-nophone")?.websiteEntry ?? {}) as Record<string, unknown>
+  assert.equal(cont.pendingEmit, true)
+  assert.equal(cont.flowId, "cv:resume-1")
+})
+
+test("recordWebsiteEntryAfterPublicCvIngest preserves the auth provider from a prior verify entry", async () => {
+  const { db, users } = fakeUsersDb({
+    "cand-keep": { websiteEntry: { authProvider: "linkedin_oauth", flowId: "login:1" } },
+  })
+  await recordWebsiteEntryAfterPublicCvIngest({
+    db,
+    candidateId: "cand-keep",
+    resumeId: "resume-2",
+    deps: {
+      isCanary: () => false,
+      enqueue: async () => ({ ok: true, eventId: "e", sessionId: "s", created: true }),
+    },
+  })
+  const cont = (users.get("cand-keep")?.websiteEntry ?? {}) as Record<string, unknown>
+  assert.equal(cont.authProvider, "linkedin_oauth")
+})
+
+test("recordWebsiteEntryAfterPublicCvIngest never throws (returns null on db failure)", async () => {
+  const db = {
+    collection: () => {
+      throw new Error("firestore down")
+    },
+  } as unknown as Firestore
+  const out = await recordWebsiteEntryAfterPublicCvIngest({
+    db,
+    candidateId: "cand-x",
+    resumeId: "r",
+  })
+  assert.equal(out, null)
+})

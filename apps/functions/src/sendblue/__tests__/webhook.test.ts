@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 
 import { handleSendblueWebhook } from "../webhook.js"
+import { inboundEventMatchesOutboundHandle } from "../outbox.js"
 import type { SendblueInboundPayload } from "../types.js"
 import { _clearFeatureFlagCache } from "@pa/pa-persistence"
 
@@ -262,6 +263,16 @@ function basePayload(overrides: Partial<SendblueInboundPayload> = {}): SendblueI
     ...overrides,
   }
 }
+
+// RULE-1 evidence contract (2026-06-12): any inbound whose text matches a
+// trigger gets ONE evidence row written to pa-inbound-events BEFORE dispatch —
+// status "completed", completedReason "trigger_control_message". That row is
+// never picked up by a processor; assertions about what the broker enqueues
+// for processing must therefore filter it out.
+const processableInbound = (inbound: Map<string, DocData>) =>
+  [...inbound.entries()].filter(
+    ([, r]) => (r as Record<string, unknown>).completedReason !== "trigger_control_message",
+  )
 
 function assertCompletedTriggerEvidence(
   inbound: Map<string, DocData>,
@@ -1027,6 +1038,48 @@ describe("handleSendblueWebhook", () => {
     ))
   })
 
+  it("Test 16-consent (RULE-1, phone origin): trigger evidence from a PHONE sender authorizes outbound to that phone", async () => {
+    // Consent model (11edbd4a): the evidence row records the ACTUAL transport
+    // sender. Phone-origin trigger paste → original.from_number is the phone →
+    // the outbox gate's provider-field preference counts it as PHONE consent
+    // and Q1 to that phone passes.
+    const { db, inbound } = makeFakeDb()
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_uJob1_Job",
+      message_handle: "msg-entry-job-consent-phone-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "uJob1",
+      runPreScreenForUser: async () => ({ ok: true, sessionId: "ps_job_consent_1" }),
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    const evidence = assertCompletedTriggerEvidence(inbound)
+    const raw = evidence.rawPayload as Record<string, unknown>
+    assert.equal(raw.rawSenderHandle, undefined, "phone-origin row carries no rawSenderHandle")
+    assert.equal(
+      (raw.original as Record<string, unknown>).from_number,
+      "+15551234567",
+      "original.from_number preserves the ACTUAL transport sender (the phone)",
+    )
+    assert.equal(
+      inboundEventMatchesOutboundHandle(evidence, "+15551234567"),
+      true,
+      "phone-origin trigger evidence = phone consent → Q1 to the phone passes the gate",
+    )
+    assert.equal(
+      inboundEventMatchesOutboundHandle(evidence, "+19998887777"),
+      false,
+      "evidence never authorizes a handle that did not send it",
+    )
+  })
+
   it("Test 16a (entrypoints): prescreen trigger waits for session bootstrap before replying", async () => {
     const { db, inbound } = makeFakeDb()
     const body = JSON.stringify(basePayload({
@@ -1444,7 +1497,18 @@ describe("handleSendblueWebhook", () => {
     assert.equal(res2.statusCode, 200)
     assert.equal(bodyOut2.ok, true)
     assert.equal(bodyOut2.action, "layoff_unauthorized")
-    assert.equal(inbound.size, 0, "manual layoff text must not enter legacy onboarding as text")
+    assert.equal(
+      processableInbound(inbound).length,
+      0,
+      "manual layoff text must not enter legacy onboarding as text",
+    )
+    // Suppression happens at the handler — the text still MATCHES a trigger,
+    // so each paste leaves an inbound-evidence row (RULE-1 contract).
+    assert.equal(inbound.size, 2, "each layoff paste leaves exactly one evidence row")
+    for (const row of inbound.values()) {
+      assert.equal(row.completedReason, "trigger_control_message")
+      assert.equal((row.rawPayload as { participant?: unknown }).participant, "+15551234567")
+    }
     assert.deepEqual(layoffCalls, [])
     assert.equal(layoffIdempotency.has("u_layoff_1"), false)
     assert.equal(audit.some((row) =>
@@ -1461,7 +1525,7 @@ describe("handleSendblueWebhook", () => {
     ), true)
   })
 
-  it("Test 18b (entrypoints): mixed-case + lowercase WeKruit_Laid_Off variants are suppressed and never enqueue inbound", async () => {
+  it("Test 18b (entrypoints): mixed-case + lowercase WeKruit_Laid_Off variants are suppressed and never enqueue PROCESSABLE inbound", async () => {
     // 2026-05-19 — root cause of the email-Q live bug. Adam typed mixed-case
     // "WeKruit_Laid_Off" in Messages; the original case-sensitive guard only
     // matched WeKruit_LAID_OFF, so the variant fell through to the broker
@@ -1490,7 +1554,18 @@ describe("handleSendblueWebhook", () => {
       const bodyOut = res.bodyOut as Record<string, unknown>
       assert.equal(res.statusCode, 200, `variant=${variant}`)
       assert.equal(bodyOut.action, "layoff_unauthorized", `variant=${variant}`)
-      assert.equal(inbound.size, 0, `variant=${variant} must not enter broker enqueue`)
+      assert.equal(
+        processableInbound(inbound).length,
+        0,
+        `variant=${variant} must not enqueue PROCESSABLE inbound`,
+      )
+      // Variant still MATCHES a trigger → evidence row exists (RULE-1 contract).
+      assert.equal(inbound.size, 1, `variant=${variant} must leave an inbound-evidence row`)
+      assert.equal(
+        [...inbound.values()][0]!.completedReason,
+        "trigger_control_message",
+        `variant=${variant} evidence row is trigger-completed, never processable`,
+      )
       assert.equal(layoffStartCalls, 0, `variant=${variant} must not start layoff path`)
       assert.equal(layoffIdempotency.has("u_layoff_variant"), false)
       assert.equal(audit.some((row) =>

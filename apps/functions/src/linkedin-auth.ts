@@ -1019,6 +1019,17 @@ export const paLinkedinCallback = onRequest(
         linkedinSub: sub,
         ...(typeof info.email === "string" ? { linkedinEmail: info.email } : {}),
         ...(typeof info.name === "string" ? { linkedinName: info.name } : {}),
+        // PRD gap "LinkedIn OAuth login" (ENTRY-UX-PRD §4): thread the OIDC
+        // `picture` (photo-first Coresignal enrich signal) and `profile` (the
+        // member's REAL public URL) through to candidate-verify so the website
+        // login links the canonical LinkedIn handle + stores the enrich signal,
+        // not just the synthetic oauth marker.
+        ...(typeof info.picture === "string" && info.picture.trim()
+          ? { linkedinPicture: info.picture.trim() }
+          : {}),
+        ...(typeof info.profile === "string" && info.profile.trim()
+          ? { linkedinProfileUrl: info.profile.trim() }
+          : {}),
       })
       finish({ ok: true, customToken })
     } catch (err) {

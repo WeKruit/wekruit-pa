@@ -24,6 +24,7 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { logger } from "firebase-functions/v2"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { linkCandidateHandle, mergeCandidatesByPhone } from "@pa/pa-persistence"
+import { replayPendingWebsiteEntryEvent } from "../website-entry/website-entry-event.js"
 import { verifyConnectPhoneCode } from "./connect-phone-code.js"
 
 type CallableAuth = {
@@ -70,6 +71,10 @@ export interface ConnectPhoneVerifyDeps {
   repointAuth: (firebaseUid: string, phoneCandidateId: string, nowIso: string) => Promise<void>
   /** Fold any older-canonical same-phone duplicate into one canonical (audited). */
   mergeByPhone: (phoneCandidateId: string) => Promise<void>
+  /** PRD §2.5.2 — replay a pending website-entry runtime event now that the
+   *  phone is routable (website-first candidate who uploaded evidence before
+   *  binding a phone). Best-effort; never blocks the bind. */
+  replayWebsiteEntry?: (phoneCandidateId: string) => Promise<{ emitted: boolean; reason?: string }>
   nowIso?: () => string
 }
 
@@ -128,6 +133,22 @@ export async function runConnectPhoneVerify(
     })
   }
 
+  // 5. PRD §2.5.2 — the phone is now routable: replay any pending website-entry
+  //    runtime event (evidence uploaded on the website before a phone existed)
+  //    so Claire's pitch lands in the just-bound thread. Idempotent on the
+  //    stored per-flow id; best-effort (a miss degrades to the §2.4 inbound
+  //    continuation read).
+  if (deps.replayWebsiteEntry) {
+    try {
+      const replay = await deps.replayWebsiteEntry(phoneCandidateId)
+      logger.info("connect_phone.website_entry_replay", { ...replay })
+    } catch (err) {
+      logger.warn("connect_phone.website_entry_replay_failed", {
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   return { ok: true, candidateId: phoneCandidateId }
 }
 
@@ -158,6 +179,7 @@ function makeProdDeps(db: Firestore): ConnectPhoneVerifyDeps {
           { merge: true },
         )
     },
+    replayWebsiteEntry: (phoneCandidateId) => replayPendingWebsiteEntryEvent(db, phoneCandidateId),
     mergeByPhone: async (phoneCandidateId) => {
       // Resolve the phone for this candidate, then fold same-phone duplicates.
       const snap = await db.collection(PA_COLLECTIONS.users).doc(phoneCandidateId).get()

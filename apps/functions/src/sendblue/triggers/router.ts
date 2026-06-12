@@ -116,6 +116,23 @@ export interface DispatchResult {
 export class TriggerRouter {
   constructor(private readonly opts: TriggerRouterOpts) {}
 
+  /**
+   * Sync predicate: would ANY trigger consume this text? Used by the webhook to
+   * persist the inbound-evidence row BEFORE dispatch — trigger handlers enqueue
+   * outbound (prescreen Q1) whose RULE-1 outbox gate needs the evidence to
+   * already exist (live victim 2026-06-12: first-contact trigger paste blocked).
+   */
+  matchesAny(text: string): boolean {
+    for (const trigger of this.opts.triggers) {
+      try {
+        if (trigger.match(text)) return true
+      } catch {
+        // match errors are logged at dispatch; for the predicate just skip
+      }
+    }
+    return false
+  }
+
   async dispatch(ctx: TriggerContext): Promise<DispatchResult> {
     for (const trigger of this.opts.triggers) {
       let matched = false

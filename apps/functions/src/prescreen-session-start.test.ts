@@ -673,6 +673,38 @@ describe("runPreScreenForUser RULE 2 — never restart a completed screen (2026-
     assert.equal(smsCount, 1, "Q1 goes out for the real start")
   })
 
+  it("timed-out PAUSE session does NOT trip the gate — 'restart screen' must start a fresh run (Adam 2026-06-12)", async () => {
+    const { db } = makeFakeDb({
+      "pa-jobs/job-t": { prescreenConfig },
+      // The 21d expiry sweep closes stale screens as PAUSE/boundary=timeout and the candidate is
+      // PROMISED "reply 'restart screen' and i'll start a fresh run". A PAUSE terminal is a routing
+      // state, not a completion — it must not produce already_completed (which also sent the false
+      // "it's with the team for review" notice).
+      "pa-prescreen-sessions/ps_timed_out": {
+        sessionId: "ps_timed_out",
+        userId: "u1",
+        jobId: "job-t",
+        terminal: "PAUSE",
+        terminalReason: "expired_inactive_prescreen_session",
+        workSession: { kind: "job_prescreen", status: "ended", boundary: "timeout" },
+        currentQId: null,
+      },
+    })
+    let smsCount = 0
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-t",
+      userId: "u1",
+      toE164: "+13054507715",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async (a) => { smsCount++; return okSms(a) },
+    })
+    assert.equal(result.ok, true, "a paused/timed-out screen is restartable by design")
+    assert.equal(result.reason, "started")
+    assert.equal(smsCount, 1, "fresh Q1 goes out")
+  })
+
   it("ACTIVE (terminal null) session for the same job → existing new-work-session behavior unchanged", async () => {
     const { db, docs } = makeFakeDb({
       "pa-jobs/job-a": { prescreenConfig },
@@ -783,5 +815,159 @@ describe("runPreScreenForUser RULE 2 — never restart a completed screen (2026-
     assert.equal(smsCount, 0)
     const sessions = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/"))
     assert.equal(sessions.length, 0, "no session created while the lock is held")
+  })
+})
+
+describe("ENTRY-UX PRD §2.6.2/§2.6.5 — evidence-aware Q1 + §2.6.3 safe-fallback continue", () => {
+  const CANARY_UID = "8fEwIduUrzxZsblHHsNz" // dev cohort — entry-UX canary
+  const okSms = async ({ content }: { content: string }) => ({ status: "queued", content })
+
+  it("canary candidate WITH resume evidence → Q1 references the evidence and asks for additions (not the verbatim template)", async () => {
+    const { db } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      [`pa-users/${CANARY_UID}`]: {
+        enrichmentInFlight: false,
+        tags: {
+          recentRoleTitle: "Senior Product Designer",
+          recentCompany: "Figma",
+          skills: ["design systems", { name: "prototyping" }, "user research", "extra-ignored"],
+        },
+      },
+    })
+    const sent: string[] = []
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: CANARY_UID,
+      toE164: "+14243201960",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async ({ content }) => {
+        sent.push(content)
+        return okSms({ content })
+      },
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.reason, "started")
+    const opener = sent[0] ?? ""
+    // still the same screen-first frame…
+    assert.match(opener, /Quick screen for Technical Account Manager/)
+    assert.match(opener, /What recent work best matches/)
+    // …but NOT context-blind: references the covering evidence + asks for additions (§2.6.5)
+    assert.match(opener, /I've already been through your resume\/profile/)
+    assert.match(opener, /Senior Product Designer at Figma/)
+    assert.match(opener, /design systems, prototyping, user research/)
+    assert.match(opener, /fresh details, corrections, or additions/)
+    // honest cap: only the top 3 skills are cited
+    assert.doesNotMatch(opener, /extra-ignored/)
+  })
+
+  it("canary candidate WITHOUT evidence → unchanged template (the §2.6.5 'ask the probe directly' branch)", async () => {
+    const { db } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      [`pa-users/${CANARY_UID}`]: { enrichmentInFlight: false },
+    })
+    const sent: string[] = []
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: CANARY_UID,
+      toE164: "+14243201960",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async ({ content }) => {
+        sent.push(content)
+        return okSms({ content })
+      },
+    })
+    assert.equal(result.ok, true)
+    assert.equal(
+      sent[0],
+      "Hi — Claire from Rain. Quick screen for Technical Account Manager. What recent work best matches this technical account management role?",
+    )
+  })
+
+  it("NON-canary candidate with evidence → byte-identical legacy template (no ramp leak)", async () => {
+    const { db } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      "pa-users/u1": {
+        tags: { recentRoleTitle: "Senior Product Designer", recentCompany: "Figma", skills: ["a", "b", "c"] },
+      },
+    })
+    const sent: string[] = []
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: "u1",
+      toE164: "+13054507715",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async ({ content }) => {
+        sent.push(content)
+        return okSms({ content })
+      },
+    })
+    assert.equal(result.ok, true)
+    assert.equal(
+      sent[0],
+      "Hi — Claire from Rain. Quick screen for Technical Account Manager. What recent work best matches this technical account management role?",
+    )
+  })
+
+  it("hold copy advertises the candidate-visible safe-fallback exit (§2.6.3 'explicit safe-fallback continue')", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      [`pa-users/${CANARY_UID}`]: { enrichmentInFlight: true, enrichmentStartedAt: now },
+    })
+    const sent: string[] = []
+    const held = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: CANARY_UID,
+      toE164: "+14243201960",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async ({ content }) => {
+        sent.push(content)
+        return okSms({ content })
+      },
+    })
+    assert.equal(held.reason, "readiness_hold")
+    assert.match(sent[0] ?? "", /still reading through your resume\/experience/i)
+    assert.match(sent[0] ?? "", /if you'd rather not wait, just reply and i'll start the screen right away/i)
+  })
+
+  it("SECOND start attempt for the same job while the hold is waiting → starts (safe-fallback continue), never a second hold", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      [`pa-users/${CANARY_UID}`]: { enrichmentInFlight: true, enrichmentStartedAt: now },
+    })
+    const sent: string[] = []
+    const sendSms = async ({ content }: { content: string }) => {
+      sent.push(content)
+      return okSms({ content })
+    }
+    const held = await runPreScreenForUser({
+      db, jobId: "job-new", userId: CANARY_UID, toE164: "+14243201960",
+      allowMatchedBypass: true, markStarted: async () => undefined, sendSms,
+    })
+    assert.equal(held.reason, "readiness_hold")
+    assert.equal(sent.length, 1)
+
+    // candidate re-pastes the trigger / retries while enrichment is STILL in flight
+    const second = await runPreScreenForUser({
+      db, jobId: "job-new", userId: CANARY_UID, toE164: "+14243201960",
+      allowMatchedBypass: true, markStarted: async () => undefined, sendSms,
+    })
+    assert.equal(second.ok, true)
+    assert.equal(second.reason, "started")
+    assert.equal(sent.length, 2, "exactly one hold + one Q1 — never a second hold")
+    assert.match(sent[1] ?? "", /Quick screen for Technical Account Manager/)
+    const pending = docs.get(`pa-users/${CANARY_UID}`)?.data.pendingPrescreenStart as Record<string, unknown>
+    assert.equal(pending.status, "fallback_continue", "pending start resolved by the fallback continue")
+    const session = [...docs.entries()].find(([p]) => p.startsWith("pa-prescreen-sessions/") && !p.includes("-lock"))
+    assert.ok(session, "a real session exists after the fallback continue")
   })
 })

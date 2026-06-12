@@ -135,6 +135,11 @@ export default function PublicJobCv() {
         // localStorage disabled — non-fatal
       }
       setStatus("ok")
+      // PRD §2.3.5 / ENTRY-UX gap "Resume upload from public job": never
+      // dead-end with a receipt ("close this tab"). Route into the job page's
+      // continuation CTA (PrescreenStartGate + Talk-to-Claire sms deeplink with
+      // the job opener token) so the upload flows into Claire's turn.
+      navigate(`/j/${publicJobId}`, { replace: true })
     } catch (err) {
       setStatus("err")
       setErrMsg(RESUME_UPLOAD_FAILED_MESSAGE)
@@ -169,7 +174,10 @@ export default function PublicJobCv() {
           {status === "uploading" ? "Uploading…" : "Upload"}
         </button>
         {status === "ok" ? (
-          <p style={{ color: "#2d6a4f", marginTop: "1rem" }}>Resume uploaded. You can close this tab.</p>
+          <p style={{ color: "#2d6a4f", marginTop: "1rem" }}>
+            Got it — taking you back to the role so you can{" "}
+            <Link to={`/j/${publicJobId}`}>continue with Claire</Link>.
+          </p>
         ) : null}
         {status === "err" && errMsg ? (
           <p style={{ color: "#9d3a2d", marginTop: "1rem" }}>{errMsg}</p>

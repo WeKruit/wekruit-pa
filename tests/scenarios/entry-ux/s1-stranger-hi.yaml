@@ -1,0 +1,24 @@
+# Entry-UX round 1 — S1: stranger texts "hi" (LEGACY orchestrator path via runner-local).
+# REGRESSION CONTRACT: must match baseline B1 semantics (.audit/entry-ux-baseline.md §B1):
+#   - deterministic shared-onboarding bootstrap (directIntent=shared_onboarding -> bootstrapped_q1_inline)
+#   - 2-bubble text_split_2 delivery (opener + main_goal Q1)
+# NOTE: production routes a stranger "hi" through the THIN runtime (maybeRunThinClaire) first;
+# runner-local exercises only the legacy processInboundEvent fallback. The thin-path golden
+# cold opener (value pitch + least-friction ask, LinkedIn login link prioritized) is covered
+# separately by apps/functions/src/claire-agent/__tests__ harness extension.
+id: entry_ux_s1_stranger_hi
+description: |
+  Unknown user (no userState seed -> onboardingState=pending) sends a bare "hi".
+  Capture every outbound bubble verbatim. No judge. Assert B1 semantics.
+locale: en-US
+agentId: default
+participant: "+19999990042"
+chatId: "iMessage;+19999990042"
+turnTimeoutMs: 90000
+turns:
+  - user: "hi"
+    assert:
+      reply_min_length: 1
+      reply_count_min: 2
+      joined_reply_contains_any:
+        - "match"

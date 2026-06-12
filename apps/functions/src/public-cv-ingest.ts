@@ -47,6 +47,18 @@ import { ingestCv } from "./cv-ingest/cv-ingest.js"
 import type { IngestCvInput, IngestCvDeps } from "./cv-ingest/cv-ingest.js"
 import { detectResumeUploadKind, extractDocxText } from "./resume-upload-parser.js"
 import type { ResumeUploadKind } from "./resume-upload-parser.js"
+import { isClaireEntryUxCanary } from "./claire-agent/canary.js"
+import {
+  clearEnrichmentInFlight,
+  setEnrichmentInFlight,
+} from "./claire-agent/enrichment-inflight.js"
+import {
+  deriveLinkedinStateFromUser,
+  derivePitchAlreadySent,
+  processWebsiteEntry,
+  type ProcessWebsiteEntryResult,
+  type WebsiteEntryDeps,
+} from "./website-entry/website-entry-event.js"
 
 // Same-name defineSecret() refs hydrate from the same Firebase Secret. Wired
 // into the CF deploy below so the cv-ingest LLM extract path can read the
@@ -294,6 +306,59 @@ async function recordCandidateUploadResumeArtifact(args: {
   return writes.artifact.resumeId
 }
 
+/**
+ * PRD §2.3.2/§2.3.5 (ENTRY-UX-PRD.md) — website resume upload entry seam.
+ *
+ * public-cv-ingest runs with followupDeliveryMode:"none", so cv-ingest itself
+ * NEVER emits the resume_parse_completed runtime event for website uploads —
+ * historically the website-first cohort's parse completed silently. This
+ * helper (called after a successful ingest, candidate-facing sources only)
+ * records the "Talk to Claire" continuation on pa-users.websiteEntry and emits
+ * the pitch runtime event (per-parse flowId `cv:<resumeId>`, canary-gated).
+ * No routable phone → pendingEmit, replayed at phone bind.
+ */
+export async function recordWebsiteEntryAfterPublicCvIngest(args: {
+  db: Firestore
+  candidateId: string
+  resumeId: string
+  jobIdContext?: string
+  deps?: WebsiteEntryDeps
+}): Promise<ProcessWebsiteEntryResult | null> {
+  try {
+    const snap = await args.db.collection(PA_COLLECTIONS.users).doc(args.candidateId).get()
+    const userData = (snap.data() ?? {}) as Record<string, unknown>
+    const existing =
+      userData.websiteEntry && typeof userData.websiteEntry === "object"
+        ? (userData.websiteEntry as Record<string, unknown>)
+        : {}
+    const priorAuthProvider =
+      existing.authProvider === "google" ||
+      existing.authProvider === "magic_link" ||
+      existing.authProvider === "linkedin_oauth"
+        ? existing.authProvider
+        : "unknown"
+    return await processWebsiteEntry(
+      args.db,
+      {
+        candidateId: args.candidateId,
+        authProvider: priorAuthProvider,
+        resumeStatus: "parsed",
+        linkedinState: deriveLinkedinStateFromUser(userData),
+        jobIdContext: args.jobIdContext?.trim() ? args.jobIdContext.trim() : null,
+        pitchAlreadySent: derivePitchAlreadySent(userData),
+      },
+      {
+        flowId: `cv:${args.resumeId}`,
+        source: "public_cv_ingest",
+        newEvidence: true,
+        ...(args.deps ? { deps: args.deps } : {}),
+      },
+    )
+  } catch {
+    return null
+  }
+}
+
 export const paPublicCvIngest = onRequest(
   {
     region: "us-central1",
@@ -440,8 +505,22 @@ export const paPublicCvIngest = onRequest(
       body,
     })
 
+    // PRD §2.3.6 — the parse runs inline in this request; a candidate who texts
+    // "hi" mid-parse must get the "still reading your background" hold, not a
+    // stranger/idle reply. Candidate-facing uploads only (never ATS/employer
+    // bulk intake), canary-gated like the other entry-UX slices. The marker is
+    // cleared below on EVERY outcome (TTL self-heals a crash).
+    const candidateFacingUpload = !isServerTrustedCvIntake(body)
+    const entryUxNowIso = new Date().toISOString()
+    if (candidateFacingUpload && isClaireEntryUxCanary(userId)) {
+      await setEnrichmentInFlight(db, userId, "resume", entryUxNowIso)
+    }
+
     try {
       const result = await ingestCv(input, deps)
+      if (candidateFacingUpload && isClaireEntryUxCanary(userId)) {
+        await clearEnrichmentInFlight(db, userId, new Date().toISOString())
+      }
       if (result.ok) {
         const resumeArtifactId = await recordCandidateUploadResumeArtifact({
           db,
@@ -460,6 +539,23 @@ export const paPublicCvIngest = onRequest(
           source: body.source ?? "public_job_page",
           jobIdContext: body.jobIdContext,
         })
+        // PRD §2.3.2/§2.3.5 — record the website-entry continuation + emit the
+        // pitch runtime event (cv-ingest runs followupDeliveryMode:"none" here,
+        // so this is the ONLY producer for website uploads). No routable phone
+        // → pendingEmit for the phone-bind replay. Never fails the upload.
+        if (candidateFacingUpload) {
+          const entry = await recordWebsiteEntryAfterPublicCvIngest({
+            db,
+            candidateId: result.userId,
+            resumeId: result.resumeId,
+            ...(body.jobIdContext ? { jobIdContext: body.jobIdContext } : {}),
+          })
+          log("public_cv_ingest.website_entry", {
+            userId: result.userId,
+            resumeId: result.resumeId,
+            entry,
+          })
+        }
         // QR path: burn the single-use upload token only after a SUCCESSFUL ingest
         // (a transient failure leaves the texted link reusable). Best-effort.
         const uploadTokenRaw = (body.uploadToken ?? "").toString().trim()
@@ -481,6 +577,9 @@ export const paPublicCvIngest = onRequest(
         res.status(422).json({ ok: false, reason: result.reason })
       }
     } catch (err) {
+      if (candidateFacingUpload && isClaireEntryUxCanary(userId)) {
+        await clearEnrichmentInFlight(db, userId, new Date().toISOString())
+      }
       log("public_cv_ingest.error", {
         userId,
         error: err instanceof Error ? err.message : String(err),

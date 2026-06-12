@@ -24,7 +24,12 @@ import { isThinClaireEnabled } from "./flags.js"
 import { isCanaryUser, isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
-import { setEnrichmentInFlight, clearEnrichmentInFlight } from "./enrichment-inflight.js"
+import {
+  setEnrichmentInFlight,
+  clearEnrichmentInFlight,
+  claimEnrichmentHoldNotice,
+  ENRICHMENT_HOLD_NOTICE_COPY,
+} from "./enrichment-inflight.js"
 import { withProgressHeartbeat, PROGRESS_HEARTBEAT_COPY } from "./progress-heartbeat.js"
 import {
   hasPriorParsedResume,
@@ -40,7 +45,11 @@ import {
 } from "./merge-resume-confirm.js"
 import { buildDecisionTrace } from "./decision-trace.js"
 import type { ClaireLang } from "./types.js"
-import { resumePendingProfileReadinessPrescreenStart } from "../prescreen-session-start.js"
+import {
+  resumePendingProfileReadinessPrescreenStart,
+  runPreScreenForUser,
+  type RunPreScreenResult,
+} from "../prescreen-session-start.js"
 // NOTE: agent.js + tools/matching-tools.js are NOT imported statically — they pull
 // the @pa/agent-runtime/zod@4 SDK, which crashes the deployed container at boot.
 // They're dynamic-imported below, only after the flag gate passes.
@@ -130,6 +139,18 @@ export interface MaybeThinClaireDeps {
     input: { userId: string; mediaUrl: string; sessionId?: string },
     opts: { skipLimitEnforcement: boolean },
   ) => Promise<unknown>
+  /**
+   * Test seam (website role-context entry): override the prescreen start fired when a
+   * resume_parse_completed event carries context.websiteEntry=true + jobIdContext, so tests can
+   * assert the §2.6.4 screen-first routing without bootstrapping a real prescreen config.
+   * Production omits it → the real runPreScreenForUser (which owns the §2.6.3 readiness hold).
+   */
+  runPreScreenOverride?: (a: {
+    jobId: string
+    userId: string
+    toE164: string
+    allowMatchedBypass: boolean
+  }) => Promise<RunPreScreenResult>
 }
 
 export async function maybeRunThinClaire(
@@ -305,6 +326,119 @@ export async function maybeRunThinClaire(
           reason: pendingStart.result?.reason,
         })
         return true
+      }
+
+      // ── WEBSITE ROLE-CONTEXT ENTRY (ENTRY-UX PRD §2.4 / §2.6.4) ──────────────────────────────────
+      // The website producer (website-entry/website-entry-event.ts) emits this SAME
+      // resume_parse_completed kind with context.websiteEntry=true — and jobIdContext when the entry
+      // came from a job page / market card. A ROLE-context completion starts the SCREEN directly: Q1,
+      // never the general pitch first (§2.6.4 "she does not send the general candidate pitch before
+      // Q1"). The EXISTING start path owns everything hard: already_completed / start_in_progress
+      // dedupe, the §2.6.3 readiness hold, the config-missing notice, supersede. Job-page entry is
+      // self-authorizing (the candidate authenticated AS this user on the website and clicked THIS
+      // job) → matched-gate bypass, mirroring the WeKruit_<jobId>_<userId>_Job string-token rule.
+      // FAIL-OPEN: a start error falls through to the pitch engine below — the candidate still gets
+      // the pitch turn rather than silence.
+      const websiteEntryJobId =
+        handoffContext.websiteEntry === true && typeof handoffContext.jobIdContext === "string"
+          ? handoffContext.jobIdContext.trim()
+          : ""
+      if (websiteEntryJobId && toE164) {
+        try {
+          // RESUME, DON'T RESTART (ENTRY-UX PRD §2.4 / §2.6.3 safe-fallback) — if a screen for this
+          // exact (user, job) is ALREADY ACTIVE (e.g. the candidate used the hold's "just reply and
+          // i'll start" safe-fallback continue, or a completion event re-fired), starting again would
+          // supersede the live session and send a SECOND Q1. Same query shape as the supersede /
+          // matched-gate arms (equality only — no composite-index dependency). Fail-open: a read
+          // error falls through to the normal start (already_completed / start-lock still guard).
+          let alreadyActiveSessionId: string | null = null
+          try {
+            const activeSnap = await db
+              .collection("pa-prescreen-sessions")
+              .where("userId", "==", userId)
+              .where("jobId", "==", websiteEntryJobId)
+              .where("terminal", "==", null)
+              .limit(1)
+              .get()
+            if (!activeSnap.empty) alreadyActiveSessionId = activeSnap.docs[0]!.id
+          } catch {
+            /* fail-open — proceed to the normal start path */
+          }
+          if (alreadyActiveSessionId) {
+            await db
+              .collection(PA_COLLECTIONS.inboundEvents)
+              .doc(eventId)
+              .set(
+                {
+                  status: "completed",
+                  handledBy: "thin_claire_website_entry_prescreen",
+                  websiteEntryPrescreen: {
+                    jobId: websiteEntryJobId,
+                    ok: true,
+                    reason: "already_active",
+                    sessionId: alreadyActiveSessionId,
+                  },
+                },
+                { merge: true },
+              )
+              .catch(() => {})
+            log("thin_claire.website_entry.prescreen_already_active", {
+              eventId,
+              userId,
+              jobId: websiteEntryJobId,
+              sessionId: alreadyActiveSessionId,
+            })
+            return true
+          }
+          const runStart =
+            deps.runPreScreenOverride ??
+            ((a: { jobId: string; userId: string; toE164: string; allowMatchedBypass: boolean }) =>
+              runPreScreenForUser({
+                db,
+                ...a,
+                ...(dryRunPrescreenSender ? { sendSms: dryRunPrescreenSender } : {}),
+                log,
+              }))
+          const startResult = await runStart({
+            jobId: websiteEntryJobId,
+            userId,
+            toE164: String(toE164),
+            allowMatchedBypass: true,
+          })
+          await db
+            .collection(PA_COLLECTIONS.inboundEvents)
+            .doc(eventId)
+            .set(
+              {
+                status: "completed",
+                handledBy: "thin_claire_website_entry_prescreen",
+                websiteEntryPrescreen: {
+                  jobId: websiteEntryJobId,
+                  ok: startResult.ok,
+                  reason: startResult.reason ?? null,
+                  sessionId: startResult.sessionId ?? null,
+                },
+              },
+              { merge: true },
+            )
+            .catch(() => {})
+          log("thin_claire.website_entry.prescreen_start", {
+            eventId,
+            userId,
+            jobId: websiteEntryJobId,
+            ok: startResult.ok,
+            reason: startResult.reason,
+          })
+          return true
+        } catch (err) {
+          // Fall through to the pitch engine — never strand the completion event in silence.
+          log("thin_claire.website_entry.prescreen_start_error", {
+            eventId,
+            userId,
+            jobId: websiteEntryJobId,
+            err: err instanceof Error ? err.message : String(err),
+          })
+        }
       }
     }
   }
@@ -769,6 +903,90 @@ export async function maybeRunThinClaire(
     }
   }
 
+  // ── PRESCREEN SAFE-FALLBACK CONTINUE (ENTRY-UX PRD §2.6.3) ─────────────────────────────────────────
+  // The readiness hold promises a candidate-visible exit ("if you'd rather not wait, just reply and
+  // i'll start the screen right away"). A candidate TEXT arriving while pendingPrescreenStart is still
+  // waiting_profile IS that explicit continue — resume the pending start NOW (the resume path sets
+  // skipProfileReadinessHold, so Q1 fires on whatever evidence already landed) instead of stranding
+  // them until a completion event that may have been lost, or the 3-min TTL + a re-paste. Entry-UX
+  // canary only; fail-open — any error falls through to the normal turn (never silence).
+  if (
+    toE164 &&
+    hasRealUserText(text) &&
+    !inboundMediaUrl &&
+    rawMeta.runtimeEvent !== true &&
+    isClaireEntryUxCanary(userId)
+  ) {
+    try {
+      const uSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const pendingRaw = (uSnap.data() ?? {}) as Record<string, unknown>
+      const pending = pendingRaw.pendingPrescreenStart
+      const waitingProfile =
+        Boolean(pending) &&
+        typeof pending === "object" &&
+        !Array.isArray(pending) &&
+        (pending as { status?: unknown }).status === "waiting_profile"
+      if (waitingProfile) {
+        const fallbackDryRunSender: RuntimeSmsSender | undefined = deps.dryRun
+          ? async ({ to, content }) => {
+              const transport = createSendblueTransport({
+                db,
+                toE164: to,
+                inboundMessageHandle,
+                userId,
+                sessionId,
+                inboundEventId: eventId,
+                log,
+                dryRun: true,
+              })
+              return transport.sendText(content, { seq: 0 })
+            }
+          : undefined
+        const resumed = await resumePendingProfileReadinessPrescreenStart({
+          db,
+          userId,
+          occurredAt: new Date().toISOString(),
+          ...(fallbackDryRunSender ? { sendSms: fallbackDryRunSender } : {}),
+          log,
+        })
+        if (resumed.attempted) {
+          await db
+            .collection(PA_COLLECTIONS.inboundEvents)
+            .doc(eventId)
+            .set(
+              {
+                status: "completed",
+                handledBy: "thin_claire_prescreen_safe_fallback_start",
+                pendingPrescreenStart: {
+                  jobId: resumed.jobId ?? null,
+                  ok: resumed.result?.ok ?? null,
+                  reason: resumed.result?.reason ?? null,
+                  sessionId: resumed.result?.sessionId ?? null,
+                },
+              },
+              { merge: true },
+            )
+            .catch(() => {})
+          log("thin_claire.prescreen_safe_fallback_start", {
+            eventId,
+            userId,
+            jobId: resumed.jobId,
+            ok: resumed.result?.ok,
+            reason: resumed.result?.reason,
+          })
+          return true
+        }
+      }
+    } catch (sfErr) {
+      // Fail-open: a safe-fallback read/resume error must never block the turn.
+      log("thin_claire.prescreen_safe_fallback_error", {
+        eventId,
+        userId,
+        err: sfErr instanceof Error ? sfErr.message : String(sfErr),
+      })
+    }
+  }
+
   const lang: ClaireLang = data.lang === "zh" ? "zh" : "en"
 
   // Deterministic mode pick from durable state (onboarding/prescreen/triage). An active
@@ -786,6 +1004,61 @@ export async function maybeRunThinClaire(
   if (decision.suppressReply) {
     log("thin_claire_suppress_reply", { eventId, userId, reason: decision.suppressReason })
     return true
+  }
+
+  // ── ENRICHMENT HOLD, DETERMINISTIC + ONCE-ONLY (ENTRY-UX PRD §2.3.6) ───────────────────────────────
+  // A candidate texting "hi" / "what now?" / their first Talk-to-Claire message while their résumé
+  // parse or LinkedIn/Coresignal import is still running gets ONE short deterministic progress line —
+  // not an agent turn pitching from incomplete data, and not a fresh hold on every message. Once-only
+  // per enrichment window via the claimEnrichmentHoldNotice stamp (the heartbeat once-only convention);
+  // a SECOND mid-enrich message falls through to the agent, which still carries the softer
+  // enrichmentInFlight directive (existing behavior — nobody is left in silence). The completion event
+  // (resume_parse_completed) then resumes: pitch turn for general entry, Q1 for a pending role start.
+  // decision.enrichmentInFlight is already entry-UX-canary-gated in mode-selector; the explicit gate
+  // here is belt-and-braces so this deterministic send can never ride a wider ramp.
+  if (
+    decision.enrichmentInFlight === true &&
+    // TRIAGE turns only: an ACTIVE-onboarding user mid-enrich keeps the existing agent decision
+    // (ack + the pending onboarding question ride together — mode-selector's documented behavior).
+    decision.mode === "triage" &&
+    toE164 &&
+    hasRealUserText(text) &&
+    !inboundMediaUrl &&
+    rawMeta.runtimeEvent !== true &&
+    isClaireEntryUxCanary(userId)
+  ) {
+    try {
+      const claimed = await claimEnrichmentHoldNotice(db, userId, new Date().toISOString())
+      if (claimed) {
+        const holdTransport = createSendblueTransport({
+          db,
+          toE164: String(toE164),
+          inboundMessageHandle,
+          userId,
+          sessionId,
+          inboundEventId: eventId,
+          log,
+          ...(deps.dryRun ? { dryRun: true } : {}),
+        })
+        // Transient "one sec" bubble → sendStatus (same seam as the progress heartbeat).
+        await holdTransport.sendStatus(ENRICHMENT_HOLD_NOTICE_COPY)
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set({ status: "completed", handledBy: "thin_claire_enrichment_hold" }, { merge: true })
+          .catch(() => {})
+        log("thin_claire.enrichment_hold.sent", { eventId, userId })
+        return true
+      }
+      log("thin_claire.enrichment_hold.already_sent_fallthrough", { eventId, userId })
+    } catch (err) {
+      // Fail-open: a hold error must never block the turn — the agent path still answers.
+      log("thin_claire.enrichment_hold.error", {
+        eventId,
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
   // RECOGNIZED-CANDIDATE TEXT PITCH (Adam 2026-06-08): an enriched candidate (résumé-upload / LinkedIn)

@@ -55,8 +55,8 @@ import {
   CompanyMark,
   Icon,
   PulseDot,
-  buildClaireImessageHref,
 } from "./CandidateLogin.js"
+import { buildClaireContinuationHref } from "../lib/claire-continuation.js"
 
 const LOGO_BG_POOL = [
   "#2A1812", "#0F1B2D", "#5E6AD2", "#635BFF", "#0D0D0D", "#1A1A1A", "#374151", "#7C2D12",
@@ -626,6 +626,20 @@ function profileHasVerifiedPhone(profile: CandidateSelfProfile): boolean {
   return Boolean(profile.phoneMasked || profile.handles?.some((h) => h.kind === "phone" && h.verifiedAt))
 }
 
+/**
+ * PRD §2.4/§2.5 — "Continue with Claire" carries the continuation: a bound
+ * phone opens the sticky thread ("Hi Claire"); an unbound (website-first)
+ * profile gets the verification-code BINDING opener so the first thread
+ * message attributes to this same pa-users uid, never a stranger profile.
+ */
+function claireContinuationHrefFor(profile: CandidateSelfProfile): string | null {
+  return buildClaireContinuationHref({
+    senderNumber: profile.senderNumber ?? null,
+    candidateId: profile.candidateId,
+    phoneVerified: profileHasVerifiedPhone(profile),
+  })
+}
+
 async function startCandidateConnectorOAuth(provider: "linkedin" | "github" | "calcom"): Promise<void> {
   const call = httpsCallable<
     { provider: "linkedin" | "github" | "calcom"; returnTo: string },
@@ -762,7 +776,7 @@ function CandidateMeReady({
   const visibility = matchesState.status === "ready" ? deriveVisibilityFromMatches(allMatches) : null
   const visibilityLabel = visibility?.label ?? (matchesErrored ? "Pipeline unavailable" : "Checking pipeline")
   const operatingLoop = deriveCandidateOperatingLoop(allMatches)
-  const claireHref = buildClaireImessageHref(profile.senderNumber)
+  const claireHref = claireContinuationHrefFor(profile)
 
   const interviewActions: MeAction[] = upNext.map((m) => {
     const display = getCandidateJobStatusDisplay(m.status, m.job.title)
@@ -3005,7 +3019,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
   const completeness = deriveCompleteness(profile)
   const visibility = matchesState.status === "ready" ? deriveVisibilityFromMatches(matchesState.matches) : null
   const visibilityError = matchesState.status === "error" ? matchesState.message : null
-  const claireHref = buildClaireImessageHref(profile.senderNumber)
+  const claireHref = claireContinuationHrefFor(profile)
   return (
     <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }} claireHref={claireHref}>
       <style>{ME_PORTAL_STYLES}</style>
@@ -3077,7 +3091,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
 
 function PrivacySurface({ profile }: { profile: CandidateSelfProfile }) {
   useProfileHashScroll()
-  const claireHref = buildClaireImessageHref(profile.senderNumber)
+  const claireHref = claireContinuationHrefFor(profile)
   return (
     <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }} claireHref={claireHref}>
       <style>{ME_PORTAL_STYLES}</style>
@@ -3600,7 +3614,7 @@ function ContactCard({ profile }: { profile: CandidateSelfProfile }) {
 function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
   const items = deriveConnectors(profile)
   const githubRepos = (profile.githubPublicRepos ?? []).slice(0, 3)
-  const claireHref = buildClaireImessageHref(profile.senderNumber)
+  const claireHref = claireContinuationHrefFor(profile)
   return (
     <section id="connected-accounts" className="wkv2-card wk-prof-card">
       <h3 className="wkv2-card__h">Connected accounts</h3>
@@ -4938,7 +4952,7 @@ function MatchesSurface({
   // Backend curates the set: WeKruit-collab jobs (pre-screenable) + daily-recommend
   // recs, deduped. Show all; the filter splits collab vs recommended.
   const all = matchesState.status === "ready" ? matchesState.matches : []
-  const claireHref = buildClaireImessageHref(profileState.profile.senderNumber)
+  const claireHref = claireContinuationHrefFor(profileState.profile)
   return (
     <MatchesView
       profile={profileState.profile}
