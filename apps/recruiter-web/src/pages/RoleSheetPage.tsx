@@ -222,11 +222,13 @@ function cellsFromSubmission(row: RecruiterSubmissionItem): SheetCells {
   const c: SubmissionCandidateCells = row.candidate ?? {}
   const link = (c.link ?? "").trim()
   const linkIsLinkedin = looksLikeLinkedinUrl(link)
+  const linkedin = (c.linkedinUrl ?? "").trim() || (linkIsLinkedin ? link : "")
+  const resume = (c.resumeUrl ?? "").trim() || (linkIsLinkedin ? "" : link)
   return {
     name: c.name ?? "",
     email: c.email ?? "",
-    linkedin: linkIsLinkedin ? link : "",
-    resume: linkIsLinkedin ? "" : link,
+    linkedin,
+    resume,
     currentCompany: c.currentCompany ?? "",
     currentTitle: c.currentRole ?? "",
     location: c.location ?? "",
