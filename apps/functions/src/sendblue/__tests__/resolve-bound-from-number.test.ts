@@ -246,3 +246,137 @@ describe("decideBoundFromNumber (pure core)", () => {
     assert.equal(minted.source, "send_path_mint")
   })
 })
+
+// ─── RULE 3 (2026-06-11 incident) — mint binds from the inbound thread ──────
+// Live violation: user texted IN on 717 (identity notices replied from 717),
+// then a cold opener MINTED a fresh capacity-pick binding → went out from 614.
+// One human, two numbers. The MINT arm must bind to the line the user's
+// latest inbound arrived on; capacity pick is only the no-inbound fallback.
+
+function makeFakeDbWithInbound(
+  users: Record<string, DocData>,
+  inboundEvents: Record<string, DocData>,
+) {
+  const usersMap = new Map<string, DocData>(Object.entries(users))
+  const inboundMap = new Map<string, DocData>(Object.entries(inboundEvents))
+  const writes: Array<{ id: string; data: DocData }> = []
+  const db = {
+    collection(name: string) {
+      if (name === "pa-inbound-events") {
+        const filters: Array<[string, unknown]> = []
+        const q = {
+          where(field: string, _op: string, value: unknown) {
+            filters.push([field, value])
+            return q
+          },
+          limit() { return q },
+          async get() {
+            const docs = [...inboundMap.entries()]
+              .filter(([, d]) => filters.every(([f, v]) => d[f] === v))
+              .map(([id, d]) => ({ id, data: () => d }))
+            return { empty: docs.length === 0, docs }
+          },
+        }
+        return q
+      }
+      assert.equal(name, "pa-users")
+      return {
+        doc(id: string) {
+          return {
+            async get() {
+              const data = usersMap.get(id)
+              return { exists: data !== undefined, data: () => data, id }
+            },
+            async set(data: DocData, opts?: { merge?: boolean }) {
+              writes.push({ id, data })
+              if (opts?.merge) usersMap.set(id, { ...(usersMap.get(id) ?? {}), ...data })
+              else usersMap.set(id, { ...data })
+            },
+          }
+        },
+      }
+    },
+  }
+  return { db, usersMap, writes }
+}
+
+describe("RULE 3 — mint binds from the inbound thread (2026-06-11)", () => {
+  it("MINT prefers the user's latest inbound-thread line over the capacity pick", async () => {
+    // Find a uid whose CAPACITY pick under POOL_2 is +...0002 so preferring
+    // +...0001 (the inbound thread) is observably NOT the capacity pick.
+    const { pickFromNumber } = await import("../pool.js")
+    let uid = ""
+    for (let i = 0; i < 200; i++) {
+      if (pickFromNumber(POOL_2, `u-${i}`) === POOL_2.numbers![1].number) { uid = `u-${i}`; break }
+    }
+    assert.ok(uid, "expected a uid whose capacity pick is the second line")
+
+    const threadLine = POOL_2.numbers![0].number // the line their inbound arrived ON
+    const { db, usersMap, writes } = makeFakeDbWithInbound(
+      { [uid]: {} },
+      {
+        inb_old: { userId: uid, createdAt: "2026-06-10T01:00:00.000Z", rawPayload: { toNumber: POOL_2.numbers![1].number } },
+        inb_new: { userId: uid, createdAt: "2026-06-11T09:00:00.000Z", rawPayload: { toNumber: threadLine } },
+      },
+    )
+    const logged: string[] = []
+    const out = await resolveBoundFromNumber(db as never, uid, {
+      pool: POOL_2,
+      user: {},
+      mintSource: "send_path_mint",
+      log: (event) => logged.push(event),
+    })
+    assert.equal(out.fromNumber, threadLine, "binds to the LATEST inbound thread line, not the capacity pick")
+    assert.equal(out.persisted, true)
+    assert.equal(usersMap.get(uid)!.senderNumber, threadLine)
+    assert.equal(writes.length, 1)
+    assert.ok(logged.includes("sendblue.bind.mint_from_inbound_thread"), "mint arm logged")
+    assert.ok(!logged.includes("sendblue.bind.mint_by_capacity"))
+  })
+
+  it("falls back to the capacity pick when the user has NO inbound evidence", async () => {
+    const { db, usersMap } = makeFakeDbWithInbound({ "u-cold": {} }, {})
+    const logged: string[] = []
+    const out = await resolveBoundFromNumber(db as never, "u-cold", {
+      pool: POOL_2,
+      user: {},
+      mintSource: "send_path_mint",
+      log: (event) => logged.push(event),
+    })
+    assert.ok(out.fromNumber, "capacity mint still works")
+    assert.ok([POOL_2.numbers![0].number, POOL_2.numbers![1].number].includes(out.fromNumber!))
+    assert.equal(out.persisted, true)
+    assert.equal(usersMap.get("u-cold")!.senderNumber, out.fromNumber)
+    assert.ok(logged.includes("sendblue.bind.mint_by_capacity"), "capacity arm logged")
+    assert.ok(!logged.includes("sendblue.bind.mint_from_inbound_thread"))
+  })
+
+  it("ignores an inbound-thread line that is NOT an eligible pool line (paused/foreign)", async () => {
+    const { db } = makeFakeDbWithInbound(
+      { "u-x": {} },
+      { inb_1: { userId: "u-x", createdAt: "2026-06-11T09:00:00.000Z", rawPayload: { toNumber: "+19999999999" } } },
+    )
+    const logged: string[] = []
+    const out = await resolveBoundFromNumber(db as never, "u-x", {
+      pool: POOL_2,
+      user: {},
+      log: (event) => logged.push(event),
+    })
+    assert.ok(out.fromNumber, "still mints")
+    assert.notEqual(out.fromNumber, "+19999999999", "a non-pool line is never minted")
+    assert.ok(logged.includes("sendblue.bind.mint_by_capacity"))
+  })
+
+  it("BOUND user never triggers the inbound-thread lookup (hot path unchanged)", async () => {
+    // The fake throws an assertion if pa-inbound-events is queried when we
+    // don't expect it — reuse the strict pa-users-only fake.
+    const { db, writes } = makeFakeDb({ "u-bound": { senderNumber: POOL_2.numbers![0].number } })
+    const out = await resolveBoundFromNumber(db as never, "u-bound", {
+      pool: POOL_2,
+      user: { senderNumber: POOL_2.numbers![0].number },
+    })
+    assert.equal(out.source, "bound")
+    assert.equal(out.fromNumber, POOL_2.numbers![0].number)
+    assert.equal(writes.length, 0)
+  })
+})

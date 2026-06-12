@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
 
-import { isMarketplaceOutreachOutbound, paSendblueOutboxHandler, shouldAppendOutboundTranscript } from "../outbox.js"
+import { isMarketplaceOutreachOutbound, paSendblueOutboxHandler, shouldAppendOutboundTranscript, _resetPriorInboundEvidenceCache } from "../outbox.js"
 import { SendblueClientError, SendblueServerError } from "../sendblue-client.js"
 import { _resetPoolCache, _resetCountersCache } from "../pool.js"
 
@@ -12,7 +12,7 @@ type DocData = Record<string, unknown>
 function makeFakeDb(
   initialOutbound: Record<string, DocData> = {},
   users: Record<string, DocData> = {},
-  opts: { quotaLimit?: number; existingDailyCount?: number } = {}
+  opts: { quotaLimit?: number; existingDailyCount?: number; inboundEvidenceFor?: string[] } = {}
 ) {
   const outbound = new Map<string, DocData>(
     Object.entries(initialOutbound).map(([id, row]) => [
@@ -26,6 +26,51 @@ function makeFakeDb(
   const flags = new Map<string, DocData>()
   const audit: DocData[] = []
   const outboundDaily = new Map<string, DocData>()
+  // RULE 1 (2026-06-11) — the outbox requires prior-inbound evidence for the
+  // recipient handle. This suite's users all "texted in first" by default;
+  // pass opts.inboundEvidenceFor: [] to simulate a never-inbound recipient.
+  const inboundEvents = new Map<string, DocData>(
+    (opts.inboundEvidenceFor ?? ["+15551234567"]).map((handle, i) => [
+      `inb_${i}`,
+      {
+        userId: "u-1",
+        createdAt: new Date().toISOString(),
+        rawPayload: { kind: "imessage", participant: handle, fromNumber: handle },
+      },
+    ])
+  )
+
+  function nestedField(data: DocData, path: string): unknown {
+    let cur: unknown = data
+    for (const part of path.split(".")) {
+      if (!cur || typeof cur !== "object") return undefined
+      cur = (cur as Record<string, unknown>)[part]
+    }
+    return cur
+  }
+
+  function makeInboundEventsQuery() {
+    const filters: Array<{ field: string; value: unknown }> = []
+    const query = {
+      doc(id: string) {
+        return makeDocRef("pa-inbound-events", id)
+      },
+      where(field: string, _op: string, value: unknown) {
+        filters.push({ field, value })
+        return query
+      },
+      limit() {
+        return query
+      },
+      async get() {
+        const docs = [...inboundEvents.entries()]
+          .filter(([, d]) => filters.every((f) => nestedField(d, f.field) === f.value))
+          .map(([id, d]) => ({ id, data: () => d }))
+        return { empty: docs.length === 0, docs }
+      },
+    }
+    return query
+  }
 
   if (opts.quotaLimit != null) {
     flags.set("sendblueDailyQuota", {
@@ -53,6 +98,7 @@ function makeFakeDb(
       case "pa-messages": return messages
       case "pa-feature-flags": return flags
       case "pa-outbound-daily": return outboundDaily
+      case "pa-inbound-events": return inboundEvents
       default: return usersMap
     }
   }
@@ -81,6 +127,7 @@ function makeFakeDb(
 
   const db = {
     collection(name: string) {
+      if (name === "pa-inbound-events") return makeInboundEventsQuery()
       return {
         doc(id: string) {
           return makeDocRef(name, id)
@@ -188,6 +235,7 @@ beforeEach(() => {
   // pool config from another suite can't leak into these fake-db reads.
   _resetPoolCache()
   _resetCountersCache()
+  _resetPriorInboundEvidenceCache()
 })
 afterEach(() => {
   for (const k of ENV_KEYS) delete process.env[k]
@@ -351,7 +399,7 @@ describe("paSendblueOutboxHandler", () => {
     assert.match(String(finalDoc.error), /not approved by runtime/)
   })
 
-  it("Test 2: arbitrary outbound toE164 sends normally", async () => {
+  it("Test 2: arbitrary outbound toE164 (with prior inbound) sends normally — no allowlist gate", async () => {
     const baseRow: DocData = {
       status: "pending",
       userId: USER.id,
@@ -360,7 +408,10 @@ describe("paSendblueOutboxHandler", () => {
       idempotencyKey: "out-test-2",
       createdAt: new Date().toISOString(),
     }
-    const { db, outbound } = makeFakeDb({ "doc-2": baseRow })
+    // RULE 1 (2026-06-11): outbound requires prior-inbound evidence for the
+    // recipient handle — this arbitrary peer "texted in first". (There is
+    // still NO static allowlist; that is what this test locks.)
+    const { db, outbound } = makeFakeDb({ "doc-2": baseRow }, {}, { inboundEvidenceFor: ["+15559999999"] })
     const sb = makeSendblueMock()
     const event = makeEvent("doc-2", baseRow)
 

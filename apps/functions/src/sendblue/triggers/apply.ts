@@ -188,6 +188,44 @@ export class ApplyTrigger implements Trigger {
           })
           return { kind: "handled", action: "prescreen_config_missing" }
         }
+        // RULE 2 (2026-06-11) — a terminal session already exists for this
+        // (userId, jobId): never restart it. Friendly status notice instead
+        // of throwing into the error path.
+        if (runResult.reason === "already_completed") {
+          try {
+            await this.deps.sendAccessIssueNotice({
+              targetUserId: userId,
+              jobId,
+              toE164: ctx.fromNumber,
+              ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
+              messageHandle: ctx.messageHandle,
+              content:
+                "You've already completed this screen — it's with the team for review. I'll text you as soon as there's an update.",
+              reason: "already_completed",
+            })
+          } catch (noticeErr) {
+            ctx.log("trigger.apply.already_completed_notice_failed", {
+              jobId,
+              userId,
+              error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+            })
+          }
+          await this.deps.audit({
+            kind: "trigger.apply.prescreen_already_completed",
+            jobId,
+            userId,
+          })
+          return { kind: "handled", action: "prescreen_already_completed" }
+        }
+        if (runResult.reason === "start_in_progress") {
+          // Concurrent start owns the create — friendly no-op.
+          await this.deps.audit({
+            kind: "trigger.apply.prescreen_start_in_progress",
+            jobId,
+            userId,
+          })
+          return { kind: "handled", action: "prescreen_start_in_progress" }
+        }
         throw new Error(`prescreen_start_${runResult.reason ?? "failed"}`)
       }
     } catch (err) {
