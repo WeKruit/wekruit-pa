@@ -41,6 +41,7 @@ import {
   type JobRecIntroContext,
   type JobRecommendationSource,
 } from "./job-rec-copy.js"
+import { isClaireEntryUxCanary } from "./claire-agent/canary.js"
 
 export type PrescreenTerminalKind = "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
 const BETA_CANDIDATE_VISIBLE_LANG = "en" as const
@@ -336,6 +337,125 @@ async function defaultSendSms(args: {
     runtimeSource: args.runtimeSource ?? "pa_prescreen_runtime",
     idempotencyKey: args.idempotencyKey,
   })
+}
+
+function hasResumeOrLinkedInProfileSignal(user: Record<string, unknown>): boolean {
+  if (typeof user.latestResumeArtifactId === "string" && user.latestResumeArtifactId.trim()) return true
+  if (typeof user.linkedinUrl === "string" && user.linkedinUrl.trim()) return true
+  if (user.linkedinOauthLinked === true) return true
+  const resumeParseCount = user.resumeParseCount
+  if (typeof resumeParseCount === "number" && Number.isFinite(resumeParseCount) && resumeParseCount > 0) {
+    return true
+  }
+  const tags = user.tags && typeof user.tags === "object" ? user.tags as Record<string, unknown> : null
+  const skills = tags && Array.isArray(tags.skills) ? tags.skills : []
+  return skills.some((value) => typeof value === "string" && value.trim())
+}
+
+function prescreenTerminalActionQuestionLabel(qId: string): string {
+  return qId.replace(/_/g, " ").trim()
+}
+
+function cleanTerminalActionSummary(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null
+  const clean = value.replace(/\s+/g, " ").trim().replace(/[.。]+$/g, "")
+  return clean ? clean.slice(0, max) : null
+}
+
+function rejectedPrescreenFeedback(session: Record<string, unknown>): string {
+  const questions = session.questions && typeof session.questions === "object"
+    ? session.questions as Record<string, unknown>
+    : {}
+  const rows: Array<{ qId: string; score: number; summary: string | null }> = []
+  for (const [qId, raw] of Object.entries(questions)) {
+    if (!raw || typeof raw !== "object") continue
+    const q = raw as {
+      finalS?: unknown
+      scored?: { aggregate?: { summary?: unknown } }
+    }
+    const score = typeof q.finalS === "number" && Number.isFinite(q.finalS) ? q.finalS : null
+    if (score === null) continue
+    rows.push({
+      qId,
+      score,
+      summary: cleanTerminalActionSummary(q.scored?.aggregate?.summary, 180),
+    })
+  }
+  const weakest = rows.sort((a, b) => a.score - b.score)[0]
+  if (!weakest) return "the screen did not show enough direct evidence for this specific role"
+  const label = prescreenTerminalActionQuestionLabel(weakest.qId)
+  if (weakest.summary) return `${label}: ${weakest.summary}`
+  return `the screen needed stronger evidence on ${label}`
+}
+
+async function sendDevRejectedRetentionHandoff(args: {
+  db: Firestore
+  sessionId: string
+  userId: string
+  toE164: string
+  terminal: "FAIL" | "HARD_STOP"
+  session: Record<string, unknown>
+  send: NonNullable<RunPrescreenTerminalActionArgs["sendSms"]>
+  log: NonNullable<RunPrescreenTerminalActionArgs["log"]>
+}): Promise<boolean> {
+  if (!isClaireEntryUxCanary(args.userId)) return false
+  let user: Record<string, unknown> = {}
+  try {
+    const snap = await args.db.collection("pa-users").doc(args.userId).get()
+    user = (snap.data() ?? {}) as Record<string, unknown>
+  } catch (err) {
+    args.log("prescreen.terminal_action.rejected_handoff_user_read_failed", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  const hasProfileSignal = hasResumeOrLinkedInProfileSignal(user)
+  const profileCopy = hasProfileSignal
+    ? "I have some resume/LinkedIn signal on file, and I can keep using that plus this screen to pitch better-fit collaboration roles with more context."
+    : "If you add your LinkedIn or resume, I can pull your experience into your profile and pitch better-fit collaboration roles with context instead of making you repeat the same background."
+  const text = [
+    `WeKruit team notes: this specific role probably is not moving forward because ${rejectedPrescreenFeedback(args.session)}.`,
+    profileCopy,
+    "Want me to send matching recommendations too?",
+  ].join(" ")
+
+  try {
+    await args.send({
+      to: args.toE164,
+      content: text,
+      userId: args.userId,
+      db: args.db,
+      runtimeSource: "pa_prescreen_runtime",
+      idempotencyKey: `prescreen_terminal_rejected_retention:${args.sessionId}`,
+    })
+    await args.db.collection("pa-prescreen-sessions").doc(args.sessionId).set(
+      {
+        postPrescreenRetention: {
+          stage: "await_profile_and_match_opt_in",
+          terminal: args.terminal,
+          profileSignalOnFile: hasProfileSignal,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      { merge: true },
+    )
+    args.log("prescreen.terminal_action.rejected_retention_handoff_sent", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      terminal: args.terminal,
+      profileSignalOnFile: hasProfileSignal,
+    })
+    return true
+  } catch (err) {
+    args.log("prescreen.terminal_action.rejected_retention_handoff_failed", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      terminal: args.terminal,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return false
+  }
 }
 
 export async function writePrescreenMemoryUpdate(args: {
@@ -722,28 +842,54 @@ export async function runPrescreenTerminalAction(
     // employer, so do not immediately push unrelated job recommendations.
     piiStarted = await startPiiWithRecsChain(args, "pass", genJobRecs, log, { fireJobRecs: false })
   } else if (args.terminal === "FAIL") {
-    // TERMINAL-02 — preamble first, then PII collect, then recs.
-    try {
-      await send({
-        to: args.toE164,
-        content: composeFailJobRecsPreamble(BETA_CANDIDATE_VISIBLE_LANG),
-        userId: args.userId,
+    if (isClaireEntryUxCanary(args.userId)) {
+      await sendDevRejectedRetentionHandoff({
         db: args.db,
-        runtimeSource: "pa_prescreen_runtime",
-        idempotencyKey: `prescreen_terminal_fail_preamble:${args.sessionId}`,
-      })
-    } catch (err) {
-      log("prescreen.terminal_action.preamble_send_failed", {
         sessionId: args.sessionId,
-        error: err instanceof Error ? err.message : String(err),
+        userId: args.userId,
+        toE164: args.toE164,
+        terminal: args.terminal,
+        session: sessData,
+        send,
+        log,
       })
+    } else {
+      // TERMINAL-02 — preamble first, then PII collect, then recs.
+      try {
+        await send({
+          to: args.toE164,
+          content: composeFailJobRecsPreamble(BETA_CANDIDATE_VISIBLE_LANG),
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_prescreen_runtime",
+          idempotencyKey: `prescreen_terminal_fail_preamble:${args.sessionId}`,
+        })
+      } catch (err) {
+        log("prescreen.terminal_action.preamble_send_failed", {
+          sessionId: args.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log)
     }
-    piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log)
   } else if (args.terminal === "HARD_STOP") {
-    // TERMINAL-03 — preserve the candidate in the pool, but do not push
-    // immediate job recommendations from stale global tags after a must-have
-    // failure in the visible transcript.
-    piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log, { fireJobRecs: false })
+    if (isClaireEntryUxCanary(args.userId)) {
+      await sendDevRejectedRetentionHandoff({
+        db: args.db,
+        sessionId: args.sessionId,
+        userId: args.userId,
+        toE164: args.toE164,
+        terminal: args.terminal,
+        session: sessData,
+        send,
+        log,
+      })
+    } else {
+      // TERMINAL-03 — preserve the candidate in the pool, but do not push
+      // immediate job recommendations from stale global tags after a must-have
+      // failure in the visible transcript.
+      piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log, { fireJobRecs: false })
+    }
   } else if (args.terminal === "PAUSE") {
     await sessRef.update({ pausedAt: now().toISOString() })
   }

@@ -112,8 +112,8 @@ export type ViabilityOutcome =
  *
  * The viability "should we keep asking" check MUST be decoupled from the
  * PASS-proposal threshold. Production forces the PASS bar to
- * PRESCREEN_REVIEW_PASS_THRESHOLD = 0.95 so a human reviewer only ever sees
- * Claire propose PASS for ~top-5 evidence — that is a HUMAN-REVIEW policy,
+ * PRESCREEN_REVIEW_PASS_THRESHOLD = 0.95 so the review queue only ever sees
+ * Claire propose PASS for ~top-5 evidence — that is a WeKruit-team review policy,
  * NOT a signal the automated FSM should use to early-terminate.
  *
  * If viability used the 0.95 bar, a single competent-but-not-top-5 answer

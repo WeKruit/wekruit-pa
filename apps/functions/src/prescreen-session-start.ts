@@ -25,6 +25,8 @@ import {
 } from "@pa/pa-orchestrator"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { markFirstInterviewStarted } from "./prescreen-outcome-service.js"
+import { isClaireEntryUxCanary } from "./claire-agent/canary.js"
+import { isEnrichmentInFlight } from "./claire-agent/enrichment-inflight.js"
 
 type RuntimeSmsSender = (args: {
   to: string
@@ -72,6 +74,11 @@ export interface RunPreScreenArgs {
    */
   allowMatchedBypass?: boolean
   /**
+   * Internal continuation path: once resume/LinkedIn enrichment completes, the pending start should
+   * fire Q1 even if a stale in-flight marker has not cleared yet.
+   */
+  skipProfileReadinessHold?: boolean
+  /**
    * Injectable matched-set check (tests stub it). Default reads the rec ledger
    * (`pa-user-job-recommendations/{userId}/jobs/{jobId}.recommendationCount > 0`)
    * ∪ a pending-invite for this job. Point-reads only — never the live V16 query
@@ -110,12 +117,27 @@ export interface RunPreScreenResult {
      * run). Friendly no-op: the concurrent start owns Q1.
      */
     | "start_in_progress"
+    /**
+     * Dev-phone entry UX: profile enrichment is still in flight, so Claire sent a short hold and stored
+     * a pending start instead of creating a half-context prescreen session.
+     */
+    | "readiness_hold"
   sessionId: string
   firstQuestionSent?: boolean
 }
 
 const USER_JOB_RECOMMENDATIONS_COLLECTION = "pa-user-job-recommendations"
 const PENDING_INVITES_COLLECTION = "pa-prescreen-pending-invites"
+const PROFILE_READINESS_HOLD_COPY =
+  "i'm still reading through your resume/experience so i can start this screen with the right context - one sec"
+
+type PendingPrescreenStart = {
+  status?: unknown
+  jobId?: unknown
+  toE164?: unknown
+  sourceRequestedUserId?: unknown
+  allowMatchedBypass?: unknown
+}
 
 /**
  * Default matched-set check for the prescreen MATCHED-GATE. A candidate may only
@@ -335,6 +357,177 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+function readPendingPrescreenStart(user: Record<string, unknown>): PendingPrescreenStart | null {
+  const pending = user.pendingPrescreenStart
+  if (!pending || typeof pending !== "object" || Array.isArray(pending)) return null
+  return pending as PendingPrescreenStart
+}
+
+async function maybeHoldForProfileReadiness(args: {
+  db: Firestore
+  userId: string
+  jobId: string
+  toE164: string
+  sourceRequestedUserId?: string
+  allowMatchedBypass?: boolean
+  suppressFirstQuestion?: boolean
+  sessionId: string
+  nowIso: string
+  sendSms: RuntimeSmsSender
+  log: (event: string, payload: Record<string, unknown>) => void
+}): Promise<RunPreScreenResult | null> {
+  if (!isClaireEntryUxCanary(args.userId)) return null
+  if (args.suppressFirstQuestion) return null
+
+  const userRef = args.db.collection("pa-users").doc(args.userId)
+  const userSnap = await userRef.get()
+  const user = (userSnap.exists ? userSnap.data() : {}) ?? {}
+  if (!isEnrichmentInFlight(user)) return null
+
+  const pendingStart = {
+    status: "waiting_profile",
+    reason: "enrichment_in_flight",
+    userId: args.userId,
+    jobId: args.jobId,
+    toE164: args.toE164,
+    sourceRequestedUserId: args.sourceRequestedUserId ?? null,
+    allowMatchedBypass: args.allowMatchedBypass === true,
+    createdAt: args.nowIso,
+    updatedAt: args.nowIso,
+  }
+
+  await userRef.set(
+    {
+      pendingPrescreenStart: pendingStart,
+      updatedAt: args.nowIso,
+    },
+    { merge: true },
+  )
+
+  try {
+    await args.sendSms({
+      to: args.toE164,
+      content: PROFILE_READINESS_HOLD_COPY,
+      userId: args.userId,
+      db: args.db,
+      runtimeSource: "pa_prescreen_runtime",
+      idempotencyKey: `prescreen_profile_readiness_hold:${args.jobId}:${args.userId}`,
+    })
+  } catch (err) {
+    await userRef.set(
+      {
+        pendingPrescreenStart: {
+          ...pendingStart,
+          status: "hold_send_failed",
+          sendFailedAt: args.nowIso,
+          sendFailedReason: errorMessage(err),
+          updatedAt: args.nowIso,
+        },
+        updatedAt: args.nowIso,
+      },
+      { merge: true },
+    )
+    args.log("prescreen.profile_readiness_hold_send_failed", {
+      userId: args.userId,
+      jobId: args.jobId,
+      error: errorMessage(err),
+    })
+    return { ok: false, reason: "send_failed", sessionId: args.sessionId, firstQuestionSent: false }
+  }
+
+  args.log("prescreen.profile_readiness_hold", { userId: args.userId, jobId: args.jobId })
+  return { ok: false, reason: "readiness_hold", sessionId: args.sessionId, firstQuestionSent: false }
+}
+
+export async function resumePendingProfileReadinessPrescreenStart(args: {
+  db: Firestore
+  userId: string
+  occurredAt?: string
+  sendSms?: RuntimeSmsSender
+  markStarted?: RunPreScreenArgs["markStarted"]
+  log?: (event: string, payload: Record<string, unknown>) => void
+}): Promise<{ attempted: boolean; result?: RunPreScreenResult; jobId?: string }> {
+  const log = args.log ?? (() => {})
+  const nowIso = args.occurredAt ?? new Date().toISOString()
+  const userRef = args.db.collection("pa-users").doc(args.userId)
+  const snap = await userRef.get()
+  const user = (snap.exists ? snap.data() : {}) ?? {}
+  const pending = readPendingPrescreenStart(user)
+  if (!pending || pending.status !== "waiting_profile") return { attempted: false }
+
+  const jobId = typeof pending.jobId === "string" ? pending.jobId : ""
+  const toE164 = typeof pending.toE164 === "string" ? pending.toE164 : ""
+  if (!jobId || !toE164) {
+    await userRef.set(
+      {
+        pendingPrescreenStart: {
+          ...pending,
+          status: "start_failed",
+          resultReason: "invalid_pending_start",
+          resolvedAt: nowIso,
+          updatedAt: nowIso,
+        },
+        updatedAt: nowIso,
+      },
+      { merge: true },
+    )
+    log("prescreen.pending_start_invalid", { userId: args.userId, jobId })
+    return { attempted: true, jobId }
+  }
+
+  await userRef.set(
+    {
+      pendingPrescreenStart: {
+        ...pending,
+        status: "starting",
+        resumedAt: nowIso,
+        updatedAt: nowIso,
+      },
+      updatedAt: nowIso,
+    },
+    { merge: true },
+  )
+
+  const result = await runPreScreenForUser({
+    db: args.db,
+    userId: args.userId,
+    jobId,
+    toE164,
+    ...(typeof pending.sourceRequestedUserId === "string" && pending.sourceRequestedUserId
+      ? { sourceRequestedUserId: pending.sourceRequestedUserId }
+      : {}),
+    allowMatchedBypass: pending.allowMatchedBypass === true,
+    skipProfileReadinessHold: true,
+    ...(args.markStarted ? { markStarted: args.markStarted } : {}),
+    ...(args.sendSms ? { sendSms: args.sendSms } : {}),
+    log,
+  })
+
+  await userRef.set(
+    {
+      pendingPrescreenStart: {
+        ...pending,
+        status: result.ok ? "started" : "start_failed",
+        resultReason: result.reason ?? null,
+        sessionId: result.sessionId,
+        firstQuestionSent: result.firstQuestionSent ?? null,
+        resolvedAt: nowIso,
+        updatedAt: nowIso,
+      },
+      updatedAt: nowIso,
+    },
+    { merge: true },
+  )
+  log("prescreen.pending_start_resolved", {
+    userId: args.userId,
+    jobId,
+    ok: result.ok,
+    reason: result.reason,
+    sessionId: result.sessionId,
+  })
+  return { attempted: true, result, jobId }
+}
+
 async function markSessionStartSendFailed(args: {
   db: Firestore
   sessionId: string
@@ -466,6 +659,23 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     return { ok: false, reason: "config_invalid", sessionId }
   }
   const cfg: PrescreenConfig = parsed.config
+
+  if (!args.skipProfileReadinessHold) {
+    const hold = await maybeHoldForProfileReadiness({
+      db: args.db,
+      userId: args.userId,
+      jobId: args.jobId,
+      toE164: args.toE164,
+      ...(args.sourceRequestedUserId ? { sourceRequestedUserId: args.sourceRequestedUserId } : {}),
+      allowMatchedBypass: args.allowMatchedBypass,
+      suppressFirstQuestion: args.suppressFirstQuestion,
+      sessionId,
+      nowIso,
+      sendSms,
+      log,
+    })
+    if (hold) return hold
+  }
 
   // 1.5 RULE 2 race-closer (2026-06-11: one sweep run created THREE sessions
   // for the same user) — deterministic in-flight lock on (userId, jobId),

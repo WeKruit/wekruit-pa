@@ -75,6 +75,20 @@ export function isPrescreenNudgeCanary(userId: string | null | undefined): boole
   return typeof userId === "string" && CANARY_UIDS.has(userId)
 }
 
+/**
+ * DEDICATED gate for CLAIRE ENTRY UX rebuild slices (2026-06-11).
+ *
+ * This covers candidate-entry polish that changes when Claire holds, resumes, or starts a screen
+ * around profile enrichment. It must start with dev phones only and must NOT be swept live by the
+ * onboarding ramp (`PA_ONBOARDING_RAMP_ALL=1` makes `isCanaryUser` true for everyone in prod).
+ *
+ * To ramp this specific UX later, set PA_CLAIRE_ENTRY_UX_RAMP_ALL=1 or widen CANARY_UIDS.
+ */
+export function isClaireEntryUxCanary(userId: string | null | undefined): boolean {
+  if (process.env.PA_CLAIRE_ENTRY_UX_RAMP_ALL === "1") return true
+  return typeof userId === "string" && CANARY_UIDS.has(userId)
+}
+
 export function isPrescreenRetentionHandoffCanary(userId: string | null | undefined): boolean {
   // RAMPED (Adam 2026-06-05 explicit "yes" — real affected users, e.g. Sai +18578918525, must get
   // the fix, not just dev phones). Uses a DEDICATED switch independent of the onboarding

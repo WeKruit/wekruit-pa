@@ -21,7 +21,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { isThinClaireEnabled } from "./flags.js"
-import { isCanaryUser, isPrescreenRetentionHandoffCanary } from "./canary.js"
+import { isCanaryUser, isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
 import { setEnrichmentInFlight, clearEnrichmentInFlight } from "./enrichment-inflight.js"
@@ -40,6 +40,7 @@ import {
 } from "./merge-resume-confirm.js"
 import { buildDecisionTrace } from "./decision-trace.js"
 import type { ClaireLang } from "./types.js"
+import { resumePendingProfileReadinessPrescreenStart } from "../prescreen-session-start.js"
 // NOTE: agent.js + tools/matching-tools.js are NOT imported statically — they pull
 // the @pa/agent-runtime/zod@4 SDK, which crashes the deployed container at boot.
 // They're dynamic-imported below, only after the flag gate passes.
@@ -90,6 +91,15 @@ export const IMAGE_ATTACHMENT_REPLY =
 /** Real reply when an attempted résumé ingest fails (instead of the old silent log-and-drop). */
 export const RESUME_INGEST_FAILURE_REPLY =
   "hmm — that didn't read as a résumé on my side 😅 can you send the file itself (PDF) or a link to it? if you meant to share something else, just tell me what's up"
+
+type RuntimeSmsSender = (args: {
+  to: string
+  content: string
+  userId?: string
+  db?: Firestore
+  runtimeSource?: string
+  idempotencyKey?: string
+}) => Promise<unknown>
 
 // ingestCv reasons that ALREADY message the candidate themselves (enqueueLimitRejection's Claire-voice
 // rejection iMessage) — sending our fallback on top would double-text. Every OTHER failure reason
@@ -232,14 +242,6 @@ export async function maybeRunThinClaire(
     })
     return false
   }
-  if (cvParsedReentry) {
-    log("thin_claire.cv_parsed_reentry", { eventId, userId })
-    // WS-1(b): the resume_parse_completed event = enrichment FINISHED. CLEAR the in-flight marker
-    // (best-effort, never blocks) so the NEXT turn after the pitch doesn't keep saying "one sec".
-    // This is the pitch turn (postParsePitch), so the directive is never active here regardless.
-    void clearEnrichmentInFlight(db, userId, new Date().toISOString()).catch(() => {})
-  }
-
   const toE164 =
     (typeof data.fromNumber === "string" && data.fromNumber) ||
     (typeof data.externalChatId === "string" && data.externalChatId) ||
@@ -247,6 +249,65 @@ export async function maybeRunThinClaire(
     ""
   const inboundMessageHandle =
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
+
+  if (cvParsedReentry) {
+    log("thin_claire.cv_parsed_reentry", { eventId, userId })
+    // WS-1(b): the resume_parse_completed event = enrichment FINISHED. Clear before checking pending
+    // prescreen starts so the continuation cannot loop back into another readiness hold.
+    await clearEnrichmentInFlight(db, userId, new Date().toISOString()).catch(() => {})
+
+    if (isClaireEntryUxCanary(userId)) {
+      const dryRunPrescreenSender: RuntimeSmsSender | undefined = deps.dryRun
+        ? async ({ to, content }) => {
+            const transport = createSendblueTransport({
+              db,
+              toE164: to,
+              inboundMessageHandle,
+              userId,
+              sessionId,
+              inboundEventId: pitchTurnScope,
+              log,
+              dryRun: true,
+            })
+            return transport.sendText(content, { seq: 0 })
+          }
+        : undefined
+      const pendingStart = await resumePendingProfileReadinessPrescreenStart({
+        db,
+        userId,
+        occurredAt: new Date().toISOString(),
+        ...(dryRunPrescreenSender ? { sendSms: dryRunPrescreenSender } : {}),
+        log,
+      })
+      if (pendingStart.attempted) {
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set(
+            {
+              status: "completed",
+              handledBy: "thin_claire_pending_prescreen_start",
+              pendingPrescreenStart: {
+                jobId: pendingStart.jobId ?? null,
+                ok: pendingStart.result?.ok ?? null,
+                reason: pendingStart.result?.reason ?? null,
+                sessionId: pendingStart.result?.sessionId ?? null,
+              },
+            },
+            { merge: true },
+          )
+          .catch(() => {})
+        log("thin_claire.pending_prescreen_start.handled", {
+          eventId,
+          userId,
+          jobId: pendingStart.jobId,
+          ok: pendingStart.result?.ok,
+          reason: pendingStart.result?.reason,
+        })
+        return true
+      }
+    }
+  }
 
   // ── RÉSUMÉ-INGEST FAILURE HANDLER (BUG A fix, 2026-06-11) ───────────────────────────────────────────
   // Shared by BOTH fire-and-forget ingest sites (merge-accept + immediate-ingest). A failed/empty parse

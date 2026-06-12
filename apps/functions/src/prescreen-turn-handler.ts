@@ -595,7 +595,7 @@ function postPrescreenOnboardingPrompt(_lang: "zh" | "en", terminal?: string | n
 }
 
 function pendingReviewFollowupAckText(_lang: "zh" | "en"): string {
-  return "Got it — I added this to your role screen context. The outcome is still under human review, so I won’t guess at the final decision here. I’ll follow up once review is complete."
+  return "Got it - I added this to your role screen context. The outcome is still with the WeKruit team, so I won't guess at the final decision here. I'll follow up once review is complete."
 }
 
 async function markUserPrescreenWorkSessionEnded(args: {
@@ -943,7 +943,7 @@ export async function runPrescreenTurnIfActive(
         action: {
           kind: "post_terminal_followup",
           terminal: lookup.terminal,
-          reason: "pending_human_review",
+          reason: "pending_wekruit_team_review",
         },
         ts: nowIso,
       })
@@ -974,7 +974,7 @@ export async function runPrescreenTurnIfActive(
     // outcome-explanation) + regex intent. The terminal, retain action, and any match were ALREADY fired
     // deterministically by the reducer; this only changes WHO answers next + WITH WHAT CONTEXT. Placed
     // AFTER the terminalActionPendingReview guard (above) so a genuinely under-review outcome still gets
-    // the deterministic "under human review" ack (never a thin answer that might imply a decision).
+    // the deterministic WeKruit-team review ack (never a thin answer that might imply a decision).
     // Non-canary keeps EVERY legacy branch below byte-for-byte. Dev cohort only (NOT swept by the
     // onboarding PA_ONBOARDING_RAMP_ALL prod env) — ramps separately on Adam's say-so.
     if (isPrescreenRetentionHandoffCanary(args.userId)) {

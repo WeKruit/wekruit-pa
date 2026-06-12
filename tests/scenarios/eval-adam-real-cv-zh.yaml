@@ -40,7 +40,7 @@ description: |
   iter34 followup D.8 — fire send_cv_analysis for the harness
   participant whose CV is cloned from Adam Yang's real
   parsedCandidateResumes row + inferred statedPreferences. Capture
-  ack/analysis/jobRec/tagSummary for human review of recommendation
+  ack/analysis/jobRec/tagSummary for WeKruit-team review of recommendation
   plausibility against Adam's actual background.
 locale: zh-CN
 agentId: default

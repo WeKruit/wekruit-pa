@@ -510,7 +510,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.match(sent[1] ?? "", /Do you want to proceed/i)
   })
 
-  it("acknowledges a recent terminal prescreen pending human review without sending retention outbound", async () => {
+  it("acknowledges a recent terminal prescreen pending WeKruit team review without sending retention outbound", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
       "pa-prescreen-sessions/ps_pending_review": {
@@ -548,15 +548,15 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.handled, true)
     assert.equal(result.sessionId, "ps_pending_review")
     assert.equal(result.terminal, "PASS")
-    assert.match(result.textSent ?? "", /human review/i)
+    assert.match(result.textSent ?? "", /WeKruit team/i)
     assert.equal(sent.length, 1)
-    assert.match(sent[0] ?? "", /human review/i)
+    assert.match(sent[0] ?? "", /WeKruit team/i)
     const session = docs.get("pa-prescreen-sessions/ps_pending_review")?.data
     assert.equal(session?.postPrescreenRetention, undefined)
     assert.equal(typeof session?.reviewPendingFollowupAt, "string")
     const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_pending_review/turns/"))
     assert.equal(turnEntries.length, 1)
-    assert.equal((turnEntries[0][1].data.action as { reason?: string }).reason, "pending_human_review")
+    assert.equal((turnEntries[0][1].data.action as { reason?: string }).reason, "pending_wekruit_team_review")
   })
 
   it("turns a post-interview proceed yes into the gap-aware thin onboarding (role first when nothing on file), NOT the legacy main_goal wall", async () => {
@@ -1749,7 +1749,8 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(reviewPendingCalls.length, 1)
     assert.equal(reviewPendingCalls[0]?.terminal, "PASS")
     assert.equal(sent.length, 1)
-    assert.match(sent[0] ?? "", /reviews every screen personally/i)
+    assert.match(sent[0] ?? "", /WeKruit team/i)
+    assert.match(sent[0] ?? "", /pitch the hiring manager/i)
     assert.match(sent[0] ?? "", /next step here/i)
     assert.doesNotMatch(sent[0] ?? "", /pass|not a fit|recommend|salary|proceed/i)
     const session = docs.get("pa-prescreen-sessions/ps_active")?.data

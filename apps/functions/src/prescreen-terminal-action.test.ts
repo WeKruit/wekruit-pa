@@ -366,6 +366,69 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
     assert.equal(jobRecsCalled, true)
   })
 
+  it("dev-phone rejected handoff gives feedback, asks for resume/LinkedIn, and waits for matching opt-in", async () => {
+    const canaryUid = "8fEwIduUrzxZsblHHsNz"
+    const docs = setupSession({
+      sessionId: "s3-dev",
+      jobId: "j3-dev",
+      prescreenConfig: { jobTitle: "Product Manager" },
+    })
+    docs.set("pa-prescreen-sessions/s3-dev", {
+      exists: true,
+      data: {
+        questions: {
+          role_fit: {
+            finalS: 0.28,
+            finalC: 0.91,
+            scored: {
+              aggregate: {
+                summary: "The answer stayed high-level and did not show enough product launch ownership.",
+              },
+            },
+          },
+        },
+      },
+    })
+    docs.set(`pa-users/${canaryUid}`, { exists: true, data: {} })
+    const { db, docs: writtenDocs } = makeFakeDb(docs)
+    const sent: string[] = []
+    const piiCaptures: Array<{ source: string; userId: string }> = []
+    let jobRecsCalled = false
+
+    const r = await runPrescreenTerminalAction({
+      db,
+      sessionId: "s3-dev",
+      terminal: "FAIL",
+      userId: canaryUid,
+      jobId: "j3-dev",
+      toE164: "+14243201960",
+      lang: "en",
+      markOutcome: noopMarkOutcome,
+      sendSms: async (a) => {
+        sent.push(a.content)
+      },
+      startPii: fakePiiStart(piiCaptures),
+      generateJobRecs: async () => {
+        jobRecsCalled = true
+        return { ok: true, jobCount: 5 }
+      },
+    })
+
+    assert.equal(r.jobRecsFired, false)
+    assert.equal(piiCaptures.length, 0, "dev rejected handoff should not auto-start PII before opt-in")
+    assert.equal(jobRecsCalled, false, "dev rejected handoff should not silently push recs")
+    assert.equal(sent.length, 1)
+    assert.match(sent[0]!, /WeKruit team notes/i)
+    assert.match(sent[0]!, /product launch ownership/i)
+    assert.match(sent[0]!, /LinkedIn or resume/i)
+    assert.match(sent[0]!, /matching recommendations/i)
+    const session = writtenDocs.get("pa-prescreen-sessions/s3-dev")?.data
+    assert.equal(
+      ((session?.postPrescreenRetention as Record<string, unknown> | undefined)?.stage),
+      "await_profile_and_match_opt_in",
+    )
+  })
+
   it("forces post-terminal job rec generation to English for beta", async () => {
     const docs = setupSession({
       sessionId: "s3-lang",

@@ -248,7 +248,7 @@ export async function runDraftPrescreenReviewMessages(
     if (session.terminalActionPendingReview !== true) {
       throw new HttpsError(
         "failed-precondition",
-        `Prescreen session ${sessionId} is not pending human review.`,
+        `Prescreen session ${sessionId} is not pending WeKruit team review.`,
       )
     }
     const attemptId = cleanNonEmptyString(session.evaluationAttemptId) ?? cleanNonEmptyString((session.review as { evaluationAttemptId?: unknown } | undefined)?.evaluationAttemptId)
@@ -401,14 +401,14 @@ async function composePrescreenReviewCandidateMessage(
   // rejection is never an exit from the marketplace, and never a cold form letter.
   const outcomeInstruction =
     context.finalTerminal === "PASS"
-      ? "The human operator is leaning PASS. Draft a warm next-step message without promising employment."
-      : "The human operator is leaning rejection for this role. Draft a warm, honest message: this specific role is not moving forward, with one concrete, evidence-backed reason. Make the retention explicit — they are still in WeKruit's candidate pool and Claire will keep sending them roles that fit. Never a cold form letter; write it like a recruiter friend who is still in their corner."
+      ? "The WeKruit team is moving this screen forward. Draft a warm next-step message without promising employment."
+      : "The WeKruit team is not moving this specific role forward. Draft a warm, honest message with one concrete, evidence-backed reason, framed as notes that help WeKruit pitch the right hiring manager next time. Make retention explicit: they stay in WeKruit's candidate pool, and Claire can send better-fit roles if they want. If resume or LinkedIn context is missing, mention that adding it helps future collaboration roles get pitched with more context. Never a cold form letter."
   const userText = [
     `Session: ${context.sessionId}`,
     `Candidate: ${context.candidateId}`,
     `Job: ${context.jobId}`,
     `AI proposed terminal: ${context.proposedTerminal ?? "unknown"}`,
-    `Human selected terminal: ${context.finalTerminal}`,
+    `Selected terminal: ${context.finalTerminal}`,
     typeof context.score === "number" && typeof context.scoreMax === "number"
       ? `Internal score: ${context.score}/${context.scoreMax}, threshold=${context.threshold ?? "unknown"}`
       : null,
@@ -424,7 +424,7 @@ async function composePrescreenReviewCandidateMessage(
     baseURL: openai.baseURL,
     anthropicApiKey: anthropic.apiKey ?? undefined,
     systemPrompt:
-      "You draft WeKruit candidate iMessages after a human reviews a prescreen. " +
+      "You draft WeKruit candidate iMessages after the WeKruit team reviews a prescreen. " +
       "Return JSON only. Never mention PASS, FAIL, HARD_STOP, scores, thresholds, internal review systems, or evaluation ids. " +
       "Do not invent evidence. Do not include PII. Keep it concise, direct, and editable by the operator.",
     userText,
@@ -497,6 +497,89 @@ function requirePrescreenCandidateMessage(
     )
   }
   return body
+}
+
+function hasReviewProfileSignal(user: Record<string, unknown>): boolean {
+  if (typeof user.latestResumeArtifactId === "string" && user.latestResumeArtifactId.trim()) return true
+  if (typeof user.linkedinUrl === "string" && user.linkedinUrl.trim()) return true
+  if (user.linkedinOauthLinked === true) return true
+  const resumeParseCount = user.resumeParseCount
+  if (typeof resumeParseCount === "number" && Number.isFinite(resumeParseCount) && resumeParseCount > 0) {
+    return true
+  }
+  return false
+}
+
+async function augmentRejectedPrescreenCandidateMessage(args: {
+  db: Firestore
+  userId: string
+  body: string
+  reason: string
+}): Promise<string> {
+  const normalized = args.body.toLowerCase()
+  const prefix = hasConcreteRejectionReason(args.body)
+    ? null
+    : `WeKruit team notes: this specific role probably is not moving forward because ${args.reason}.`
+  const additions: string[] = []
+  if (!/\blinkedin\b|\bresume\b|\brésumé\b/.test(normalized)) {
+    let profileSignalOnFile = false
+    try {
+      const snap = await args.db.collection(PA_COLLECTIONS.users).doc(args.userId).get()
+      profileSignalOnFile = hasReviewProfileSignal((snap.data() ?? {}) as Record<string, unknown>)
+    } catch {
+      profileSignalOnFile = false
+    }
+    additions.push(
+      profileSignalOnFile
+        ? "I have your resume/LinkedIn signal on file and will keep using it with this screen context for future collaboration roles."
+        : "If you add your LinkedIn or resume, I can pull your experience into your profile and pitch future collaboration roles with more context.",
+    )
+  }
+  if (!/matching recommendations|match recommendations|send.*recommend|recommend.*role|matching role/i.test(args.body)) {
+    additions.push("Want me to send matching recommendations too?")
+  }
+  if (!prefix && additions.length === 0) return args.body
+  return [prefix, args.body.replace(/\s+$/g, ""), ...additions].filter(Boolean).join(" ")
+}
+
+function hasConcreteRejectionReason(body: string): boolean {
+  return /\b(because|reason|gap|missing|not enough|did not show|didn't show|lacked|needs?|weaker|ownership|experience|evidence)\b/i.test(body)
+}
+
+function cleanCandidateReason(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/^(attempt|terminal reason|dimension [^:]+):\s*/i, "")
+    .replace(/[.!?\s]+$/g, "")
+    .trim()
+    .slice(0, 240)
+}
+
+function buildRejectedPrescreenReason(attempt: EvaluationAttempt, decisionReason?: string): string {
+  const explicit = cleanNonEmptyString(decisionReason)
+  if (explicit) return cleanCandidateReason(explicit)
+
+  const blockingGate = attempt.gates.find((gate) => gate.status !== "pass" && cleanNonEmptyString(gate.rationale))
+  if (blockingGate?.rationale) return cleanCandidateReason(blockingGate.rationale)
+
+  const weakestDimension = [...attempt.dimensions]
+    .filter((dimension) => cleanNonEmptyString(dimension.rationale) || dimension.missingEvidence.length > 0)
+    .sort((a, b) => a.score - b.score)[0]
+  if (weakestDimension) {
+    const missing = weakestDimension.missingEvidence.find((item) => cleanNonEmptyString(item))
+    if (missing) return cleanCandidateReason(missing)
+    if (weakestDimension.rationale) return cleanCandidateReason(weakestDimension.rationale)
+  }
+
+  const missingEvidence = attempt.missingEvidence.find((item) => cleanNonEmptyString(item))
+  if (missingEvidence) return cleanCandidateReason(missingEvidence)
+
+  const evidenceSummary = attempt.evidence.find((item) => cleanNonEmptyString(item.summary))?.summary
+  if (evidenceSummary) return cleanCandidateReason(evidenceSummary)
+
+  const explanation = cleanNonEmptyString(attempt.explanation)
+  if (explanation && !/looks good|pass|move forward/i.test(explanation)) return cleanCandidateReason(explanation)
+  return "the screen did not show enough direct evidence for the role's required experience"
 }
 
 function resolveFinalOutcome(
@@ -574,17 +657,26 @@ async function commitPrescreenOutcome(args: {
     jobId: args.attempt.jobId,
     occurredAt: args.reviewedAt,
   })
+  const candidateMessageBody = terminal === "PASS"
+    ? args.candidateMessageBody
+    : await augmentRejectedPrescreenCandidateMessage({
+        db: args.db,
+        userId: args.attempt.candidateId,
+        body: args.candidateMessageBody,
+        reason: buildRejectedPrescreenReason(args.attempt, args.decisionReason),
+      })
+
   const sent = await args.sendSms({
     db: args.db,
     userId: args.attempt.candidateId,
     to: toE164,
-    content: args.candidateMessageBody,
+    content: candidateMessageBody,
     runtimeSource: "pa_operator_review",
     idempotencyKey: `prescreen_review_decision:${args.attempt.attemptId}`,
   })
   const outboundId = typeof sent.outboundId === "string" ? sent.outboundId : undefined
   const candidateDecision = buildPrescreenCandidateDecision({
-    candidateMessageBody: args.candidateMessageBody,
+    candidateMessageBody,
     decisionReason: args.decisionReason,
     recommendedActions: args.recommendedActions,
     finalTerminal: terminal,
@@ -691,7 +783,8 @@ function defaultRecommendedActions(terminal: "PASS" | "FAIL" | "HARD_STOP"): str
     return ["Watch for the next WeKruit message.", "Keep your profile details current."]
   }
   return [
-    "Stay in the WeKruit pool — Claire keeps matching you to roles that fit.",
+    "Add LinkedIn or a resume so future collaboration roles can be pitched with more context.",
+    "Say yes if you want Claire to send matching recommendations.",
     "Add a concrete example that shows the target experience.",
   ]
 }

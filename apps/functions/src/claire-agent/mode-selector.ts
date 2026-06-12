@@ -37,7 +37,7 @@ import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-too
 import { isThinPrescreenEnabled } from "./flags.js"
 import { buildThinPrescreenSeed } from "./prescreen-config.js"
 import { loadPrescreenContext } from "./prescreen-context.js"
-import { isCanaryUser } from "./canary.js"
+import { isCanaryUser, isClaireEntryUxCanary } from "./canary.js"
 import { isEnrichmentInFlight } from "./enrichment-inflight.js"
 import { shouldNudgeGmail } from "./gmail-nudge.js"
 
@@ -451,9 +451,10 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // SAME pa-users snapshot (zero extra read). True only when résumé parse / LinkedIn import is still
   // running from an EARLIER turn (TTL self-heals a dropped completion event — see enrichment-inflight.ts).
   // NEVER flag in-flight on the cv-parsed re-entry turn: that turn IS the completion (it CLEARs the marker
-  // in cutover) and must pitch, not say "one sec". Canary-only so non-canary mode picks are unchanged.
+  // in cutover) and must pitch, not say "one sec". Entry-UX canary only so this does not ride the
+  // global onboarding ramp (PA_ONBOARDING_RAMP_ALL makes isCanaryUser true for everyone in prod).
   const enrichmentInFlight =
-    isCanaryUser(args.userId) && !args.cvParsedTrigger && isEnrichmentInFlight(user)
+    isClaireEntryUxCanary(args.userId) && !args.cvParsedTrigger && isEnrichmentInFlight(user)
   const inFlightDecision = enrichmentInFlight ? { enrichmentInFlight: true as const } : {}
 
   // ENRICHMENT-IN-FLIGHT ACK (Adam 2026-06-03, Image #24): the candidate just connected LinkedIn /

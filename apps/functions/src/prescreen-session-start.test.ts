@@ -1,6 +1,10 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { runPreScreenForUser, defaultIsJobMatchedToUser } from "./prescreen-session-start.js"
+import {
+  runPreScreenForUser,
+  defaultIsJobMatchedToUser,
+  resumePendingProfileReadinessPrescreenStart,
+} from "./prescreen-session-start.js"
 
 /**
  * Minimal fake for defaultIsJobMatchedToUser's three point-read arms:
@@ -431,6 +435,66 @@ describe("runPreScreenForUser session boundaries", () => {
     const userWorkSession = docs.get("pa-users/u1")?.data.workSession as Record<string, unknown>
     assert.equal(userWorkSession.status, "active")
     assert.equal(userWorkSession.sessionId, result.sessionId)
+  })
+
+  it("dev-phone prescreen start holds before Q1 while enrichment is in flight, then resumes on completion", async () => {
+    const canaryUid = "8fEwIduUrzxZsblHHsNz"
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      [`pa-users/${canaryUid}`]: {
+        enrichmentInFlight: true,
+        enrichmentStartedAt: now,
+      },
+    })
+    const sent: string[] = []
+
+    const held = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: canaryUid,
+      toE164: "+14243201960",
+      allowMatchedBypass: true,
+      markStarted: async () => undefined,
+      sendSms: async ({ content }) => {
+        sent.push(content)
+        return { status: "queued", content }
+      },
+    })
+
+    assert.equal(held.ok, false)
+    assert.equal(held.reason, "readiness_hold")
+    assert.equal(held.firstQuestionSent, false)
+    assert.match(sent[0] ?? "", /still reading through your resume\/experience/i)
+    assert.equal(docs.get(`pa-prescreen-sessions/${held.sessionId}`)?.exists, undefined)
+    const pending = docs.get(`pa-users/${canaryUid}`)?.data.pendingPrescreenStart as Record<string, unknown>
+    assert.equal(pending.status, "waiting_profile")
+    assert.equal(pending.jobId, "job-new")
+
+    docs.set(`pa-users/${canaryUid}`, {
+      exists: true,
+      data: {
+        ...(docs.get(`pa-users/${canaryUid}`)?.data ?? {}),
+        enrichmentInFlight: false,
+      },
+    })
+    const resumed = await resumePendingProfileReadinessPrescreenStart({
+      db,
+      userId: canaryUid,
+      markStarted: async () => undefined,
+      sendSms: async ({ content }) => {
+        sent.push(content)
+        return { status: "queued", content }
+      },
+    })
+
+    assert.equal(resumed.attempted, true)
+    assert.equal(resumed.result?.ok, true)
+    assert.equal(resumed.result?.reason, "started")
+    assert.match(sent[1] ?? "", /Quick screen for Technical Account Manager/)
+    const updatedPending = docs.get(`pa-users/${canaryUid}`)?.data.pendingPrescreenStart as Record<string, unknown>
+    assert.equal(updatedPending.status, "started")
+    assert.equal(typeof updatedPending.sessionId, "string")
   })
 })
 

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { isCanaryUser, isPrescreenNudgeCanary, CANARY_UIDS } from "./canary.js"
+import { isCanaryUser, isClaireEntryUxCanary, isPrescreenNudgeCanary, CANARY_UIDS } from "./canary.js"
 
 test("isCanaryUser — dev phones are in the cohort", () => {
   assert.equal(isCanaryUser("8fEwIduUrzxZsblHHsNz"), true) // Adam
@@ -39,5 +39,25 @@ test("isPrescreenNudgeCanary — dev cohort only; IGNORES the onboarding ramp", 
     else process.env.PA_ONBOARDING_RAMP_ALL = savedOnboarding
     if (savedNudge === undefined) delete process.env.PA_PRESCREEN_NUDGE_RAMP_ALL
     else process.env.PA_PRESCREEN_NUDGE_RAMP_ALL = savedNudge
+  }
+})
+
+test("isClaireEntryUxCanary — dev cohort only; IGNORES the onboarding ramp", () => {
+  const savedOnboarding = process.env.PA_ONBOARDING_RAMP_ALL
+  const savedEntryUx = process.env.PA_CLAIRE_ENTRY_UX_RAMP_ALL
+  try {
+    delete process.env.PA_CLAIRE_ENTRY_UX_RAMP_ALL
+    process.env.PA_ONBOARDING_RAMP_ALL = "1"
+    assert.equal(isCanaryUser("random-uid"), true, "(precondition) the onboarding ramp opens isCanaryUser")
+    assert.equal(isClaireEntryUxCanary("random-uid"), false, "entry UX stays dev-cohort-only")
+    assert.equal(isClaireEntryUxCanary("8fEwIduUrzxZsblHHsNz"), true)
+
+    process.env.PA_CLAIRE_ENTRY_UX_RAMP_ALL = "1"
+    assert.equal(isClaireEntryUxCanary("random-uid"), true)
+  } finally {
+    if (savedOnboarding === undefined) delete process.env.PA_ONBOARDING_RAMP_ALL
+    else process.env.PA_ONBOARDING_RAMP_ALL = savedOnboarding
+    if (savedEntryUx === undefined) delete process.env.PA_CLAIRE_ENTRY_UX_RAMP_ALL
+    else process.env.PA_CLAIRE_ENTRY_UX_RAMP_ALL = savedEntryUx
   }
 })

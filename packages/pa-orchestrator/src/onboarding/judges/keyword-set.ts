@@ -441,7 +441,7 @@ export function buildKeywordSetPrompt(args: {
     "- cap at 0.50 for resume-style claims with no reply-specific evidence.",
     "",
     "RULES:",
-    "- Be conservative. A high score is reserved for evidence a human reviewer would likely approve as top-5% for this role.",
+    "- Be conservative. A high score is reserved for evidence the WeKruit team would likely approve as top-5% for this role.",
     "- Output STRICT JSON matching this schema. No prose.",
     "- Do NOT invent keywords not in the configured set.",
     "- Do NOT echo the reply text — only the short evidence excerpt.",

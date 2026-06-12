@@ -861,10 +861,10 @@ export function terminalText(
 }
 
 // Graceful review-pending ack (Adam 2026-06-10): the whole point of the screen is that strong
-// candidates get put in front of the hiring team's recruiter — seen, not ghosted. MUST NOT promise
-// or imply pass/fail (review-pending invariant: never say "you passed" before the operator commits).
+// candidates get packaged for the WeKruit team to pitch the right hiring manager. MUST NOT promise
+// or imply pass/fail (review-pending invariant: never say "you passed" before the outcome commits).
 export function prescreenReviewPendingAckText(_lang: Lang): string {
-  return "that's the whole screen — nice work. the hiring team reviews every screen personally, and strong screens go straight to their recruiter, so you get seen instead of ghosted. i'll text you the next step here either way — and i'm still matching you to other roles in the meantime."
+  return "that's the whole screen - nice work. i'm sending it to the WeKruit team to help pitch the hiring manager. i'll text you the next step here either way, and i'm still matching you to other roles in the meantime."
 }
 
 function clarifyText(

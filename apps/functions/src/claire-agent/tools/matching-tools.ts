@@ -470,7 +470,7 @@ export function prescreenStatusFromTerminal(
   const pending =
     review?.pendingReview === true ||
     (typeof review?.reviewStatus === "string" && review.reviewStatus.toLowerCase() === "pending")
-  // A terminal that's awaiting human confirmation is "under review", not a real outcome.
+  // A terminal awaiting WeKruit-team confirmation is "under review", not a real outcome.
   if (pending) return "under_review"
   if (t === "PASS") return "passed"
   return "not_passed" // FAIL / HARD_STOP committed
@@ -1589,7 +1589,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "(closed enum), company (free text), industrySector (closed enum) — map their meaning the same way " +
       "you'd tag a preference. Returns matched+prescreened roles RANKED by canonical fit, each with its " +
       "status (passed / not_passed / in_progress / matched / under_review). under_review = the screen is " +
-      "submitted but awaiting human confirmation — it is NOT a pass; do NOT say they passed for it. " +
+      "submitted and awaiting WeKruit-team confirmation - it is NOT a pass; do NOT say they passed for it. " +
       "kind='one' → the single best is theirs; " +
       "kind='ambiguous' → ASK which of the candidates they mean (never guess); kind='no_match' → they " +
       "haven't been matched to such a role, so guide them to the website to start a new one. Then use " +
@@ -1726,7 +1726,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "('how did my screen go?', 'did I pass the Invoko one?', 'what's the status of my interviews?'). " +
       "Optional query = a company/title to filter to (e.g. 'Invoko'); omit to list all their screens. " +
       "Returns each screen's company, title, and status (passed / not_passed / in_progress / under_review). " +
-      "under_review = the screen is SUBMITTED and awaiting human confirmation — it is NOT a pass yet; do " +
+      "under_review = the screen is SUBMITTED and awaiting WeKruit-team confirmation - it is NOT a pass yet; do " +
       "NOT tell the candidate they passed (or offer a confirmed next step) for an under_review screen; only " +
       "a 'passed' status is a real, confirmed pass. READ-ONLY.",
     parameters: z.object({ query: z.string().nullable() }),

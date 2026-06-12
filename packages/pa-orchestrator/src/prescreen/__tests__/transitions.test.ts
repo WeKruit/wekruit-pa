@@ -302,10 +302,11 @@ test("Phase 76: setTerminal clears currentQId and stamps reason", () => {
 
 test("terminal completion text is neutral pending WeKruit review", () => {
   const text = terminalText("PASS", "passed", "en")
-  assert.match(text, /reviews every screen personally/i)
+  assert.match(text, /WeKruit team/i)
+  assert.match(text, /pitch the hiring manager/i)
   assert.match(text, /next step here/i)
   // Review-pending invariant: never promise or imply pass/fail before the operator commits.
-  assert.doesNotMatch(text, /passed|hiring manager|Do you want to proceed/i)
+  assert.doesNotMatch(text, /passed|Do you want to proceed/i)
   assert.doesNotMatch(text, /daily/i)
   assert.doesNotMatch(text, /business days/i)
   assert.doesNotMatch(text, /employer will follow/i)
@@ -313,7 +314,8 @@ test("terminal completion text is neutral pending WeKruit review", () => {
 
 test("HARD_STOP terminal text is a soft pause, not an abrupt rejection", () => {
   const text = terminalText("HARD_STOP", "must-have failed", "en")
-  assert.match(text, /reviews every screen personally/i)
+  assert.match(text, /WeKruit team/i)
+  assert.match(text, /pitch the hiring manager/i)
   // Graceful ending (Adam 2026-06-10): retention framing, never a dead-end.
   assert.match(text, /still matching you to other roles/i)
   assert.doesNotMatch(text, /daily/i)

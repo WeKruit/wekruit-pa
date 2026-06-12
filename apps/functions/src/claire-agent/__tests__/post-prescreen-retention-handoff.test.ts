@@ -244,8 +244,8 @@ describe("prescreen-seam retention handoff", () => {
     assert.equal(sent.length, 0, "no canned recentTerminalOutcomeExplanationText on the canary path")
   })
 
-  // ── T4 — pending review: the deterministic 'under human review' ack still fires (bypass does NOT) ──
-  it("T4: canary — a pending-review terminal still gets the deterministic 'under human review' ack", async () => {
+  // ── T4 — pending review: the deterministic WeKruit-team review ack still fires (bypass does NOT) ──
+  it("T4: canary — a pending-review terminal still gets the deterministic WeKruit-team review ack", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
       "pa-prescreen-sessions/ps_pending": {
@@ -274,9 +274,9 @@ describe("prescreen-seam retention handoff", () => {
     // The pending-review guard is reachable BEFORE the canary bypass → it still acks deterministically,
     // and never claims a decision (prescreen_pass_needs_hitl_commit memory).
     assert.equal(result.handled, true, "pending-review must NOT defer to thin")
-    assert.match(result.textSent ?? "", /human review/i)
+    assert.match(result.textSent ?? "", /WeKruit team/i)
     assert.equal(sent.length, 1)
-    assert.match(sent[0]!, /human review/i)
+    assert.match(sent[0]!, /WeKruit team/i)
     const session = docs.get("pa-prescreen-sessions/ps_pending")?.data
     assert.equal(typeof session?.reviewPendingFollowupAt, "string")
   })
@@ -494,7 +494,7 @@ describe("prescreen-seam retention handoff", () => {
     assert.match(ctx.prescreenContextText, /PAUSED/)
     assert.match(ctx.prescreenContextText, /find OTHER/)
     assert.match(ctx.prescreenContextText, /record_onboarding_answer/)
-    assert.match(ctx.prescreenContextText, /UNDER HUMAN REVIEW/)
+    assert.match(ctx.prescreenContextText, /UNDER WEKRUIT TEAM REVIEW/)
     // global context (from loadGlobalContext) is assembled too.
     assert.equal(typeof ctx.globalContextText, "string")
   })

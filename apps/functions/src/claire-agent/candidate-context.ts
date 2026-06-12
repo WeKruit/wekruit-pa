@@ -40,7 +40,7 @@ export interface CandidateScreenSession {
   strongestSignal?: { qLabel: string; ratio: number }
   /** weakest per-question signal (lowest scored aggregate). */
   weakestSignal?: { qLabel: string; ratio: number }
-  /** terminalActionPendingReview === true — outcome is under human review, never claim a decision. */
+  /** terminalActionPendingReview === true: outcome is under WeKruit team review, never claim a decision. */
   pendingReview: boolean
   /** postPrescreenRetention.stage (await_basic_onboarding / onboarding_started / …). */
   retentionStage: string | null
@@ -187,16 +187,16 @@ function toScreenSession(id: string, data: Record<string, unknown>): CandidateSc
   }
 }
 
-/** Human label for a terminal, for the rendered block. */
+/** Candidate-context label for a terminal, for the rendered block. */
 function terminalLabel(s: CandidateScreenSession): string {
   if (s.terminal === null) return "in progress (not finished)"
-  if (s.terminal === "PASS") return s.pendingReview ? "PASSED (under human review — outcome not final)" : "passed"
+  if (s.terminal === "PASS") return s.pendingReview ? "PASSED (under WeKruit team review - outcome not final)" : "passed"
   if (s.terminal === "PAUSE") {
     return s.terminalReason === "user_exit"
       ? "PAUSED (you stepped away mid-screen — not a rejection)"
       : "PAUSED (not a rejection)"
   }
-  return s.pendingReview ? "did not pass (under human review — outcome not final)" : "did not pass"
+  return s.pendingReview ? "did not pass (under WeKruit team review - outcome not final)" : "did not pass"
 }
 
 /** One rendered line per prior screen for the model block. */
@@ -232,7 +232,7 @@ function renderPrescreenContextText(screens: CandidateScreenSession[]): string {
     "paused or didn't pass, explain HONESTLY and kindly from the lines above (name what was strong, what",
     "was borderline, and that paused/not-passed is not a rejection) — NEVER invent a reason.",
     anyPendingReview
-      ? "One outcome is still UNDER HUMAN REVIEW: do NOT claim a final decision (never say they passed or failed) — say the outcome is still being reviewed."
+      ? "One outcome is still UNDER WEKRUIT TEAM REVIEW: do NOT claim a final decision (never say they passed or failed) - say the outcome is still being reviewed."
       : "",
     "If the candidate states a target role, seniority, or constraint, CAPTURE it (record_onboarding_answer /",
     "set_matching_preferences — map their words to the canonical enum yourself) and OFFER to find OTHER",

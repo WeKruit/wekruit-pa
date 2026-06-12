@@ -162,10 +162,16 @@ test("operator approval commits prescreen state and queues exactly the approved 
 
 test("operator approval accepts terminal-only prescreen outcome and derives canonical outcome kind", async () => {
   const { db } = makeDb({
-    [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
+    [PA_COLLECTIONS.evaluationAttempts]: {
+      "attempt-1": attempt({
+        missingEvidence: ["the screen did not show enough production ownership evidence"],
+      }),
+    },
     "pa-prescreen-sessions": { "ps-1": { sessionId: "ps-1", e164: "+15555550100", terminalActionPendingReview: true } },
+    [PA_COLLECTIONS.users]: { "cand-1": {} },
     [PA_COLLECTIONS.correctionEvents]: {},
   })
+  const sent: Array<Record<string, unknown>> = []
 
   const result = await runReviewEvaluationAttempt(
     {
@@ -179,13 +185,19 @@ test("operator approval accepts terminal-only prescreen outcome and derives cano
       db,
       now: () => NOW,
       markPrescreenOutcome: async () => ({ changed: true }) as never,
-      sendSms: async () => ({ outboundId: "out-terminal-only", created: true }),
+      sendSms: async (args) => {
+        sent.push(args as unknown as Record<string, unknown>)
+        return { outboundId: "out-terminal-only", created: true }
+      },
     },
   )
 
   assert.equal(result.finalOutcome?.kind, "reject")
   assert.equal(result.finalOutcome?.prescreenTerminal, "FAIL")
   assert.equal(result.candidateOutboundId, "out-terminal-only")
+  assert.match(String(sent[0]?.content ?? ""), /because the screen did not show enough production ownership evidence/i)
+  assert.match(String(sent[0]?.content ?? ""), /LinkedIn or resume/i)
+  assert.match(String(sent[0]?.content ?? ""), /matching recommendations/i)
 })
 
 test("operator can draft prescreen review messages without committing state or sending outbound", async () => {

@@ -149,6 +149,9 @@ Claire must understand and explain downstream prescreen outcomes, not only the l
    - The outbound rejection must include a comprehensive, personalized, evidence-backed reason.
    - Phrase the rationale as WeKruit team notes prepared to help pitch the hiring manager, not as an internal model score.
    - If the candidate asks later, Claire should consistently explain it as WeKruit team notes for the role.
+   - If the candidate has not provided LinkedIn or a resume, Claire must invite them to add one so future collaboration roles can be pitched with profile context instead of making them repeat the whole prescreen from scratch.
+   - If the candidate provides LinkedIn after rejection, the same LinkedIn/CoreSignal enrichment path should update the durable profile and future pitch context.
+   - Rejection copy must ask whether the candidate wants matching recommendations from WeKruit; it must not silently start proactive matching without opt-in.
 2. **Moved to next step.**
    - Claire should tell the candidate they moved forward and route them into interview scheduling.
    - If scheduling is already available for the role, Claire offers slots or schedules through the existing scheduling tools.
@@ -338,10 +341,11 @@ Ending is a tool-backed runtime action:
 After a role screen ends, pauses, or the candidate stops:
 
 1. Claire invites the candidate into the durable matching flow.
-2. If LinkedIn/resume is missing, Claire asks for one of them as the fastest way to find better-fit roles.
+2. If LinkedIn/resume is missing, Claire asks for one of them as the fastest way to find better-fit roles and future collaboration roles without repeating a full role screen from zero.
 3. If enough profile evidence exists, Claire can pitch and ask whether to send matched roles.
 4. If the candidate says yes, activate the job recommendation subscription on a 2-3 day cadence.
 5. If the candidate says stop/pause, pause recommendations and pending proactive sends.
+6. LinkedIn supplied in this post-prescreen flow enters the CoreSignal enrichment path and updates the same global candidate profile used for future matching and pitches.
 
 ### 5.10 Prescreen Outcome and Interview Scheduling
 
@@ -467,6 +471,10 @@ Every runtime turn receives a compact context block. mem0 snippets are supplemen
 ### P0: Outcome and Status UX
 
 - [ ] Dashboard rejection emits a personalized candidate-facing rejection with WeKruit-team-note framing.
+- [ ] Rejection copy includes a concrete evidence-backed reason; vague "not a fit" copy is augmented before send.
+- [ ] If LinkedIn/resume is missing on rejection, Claire invites the candidate to add one so future collaboration roles can be pitched without repeating the entire prescreen.
+- [ ] If LinkedIn is provided after rejection, CoreSignal enrichment updates the durable candidate profile for future matching.
+- [ ] Rejection copy asks whether the candidate wants matching recommendations; proactive recommendations start only after opt-in.
 - [ ] No-decision timeout after 21 days auto-rejects with a personalized, role-specific reason.
 - [ ] Follow-up questions about a rejection explain it consistently as WeKruit team notes for the role.
 - [ ] Moved-forward outcome offers interview scheduling through existing scheduling tools.
@@ -553,6 +561,8 @@ Unify candidate-facing post-screen outcomes:
 - 21-day no-decision auto-reject event
 - moved-forward / schedule-interview event
 - context read tools for later status questions
+- rejection-message augmentation that guarantees an evidence-backed reason, LinkedIn/resume invite when missing, and matching-recommendation opt-in
+- post-rejection LinkedIn/CoreSignal enrichment into the same global candidate profile used by future role pitches
 
 ### Phase 0G: Context Completion
 
