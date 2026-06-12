@@ -25,7 +25,7 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
-import { createInboundEvent, enqueueOutbound } from "@pa/pa-broker"
+import { createInboundEvent, enqueueOutbound, inboundEventDocId } from "@pa/pa-broker"
 
 import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { PA_COLLECTIONS } from "@pa/core-types"
@@ -108,6 +108,58 @@ async function enqueueTriggerAccessNotice(
     runtimeApproved: true,
     runtimeSource: "pa_identity_notice",
   })
+}
+
+async function createCompletedTriggerInboundEvidence(
+  deps: WebhookDeps,
+  input: {
+    idempotencyKey: string
+    fromNumber: string
+    toNumber?: string
+    text: string
+    chatId?: string
+    messageHandle: string
+    service?: string
+    rawSenderHandle?: string
+    original: unknown
+    e2eTest?: boolean
+  },
+): Promise<string> {
+  const id = inboundEventDocId(input.idempotencyKey)
+  const now = new Date().toISOString()
+  const ref = deps.db.collection(PA_COLLECTIONS.inboundEvents).doc(id)
+  try {
+    await ref.create({
+      id,
+      channel: "imessage",
+      status: "completed",
+      idempotencyKey: input.idempotencyKey,
+      rawPayload: {
+        kind: "imessage",
+        source: "sendblue",
+        fromNumber: input.fromNumber,
+        toNumber: input.toNumber,
+        text: input.text,
+        chatId: input.chatId,
+        messageHandle: input.messageHandle,
+        service: input.service,
+        participant: input.fromNumber,
+        ...(input.rawSenderHandle ? { rawSenderHandle: input.rawSenderHandle } : {}),
+        original: input.original,
+        ...(input.e2eTest ? { e2eTest: true } : {}),
+      },
+      createdAt: now,
+      updatedAt: now,
+      attemptCount: 0,
+      maxAttempts: 0,
+      correlationId: input.messageHandle,
+      completedReason: "trigger_control_message",
+      expiresAtTs: inboundEventExpiresAtTs(),
+    })
+  } catch (err) {
+    if ((err as { code?: number }).code !== 6) throw err
+  }
+  return id
 }
 // v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
 import {
@@ -976,265 +1028,304 @@ export async function handleSendblueWebhook(
     const runPreScreenForUser = deps.runPreScreenForUser ?? defaultRunPreScreenForUser
     const runPrescreenTurnIfActive = deps.runPrescreenTurnIfActive ?? defaultRunPrescreenTurnIfActive
     const runPiiConfirmForUser = deps.runPiiConfirmForUser ?? defaultRunPiiConfirmForUser
-    const router = new TriggerRouter({
-      triggers: [
-        new LayoffTrigger({
-          lookupUserByPhone: lookupForInbound,
-          getLastFiredMs: async (userId) => {
-            try {
-              const snap = await deps.db
-                .collection("pa-layoff-trigger-idempotency")
-                .doc(userId)
-                .get()
-              const data = snap.data()
-              return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
-            } catch {
-              return null
-            }
-          },
-          setLastFiredMs: async (userId, ms) => {
-            await deps.db
+    const triggers = [
+      new LayoffTrigger({
+        lookupUserByPhone: lookupForInbound,
+        getLastFiredMs: async (userId) => {
+          try {
+            const snap = await deps.db
               .collection("pa-layoff-trigger-idempotency")
               .doc(userId)
-              .set({ lastFiredMs: ms, userId, updatedAt: new Date().toISOString() })
-          },
-          runLayoffStart: async ({ userId, toE164 }) => {
-            const result = await runLayoffSmsStart({
-              db: deps.db,
-              userId,
-              toE164,
-              log: (event, payload) => log(`pa.layoff.${event}`, payload),
-            })
-            log("[sendblue][webhook] layoff_start", {
-              userId,
-              ok: result.ok,
-              ...(result.ok
-                ? { kickoffOutboundId: result.kickoffOutboundId, created: result.kickoffCreated }
-                : { reason: result.reason }),
-            })
-          },
-          audit: async (evt) => {
-            await safeAudit(deps, evt as AuditEventInput, log)
-          },
-        }),
-        new PrescreenTrigger({
-          lookupUserByPhone: lookupForInbound,
-          isAdmin: async (uid) => adminUidsRouter.includes(uid),
-          getLastFiredMs: async (jobId, userId, messageHandle) => {
-            try {
-              const snap = await deps.db
-                .collection("pa-prescreen-trigger-idempotency")
-                .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
-                .get()
-              const data = snap.data()
-              return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
-            } catch {
-              return null
-            }
-          },
-          setLastFiredMs: async (jobId, userId, messageHandle, ms) => {
-            await deps.db
+              .get()
+            const data = snap.data()
+            return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
+          } catch {
+            return null
+          }
+        },
+        setLastFiredMs: async (userId, ms) => {
+          await deps.db
+            .collection("pa-layoff-trigger-idempotency")
+            .doc(userId)
+            .set({ lastFiredMs: ms, userId, updatedAt: new Date().toISOString() })
+        },
+        runLayoffStart: async ({ userId, toE164 }) => {
+          const result = await runLayoffSmsStart({
+            db: deps.db,
+            userId,
+            toE164,
+            log: (event, payload) => log(`pa.layoff.${event}`, payload),
+          })
+          log("[sendblue][webhook] layoff_start", {
+            userId,
+            ok: result.ok,
+            ...(result.ok
+              ? { kickoffOutboundId: result.kickoffOutboundId, created: result.kickoffCreated }
+              : { reason: result.reason }),
+          })
+        },
+        audit: async (evt) => {
+          await safeAudit(deps, evt as AuditEventInput, log)
+        },
+      }),
+      new PrescreenTrigger({
+        lookupUserByPhone: lookupForInbound,
+        isAdmin: async (uid) => adminUidsRouter.includes(uid),
+        getLastFiredMs: async (jobId, userId, messageHandle) => {
+          try {
+            const snap = await deps.db
               .collection("pa-prescreen-trigger-idempotency")
               .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
-              .set({ lastFiredMs: ms, jobId, userId, messageHandle, updatedAt: new Date().toISOString() })
-          },
-          clearLastFiredMs: async (jobId, userId, messageHandle) => {
-            await deps.db
-              .collection("pa-prescreen-trigger-idempotency")
-              .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
-              .delete()
-          },
-          runPreScreen: async ({ jobId, userId, toE164, initialReplyText, sourceRequestedUserId, allowMatchedBypass }) => {
-            // Phase 77.3 — real handler: load config, build state, send 1st Q.
-            // v1.9 hotfix 2026-05-13 — sourceRequestedUserId passed through
-            // for attribution when bound via public-page pending-invite.
-            // 2026-05-31 — allowMatchedBypass forwarded (admin sender only) so the
-            // bootstrap matched-gate runs for the candidate self copy-paste path.
-            const initialReply = initialReplyText?.trim()
-            const result = await runPreScreenForUser({
+              .get()
+            const data = snap.data()
+            return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
+          } catch {
+            return null
+          }
+        },
+        setLastFiredMs: async (jobId, userId, messageHandle, ms) => {
+          await deps.db
+            .collection("pa-prescreen-trigger-idempotency")
+            .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
+            .set({ lastFiredMs: ms, jobId, userId, messageHandle, updatedAt: new Date().toISOString() })
+        },
+        clearLastFiredMs: async (jobId, userId, messageHandle) => {
+          await deps.db
+            .collection("pa-prescreen-trigger-idempotency")
+            .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
+            .delete()
+        },
+        runPreScreen: async ({ jobId, userId, toE164, initialReplyText, sourceRequestedUserId, allowMatchedBypass }) => {
+          // Phase 77.3 — real handler: load config, build state, send 1st Q.
+          // v1.9 hotfix 2026-05-13 — sourceRequestedUserId passed through
+          // for attribution when bound via public-page pending-invite.
+          // 2026-05-31 — allowMatchedBypass forwarded (admin sender only) so the
+          // bootstrap matched-gate runs for the candidate self copy-paste path.
+          const initialReply = initialReplyText?.trim()
+          const result = await runPreScreenForUser({
+            db: deps.db,
+            jobId,
+            userId,
+            toE164,
+            sourceRequestedUserId,
+            allowMatchedBypass,
+            suppressFirstQuestion: Boolean(initialReply),
+            log: (event, payload) => log(`pa.prescreen.${event}`, payload),
+          })
+          log("[sendblue][webhook] prescreen_run", {
+            jobId, userId, sessionId: result.sessionId,
+            reason: result.reason, ok: result.ok,
+            initialReplyCaptured: Boolean(initialReply),
+            ...(sourceRequestedUserId ? { sourceRequestedUserId } : {}),
+          })
+          if (result.ok && initialReply) {
+            const turn = await runPrescreenTurnIfActive({
               db: deps.db,
-              jobId,
               userId,
               toE164,
-              sourceRequestedUserId,
-              allowMatchedBypass,
-              suppressFirstQuestion: Boolean(initialReply),
+              replyText: initialReply,
+              lang: "en",
               log: (event, payload) => log(`pa.prescreen.${event}`, payload),
             })
-            log("[sendblue][webhook] prescreen_run", {
-              jobId, userId, sessionId: result.sessionId,
-              reason: result.reason, ok: result.ok,
-              initialReplyCaptured: Boolean(initialReply),
-              ...(sourceRequestedUserId ? { sourceRequestedUserId } : {}),
-            })
-            if (result.ok && initialReply) {
-              const turn = await runPrescreenTurnIfActive({
-                db: deps.db,
-                userId,
-                toE164,
-                replyText: initialReply,
-                lang: "en",
-                log: (event, payload) => log(`pa.prescreen.${event}`, payload),
-              })
-              log("[sendblue][webhook] prescreen_initial_reply_routed", {
-                jobId,
-                userId,
-                sessionId: turn.sessionId ?? result.sessionId,
-                handled: turn.handled,
-                terminal: turn.terminal ?? null,
-                textSent: Boolean(turn.textSent),
-              })
-            }
-            return result
-          },
-          audit: async (evt) => {
-            await safeAudit(deps, evt as AuditEventInput, log)
-          },
-          sendAccessIssueNotice: deps.sendIdentityConflictNotice
-            ? async (input) => deps.sendIdentityConflictNotice!(input)
-            : async (input) => {
-              await enqueueTriggerAccessNotice(deps, {
-                trigger: "prescreen",
-                targetUserId: input.targetUserId,
-                jobId: input.jobId,
-                toE164: input.toE164,
-                ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
-                messageHandle: input.messageHandle,
-                content: input.content,
-                code: input.conflictCode,
-              })
-            },
-          // v1.9 hotfix 2026-05-13 — pending-invite binding for public-page flow.
-          getPendingInvite: async (requestedUserId) => {
-            try {
-              const snap = await deps.db
-                .collection("pa-prescreen-pending-invites")
-                .doc(requestedUserId)
-                .get()
-              if (!snap.exists) return null
-              const data = snap.data() as { jobId?: string; createdAt?: string } | undefined
-              return data ?? null
-            } catch {
-              return null
-            }
-          },
-          consumePendingInvite: async (requestedUserId) => {
-            await deps.db
-              .collection("pa-prescreen-pending-invites")
-              .doc(requestedUserId)
-              .delete()
-              .catch(() => undefined)
-          },
-        }),
-        new ApplyTrigger({
-          lookupUserByPhone: lookupForInbound,
-          findRecentPass: async ({ jobId, userId, sinceMs }) => {
-            try {
-              const cutoffIso = new Date(Date.now() - sinceMs).toISOString()
-              const snap = await deps.db
-                .collection("pa-prescreen-sessions")
-                .where("jobId", "==", jobId)
-                .where("userId", "==", userId)
-                .where("terminal", "==", "PASS")
-                .orderBy("updatedAt", "desc")
-                .limit(1)
-                .get()
-              if (snap.empty) return null
-              const doc = snap.docs[0]
-              const data = doc.data() as { updatedAt?: string }
-              if (!data.updatedAt || data.updatedAt < cutoffIso) return null
-              return {
-                sessionId: doc.id,
-                terminalAtMs: Date.parse(data.updatedAt),
-              }
-            } catch {
-              return null
-            }
-          },
-          getLastFiredMs: async (jobId, userId) => {
-            try {
-              const snap = await deps.db
-                .collection("pa-apply-trigger-idempotency")
-                .doc(`${jobId}_${userId}`)
-                .get()
-              const data = snap.data()
-              return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
-            } catch {
-              return null
-            }
-          },
-          setLastFiredMs: async (jobId, userId, ms) => {
-            await deps.db
-              .collection("pa-apply-trigger-idempotency")
-              .doc(`${jobId}_${userId}`)
-              .set({ lastFiredMs: ms, jobId, userId, updatedAt: new Date().toISOString() })
-          },
-          clearLastFiredMs: async (jobId, userId) => {
-            await deps.db
-              .collection("pa-apply-trigger-idempotency")
-              .doc(`${jobId}_${userId}`)
-              .delete()
-          },
-          runPiiConfirm: async ({ jobId, userId, toE164, sourceSessionId }) => {
-            await runPiiConfirmForUser({
-              db: deps.db,
+            log("[sendblue][webhook] prescreen_initial_reply_routed", {
               jobId,
               userId,
-              toE164,
-              sourceSessionId,
-              log: (event, payload) => log(`pa.pii.${event}`, payload),
+              sessionId: turn.sessionId ?? result.sessionId,
+              handled: turn.handled,
+              terminal: turn.terminal ?? null,
+              textSent: Boolean(turn.textSent),
             })
-          },
-          runPreScreen: async ({ jobId, userId, toE164 }) => {
-            const result = await runPreScreenForUser({
-              db: deps.db,
-              jobId,
-              userId,
-              toE164,
-              log: (event, payload) => log(`pa.prescreen.${event}`, payload),
-            })
-            return result
-          },
-          audit: async (evt) => {
-            await safeAudit(deps, evt as AuditEventInput, log)
-          },
-          sendAccessIssueNotice: async (input) => {
+          }
+          return result
+        },
+        audit: async (evt) => {
+          await safeAudit(deps, evt as AuditEventInput, log)
+        },
+        sendAccessIssueNotice: deps.sendIdentityConflictNotice
+          ? async (input) => deps.sendIdentityConflictNotice!(input)
+          : async (input) => {
             await enqueueTriggerAccessNotice(deps, {
-              trigger: "apply",
+              trigger: "prescreen",
               targetUserId: input.targetUserId,
               jobId: input.jobId,
               toE164: input.toE164,
               ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
               messageHandle: input.messageHandle,
               content: input.content,
-              code: input.reason,
+              code: input.conflictCode,
             })
           },
-        }),
-        new CompactTrigger({
-          lookupUserByPhone: lookupForInbound,
-          isAdmin: async (uid) => adminUidsRouter.includes(uid),
-          runCompaction: async ({ userId, reason }) => {
-            // Phase 77.3 — real handler: runCompactionForUser pulls turns,
-            // wires Firestore deps, calls runCompactionTurn pure orchestrator.
-            const result = await runCompactionForUser({
-              db: deps.db,
-              userId,
-              reason: reason as "admin_trigger" | "turn_count" | "session_end",
-              log: (event, payload) => log(event, payload),
-            })
-            log("[sendblue][webhook] compact_run", {
-              userId, reason, ok: result.ok,
-              outcome: result.reason, factsWritten: result.factsWritten,
-            })
-          },
-          audit: async (evt) => {
-            await safeAudit(deps, evt as AuditEventInput, log)
-          },
-        }),
-      ],
+        // v1.9 hotfix 2026-05-13 — pending-invite binding for public-page flow.
+        getPendingInvite: async (requestedUserId) => {
+          try {
+            const snap = await deps.db
+              .collection("pa-prescreen-pending-invites")
+              .doc(requestedUserId)
+              .get()
+            if (!snap.exists) return null
+            const data = snap.data() as { jobId?: string; createdAt?: string } | undefined
+            return data ?? null
+          } catch {
+            return null
+          }
+        },
+        consumePendingInvite: async (requestedUserId) => {
+          await deps.db
+            .collection("pa-prescreen-pending-invites")
+            .doc(requestedUserId)
+            .delete()
+            .catch(() => undefined)
+        },
+      }),
+      new ApplyTrigger({
+        lookupUserByPhone: lookupForInbound,
+        findRecentPass: async ({ jobId, userId, sinceMs }) => {
+          try {
+            const cutoffIso = new Date(Date.now() - sinceMs).toISOString()
+            const snap = await deps.db
+              .collection("pa-prescreen-sessions")
+              .where("jobId", "==", jobId)
+              .where("userId", "==", userId)
+              .where("terminal", "==", "PASS")
+              .orderBy("updatedAt", "desc")
+              .limit(1)
+              .get()
+            if (snap.empty) return null
+            const doc = snap.docs[0]
+            const data = doc.data() as { updatedAt?: string }
+            if (!data.updatedAt || data.updatedAt < cutoffIso) return null
+            return {
+              sessionId: doc.id,
+              terminalAtMs: Date.parse(data.updatedAt),
+            }
+          } catch {
+            return null
+          }
+        },
+        getLastFiredMs: async (jobId, userId) => {
+          try {
+            const snap = await deps.db
+              .collection("pa-apply-trigger-idempotency")
+              .doc(`${jobId}_${userId}`)
+              .get()
+            const data = snap.data()
+            return typeof data?.lastFiredMs === "number" ? data.lastFiredMs : null
+          } catch {
+            return null
+          }
+        },
+        setLastFiredMs: async (jobId, userId, ms) => {
+          await deps.db
+            .collection("pa-apply-trigger-idempotency")
+            .doc(`${jobId}_${userId}`)
+            .set({ lastFiredMs: ms, jobId, userId, updatedAt: new Date().toISOString() })
+        },
+        clearLastFiredMs: async (jobId, userId) => {
+          await deps.db
+            .collection("pa-apply-trigger-idempotency")
+            .doc(`${jobId}_${userId}`)
+            .delete()
+        },
+        runPiiConfirm: async ({ jobId, userId, toE164, sourceSessionId }) => {
+          await runPiiConfirmForUser({
+            db: deps.db,
+            jobId,
+            userId,
+            toE164,
+            sourceSessionId,
+            log: (event, payload) => log(`pa.pii.${event}`, payload),
+          })
+        },
+        runPreScreen: async ({ jobId, userId, toE164 }) => {
+          const result = await runPreScreenForUser({
+            db: deps.db,
+            jobId,
+            userId,
+            toE164,
+            log: (event, payload) => log(`pa.prescreen.${event}`, payload),
+          })
+          return result
+        },
+        audit: async (evt) => {
+          await safeAudit(deps, evt as AuditEventInput, log)
+        },
+        sendAccessIssueNotice: async (input) => {
+          await enqueueTriggerAccessNotice(deps, {
+            trigger: "apply",
+            targetUserId: input.targetUserId,
+            jobId: input.jobId,
+            toE164: input.toE164,
+            ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
+            messageHandle: input.messageHandle,
+            content: input.content,
+            code: input.reason,
+          })
+        },
+      }),
+      new CompactTrigger({
+        lookupUserByPhone: lookupForInbound,
+        isAdmin: async (uid) => adminUidsRouter.includes(uid),
+        runCompaction: async ({ userId, reason }) => {
+          // Phase 77.3 — real handler: runCompactionForUser pulls turns,
+          // wires Firestore deps, calls runCompactionTurn pure orchestrator.
+          const result = await runCompactionForUser({
+            db: deps.db,
+            userId,
+            reason: reason as "admin_trigger" | "turn_count" | "session_end",
+            log: (event, payload) => log(event, payload),
+          })
+          log("[sendblue][webhook] compact_run", {
+            userId, reason, ok: result.ok,
+            outcome: result.reason, factsWritten: result.factsWritten,
+          })
+        },
+        audit: async (evt) => {
+          await safeAudit(deps, evt as AuditEventInput, log)
+        },
+      }),
+    ]
+    const router = new TriggerRouter({
+      triggers,
       log: (event, payload) => log(`pa.trigger.${event}`, payload),
     })
+    const triggerNeedingEvidence = triggers.find((trigger) => {
+      if (trigger.name !== "prescreen" && trigger.name !== "apply") return false
+      return trigger.match(normalized.text)
+    })
+    if (triggerNeedingEvidence) {
+      try {
+        const evidenceId = await createCompletedTriggerInboundEvidence(deps, {
+          idempotencyKey: normalized.idempotencyKey,
+          fromNumber: normalized.fromNumber,
+          toNumber: normalized.toNumber,
+          text: normalized.text,
+          chatId: normalized.chatId,
+          messageHandle: normalized.messageHandle,
+          service: normalized.service,
+          ...(normalized.rawSenderHandle ? { rawSenderHandle: normalized.rawSenderHandle } : {}),
+          original: payload,
+          ...(isE2eTest ? { e2eTest: true } : {}),
+        })
+        log("[sendblue][webhook] trigger inbound evidence created", {
+          eventId: evidenceId,
+          trigger: triggerNeedingEvidence.name,
+          handle: normalized.messageHandle,
+        })
+      } catch (err) {
+        log("[sendblue][webhook] trigger inbound evidence failed", {
+          trigger: triggerNeedingEvidence.name,
+          handle: normalized.messageHandle,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        reply(res, 500, {
+          ok: false,
+          error: "trigger_error",
+          action: `${triggerNeedingEvidence.name}_error`,
+          reason: "trigger_inbound_evidence_failed",
+        })
+        return
+      }
+    }
     const routerResult = await router.dispatch({
       text: normalized.text,
       fromNumber: normalized.fromNumber,

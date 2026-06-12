@@ -263,6 +263,22 @@ function basePayload(overrides: Partial<SendblueInboundPayload> = {}): SendblueI
   }
 }
 
+function assertCompletedTriggerEvidence(
+  inbound: Map<string, DocData>,
+  expectedParticipant = "+15551234567",
+): DocData {
+  assert.equal(inbound.size, 1, "trigger token must create inbound evidence for the outbox gate")
+  const evidence = [...inbound.values()][0]!
+  assert.equal(evidence.status, "completed", "trigger evidence must not be claimed by normal onboarding")
+  assert.equal(evidence.completedReason, "trigger_control_message")
+  assert.equal(
+    (evidence.rawPayload as { participant?: unknown }).participant,
+    expectedParticipant,
+    "trigger evidence must preserve the candidate handle used by outbox prior-inbound checks",
+  )
+  return evidence
+}
+
 // ---------- Tests ----------
 
 describe("handleSendblueWebhook", () => {
@@ -999,7 +1015,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
-    assert.equal(inbound.size, 0, "trigger token must not enter normal onboarding as user text")
+    assertCompletedTriggerEvidence(inbound)
     assert.equal(prescreenCalls.length, 1)
     assert.equal(prescreenCalls[0]!.jobId, "rain-software-engineer-fullstack-8849f6ef")
     assert.equal(prescreenCalls[0]!.userId, "uJob1")
@@ -1041,7 +1057,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(started, true)
     assert.equal(res.bodyOut, null, "webhook must not reply before prescreen bootstrap finishes")
-    assert.equal(inbound.size, 0, "trigger token must not enter normal onboarding while waiting")
+    assertCompletedTriggerEvidence(inbound)
 
     release()
     await request
@@ -1075,7 +1091,7 @@ describe("handleSendblueWebhook", () => {
       action: "prescreen_error",
       reason: "firestore unavailable",
     })
-    assert.equal(inbound.size, 0, "failed control-plane token must not fall through as candidate text")
+    assertCompletedTriggerEvidence(inbound)
     assert.equal(
       prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-fail-1"),
       false,
@@ -1110,7 +1126,7 @@ describe("handleSendblueWebhook", () => {
       action: "prescreen_error",
       reason: "prescreen_start_send_failed",
     })
-    assert.equal(inbound.size, 0, "failed control-plane token must not fall through as candidate text")
+    assertCompletedTriggerEvidence(inbound)
     assert.equal(
       prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-send-failed-1"),
       false,
@@ -1140,7 +1156,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_config_missing" })
-    assert.equal(inbound.size, 0, "config-missing control-plane token must not fall through as candidate text")
+    assertCompletedTriggerEvidence(inbound)
     assert.equal(
       prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-config-missing-1"),
       true,
@@ -1172,7 +1188,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_not_matched" })
-    assert.equal(inbound.size, 0, "refused control-plane token must not fall through as candidate text")
+    assertCompletedTriggerEvidence(inbound)
     assert.equal(
       prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-not-matched-1"),
       false,
@@ -1208,7 +1224,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
-    assert.equal(inbound.size, 0, "trigger token + answer must not enter normal onboarding")
+    assertCompletedTriggerEvidence(inbound)
     assert.equal(prescreenCalls.length, 1)
     assert.equal(prescreenCalls[0]!.userId, "uJob1")
     assert.equal(prescreenCalls[0]!.suppressFirstQuestion, true)
@@ -1247,7 +1263,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
-    assert.equal(inbound.size, 0)
+    assertCompletedTriggerEvidence(inbound)
     assert.equal(prescreenCalls.length, 1)
     assert.equal(prescreenCalls[0]!.userId, "u_real_candidate_1")
     assert.equal(prescreenCalls[0]!.sourceRequestedUserId, "11111111-2222-4333-8444-555555555555")
@@ -1293,7 +1309,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_identity_conflict_notified" })
-    assert.equal(inbound.size, 0, "conflicting token must not fall through to normal Claire runtime")
+    assertCompletedTriggerEvidence(inbound, "+17167509332")
     assert.equal(prescreenCalls.length, 0, "conflicting token must not start the interview")
     assert.equal(prescreenIdempotency.size, 0, "conflicting token must not stamp prescreen idempotency")
     assert.equal(notices.length, 1)
@@ -1334,7 +1350,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_access_issue_notified" })
-    assert.equal(inbound.size, 0, "unresolved trigger token must not fall through to normal Claire runtime")
+    assertCompletedTriggerEvidence(inbound, "+17167509332")
     assert.equal(prescreenCalls.length, 0, "unresolved trigger token must not start the interview")
     assert.equal(prescreenIdempotency.size, 0, "unresolved trigger token must not stamp prescreen idempotency")
     assert.equal(outbound.size, 1)
@@ -1370,7 +1386,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "apply_access_issue_notified" })
-    assert.equal(inbound.size, 0, "unauthorized apply token must not fall through to normal Claire runtime")
+    assertCompletedTriggerEvidence(inbound, "+17167509332")
     assert.equal(prescreenCalls.length, 0, "unauthorized apply token must not start fallback prescreen")
     assert.equal(applyIdempotency.size, 0, "unauthorized apply token must not stamp apply idempotency")
     assert.equal(outbound.size, 1)
@@ -1548,7 +1564,7 @@ describe("handleSendblueWebhook", () => {
 
     assert.equal(res.statusCode, 200)
     assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
-    assert.equal(inbound.size, 0, "pending-invite START must be control-plane input, not normal onboarding text")
+    assertCompletedTriggerEvidence(inbound)
     assert.equal(prescreenCalls.length, 1)
     assert.equal(prescreenCalls[0]!.jobId, "rain-software-engineer-fullstack-8849f6ef")
     assert.equal(prescreenCalls[0]!.userId, "uAts1")
