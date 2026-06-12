@@ -24,7 +24,9 @@ import {
 } from "./RecruiterSubmissionReview.helpers.js"
 import {
   buildRecruiterRoleOpsRows,
+  type RecruiterRoleEmailAudience,
   type RecruiterRoleOpsRow,
+  type RecruiterRolePriorityTier,
 } from "./RecruiterRoleOps.helpers.js"
 
 interface SubmissionDoc {
@@ -204,6 +206,50 @@ function reviewSummaryTone(tone: SubmissionReviewTone): Parameters<typeof Badge>
 }
 const SOURCE_STAGE_VALUES = ["sourced", "contacted", "screened", "ready", "submitted", "archived"]
 const CALIBRATION_VALUES = ["not_rated", "calibration_requested", "good_fit", "bad_fit", "suggested"]
+const PRIORITY_TIER_VALUES: RecruiterRolePriorityTier[] = ["urgent", "high", "normal", "paused"]
+const PRIORITY_EMAIL_AUDIENCE_VALUES: RecruiterRoleEmailAudience[] = ["recruiters", "candidates", "both", "none"]
+
+interface RolePriorityDraft {
+  rank: string
+  tier: RecruiterRolePriorityTier
+  emailAudience: RecruiterRoleEmailAudience
+  note: string
+}
+
+function rolePriorityDraftFromRow(row: RecruiterRoleOpsRow): RolePriorityDraft {
+  return {
+    rank: row.priorityRank === null ? "" : String(row.priorityRank),
+    tier: row.priorityTier,
+    emailAudience: row.priorityEmailAudience,
+    note: row.priorityNote,
+  }
+}
+
+function normalizePriorityRankInput(value: string): number | null | undefined {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const n = Number(trimmed)
+  if (!Number.isInteger(n) || n < 1 || n > 999) return undefined
+  return n
+}
+
+function priorityTierLabel(tier: RecruiterRolePriorityTier): string {
+  switch (tier) {
+    case "urgent": return "Urgent"
+    case "high": return "High"
+    case "paused": return "Paused"
+    default: return "Normal"
+  }
+}
+
+function priorityAudienceLabel(audience: RecruiterRoleEmailAudience): string {
+  switch (audience) {
+    case "candidates": return "Candidates"
+    case "both": return "Both"
+    case "none": return "None"
+    default: return "Recruiters"
+  }
+}
 
 interface SourcedCandidateDoc {
   id: string
@@ -346,6 +392,14 @@ interface RecruiterBoardAdminJobDoc {
     sortOrder?: number
     updatedAt?: { seconds?: number } | string | null
     interviewProcess?: string
+    priority?: {
+      rank?: number | null
+      tier?: string | null
+      note?: string | null
+      emailAudience?: string | null
+      updatedAt?: { seconds?: number } | string | null
+      updatedByEmail?: string | null
+    }
     label?: {
       company?: string
       companyCode?: string
@@ -1162,6 +1216,9 @@ function RecruiterRolesPanel() {
   const [rows, setRows] = useState<RecruiterRoleOpsRow[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
+  const [priorityDrafts, setPriorityDrafts] = useState<Record<string, RolePriorityDraft>>({})
+  const [savingPriorityId, setSavingPriorityId] = useState<string | null>(null)
+  const [priorityErr, setPriorityErr] = useState<string | null>(null)
 
   const reload = async () => {
     setLoading(true)
@@ -1189,19 +1246,75 @@ function RecruiterRolesPanel() {
     }
   }
 
+  const priorityDraftFor = (row: RecruiterRoleOpsRow): RolePriorityDraft =>
+    priorityDrafts[row.id] ?? rolePriorityDraftFromRow(row)
+
+  const updatePriorityDraft = (row: RecruiterRoleOpsRow, patch: Partial<RolePriorityDraft>) => {
+    setPriorityDrafts((prev) => ({
+      ...prev,
+      [row.id]: { ...priorityDraftFor(row), ...patch },
+    }))
+  }
+
+  const saveRolePriority = async (row: RecruiterRoleOpsRow) => {
+    const draft = priorityDraftFor(row)
+    const rank = normalizePriorityRankInput(draft.rank)
+    if (rank === undefined) {
+      setPriorityErr("Priority rank must be blank or an integer from 1 to 999.")
+      return
+    }
+
+    setSavingPriorityId(row.id)
+    setPriorityErr(null)
+    try {
+      await updateDoc(doc(db(), "pa-jobs", row.id), {
+        "recruiterBoard.priority.rank": rank,
+        "recruiterBoard.priority.tier": draft.tier,
+        "recruiterBoard.priority.emailAudience": draft.emailAudience,
+        "recruiterBoard.priority.note": draft.note.trim() || null,
+        "recruiterBoard.priority.updatedAt": serverTimestamp(),
+        "recruiterBoard.priority.updatedByEmail": auth().currentUser?.email ?? "admin",
+        "recruiterBoard.updatedAt": serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+      setPriorityDrafts((prev) => {
+        const next = { ...prev }
+        delete next[row.id]
+        return next
+      })
+      await reload()
+    } catch (error) {
+      setPriorityErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSavingPriorityId(null)
+    }
+  }
+
   useEffect(() => {
     void reload()
   }, [])
 
   const table = useTable<RecruiterRoleOpsRow>(rows, {
-    defaultSort: { key: "readinessScore", dir: "asc" },
+    defaultSort: { key: "prioritySort", dir: "asc" },
     pageSize: 50,
     search: (row, q) =>
       row.title.toLowerCase().includes(q) ||
       row.company.toLowerCase().includes(q) ||
       row.location.toLowerCase().includes(q) ||
+      row.priorityNote.toLowerCase().includes(q) ||
       row.id.toLowerCase().includes(q),
     chips: [
+      {
+        id: "priority",
+        label: "Priority",
+        multi: true,
+        options: [
+          { key: "ranked", label: "Ranked", test: (row) => row.priorityRank !== null },
+          { key: "urgent", label: "Urgent", test: (row) => row.priorityTier === "urgent" },
+          { key: "high", label: "High", test: (row) => row.priorityTier === "high" },
+          { key: "unranked", label: "Unranked", test: (row) => row.priorityRank === null },
+        ],
+      },
       {
         id: "launch",
         label: "Launch",
@@ -1254,6 +1367,8 @@ function RecruiterRolesPanel() {
   if (err) return <ErrorState message={err} />
 
   const activeRows = rows.filter((row) => row.active && row.collaborated)
+  const priorityRows = rows.filter((row) => row.active && row.priorityRank !== null)
+  const urgentPriorityRows = rows.filter((row) => row.active && row.priorityTier === "urgent")
   const setupGaps = rows.filter((row) => row.active && row.readinessScore < 90)
   const noMotion = rows.filter((row) => row.active && row.sourced === 0 && row.submissions === 0)
   const activationGaps = rows.filter((row) =>
@@ -1263,6 +1378,70 @@ function RecruiterRolesPanel() {
   )
   const pendingApplications = rows.reduce((sum, row) => sum + row.pendingApplications, 0)
   const columns: Column<RecruiterRoleOpsRow>[] = [
+    {
+      key: "prioritySort",
+      label: "Priority",
+      sortable: true,
+      width: 360,
+      render: (row) => {
+        const draft = priorityDraftFor(row)
+        const saving = savingPriorityId === row.id
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ display: "grid", gap: 8, minWidth: 310 }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <Badge tone={row.priorityTone}>
+                {row.priorityRank === null ? "Unranked" : `P${row.priorityRank}`}
+              </Badge>
+              <span style={{ color: "#777", fontSize: 11 }}>
+                {priorityTierLabel(row.priorityTier)} · email {priorityAudienceLabel(row.priorityEmailAudience).toLowerCase()}
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "64px 92px 112px auto", gap: 6 }}>
+              <input
+                aria-label={`Priority rank for ${row.title}`}
+                type="number"
+                min={1}
+                max={999}
+                value={draft.rank}
+                placeholder="rank"
+                onChange={(e) => updatePriorityDraft(row, { rank: e.target.value })}
+                style={{ minWidth: 0 }}
+              />
+              <select
+                aria-label={`Priority tier for ${row.title}`}
+                value={draft.tier}
+                onChange={(e) => updatePriorityDraft(row, { tier: e.target.value as RecruiterRolePriorityTier })}
+              >
+                {PRIORITY_TIER_VALUES.map((tier) => (
+                  <option key={tier} value={tier}>{priorityTierLabel(tier)}</option>
+                ))}
+              </select>
+              <select
+                aria-label={`Priority email audience for ${row.title}`}
+                value={draft.emailAudience}
+                onChange={(e) => updatePriorityDraft(row, { emailAudience: e.target.value as RecruiterRoleEmailAudience })}
+              >
+                {PRIORITY_EMAIL_AUDIENCE_VALUES.map((audience) => (
+                  <option key={audience} value={audience}>{priorityAudienceLabel(audience)}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => void saveRolePriority(row)} disabled={saving}>
+                {saving ? "Saving" : "Save"}
+              </button>
+            </div>
+            <input
+              aria-label={`Priority note for ${row.title}`}
+              value={draft.note}
+              placeholder="Priority note / email angle"
+              onChange={(e) => updatePriorityDraft(row, { note: e.target.value })}
+            />
+          </div>
+        )
+      },
+    },
     {
       key: "activationStage",
       label: "Activation",
@@ -1385,8 +1564,9 @@ function RecruiterRolesPanel() {
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
         <OpsMetric label="Live roles" value={activeRows.length} />
+        <OpsMetric label="Priority roles" value={priorityRows.length} meta={`${urgentPriorityRows.length} urgent`} />
         <OpsMetric label="Setup gaps" value={setupGaps.length} />
         <OpsMetric label="Pending applications" value={pendingApplications} />
         <OpsMetric label="Activation gaps" value={activationGaps.length} meta={`${noMotion.length} with no motion`} />
@@ -1396,6 +1576,11 @@ function RecruiterRolesPanel() {
         eyebrow="pa-jobs, recruiterBoard, applications, calibration"
         actions={<button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>}
       >
+        {priorityErr && (
+          <div style={{ marginBottom: 12 }}>
+            <Badge tone="warn">{priorityErr}</Badge>
+          </div>
+        )}
         <DataTable<RecruiterRoleOpsRow>
           columns={columns}
           rows={table.visibleRows}

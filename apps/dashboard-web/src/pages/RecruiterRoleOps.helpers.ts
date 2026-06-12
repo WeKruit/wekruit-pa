@@ -1,4 +1,6 @@
 export type RoleOpsTone = "ok" | "warn" | "info" | "muted"
+export type RecruiterRolePriorityTier = "urgent" | "high" | "normal" | "paused"
+export type RecruiterRoleEmailAudience = "recruiters" | "candidates" | "both" | "none"
 
 export type RecruiterRoleActivationStage =
   | "setup_needed"
@@ -32,6 +34,14 @@ export interface RecruiterRoleOpsJob {
     sortOrder?: number
     updatedAt?: RoleOpsTimestamp | string | null
     interviewProcess?: string
+    priority?: {
+      rank?: number | null
+      tier?: RecruiterRolePriorityTier | string | null
+      note?: string | null
+      emailAudience?: RecruiterRoleEmailAudience | string | null
+      updatedAt?: RoleOpsTimestamp | string | null
+      updatedByEmail?: string | null
+    }
     label?: {
       company?: string
       location?: string
@@ -93,6 +103,13 @@ export interface RecruiterRoleOpsRow {
   updatedAtMs: number
   updatedAt?: unknown
   sortOrder: number
+  priorityRank: number | null
+  prioritySort: number
+  priorityTier: RecruiterRolePriorityTier
+  priorityTone: RoleOpsTone
+  priorityNote: string
+  priorityEmailAudience: RecruiterRoleEmailAudience
+  priorityUpdatedAt?: unknown
   hardChecks: number
   fitChecks: number
   bonusChecks: number
@@ -127,6 +144,34 @@ function timestampToMs(raw: unknown): number {
     return ((raw as { seconds: number }).seconds) * 1000
   }
   return 0
+}
+
+const PRIORITY_TIERS = new Set<RecruiterRolePriorityTier>(["urgent", "high", "normal", "paused"])
+const PRIORITY_AUDIENCES = new Set<RecruiterRoleEmailAudience>(["recruiters", "candidates", "both", "none"])
+
+function priorityRank(raw: unknown): number | null {
+  const n = typeof raw === "number" ? raw : Number(raw)
+  if (!Number.isInteger(n) || n < 1 || n > 999) return null
+  return n
+}
+
+function priorityTier(raw: unknown): RecruiterRolePriorityTier {
+  return typeof raw === "string" && PRIORITY_TIERS.has(raw as RecruiterRolePriorityTier)
+    ? (raw as RecruiterRolePriorityTier)
+    : "normal"
+}
+
+function priorityAudience(raw: unknown): RecruiterRoleEmailAudience {
+  return typeof raw === "string" && PRIORITY_AUDIENCES.has(raw as RecruiterRoleEmailAudience)
+    ? (raw as RecruiterRoleEmailAudience)
+    : "recruiters"
+}
+
+function priorityTone(tier: RecruiterRolePriorityTier): RoleOpsTone {
+  if (tier === "urgent") return "warn"
+  if (tier === "high") return "info"
+  if (tier === "paused") return "muted"
+  return "muted"
 }
 
 function rowMatchesRole(row: { inboundJobId?: string; jobId?: string }, role: RecruiterRoleOpsJob): boolean {
@@ -267,6 +312,9 @@ export function buildRecruiterRoleOpsRows(input: {
       const roleApplications = input.applications.filter((row) => rowMatchesRole(row, role))
       const roleFeedback = input.feedback.filter((row) => rowMatchesRole(row, role))
       const roleQuestions = input.questions.filter((row) => rowMatchesRole(row, role))
+      const rbPriority = role.recruiterBoard?.priority
+      const pRank = priorityRank(rbPriority?.rank)
+      const pTier = priorityTier(rbPriority?.tier)
       const approvedRecruiters = new Set(
         roleApplications
           .filter((row) => row.status === "approved")
@@ -288,6 +336,13 @@ export function buildRecruiterRoleOpsRows(input: {
         updatedAtMs: Math.max(timestampToMs(role.recruiterBoard?.updatedAt), timestampToMs(role.updatedAt)),
         updatedAt: role.recruiterBoard?.updatedAt ?? role.updatedAt,
         sortOrder: Number(role.recruiterBoard?.sortOrder ?? 999),
+        priorityRank: pRank,
+        prioritySort: pRank ?? 9999,
+        priorityTier: pTier,
+        priorityTone: priorityTone(pTier),
+        priorityNote: typeof rbPriority?.note === "string" ? rbPriority.note : "",
+        priorityEmailAudience: priorityAudience(rbPriority?.emailAudience),
+        priorityUpdatedAt: rbPriority?.updatedAt,
         hardChecks: recruiterBoardChecklistCount(role, "hard"),
         fitChecks: recruiterBoardChecklistCount(role, "fit"),
         bonusChecks: recruiterBoardChecklistCount(role, "bonus"),
@@ -315,5 +370,10 @@ export function buildRecruiterRoleOpsRows(input: {
         activationReason: activation.reason,
       }
     })
-    .sort((a, b) => Number(b.active) - Number(a.active) || a.sortOrder - b.sortOrder || b.updatedAtMs - a.updatedAtMs)
+    .sort((a, b) =>
+      Number(b.active) - Number(a.active) ||
+      a.prioritySort - b.prioritySort ||
+      a.sortOrder - b.sortOrder ||
+      b.updatedAtMs - a.updatedAtMs,
+    )
 }

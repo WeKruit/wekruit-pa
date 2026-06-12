@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 
 import { buildRecruiterRoleOpsRows } from "../RecruiterRoleOps.helpers.js"
 
-function readyRole(id: string, title: string) {
+function readyRole(id: string, title: string, priority?: { rank?: number; tier?: string; note?: string; emailAudience?: string }) {
   return {
     id,
     publicId: id,
@@ -13,6 +13,7 @@ function readyRole(id: string, title: string) {
     recruiterBoard: {
       active: true,
       sortOrder: 1,
+      ...(priority ? { priority } : {}),
       label: { company: "Acme", location: "New York" },
       interviewProcess: "Intro, technical, final",
       culture: { bet: "High-trust founding team", bullets: ["Fast feedback"] },
@@ -24,6 +25,16 @@ function readyRole(id: string, title: string) {
       },
     },
   }
+}
+
+function roleWithBoardSort(
+  id: string,
+  title: string,
+  sortOrder: number,
+  priority?: { rank?: number; tier?: string; note?: string; emailAudience?: string },
+) {
+  const role = readyRole(id, title, priority)
+  return { ...role, recruiterBoard: { ...role.recruiterBoard, sortOrder } }
 }
 
 describe("buildRecruiterRoleOpsRows activation stages", () => {
@@ -71,5 +82,38 @@ describe("buildRecruiterRoleOpsRows activation stages", () => {
 
     assert.equal(byId.get("role-moving")?.activationStage, "moving")
     assert.match(byId.get("role-moving")?.activationReason ?? "", /advanced/i)
+  })
+
+  it("sorts active roles by explicit priority rank before board sort order", () => {
+    const rows = buildRecruiterRoleOpsRows({
+      jobs: [
+        roleWithBoardSort("role-board-first", "Board first", 1),
+        roleWithBoardSort("role-p2", "Priority two", 30, {
+          rank: 2,
+          tier: "high",
+          note: "Second",
+          emailAudience: "both",
+        }),
+        roleWithBoardSort("role-p1", "Priority one", 40, {
+          rank: 1,
+          tier: "urgent",
+          note: "First",
+          emailAudience: "recruiters",
+        }),
+      ],
+      applications: [],
+      candidates: [],
+      submissions: [],
+      feedback: [],
+      questions: [],
+    })
+
+    assert.deepEqual(rows.map((row) => row.id), ["role-p1", "role-p2", "role-board-first"])
+    assert.equal(rows[0]?.priorityRank, 1)
+    assert.equal(rows[0]?.priorityTier, "urgent")
+    assert.equal(rows[0]?.priorityNote, "First")
+    assert.equal(rows[1]?.priorityEmailAudience, "both")
+    assert.equal(rows[2]?.priorityRank, null)
+    assert.equal(rows[2]?.prioritySort, 9999)
   })
 })
