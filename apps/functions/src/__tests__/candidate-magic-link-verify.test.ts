@@ -1026,3 +1026,201 @@ test("runCandidateMagicLinkVerify keeps original first signup entry on later sig
   assert.equal(data?.lastSignupEntry?.path, "/j/wekruit-later-job")
   assert.equal(data?.lastSignupEntry?.jobId, "wekruit-later-job")
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENTRY-UX-PRD §2.3.3 — website-origin entry event seam (Builder A)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function claimBlobFor(candidateId: string, firebaseUid: string) {
+  return async () => ({
+    candidateId,
+    authMapping: { firebaseUid, candidateId, createdAt: "2026-06-12T00:00:00.000Z" },
+    emailHandle: {
+      handleId: "email_hash",
+      candidateId,
+      kind: "email" as const,
+      handleHash: "h",
+      source: "candidate" as const,
+      createdAt: "2026-06-12T00:00:00.000Z",
+    },
+    claimedEventId: "ident_claimed",
+    idempotent: true,
+    selfProfile: {
+      candidateId,
+      lifecycleState: "claimed" as const,
+      handles: [{ kind: "email" as const, source: "candidate" as const }],
+      createdAt: "2026-06-12T00:00:00.000Z",
+    },
+  })
+}
+
+test("verify emits the website entry with a per-login-flow id and the §2.4 state", async () => {
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-entry", {
+    pitchedAt: "2026-06-01T00:00:00.000Z",
+  })
+  const entryCalls: Array<{ state: Record<string, unknown>; opts: Record<string, unknown> }> = []
+  const { result, status } = await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-entry",
+      source: "candidate",
+      registrationEntry: { kind: "job_prescreen", path: "/j/wekruit-demo-job", jobId: "wekruit-demo-job" },
+    },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-entry",
+        email: "entry@example.com",
+        email_verified: true,
+        signInProvider: "google.com",
+        authTime: 1765432100,
+      }),
+      claimProfile: claimBlobFor("cand-entry", "fb-entry"),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => true,
+      processWebsiteEntry: (async (_db: unknown, state: never, opts: never) => {
+        entryCalls.push({ state, opts })
+        return { recorded: true, emitted: true, pendingEmit: false }
+      }) as never,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  assert.equal(entryCalls.length, 1)
+  const { state, opts } = entryCalls[0]!
+  assert.equal(state.candidateId, "cand-entry")
+  assert.equal(state.authProvider, "google")
+  assert.equal(state.resumeStatus, "parsed")
+  assert.equal(state.jobIdContext, "wekruit-demo-job")
+  assert.equal(state.pitchAlreadySent, true)
+  assert.equal(opts.flowId, "login:1765432100")
+  assert.equal(opts.source, "candidate_verify")
+  assert.equal(opts.newEvidence, false)
+})
+
+test("verify skips the entry event without auth_time (no nowIso/content-hash fallback)", async () => {
+  const db = fakeDb()
+  const entryCalls: unknown[] = []
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-noauthtime" },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-nat",
+        email: "nat@example.com",
+        email_verified: true,
+      }),
+      claimProfile: claimBlobFor("cand-nat", "fb-nat"),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => true,
+      processWebsiteEntry: (async (...args: unknown[]) => {
+        entryCalls.push(args)
+        return { recorded: true, emitted: false, pendingEmit: false }
+      }) as never,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  assert.equal(entryCalls.length, 0)
+})
+
+test("verify entry-event failure never breaks sign-in", async () => {
+  const db = fakeDb()
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-entry-fail" },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-ef",
+        email: "ef@example.com",
+        email_verified: true,
+        authTime: 99,
+      }),
+      claimProfile: claimBlobFor("cand-ef", "fb-ef"),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+      processWebsiteEntry: (async () => {
+        throw new Error("boom")
+      }) as never,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+})
+
+test("LinkedIn OAuth login with the OIDC profile claim links the CANONICAL url, not the marker", async () => {
+  const db = fakeDb()
+  const linkCalls: Array<Record<string, unknown>> = []
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-li-real", linkedinSignIn: true },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "li_real",
+        email: "real@example.com",
+        email_verified: true,
+        linkedinSub: "sub-real",
+        linkedinProfileUrl: "https://www.linkedin.com/in/real-person/",
+        linkedinPicture: "https://media.licdn.com/dms/image/v2/abc/profile.jpg",
+        authTime: 1765432200,
+      }),
+      claimProfile: claimBlobFor("cand-li-real", "li_real"),
+      linkLinkedin: async (_db, input) => {
+        linkCalls.push({ ...input })
+        return { handle: {} as never, created: true }
+      },
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+      processWebsiteEntry: (async () => ({ recorded: true, emitted: false, pendingEmit: false })) as never,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  assert.equal(linkCalls.length, 1)
+  const linked = String(linkCalls[0]?.value ?? "")
+  assert.ok(!linked.includes("/oauth-linked/"), `expected canonical url, got ${linked}`)
+  assert.ok(linked.includes("linkedin.com/in/real-person"), linked)
+  const userSnap = await db.collection(PA_COLLECTIONS.users).doc("cand-li-real").get()
+  const data = userSnap.data() as Record<string, unknown>
+  assert.equal(data.linkedinOauthPicture, "https://media.licdn.com/dms/image/v2/abc/profile.jpg")
+  assert.equal(data.linkedinOauthSub, "sub-real")
+  if (result.ok) {
+    assert.ok(String(result.linkedinUrl ?? "").includes("linkedin.com/in/real-person"))
+  }
+})
+
+test("verify result exposes phoneLinkVerified for the Talk-to-Claire CTA decision", async () => {
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-plv", {
+    phoneE164Source: "phone_code_verified_claire_thread",
+  })
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-plv" },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-plv",
+        email: "plv@example.com",
+        email_verified: true,
+      }),
+      claimProfile: claimBlobFor("cand-plv", "fb-plv"),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.phoneLinkVerified, true)
+  }
+})

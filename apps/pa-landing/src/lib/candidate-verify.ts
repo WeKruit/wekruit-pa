@@ -45,6 +45,9 @@ export async function verifyCandidateMagicLinkSession(options?: {
   claireConversationStarted: boolean
   hasResumeOnFile: boolean
   portalReady: boolean
+  /** True when a phone is code-verified/bound — the Talk-to-Claire CTA can use
+   *  the plain thread deeplink instead of the binding opener token (PRD §2.5). */
+  phoneLinkVerified: boolean
   senderNumber?: string | null
   senderGroupId?: string | null
   linkedinUrl?: string | null
@@ -81,6 +84,7 @@ export async function verifyCandidateMagicLinkSession(options?: {
     claireConversationStarted?: boolean
     hasResumeOnFile?: boolean
     portalReady?: boolean
+    phoneLinkVerified?: boolean
     senderNumber?: string | null
     senderGroupId?: string | null
     linkedinUrl?: string | null
@@ -106,6 +110,7 @@ export async function verifyCandidateMagicLinkSession(options?: {
     claireConversationStarted,
     hasResumeOnFile,
     portalReady,
+    phoneLinkVerified: Boolean(data.phoneLinkVerified) || claireConversationStarted,
     senderNumber: typeof data.senderNumber === "string" ? data.senderNumber : null,
     senderGroupId: typeof data.senderGroupId === "string" ? data.senderGroupId : null,
     linkedinUrl: data.linkedinUrl ?? null,

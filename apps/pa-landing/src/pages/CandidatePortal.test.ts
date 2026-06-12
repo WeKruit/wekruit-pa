@@ -182,7 +182,7 @@ test("CandidatePortal wires connector buttons through the account OAuth start ca
 
 test("CandidatePortal connector rows do not use dead profile links for non-OAuth actions", () => {
   assert.match(source, /action: "send_resume"/)
-  assert.match(source, /buildClaireImessageHref\(profile\.senderNumber\)/)
+  assert.match(source, /claireContinuationHrefFor\(profile\)/)
   assert.match(source, /<ConnectorAction connector=\{c\} claireHref=\{claireHref\} \/>/)
   assert.match(source, /connector\.action === "send_resume"[\s\S]*href=\{claireHref\}[\s\S]*Send PDF/)
   assert.match(
@@ -310,7 +310,7 @@ test("CandidatePortal /me lets signed-in users connect an existing Claire phone 
 
 test("CandidatePortal routes Claire message actions through the claimed sender number", () => {
   assert.doesNotMatch(source, /CLAIRE_IMESSAGE_HREF/)
-  assert.match(source, /buildClaireImessageHref\(profile\.senderNumber\)/)
+  assert.match(source, /claireContinuationHrefFor\(profile\)/)
   assert.match(source, /claireHref=\{claireHref\}/)
   assert.match(source, /href: claireHref/)
   assert.match(source, /<MeMatchFull key=\{m\.matchId\} match=\{m\} claireHref=\{claireHref\} \/>/)

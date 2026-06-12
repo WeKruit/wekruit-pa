@@ -906,7 +906,10 @@ function InlineCvSection({
     return (
       <div className="wk-pj-cv">
         <p className="wk-eyebrow">Resume</p>
-        <p className="wk-pj-card__copy">Resume uploaded. Role context is saved while we finish parsing and labeling before Claire's interview opens.</p>
+        {/* ENTRY-UX-PRD §2.3.6 — in-progress posture, not a receipt: Claire is
+            reading the background; the role stays attached; her turn continues
+            the moment parsing lands. */}
+        <p className="wk-pj-card__copy">Claire is reading your resume now — this role stays attached. Her interview opens the moment she's done.</p>
         <ProcessSteps activeStep={3} />
       </div>
     )

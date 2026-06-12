@@ -39,6 +39,7 @@ import {
   type IndustryTag,
 } from "./industry-tags.js"
 import { isCanaryUser } from "../claire-agent/canary.js"
+import { clearEnrichmentInFlight } from "../claire-agent/enrichment-inflight.js"
 import {
   runIndustrySecondPass,
   type WorkHistorySummary,
@@ -1903,6 +1904,11 @@ async function fireResumeParsedHandoffOnIdempotentHit(input: {
         resumeId: input.resumeId,
         reason: "no_phone",
       })
+      // ENTRY-UX (PRD §2.3.6-7): no routable phone → the resume_parse_completed re-entry — the
+      // normal CLEAR site for the enrichmentInFlight marker — can never fire. Clear it here so a
+      // website-first candidate who binds a phone minutes later isn't greeted with a phantom
+      // "still pulling your info" hold (TTL would self-heal eventually; this closes the gap now).
+      await clearEnrichmentInFlight(input.db, input.userId, new Date().toISOString()).catch(() => {})
       return
     }
     // Same shape buildCvFactBody emits — prefer the caller-provided summary (identity path has `parsed`),
@@ -2973,6 +2979,19 @@ export async function ingestCv(
             resumeId,
             runtime,
           })
+        } else {
+          // ENTRY-UX (PRD §2.3.6-7): this skip was previously FULLY SILENT — the parse completed,
+          // no completion event fired (enqueueRuntimeEventHandoff needs a routable phone), and the
+          // enrichmentInFlight marker had no clear site. Log it AND clear the marker so the
+          // website-first / no-phone cohort never carries a stuck "still pulling" state into the
+          // moment they bind a phone. The pitch itself is NOT lost: the recognized-candidate
+          // first-text pitch path (postParsePitch, gated on !pitchedAt) fires when they text in.
+          log("pa.cv_followup.synthetic_trigger_skipped", {
+            userId: userId,
+            resumeId,
+            reason: "no_phone",
+          })
+          await clearEnrichmentInFlight(dbHandle, userId, nowIso()).catch(() => {})
         }
       } catch (err) {
         log("pa.cv_followup.synthetic_trigger_failed", {

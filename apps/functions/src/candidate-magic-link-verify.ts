@@ -3,11 +3,19 @@ import { FieldValue, getFirestore, type Firestore } from "firebase-admin/firesto
 import { onRequest } from "firebase-functions/v2/https"
 import { isPaUserSource, PA_COLLECTIONS } from "@pa/core-types"
 import { claimCandidateProfile, linkCandidateHandle } from "@pa/pa-persistence"
+import { canonicalizeLinkedInUrl } from "@pa/external-supply"
 import {
   candidateClaireConversationStarted,
   candidateHasResumeOnFile,
 } from "./candidate-claire-conversation.js"
 import { assignCandidateSenderNumber } from "./identity/candidate-sender-number.js"
+import {
+  deriveLinkedinStateFromUser,
+  derivePitchAlreadySent,
+  processWebsiteEntry,
+  type WebsiteEntryAuthProvider,
+  type WebsiteEntryState,
+} from "./website-entry/website-entry-event.js"
 
 export interface CandidateMagicLinkVerifyInput {
   firebaseIdToken?: string
@@ -37,6 +45,9 @@ export interface CandidateMagicLinkVerifySuccess {
   hasResumeOnFile: boolean
   /** True when candidate has inbound Claire iMessage — required for /me portal. */
   portalReady: boolean
+  /** True when a phone is code-verified/bound — the "Talk to Claire" CTA can
+   *  use the plain thread deeplink instead of the binding opener token. */
+  phoneLinkVerified: boolean
   senderNumber?: string | null
   senderGroupId?: string | null
   linkedinUrl?: string | null
@@ -145,6 +156,14 @@ export interface CandidateMagicLinkVerifyDeps {
     linkedinEmail?: string
     linkedinName?: string
     linkedinSub?: string
+    /** OIDC `picture` claim minted into the LinkedIn custom token — stored for
+     *  the photo-first Coresignal enrich path (no paste, no URL). */
+    linkedinPicture?: string
+    /** OIDC `profile` claim (the member's REAL public URL) when LinkedIn returns it. */
+    linkedinProfileUrl?: string
+    /** Firebase `auth_time` (seconds) — the PER-LOGIN-FLOW id for the website
+     *  entry event idempotency key (never content-hash, never nowIso). */
+    authTime?: number
     /**
      * Firebase `firebase.sign_in_provider` claim. Used to gate L1 entry:
      * - `google.com` / LinkedIn (custom token via li_*) → allowed to create
@@ -176,6 +195,8 @@ export interface CandidateMagicLinkVerifyDeps {
     email: string
     referralSlug?: string | null
   }) => Promise<{ matchedReferralId?: string }>
+  /** PRD §2.3.3 — website-origin entry continuation + runtime event producer. */
+  processWebsiteEntry?: typeof processWebsiteEntry
 }
 
 export async function runCandidateMagicLinkVerify(
@@ -226,6 +247,15 @@ export async function runCandidateMagicLinkVerify(
             ? decoded.linkedinName.trim()
             : undefined,
         linkedinSub,
+        linkedinPicture:
+          typeof decoded.linkedinPicture === "string" && decoded.linkedinPicture.trim()
+            ? decoded.linkedinPicture.trim()
+            : undefined,
+        linkedinProfileUrl:
+          typeof decoded.linkedinProfileUrl === "string" && decoded.linkedinProfileUrl.trim()
+            ? decoded.linkedinProfileUrl.trim()
+            : undefined,
+        authTime: typeof decoded.auth_time === "number" ? decoded.auth_time : undefined,
         signInProvider,
       }
     })
@@ -280,11 +310,17 @@ export async function runCandidateMagicLinkVerify(
 
     if (linkedinSignIn && decoded.linkedinSub) {
       linkedinLinkedViaOauth = true
-      const oauthMarker = `https://www.linkedin.com/oauth-linked/${decoded.linkedinSub}`
+      // PRD gap "LinkedIn OAuth login": when LinkedIn returned the OIDC `profile`
+      // claim (the member's REAL public URL, threaded through the custom token),
+      // link the CANONICAL URL instead of the synthetic oauth marker — same
+      // preference connectLinkedinProspectViaOAuth applies on the texted path.
+      const realUrl = canonicalizeLinkedInUrl(decoded.linkedinProfileUrl ?? "")
+      if (realUrl) linkedinUrl = realUrl
+      const handleValue = realUrl ?? `https://www.linkedin.com/oauth-linked/${decoded.linkedinSub}`
       await (deps.linkLinkedin ?? linkCandidateHandle)(deps.db, {
         candidateId: claim.candidateId,
         kind: "linkedin",
-        value: oauthMarker,
+        value: handleValue,
         source: "candidate",
         verified: true,
         evidence: [{ source: "system", summary: "LinkedIn OAuth sign-in identity" }],
@@ -339,6 +375,11 @@ export async function runCandidateMagicLinkVerify(
       mergeFields.linkedinOauthLinked = true
       mergeFields.linkedinOauthConnectedAt = now
       mergeFields.linkedinOauthName = displayName ?? undefined
+      // Photo-first enrich signal (licdn asset id resolves on Coresignal
+      // employee_clean) — stored as durable state; the enrichment execution is
+      // runtime/connector-owned, never inline in this login-blocking CF.
+      if (decoded.linkedinPicture) mergeFields.linkedinOauthPicture = decoded.linkedinPicture
+      if (decoded.linkedinSub) mergeFields.linkedinOauthSub = decoded.linkedinSub
       mergeFields.linkedinOauthProfile = {
         connectedAt: now,
         ...(displayName ? { name: displayName } : {}),
@@ -399,6 +440,42 @@ export async function runCandidateMagicLinkVerify(
       userData,
     )
 
+    // PRD §2.3.3 — website-origin entry: record the "Talk to Claire" continuation
+    // state and (evidence-bearing, canary, routable) emit the SAME pitch runtime
+    // event class the LinkedIn one-tap connect uses. Per-login-flow idempotency
+    // (auth_time), so the double verify calls of one sign-in dedup. Non-fatal:
+    // a failure here must never break sign-in.
+    try {
+      const authProvider: WebsiteEntryAuthProvider = linkedinSignIn
+        ? "linkedin_oauth"
+        : decoded.signInProvider === "google.com"
+          ? "google"
+          : decoded.signInProvider === "password"
+            ? "magic_link"
+            : "unknown"
+      const entryState: WebsiteEntryState = {
+        candidateId: claim.candidateId,
+        authProvider,
+        resumeStatus: resumeOnFile ? "parsed" : "none",
+        linkedinState: deriveLinkedinStateFromUser(userData),
+        jobIdContext: signupEntry ? ((signupEntry.jobId as string | undefined) ?? null) : null,
+        pitchAlreadySent: derivePitchAlreadySent(userData),
+      }
+      if (typeof decoded.authTime === "number" && Number.isFinite(decoded.authTime)) {
+        await (deps.processWebsiteEntry ?? processWebsiteEntry)(deps.db, entryState, {
+          flowId: `login:${decoded.authTime}`,
+          source: "candidate_verify",
+          newEvidence: false,
+        })
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("website_entry.verify_seam_failed", {
+        uid: claim.candidateId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+
     return {
       result: {
         ok: true,
@@ -408,6 +485,7 @@ export async function runCandidateMagicLinkVerify(
         claireConversationStarted: claireStarted,
         hasResumeOnFile: resumeOnFile,
         portalReady: claireStarted && (resumeOnFile || phoneLinkVerified),
+        phoneLinkVerified,
         senderNumber: sender.senderNumber ?? null,
         senderGroupId: sender.senderGroupId ?? null,
         linkedinUrl: storedLinkedin,
