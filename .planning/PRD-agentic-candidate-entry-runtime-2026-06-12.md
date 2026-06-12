@@ -105,15 +105,61 @@ On the first candidate message after this click, runtime must call the entry/pit
 - known + pitched + role context: connect the pitch to the role and start/resume prescreen
 - known + resume parse still pending: acknowledge the pending parse and ask only for missing context that cannot come from the resume
 
-### 2.5 Role Screen UX After Known Profile
+### 2.5 Phone Binding and "No Re-Onboarding" UX
 
-For a role-specific "Talk to Claire" or prescreen trigger:
+Website-origin candidates still need a Claire phone/iMessage thread when they click "Talk to Claire."
 
-1. Claire should not skip the candidate pitch if this is the first time the candidate's profile/resume/LinkedIn evidence became available.
-2. Claire should not ask broad onboarding questions if the website/resume already answered them.
-3. Before Q1, Claire should load prior resume/LinkedIn/conversation evidence and adapt the first role probe.
-4. If the candidate already gave relevant evidence, Claire asks for additions/corrections/fresher details. If not, Claire asks the role's evidence probe directly.
-5. The role screen starts only after the candidate understands the pitch/profile Claire is using, unless the user explicitly sent a role prescreen token and the profile is already pitched or intentionally skipped.
+1. If the candidate already has a bound phone/Claire thread, open that thread and continue from the known profile.
+2. If the candidate is signed in on the website but has no bound phone, "Talk to Claire" must create or route through a phone-binding step. The first Claire thread message must be attributable to the same `pa-users/{uid}`; it must not create a stranger profile.
+3. A candidate who onboarded through phone, website login, LinkedIn, or resume upload must never be sent back to the cold onboarding wall after identity is bound.
+4. Portal readiness can come from a verified Claire phone thread even without a resume. Resume is evidence, not the gate for "this is a known Claire user."
+
+### 2.6 Role Prescreen UX: Screen First, Onboard After
+
+For a role-specific "Talk to Claire" or prescreen trigger, Claire starts the role screen directly.
+
+1. Do not block the first prescreen on LinkedIn login, resume upload, profile pitch, or broad onboarding.
+2. Before Q1, Claire should still load known resume/LinkedIn/conversation evidence and adapt the role probe when evidence already exists.
+3. If prior evidence covers the role probe, Claire asks for additions/corrections/fresher details. If not, Claire asks the role's evidence probe directly.
+4. When the prescreen ends, pauses, or the candidate stops, Claire transitions into the candidate-retention flow: "I can keep matching you to better-fit roles if you connect LinkedIn or send a resume."
+5. The post-prescreen retention ask is conversational and optional. It is not a login wall before the role screen.
+
+### 2.7 Post-Pitch Matching Subscription UX
+
+After Claire pitches the candidate and the candidate says yes to matching:
+
+1. Activate the job recommendation subscription.
+2. Send matched roles on a 2-3 day cadence, not an every-turn spam loop.
+3. Every outbound recommendation path must honor STOP / unsubscribe. If the candidate says "stop" or asks to pause job recommendations, pause the subscription and pending sends.
+4. The pitch offer should ask one clear thing: whether Claire should pull/send matching roles now. Profile tweaks remain available, but they should not make "yes" ambiguous.
+
+### 2.8 Prescreen Outcome UX
+
+Claire must understand and explain downstream prescreen outcomes, not only the live Q&A screen.
+
+1. **Rejected / not moving forward.**
+   - A rejection can be initiated from dashboard review or by timeout.
+   - If a hiring-manager/recruiter decision is still absent after 21 days, WeKruit auto-rejects rather than leaving the candidate in limbo.
+   - The outbound rejection must include a comprehensive, personalized, evidence-backed reason.
+   - Phrase the rationale as hiring-manager notes / role-team feedback, not as an internal model score.
+   - If the candidate asks later, Claire should consistently explain it as notes from the hiring manager / role team.
+2. **Moved to next step.**
+   - Claire should tell the candidate they moved forward and route them into interview scheduling.
+   - If scheduling is already available for the role, Claire offers slots or schedules through the existing scheduling tools.
+   - If a booking exists, Claire can answer interview time/status questions from booking context.
+3. **Under review / waiting.**
+   - Claire can explain that the first screen is waiting on WeKruit / hiring-team review.
+   - Claire should not imply pass/reject before the review state is final.
+
+### 2.9 Context-Aware Status UX
+
+Claire should answer operational questions using stored state before asking new questions:
+
+1. "Did I schedule an interview?" -> read interview bookings and answer with time/status/role.
+2. "Where am I with Invoko?" -> read prescreen sessions and candidate job status.
+3. "What jobs have you matched me to?" -> read recommendation/match history.
+4. "What happened with my previous screen?" -> read prior prescreen terminal/review/outcome state.
+5. "Can you keep sending matches?" / "stop sending matches" -> read and update recommendation subscription state.
 
 ## 3. Non-Negotiable Design Rules
 
@@ -134,14 +180,19 @@ For a role-specific "Talk to Claire" or prescreen trigger:
 | SMS prescreen/apply trigger evidence | `prescreen`/`apply` control texts are consumed inline by the webhook and historically did not create `pa-inbound-events` evidence. | Outbox RULE-1 can see "no prior inbound" for the exact person who just texted a valid token. | Small | P0 |
 | Website first pitch | Candidate verify creates/claims profile and returns portal flags. | No first-class runtime event that says "candidate entered from website with auth/resume/linkedin evidence; pitch and choose next action." | Medium | P0 |
 | Website "Talk to Claire" continuation | Site has CTAs and auth/profile state. | First user message after website login/upload is not guaranteed to resume the known candidate state and run the existing pitch turn. | Medium | P0 |
+| Talk-to-Claire phone binding | Phone-code linking exists and portal readiness can use verified Claire phone threads. | Website-origin Talk-to-Claire is not specified as a binding path; a web user without a bound phone can still fall into stranger/onboarding behavior. | Medium | P0 |
 | Google/Gmail login | `/login` signs in via Google or magic link and calls candidate verify. | Verify does not guarantee a Claire runtime pitch; web flow can land in portal/job page without contextual conversation. | Medium | P0 |
 | LinkedIn OAuth login | OAuth login exists and candidate verify detects `li_*` / `linkedinSignIn`. | OAuth profile is not enough by itself to guarantee canonical LinkedIn URL enrichment or Claire pitch. | Medium | P0 |
 | LinkedIn connect URL flow | `paLinkedinConnectSubmit` links URL, can enrich via Coresignal, and can emit a runtime event for canary. | Behavior is path/canary specific and not unified with first-party website login. | Medium | P1 |
 | Resume upload from public job | Inline job page says resume is saved/processing; legacy `/j/:jobId/cv` still says "Resume uploaded. You can close this tab." | Resume upload does not consistently trigger Claire's runtime pitch/start decision. | Medium | P0 |
 | Coresignal enrichment | Admin/external-supply adapters, collect client, mirror, tag bridge, and experience merge exist. | First-party self-signup enrichment is not one unified product path tied to Claire's first pitch. | Medium/Large | P1 |
 | Prescreen start | Trigger starts deterministic prescreen runtime. | Kickoff does not consistently load global profile/tags/memory/prior answers before asking Q1. | Large | P1 |
+| Post-prescreen onboarding | Prescreen terminal actions exist and post-match retention exists in places. | Product sequence is unclear: role screen should start first, then Claire should invite LinkedIn/resume/matching after end/stop. | Medium | P0 |
 | Prescreen answer handling | Reducer commits answers; audit shows off-script text can be consumed as answers. | Need pre-reducer intent tool path: answer vs already-did-this vs question vs pause/exit. | Large | P1 |
 | Prescreen ending | Terminal copy and terminal actions are partly deterministic. | Ending narration and per-layer next step should be agent/tool-backed and terminal-cause aware. | Medium | P1 |
+| Prescreen outcome follow-up | Dashboard/admin outcomes and scheduling tools exist. | Candidate UX for rejection, 21-day timeout auto-reject, hiring-manager-note explanation, moved-forward scheduling, and later status questions is not captured as one flow. | Medium/Large | P0 |
+| Matching subscription cadence | Job recommendation subscription and STOP handling exist. | Runtime must verify the post-pitch "yes" path activates a 2-3 day cadence and that STOP/pause suppresses pending proactive sends. | Small/Medium | P0 |
+| Context-aware status answers | Tools exist for match status, prescreen progress, and scheduling. | Runtime UX does not explicitly route candidate questions about scheduled interviews, previous screens, or job matches to read tools first. | Medium | P0 |
 | Preferences/tags | Write side exists for some axes. | Runtime context renders only part of saved tags; visa/salary/industry/company size can be missing from prompt context. | Small | P0 |
 | Recommendation history | Matcher ledger exists. | Conversation context does not render compact roles-on-file/status/token availability. | Small | P0 |
 | Conversation history | Current session transcript is loaded. | Cross-session/cross-number summary is missing for known users. | Medium | P1 |
@@ -186,8 +237,10 @@ On successful candidate verify:
    - `jobIdContext` when entered from `/j/:jobId` or `/j/:jobId/cv`
 2. Runtime loads context and chooses the same pitch path used by direct SMS LinkedIn/resume uptake.
 3. If no outbound-capable thread exists, persist `pendingClaireContinuation` so "Talk to Claire" resumes as a known candidate.
-4. If job context exists and profile is sufficient, runtime pitches first when needed, then calls `start_prescreen`.
-5. If profile is missing key info, runtime asks for the smallest missing item.
+4. If the candidate clicks "Talk to Claire" and no phone is bound, start/continue phone binding before treating the iMessage thread as established.
+5. If job context exists, runtime starts/resumes the role prescreen directly. Do not force profile pitch/onboarding before Q1.
+6. If no job context exists and profile evidence is available, runtime uses the existing pitch path and offers matching.
+7. If profile is missing key info, runtime asks for the smallest missing item.
 
 ### 5.3 Website Login: LinkedIn OAuth
 
@@ -215,11 +268,12 @@ On successful resume upload:
 When a candidate signs in or uploads a resume on the website and then clicks "Talk to Claire":
 
 1. The click/message carries `candidateId`, `entryEventId`, and optional `jobIdContext`.
-2. Runtime reads the pending website-entry state before treating the message as a normal free-form chat.
-3. If the candidate has not received the pitch, runtime sends the existing pitch turn.
-4. If the candidate has already received the pitch, runtime references that state and offers the next action.
-5. If a role is attached, runtime transitions from pitch/status into prescreen start/resume.
-6. The reply must not ask for login, LinkedIn, or resume when the website already supplied those signals.
+2. If no phone/Claire thread is bound, runtime starts or resumes phone binding and links the resulting handle to the same candidate.
+3. Runtime reads the pending website-entry state before treating the message as a normal free-form chat.
+4. If a role is attached, runtime starts/resumes the prescreen directly and defers onboarding/pitch until after the screen ends or pauses.
+5. If no role is attached and the candidate has not received the pitch, runtime sends the existing pitch turn.
+6. If the candidate has already received the pitch, runtime references that state and offers the next action.
+7. The reply must not ask for login, LinkedIn, or resume when the website already supplied those signals.
 
 ### 5.6 LinkedIn Connect URL
 
@@ -237,7 +291,7 @@ Before the first prescreen question:
 1. Runtime calls `read_candidate_context`.
 2. Runtime calls `read_prescreen_history(jobId)` and `read_recommendation_history`.
 3. Runtime calls `read_memory`.
-4. Runtime calls `start_prescreen(jobId, candidateId)` only after checking duplicate/completed/paused state.
+4. Runtime calls `start_prescreen(jobId, candidateId)` after checking duplicate/completed/paused state. A missing LinkedIn/resume/profile pitch must not block Q1.
 5. The first question is adapted:
    - If resume/LinkedIn/tags already answer it, Claire cites the evidence and asks for additions or confirmation.
    - If prior answer exists for same topic, Claire asks "anything new to add?" instead of asking from scratch.
@@ -256,6 +310,36 @@ Ending is a tool-backed runtime action:
    - needs-review / waiting on WeKruit
 4. No one-size "nice work" copy for every terminal cause.
 
+### 5.9 Post-Prescreen Retention and Matching
+
+After a role screen ends, pauses, or the candidate stops:
+
+1. Claire invites the candidate into the durable matching flow.
+2. If LinkedIn/resume is missing, Claire asks for one of them as the fastest way to find better-fit roles.
+3. If enough profile evidence exists, Claire can pitch and ask whether to send matched roles.
+4. If the candidate says yes, activate the job recommendation subscription on a 2-3 day cadence.
+5. If the candidate says stop/pause, pause recommendations and pending proactive sends.
+
+### 5.10 Prescreen Outcome and Interview Scheduling
+
+When admin review, hiring-manager feedback, timeout, or scheduler events update the candidate:
+
+1. Rejection/timeout outcome emits a runtime event with the decision source, role context, and evidence-backed reason.
+2. If no final decision exists after 21 days, WeKruit auto-rejects with a personalized, role-specific reason rather than leaving the status hanging.
+3. Claire phrases rejection reasons as hiring-manager / role-team notes and keeps that explanation consistent on follow-up.
+4. Moved-forward outcome emits a runtime event that offers interview scheduling.
+5. Existing interview bookings are readable by Claire for follow-up status questions.
+
+### 5.11 Context and Status Questions
+
+On any normal conversation turn, before answering status questions, runtime reads the relevant state:
+
+1. interview bookings
+2. prescreen sessions and review status
+3. candidate job/match status
+4. recommendation subscription state
+5. recent outbound/inbound thread context
+
 ---
 
 ## 6. Runtime Tool Contract
@@ -271,6 +355,10 @@ Ending is a tool-backed runtime action:
 | `read_recommendation_history(candidateId)` | Roles sent, status, token availability, suppressed/rejected roles |
 | `read_enrichment_status(candidateId)` | Resume parse, LinkedIn/Coresignal enrichment, conflicts, pending jobs |
 | `read_candidate_entry_state(candidateId, entryEventId?)` | Pending website-origin continuation, pitch status, source, and attached job context |
+| `read_phone_binding_status(candidateId)` | Bound phone/iMessage thread state and whether Talk-to-Claire can safely open a thread |
+| `read_interview_bookings(candidateId, jobId?)` | Scheduled interview times, booking status, role/company, and reschedule/cancel state |
+| `read_candidate_job_status(candidateId, jobId?)` | Candidate-visible job status across match, prescreen, review, interview, rejected, and hired states |
+| `read_recommendation_subscription(candidateId)` | Active/paused state, cadence, last batch sent, next eligible send |
 
 ### Write/action tools
 
@@ -286,6 +374,10 @@ Ending is a tool-backed runtime action:
 | `start_enrichment(candidateId, source)` | Resume/LinkedIn/Coresignal enrichment job |
 | `create_candidate_entry_event(candidateId, source, context)` | Website-origin runtime entry |
 | `mark_pitch_sent(candidateId, source, pitchTurnId)` | Durable pitch state so Talk-to-Claire can continue instead of re-pitching or re-onboarding |
+| `start_phone_binding(candidateId, phone?)` | Website-origin Talk-to-Claire binding/code flow |
+| `set_recommendation_subscription(candidateId, status, cadence)` | Activate/pause recurring matched-role sends |
+| `emit_prescreen_outcome(candidateId, jobId, outcome)` | Candidate-facing rejection/moved-forward/timeout runtime event |
+| `schedule_or_offer_interview(candidateId, jobId, constraints?)` | Route moved-forward candidates into interview scheduling |
 
 ### Tool-loop rule
 
@@ -334,6 +426,25 @@ Every runtime turn receives a compact context block. mem0 snippets are supplemen
 - [ ] If no outbound-capable thread exists at website entry, "Talk to Claire" resumes the pending known-candidate state and sends the pitch on the first candidate message.
 - [ ] Website-origin Claire never asks for login, LinkedIn, or resume when those signals are already present.
 - [ ] Returning signed-in candidate sees status/next action, not a full re-introduction.
+- [ ] "Talk to Claire" binds or resumes the candidate phone/Claire thread before any generic chat path.
+- [ ] A candidate with a verified Claire phone thread or website identity never cold-starts onboarding again.
+
+### P0: Prescreen-First Flow
+
+- [ ] Role prescreen trigger starts Q1 directly even when LinkedIn/resume/pitch is missing.
+- [ ] Missing LinkedIn/resume/profile pitch never blocks the first role screen.
+- [ ] After prescreen end, pause, or user stop, Claire invites LinkedIn/resume/profile enrichment for future matching.
+- [ ] If the candidate accepts matching after the pitch, job recommendations activate on a 2-3 day cadence.
+- [ ] STOP / pause requests pause recommendation subscription and pending sends.
+
+### P0: Outcome and Status UX
+
+- [ ] Dashboard rejection emits a personalized candidate-facing rejection with hiring-manager/role-team-note framing.
+- [ ] No-decision timeout after 21 days auto-rejects with a personalized, role-specific reason.
+- [ ] Follow-up questions about a rejection explain it consistently as hiring-manager / role-team notes.
+- [ ] Moved-forward outcome offers interview scheduling through existing scheduling tools.
+- [ ] Candidate questions about scheduled interviews, previous prescreens, and job matches read state before answering.
+- [ ] Candidate questions about whether Claire will keep sending matches read recommendation subscription state before answering or updating it.
 
 ### P0: Context and Memory
 
@@ -380,7 +491,33 @@ Wire candidate verify, public resume upload, and LinkedIn login to emit the even
 
 The event handler must prefer the existing pitch engine/posture over new copy. If an outbound thread is unavailable, it records a pending website-origin continuation consumed by the next "Talk to Claire" message.
 
-### Phase 0C: Context Completion
+### Phase 0C: Talk-to-Claire Phone Binding
+
+Make Talk-to-Claire identity-safe:
+
+- detect whether the signed-in candidate already has a bound Claire phone thread
+- if not, route through phone binding before opening the Claire thread as an established candidate
+- once bound, mark the user as known/portal-ready enough to avoid cold onboarding
+- preserve job context across the binding step
+
+### Phase 0D: Prescreen-First Retention Handoff
+
+Correct the role flow:
+
+- start prescreen directly from role trigger / Talk-to-Claire job context
+- after terminal/pause/stop, emit a retention handoff asking for LinkedIn/resume or offering matching
+- when the user accepts matching, activate 2-3 day job recommendation cadence with STOP compliance
+
+### Phase 0E: Prescreen Outcome Runtime Events
+
+Unify candidate-facing post-screen outcomes:
+
+- dashboard rejection event
+- 21-day no-decision auto-reject event
+- moved-forward / schedule-interview event
+- context read tools for later status questions
+
+### Phase 0F: Context Completion
 
 Extend runtime context with:
 
