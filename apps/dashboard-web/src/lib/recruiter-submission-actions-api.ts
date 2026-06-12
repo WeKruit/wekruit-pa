@@ -12,6 +12,15 @@ export type RecruiterSubmissionAction =
   | "client_review"
   | "hired"
 
+export type RecruiterCandidateRejectionCategory = "quality" | "role_fit"
+export type RecruiterCandidateTier = "tier_1" | "tier_2" | "tier_3"
+
+export interface RecruiterSubmissionRejectionInput {
+  category: RecruiterCandidateRejectionCategory
+  candidateTier: RecruiterCandidateTier
+  reason: string
+}
+
 /** Client-side mirror of the callable's status writes (for optimistic UI). */
 export const RECRUITER_SUBMISSION_ACTION_TO_STATUS: Record<RecruiterSubmissionAction, string> = {
   advance: "advanced",
@@ -29,6 +38,7 @@ export interface RecruiterSubmissionActionInput {
   action: RecruiterSubmissionAction
   note?: string
   requestMessage?: string
+  rejection?: RecruiterSubmissionRejectionInput
   adminToken?: string
 }
 

@@ -35,6 +35,7 @@ import {
   type CoresignalEmployeeCollectV2,
 } from "@pa/external-supply"
 import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
+import { ensureRecruiterSubmissionCandidateTracked } from "./recruiter-candidate-tracking.js"
 
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY")
@@ -577,6 +578,24 @@ export async function runRecruiterSubmissionEval(
     const candidate = extractCandidate(submission)
     const ticks = extractChecklistTicks(submission)
     const research = await researchCandidate(candidate.linkedinUrl ?? candidate.link, deps, raw.submissionId)
+    const evaluatedAt = now()
+    const tracking = await ensureRecruiterSubmissionCandidateTracked(deps.db, {
+      submissionId: raw.submissionId,
+      submission,
+      now: evaluatedAt,
+      writeCreatedEvent: true,
+    })
+    const trackingPatch = tracking.status === "tracked" && tracking.candidateId
+      ? {
+          candidateId: tracking.candidateId,
+          candidateTracking: {
+            candidateId: tracking.candidateId,
+            linkedinUrl: tracking.canonicalLinkedInUrl,
+            linkedAt: evaluatedAt,
+            source: "recruiter_submission",
+          },
+        }
+      : {}
 
     const userText = buildJudgeUserText({ jobId, job, groups, candidate, ticks, submission, research })
     const { judgment, usedModel } = await judgeSubmission(deps, userText, raw.submissionId, groups)
@@ -584,11 +603,11 @@ export async function runRecruiterSubmissionEval(
     const aiEvaluation: SubmissionAiEvaluation = {
       ...judgment,
       ...(research ? { research } : {}),
-      evaluatedAt: now(),
+      evaluatedAt,
       model: usedModel,
       version: SUBMISSION_EVAL_VERSION,
     }
-    await ref.set({ aiEvaluation }, { merge: true })
+    await ref.set({ aiEvaluation, ...trackingPatch }, { merge: true })
     deps.log?.("evaluation_written", {
       submissionId: raw.submissionId,
       verdict: aiEvaluation.verdict,

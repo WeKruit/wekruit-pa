@@ -1796,6 +1796,7 @@ describe("recruiter submissions", () => {
     assert.equal(result.ok, true)
     if (!result.ok) return
     assert.equal(result.value.candidate.email, "ada@example.com")
+    assert.equal(result.value.candidate.linkedinUrl, "https://linkedin.com/in/ada")
     assert.equal(result.value.source, "hiring-board")
     assert.equal(result.value.sourcedCandidateId, "candidate_123")
   })
@@ -1827,6 +1828,31 @@ describe("recruiter submissions", () => {
     })
   })
 
+  it("requires a LinkedIn profile URL and canonicalizes it for identity tracking", () => {
+    assert.deepEqual(validateSubmission({
+      ...validSubmission,
+      candidate: {
+        ...validSubmission.candidate,
+        link: "https://storage.example.com/resumes/ada.pdf",
+      },
+    }), {
+      ok: false,
+      reason: "candidate_linkedin_url_required",
+    })
+
+    const result = validateSubmission({
+      ...validSubmission,
+      candidate: {
+        ...validSubmission.candidate,
+        link: "https://www.linkedin.com/in/Ada-Lovelace/?trk=profile",
+      },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.candidate.linkedinUrl, "https://linkedin.com/in/ada-lovelace")
+    assert.equal(result.value.candidate.link, "https://linkedin.com/in/ada-lovelace")
+  })
+
   it("accepts optional candidate linkedin and resume urls and stores them on the candidate", () => {
     const result = validateSubmission({
       ...validSubmission,
@@ -1837,7 +1863,7 @@ describe("recruiter submissions", () => {
     if (!result.ok) return
     assert.equal(result.value.candidate.linkedinUrl, "https://linkedin.com/in/ada-lovelace")
     assert.equal(result.value.candidate.resumeUrl, "https://storage.example.com/resumes/ada.pdf")
-    assert.equal(result.value.candidate.link, "https://linkedin.com/in/ada")
+    assert.equal(result.value.candidate.link, "https://linkedin.com/in/ada-lovelace")
   })
 
   it("accepts nested candidate.linkedinUrl / candidate.resumeUrl from newer clients", () => {
@@ -1855,7 +1881,7 @@ describe("recruiter submissions", () => {
     assert.equal(result.value.candidate.resumeUrl, "https://storage.example.com/resumes/ada.pdf")
   })
 
-  it("keeps old payloads unchanged and drops unknown fields from the stored value", () => {
+  it("drops unknown fields from the stored value", () => {
     const result = validateSubmission({
       ...validSubmission,
       unexpectedTopLevel: "ignored",
@@ -1863,7 +1889,7 @@ describe("recruiter submissions", () => {
     })
     assert.equal(result.ok, true)
     if (!result.ok) return
-    assert.equal("linkedinUrl" in result.value.candidate, false)
+    assert.equal(result.value.candidate.linkedinUrl, "https://linkedin.com/in/ada")
     assert.equal("resumeUrl" in result.value.candidate, false)
     assert.equal("unexpectedNested" in result.value.candidate, false)
     assert.equal("unexpectedTopLevel" in result.value, false)
@@ -1891,6 +1917,7 @@ describe("recruiter submissions", () => {
       name: "Ada Lovelace",
       email: "ada@example.com",
       link: "https://linkedin.com/in/ada",
+      linkedinUrl: "https://linkedin.com/in/ada",
     })
   })
 
@@ -1898,6 +1925,13 @@ describe("recruiter submissions", () => {
     assert.deepEqual(validateSubmission({
       ...validSubmission,
       candidateLinkedinUrl: 42,
+    }), {
+      ok: false,
+      reason: "invalid_candidate_linkedin_url",
+    })
+    assert.deepEqual(validateSubmission({
+      ...validSubmission,
+      candidateLinkedinUrl: "https://linkedin.com/company/wekruit",
     }), {
       ok: false,
       reason: "invalid_candidate_linkedin_url",

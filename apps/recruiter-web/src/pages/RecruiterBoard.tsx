@@ -3059,7 +3059,7 @@ function computeRecruiterEarningsMetrics(
       progressLabel: `${Math.min(sourcedCandidates.filter((candidate) => candidate.stage !== "archived").length, 5)}/5 sourced`,
       reward: "Matchboard unlock",
       payoutTiming: "No direct payout; this unlocks better matchboard and access-review signal.",
-      eligibility: "Distinct active candidates with a LinkedIn or resume link count toward this challenge.",
+      eligibility: "Distinct active candidates with a LinkedIn profile URL count toward this challenge.",
       tone: sourcedCandidates.length ? "info" : "mute",
       actionLabel: "Add candidates",
       action: "candidates",
@@ -3684,7 +3684,7 @@ function buildRecruiterGroundRulesCenter(
       {
         label: "Ownership first",
         value: "One record",
-        body: "Use one candidate identity record with email or profile link before any recruiter outreach scales.",
+        body: "Use one candidate identity record with email and LinkedIn before any recruiter outreach scales.",
         tone: duplicateIds.size ? "warn" : "success",
         action: "candidates",
         actionLabel: "Check ownership",
@@ -3813,12 +3813,12 @@ function computeRecruiterTrustCenter(
     : confirmationNeeds.length > 0
       ? "Resend confirmation or stop treating those packets as clean submissions until the candidate confirms."
       : duplicateIds.size > 0
-        ? "Keep one source-of-truth record per candidate email or profile link before outreach continues."
+        ? "Keep one source-of-truth record per candidate email and LinkedIn before outreach continues."
         : followUpsDue.length > 0
           ? "Move overdue prospects forward or archive them so the bench stays truthful."
           : readyCandidates.length > 0
             ? "Match the strongest ready candidates into role briefs and submit only with consent."
-            : "Add email, LinkedIn/resume, notes, outreach status, and follow-up dates to make matching reliable."
+            : "Add email, LinkedIn, notes, outreach status, and follow-up dates to make matching reliable."
   const advancedSubmissions = submissions.filter((submission) => ADVANCED_STATUSES.includes(submission.status ?? ""))
   const hiredSubmissions = submissions.filter((submission) => submission.status === "hired")
   const cleanSubmissions = submissions.filter((submission) => {
@@ -5003,7 +5003,7 @@ function buildRecruiterWorkQueue(
       title: sourcedCandidates.length ? "Move prospects to ready" : "Build a sourced shortlist",
       body: sourcedCandidates.length
         ? "Screen saved prospects, mark the strongest as ready, then submit from the role brief."
-        : "Save LinkedIn or resume links before submitting so duplicate and status tracking can work.",
+        : "Save LinkedIn profile URLs before submitting so duplicate and status tracking can work.",
       cta: "Open candidate CRM",
       action: "candidates",
       tone: "live",
@@ -6982,7 +6982,7 @@ function buildCandidateOwnershipDesk(
       ? "A submitted candidate still needs confirmation before the submission has a clean consent trail."
       : submittedReceipts.length || contactedCandidates.length
         ? "Candidate activity is tied to outreach status, role lane, consent, and submission receipts."
-        : "Save candidates with role, email, profile link, outreach status, and notes before any formal submission."
+        : "Save candidates with role, email, LinkedIn, outreach status, and notes before any formal submission."
 
   return {
     label: "Ownership desk",
@@ -7025,7 +7025,7 @@ function buildCandidateOwnershipDesk(
       {
         label: "Check lane",
         title: "Role-tied saves run a company-lane identity check",
-        body: "When a role is selected, WeKruit checks candidate email and profile link against existing sourced and submitted records for that role.",
+        body: "When a role is selected, WeKruit checks candidate email and LinkedIn against existing sourced and submitted records for that role.",
         tone: "live",
       },
       {
@@ -7198,6 +7198,18 @@ function normalizeBulkCandidateLink(value: string): string {
   return cleaned
 }
 
+function looksLikeLinkedinProfileUrl(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed.replace(/^\/\//, "")}`
+  try {
+    const parsed = new URL(withScheme)
+    return /(^|\.)linkedin\.com$/i.test(parsed.hostname) && /^\/(?:[a-z]{2}\/)?in\/[^/?#]+/i.test(parsed.pathname)
+  } catch {
+    return false
+  }
+}
+
 function inferCandidateNameFromLink(link: string): string {
   const withoutQuery = link.split(/[?#]/)[0] ?? link
   const slug = withoutQuery.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "Candidate"
@@ -7214,7 +7226,7 @@ function parseBulkCandidateLine(line: string, rowNumber: number): BulkCandidateP
   const parts = delimiter
     ? raw.split(delimiter).map(cleanBulkCell).filter(Boolean)
     : [raw]
-  const linkPattern = /(?:https?:\/\/|www\.|linkedin\.com\/)\S+/i
+  const linkPattern = /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/\S+/i
   const emailPattern = /[^\s,|;<>]+@[^\s,|;<>]+\.[^\s,|;<>]+/i
   const email = raw.match(emailPattern)?.[0]?.toLowerCase()
   const linkIndex = parts.findIndex((part) => linkPattern.test(part))
@@ -7222,7 +7234,8 @@ function parseBulkCandidateLine(line: string, rowNumber: number): BulkCandidateP
     const linkMatch = parts[linkIndex]?.match(linkPattern)?.[0]
     const link = linkMatch ? normalizeBulkCandidateLink(linkMatch) : ""
     const name = cleanBulkCell(parts.slice(0, linkIndex).join(" ").replace(email ?? "", "")) || inferCandidateNameFromLink(link)
-    if (!link) return { ok: false, rowNumber, raw: line, reason: "Missing LinkedIn or resume link" }
+    if (!link) return { ok: false, rowNumber, raw: line, reason: "Missing LinkedIn profile URL" }
+    if (!looksLikeLinkedinProfileUrl(link)) return { ok: false, rowNumber, raw: line, reason: "Use a LinkedIn /in/ profile URL" }
     const currentRole = cleanBulkCell(parts[linkIndex + 1] ?? "")
     const notes = parts.slice(linkIndex + 2).map(cleanBulkCell).filter((part) => part.toLowerCase() !== email).filter(Boolean).join(" · ")
     return {
@@ -7240,8 +7253,9 @@ function parseBulkCandidateLine(line: string, rowNumber: number): BulkCandidateP
   }
 
   const linkMatch = raw.match(linkPattern)?.[0]
-  if (!linkMatch) return { ok: false, rowNumber, raw: line, reason: "Missing LinkedIn or resume link" }
+  if (!linkMatch) return { ok: false, rowNumber, raw: line, reason: "Missing LinkedIn profile URL" }
   const link = normalizeBulkCandidateLink(linkMatch)
+  if (!looksLikeLinkedinProfileUrl(link)) return { ok: false, rowNumber, raw: line, reason: "Use a LinkedIn /in/ profile URL" }
   const beforeLink = cleanBulkCell(raw.slice(0, raw.indexOf(linkMatch)).replace(email ?? "", "").replace(/[-–—|,]+$/g, ""))
   const afterLink = cleanBulkCell(raw.slice(raw.indexOf(linkMatch) + linkMatch.length).replace(/^[-–—|,]+/g, ""))
   return {
@@ -7340,10 +7354,11 @@ function buildCandidateNetworkExposure(
       .slice(0, 3)
     const topMatch = matches[0]
     const matchedSubmissions = candidateMatchedSubmissions(candidate, submissions)
-    const hasIdentity = Boolean(candidate.candidate?.email && candidate.candidate?.link)
+    const hasLinkedin = Boolean(candidate.candidate?.link && looksLikeLinkedinProfileUrl(candidate.candidate.link))
+    const hasIdentity = Boolean(candidate.candidate?.email && hasLinkedin)
     const profileProofCount = [
       candidate.candidate?.email,
-      candidate.candidate?.link,
+      hasLinkedin,
       candidate.candidate?.currentRole,
       candidate.candidate?.yoe,
       candidate.candidate?.notes,
@@ -7363,7 +7378,7 @@ function buildCandidateNetworkExposure(
       tone = "warn"
       label = "Proof missing"
       title = `${candidateName(candidate)} needs identity proof`
-      body = `${profileProofCount}/5 profile signals captured. Add email and LinkedIn/resume before wider matching.`
+      body = `${profileProofCount}/5 profile signals captured. Add email and LinkedIn before wider matching.`
       actionLabel = "Complete profile"
       href = undefined
     } else if (candidate.calibrationStatus === "bad_fit") {
@@ -7436,7 +7451,7 @@ function buildCandidateNetworkExposure(
   const body = readyForNetwork
     ? "Use saved candidates across WeKruit collab roles instead of treating every role as a cold-start search."
     : proofMissing
-      ? "Email, LinkedIn/resume, and notes are what make a candidate reusable across the recruiter marketplace."
+      ? "Email, LinkedIn, and notes are what make a candidate reusable across the recruiter marketplace."
       : "Save prospects into the private bench so new roles can be matched against existing recruiter supply."
   return {
     tone: readyForNetwork ? "live" : proofMissing ? "warn" : activeCandidates.length ? "info" : "mute",
@@ -7459,7 +7474,7 @@ function buildCandidateNetworkExposure(
       {
         label: "Needs proof",
         value: String(proofMissing),
-        body: "Candidates missing email or LinkedIn/resume before wider matching.",
+        body: "Candidates missing email or LinkedIn before wider matching.",
         tone: proofMissing ? "warn" : "success",
       },
       {
@@ -7720,7 +7735,7 @@ function buildCandidateMatchCommand(
       {
         label: "Profile proof",
         value: `${profileItems}/5`,
-        body: hasCandidateIdentity ? "Email and link are present for consent workflow." : "Email and LinkedIn/resume are required.",
+        body: hasCandidateIdentity ? "Email and LinkedIn are present for consent workflow." : "Email and LinkedIn are required.",
         tone: hasCandidateIdentity ? profileItems >= 4 ? "success" : "info" : "warn",
         href: "/recruiters?tab=candidates",
       },
@@ -7767,7 +7782,7 @@ function MatchboardTab({
         <div><h2>Candidate-to-role matchboard</h2><p>Pick a saved prospect, compare open roles, then submit from the strongest brief.</p></div>
       </header>
       {activeCandidates.length === 0 ? (
-        <p className="rb-empty">Save sourced candidates first. The matchboard needs candidate notes or a LinkedIn/resume link to rank open roles.</p>
+        <p className="rb-empty">Save sourced candidates first. The matchboard needs candidate notes and a LinkedIn profile URL to rank open roles.</p>
       ) : (
         <div className="rb-matchboard">
           <aside className="rb-matchboard__candidates" aria-label="Saved candidates">
@@ -7973,8 +7988,18 @@ function CandidatesTab({
     if (!link) {
       const state: CandidateIdentityCheckState = {
         status: "error",
-        title: "Profile link required",
-        body: "Add a LinkedIn or resume link before checking candidate ownership.",
+        title: "LinkedIn required",
+        body: "Add the candidate's LinkedIn /in/ profile URL before checking ownership.",
+        tone: "warn",
+      }
+      setIdentityCheck(state)
+      return null
+    }
+    if (!looksLikeLinkedinProfileUrl(link)) {
+      const state: CandidateIdentityCheckState = {
+        status: "error",
+        title: "LinkedIn profile required",
+        body: "Use a valid LinkedIn /in/ profile URL. Resume links are supporting evidence, not identity.",
         tone: "warn",
       }
       setIdentityCheck(state)
@@ -7995,7 +8020,7 @@ function CandidatesTab({
         : {
             status: "clear",
             title: "No role conflict found",
-            body: "No existing sourced or submitted candidate matched this email/link for the selected role. You still need consent before formal submission.",
+            body: "No existing sourced or submitted candidate matched this email and LinkedIn for the selected role. You still need consent before formal submission.",
             tone: "success",
           }
       setIdentityCheck(state)
@@ -8020,6 +8045,11 @@ function CandidatesTab({
     setErr(null)
     try {
       const selectedJobId = form.jobId?.trim()
+      const link = form.candidate.link.trim()
+      if (!looksLikeLinkedinProfileUrl(link)) {
+        setErr("Use the candidate's LinkedIn /in/ profile URL before saving.")
+        return
+      }
       if (selectedJobId) {
         const check = await runIdentityCheck()
         if (!check || check.status !== "clear") {
@@ -8034,7 +8064,7 @@ function CandidatesTab({
         candidate: {
           name: form.candidate.name.trim(),
           email: form.candidate.email?.trim().toLowerCase() || undefined,
-          link: form.candidate.link.trim(),
+          link,
           currentRole: form.candidate.currentRole?.trim() || undefined,
           yoe: form.candidate.yoe?.trim() || undefined,
           notes: form.candidate.notes?.trim() || undefined,
@@ -8076,7 +8106,11 @@ function CandidatesTab({
     const jobId = candidate.inboundJobId || candidate.jobId || ""
     const link = candidate.candidate?.link?.trim()
     if (!link) {
-      setErr("This saved candidate is missing the link needed to update it.")
+      setErr("This saved candidate is missing the LinkedIn profile URL needed to update it.")
+      return
+    }
+    if (!looksLikeLinkedinProfileUrl(link)) {
+      setErr("This saved candidate needs a LinkedIn /in/ profile URL before it can be updated.")
       return
     }
     setUpdatingId(candidate.id)
@@ -8177,7 +8211,11 @@ function CandidatesTab({
     const jobId = candidate.inboundJobId || candidate.jobId || ""
     const link = candidate.candidate?.link?.trim()
     if (!jobId || !link) {
-      setErr("This saved candidate is missing the role or link needed for calibration.")
+      setErr("This saved candidate is missing the role or LinkedIn profile URL needed for calibration.")
+      return
+    }
+    if (!looksLikeLinkedinProfileUrl(link)) {
+      setErr("This saved candidate needs a LinkedIn /in/ profile URL before calibration.")
       return
     }
     setCalibratingId(candidate.id)
@@ -8315,7 +8353,7 @@ function CandidatesTab({
               />
             </label>
             <label>
-              <span>LinkedIn / resume</span>
+                <span>LinkedIn URL</span>
               <input
                 value={form.candidate.link}
                 onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, link: e.target.value } })}
@@ -8330,7 +8368,7 @@ function CandidatesTab({
                 <p>
                   {identityCheck?.body ??
                     (selectedFormJob
-                      ? `${selectedFormJob.title} · ${selectedFormJob.recruiterBoard.label.company}. Check email/link against existing sourced and submitted records for this role.`
+                      ? `${selectedFormJob.title} · ${selectedFormJob.recruiterBoard.label.company}. Check email and LinkedIn against existing sourced and submitted records for this role.`
                       : "Select a role when you are claiming a specific company lane. Private bench candidates can be matched later.")}
                 </p>
               </div>
@@ -8403,7 +8441,7 @@ function CandidatesTab({
           <section id="bulk-import-candidates" className="rb-bulk-import" aria-label="Bulk import candidates">
             <div>
               <h3>Bulk import</h3>
-              <p>Paste one candidate per line. Leave role on Private bench to rank them on the matchboard later.</p>
+              <p>Paste one candidate per line with a LinkedIn /in/ profile URL. Leave role on Private bench to rank them on the matchboard later.</p>
             </div>
             <textarea
               value={bulkText}
@@ -8482,7 +8520,7 @@ function CandidateDossierPanel({
   const outreach = outreachMeta(candidate.outreach?.status)
   const followUp = candidateFollowUpState(candidate)
   const hasEmail = Boolean(candidate.candidate?.email)
-  const hasLink = Boolean(candidate.candidate?.link)
+  const hasLink = Boolean(candidate.candidate?.link && looksLikeLinkedinProfileUrl(candidate.candidate.link))
   const hasNote = Boolean(candidate.candidate?.notes?.trim())
   const profileProofCount = [hasEmail, hasLink, hasNote, candidate.outreach?.status && candidate.outreach.status !== "not_contacted", candidate.stage === "ready" || candidate.stage === "submitted"].filter(Boolean).length
   const latestSubmission = [...matchedSubmissions].sort((a, b) => timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt))[0]
@@ -8491,7 +8529,7 @@ function CandidateDossierPanel({
     {
       label: "Identity",
       value: hasEmail && hasLink ? "Ready" : `${Number(hasEmail) + Number(hasLink)}/2`,
-      body: hasEmail && hasLink ? "Email and LinkedIn/resume are ready for duplicate checks." : "Add email and LinkedIn/resume before submission.",
+      body: hasEmail && hasLink ? "Email and LinkedIn are ready for duplicate checks." : "Add email and LinkedIn before submission.",
       tone: hasEmail && hasLink ? "success" as const : "warn" as const,
     },
     {
@@ -8518,7 +8556,7 @@ function CandidateDossierPanel({
     : candidate.stage === "ready" && topMatch
       ? { title: "Submit from best role", body: "Open the top role brief, verify hard filters, then submit with consent.", tone: "live" as const }
       : !hasEmail || !hasLink
-        ? { title: "Complete identity proof", body: "Candidate needs email and profile link before clean ownership and consent checks.", tone: "warn" as const }
+        ? { title: "Complete identity proof", body: "Candidate needs email and LinkedIn before clean ownership and consent checks.", tone: "warn" as const }
         : topMatch
           ? { title: "Screen against best role", body: "Use the top match to collect hard-filter evidence and mark ready.", tone: "info" as const }
           : { title: "Keep in private bench", body: "Wait for a stronger WeKruit role or add richer notes for matching.", tone: "mute" as const }
@@ -8784,7 +8822,7 @@ function CandidateNetworkExposurePanel({
         {model.rows.length === 0 && (
           <div className="rb-candidate-network__empty">
             <strong>No reusable candidate supply yet</strong>
-            <p>Save candidates with email, LinkedIn or resume, and notes so future WeKruit roles can match against your bench.</p>
+            <p>Save candidates with email, LinkedIn, and notes so future WeKruit roles can match against your bench.</p>
           </div>
         )}
       </div>
@@ -9079,7 +9117,7 @@ function SubmissionTable({
               <tr id={submissionDomId(submission.id)} key={submission.id}>
                 <td data-label="Candidate">
                   <strong>{submission.candidate?.name ?? "Candidate"}</strong>
-                  <span>{submission.candidate?.email || shortText(submission.candidate?.link, "No email/link", 48)}</span>
+                  <span>{submission.candidate?.email || shortText(submission.candidate?.link, "No email/LinkedIn", 48)}</span>
                 </td>
                 <td data-label="Role">
                   <strong>{shortText(submission.jobTitleSnapshot, "Role", 48)}</strong>

@@ -207,7 +207,34 @@ describe("runRecruiterSubmissionEval", () => {
     assert.equal(doc.status, "submitted")
     const evalWrites = mfs.writeLog.filter((w) => w.path === SUBMISSIONS && w.id === "sub-1" && w.mode === "merge")
     assert.equal(evalWrites.length, 1)
-    assert.deepEqual(Object.keys(evalWrites[0]!.data), ["aiEvaluation"])
+    assert.deepEqual(Object.keys(evalWrites[0]!.data), ["aiEvaluation", "candidateId", "candidateTracking"])
+
+    const users = mfs.store.get("pa-users")
+    assert.equal(users?.size, 1)
+    const [candidateId, user] = [...users!.entries()][0]!
+    assert.equal(user.candidateLifecycleState, "prospect")
+    assert.equal(user.email, "yue@example.com")
+    assert.equal(user.linkedinUrl, "https://linkedin.com/in/yue-h")
+    assert.deepEqual(user.recruiterSubmissionTracking, {
+      lastSubmissionId: "sub-1",
+      lastStatus: "submitted",
+      lastJobId: "job-1",
+      updatedAt: now,
+    })
+
+    const handles = mfs.store.get("pa-candidate-handles")
+    assert.equal(handles?.size, 1)
+    const handle = [...handles!.values()][0]!
+    assert.equal(handle.kind, "linkedin")
+    assert.equal(handle.candidateId, candidateId)
+    assert.equal(handle.normalizedValue, "https://linkedin.com/in/yue-h")
+
+    const events = mfs.store.get("pa-recruiter-candidate-events")
+    assert.equal(events?.size, 1)
+    const event = [...events!.values()][0]!
+    assert.equal(event.kind, "recruiter_submission_created")
+    assert.equal(event.candidateId, candidateId)
+    assert.equal(event.submissionId, "sub-1")
 
     // Judge prompt carries rubric, recruiter CLAIMS, and research.
     const userText = deps.judgeCalls[0]!.userText

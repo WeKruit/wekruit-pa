@@ -10,14 +10,17 @@
  * emails with no matching recruiter profile land in an "Unclaimed
  * submitters" group.
  */
-import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react"
-import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
+import { useEffect, useMemo, useState, type CSSProperties } from "react"
+import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
   runRecruiterSubmissionAction,
   sendRecruiterSubmissionComment,
+  type RecruiterCandidateRejectionCategory,
+  type RecruiterCandidateTier,
+  type RecruiterSubmissionRejectionInput,
   type RecruiterSubmissionAction,
 } from "../lib/recruiter-submission-actions-api.js"
 
@@ -96,6 +99,15 @@ interface BoardSubmissionDoc {
     linkedinUrl?: string
     resumeUrl?: string
     currentRole?: string
+    yoe?: string
+    notes?: string
+    currentCompany?: string
+    location?: string
+    workAuthorization?: string
+    employmentStatus?: string
+    compensationExpectation?: string
+    noticePeriod?: string
+    interviewAvailability?: string
   }
   score?: {
     hardChecked: number
@@ -122,6 +134,35 @@ interface BoardRecruiterDoc {
   name?: string
   email?: string
   status?: string
+}
+
+interface BoardJdBlock {
+  heading?: string
+  body?: string
+  items?: string[]
+  kind?: "list" | "prose"
+}
+
+interface BoardChecklistItem {
+  id?: string
+  text?: string
+}
+
+interface BoardChecklistGroupDoc {
+  kind?: "hard" | "fit" | "bonus" | "anti"
+  heading?: string
+  items?: BoardChecklistItem[]
+}
+
+interface BoardJobDoc {
+  id: string
+  title?: string
+  company?: string
+  jdBlocks?: BoardJdBlock[]
+  recruiterBoard?: {
+    label?: { company?: string }
+    checklist?: { groups?: BoardChecklistGroupDoc[] }
+  }
 }
 
 interface BoardJobGroup {
@@ -227,17 +268,6 @@ const STAGE_PRIMARY_ACTION: Record<Exclude<SubmissionStage, "terminal">, { label
   pending: { label: "Move to interview", action: "wekruit_interview" },
   wekruit_interview: { label: "Send to client", action: "client_review" },
   client_review: { label: "Hired", action: "hired" },
-}
-
-function primaryActionShortLabel(stage: Exclude<SubmissionStage, "terminal">): string {
-  switch (stage) {
-    case "pending":
-      return "Interview"
-    case "wekruit_interview":
-      return "Client"
-    case "client_review":
-      return "Hired"
-  }
 }
 
 function recruiterAccountTone(status: string | null): Parameters<typeof Badge>[0]["tone"] {
@@ -456,7 +486,7 @@ const blockedButtonStyle = {
 const boardGroupBodyStyle: CSSProperties = {
   display: "grid",
   gap: 10,
-  maxHeight: 520,
+  maxHeight: 420,
   overflow: "auto",
   paddingRight: 6,
   scrollbarWidth: "thin",
@@ -479,7 +509,7 @@ const boardTableShellStyle: CSSProperties = {
 }
 
 const boardTableStyle: CSSProperties = {
-  minWidth: 940,
+  minWidth: 760,
   border: 0,
   fontSize: 11.5,
   lineHeight: 1.25,
@@ -493,6 +523,63 @@ const boardHeaderCellStyle: CSSProperties = {
   background: "#fff",
   boxShadow: "0 1px 0 #eee",
   color: "#777",
+}
+
+const reviewWorkspaceStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) minmax(360px, 440px)",
+  gap: 16,
+  alignItems: "start",
+}
+
+const reviewLeftColumnStyle: CSSProperties = {
+  minWidth: 0,
+  display: "grid",
+  gap: 14,
+}
+
+const reviewSidePanelStyle: CSSProperties = {
+  position: "sticky",
+  top: 16,
+  maxHeight: "calc(100vh - 112px)",
+  overflow: "auto",
+  border: "1px solid #e5ded2",
+  borderRadius: 12,
+  background: "#fffdf9",
+  padding: 14,
+  boxShadow: "0 14px 36px rgba(54, 38, 24, 0.12)",
+  scrollbarWidth: "thin",
+}
+
+const reviewContextStyle: CSSProperties = {
+  maxHeight: 300,
+  overflow: "auto",
+  border: "1px solid #e5ded2",
+  borderRadius: 12,
+  background: "#fffdf9",
+  padding: 14,
+  scrollbarWidth: "thin",
+}
+
+const reviewSectionStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  padding: "10px 0",
+  borderTop: "1px solid #eee6da",
+}
+
+const fieldGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 8,
+}
+
+const compactFieldStyle: CSSProperties = {
+  border: "1px solid #eee6da",
+  borderRadius: 8,
+  padding: "7px 8px",
+  background: "#fff",
+  minWidth: 0,
 }
 
 function GapList({ label, items }: { label: string; items: string[] }) {
@@ -591,6 +678,335 @@ function AiDetail({ submission }: { submission: BoardSubmissionDoc }) {
         )}
       </div>
     </div>
+  )
+}
+
+function jobLookupKey(submission: BoardSubmissionDoc): string | null {
+  return submission.jobId?.trim() || submission.inboundJobId?.trim() || null
+}
+
+function ReviewField({ label, value, href }: { label: string; value?: string; href?: string | null }) {
+  if (!value?.trim()) return null
+  return (
+    <div style={compactFieldStyle}>
+      <div style={{ color: "#8b7d6d", fontSize: 10, textTransform: "uppercase", letterSpacing: 0 }}>{label}</div>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "#2a5fb8", fontSize: 12, fontWeight: 600, overflowWrap: "anywhere" }}
+        >
+          {value.trim()}
+        </a>
+      ) : (
+        <div style={{ color: "#35291f", fontSize: 12, fontWeight: 600, overflowWrap: "anywhere" }}>{value.trim()}</div>
+      )}
+    </div>
+  )
+}
+
+function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: BoardSubmissionDoc }) {
+  const title = job?.title ?? submission.jobTitleSnapshot ?? submission.jobId ?? "Selected role"
+  const company = job?.recruiterBoard?.label?.company ?? job?.company ?? submission.companyLabelSnapshot
+  const groups = job?.recruiterBoard?.checklist?.groups ?? []
+  const blocks = job?.jdBlocks ?? []
+  return (
+    <div style={reviewContextStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+        <div>
+          <div style={{ color: "#8b7d6d", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
+            Role context
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#2b2119", lineHeight: 1.2 }}>{title}</div>
+          {company && <div style={{ color: "#7b6f61", fontSize: 12, marginTop: 2 }}>{company}</div>}
+        </div>
+        <Badge tone="info">{selfScoreLabel(submission.score)}</Badge>
+      </div>
+      {groups.length > 0 && (
+        <div style={reviewSectionStyle}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: "#4b3a2e" }}>Checklist</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+            {groups.map((group, index) => (
+              <div key={`${group.kind ?? "group"}-${index}`} style={{ border: "1px solid #eee6da", borderRadius: 8, padding: 8, background: "#fff" }}>
+                <div style={{ fontSize: 11, color: "#8b7d6d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
+                  {group.heading ?? group.kind ?? "Checklist"}
+                </div>
+                <ul style={{ margin: "6px 0 0", paddingLeft: 16, color: "#4e443a", fontSize: 12, lineHeight: 1.35 }}>
+                  {(group.items ?? []).slice(0, 8).map((item, i) => (
+                    <li key={item.id ?? i}>{item.text ?? item.id}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {blocks.length > 0 && (
+        <div style={reviewSectionStyle}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: "#4b3a2e" }}>Job description</div>
+          {blocks.slice(0, 6).map((block, index) => (
+            <div key={`${block.heading ?? "block"}-${index}`}>
+              {block.heading && <div style={{ fontSize: 12, fontWeight: 700, color: "#4b3a2e" }}>{block.heading}</div>}
+              {block.body && (
+                <div style={{ whiteSpace: "pre-wrap", color: "#5d5248", fontSize: 12, lineHeight: 1.45 }}>{block.body}</div>
+              )}
+              {Array.isArray(block.items) && block.items.length > 0 && (
+                <ul style={{ margin: "6px 0 0", paddingLeft: 16, color: "#5d5248", fontSize: 12, lineHeight: 1.4 }}>
+                  {block.items.slice(0, 10).map((item, itemIndex) => <li key={`${index}-${itemIndex}`}>{item}</li>)}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CandidateReviewPanel({
+  submission,
+  busy,
+  blocked,
+  actionError,
+  rejectOpen,
+  rejectCategory,
+  rejectTier,
+  rejectReason,
+  requestInfoOpen,
+  requestMessage,
+  onClose,
+  onOpenReject,
+  onRejectCategory,
+  onRejectTier,
+  onRejectReason,
+  onRequestInfoOpen,
+  onRequestMessage,
+  onApplyAction,
+  onCommentCount,
+}: {
+  submission: BoardSubmissionDoc
+  busy: boolean
+  blocked: boolean
+  actionError?: string
+  rejectOpen: boolean
+  rejectCategory: RecruiterCandidateRejectionCategory
+  rejectTier: RecruiterCandidateTier
+  rejectReason: string
+  requestInfoOpen: boolean
+  requestMessage: string
+  onClose: () => void
+  onOpenReject: (open: boolean) => void
+  onRejectCategory: (value: RecruiterCandidateRejectionCategory) => void
+  onRejectTier: (value: RecruiterCandidateTier) => void
+  onRejectReason: (value: string) => void
+  onRequestInfoOpen: (open: boolean) => void
+  onRequestMessage: (value: string) => void
+  onApplyAction: (action: RecruiterSubmissionAction, options?: { requestMessage?: string; rejection?: RecruiterSubmissionRejectionInput }) => void
+  onCommentCount: (submissionId: string, count: number) => void
+}) {
+  const stage = submissionStage(submission.status)
+  const status = statusDisplay(submission.status)
+  const chip = verdictChip(submission.aiEvaluation)
+  const href = candidateHref(submission)
+  const resumeHref = submission.candidate?.resumeUrl?.trim() ? submission.candidate.resumeUrl.trim() : null
+  const email = submission.candidate?.email?.trim()
+  const dim = blocked ? blockedButtonStyle : null
+  const rejectDisabled = blocked || !rejectReason.trim()
+  return (
+    <aside style={reviewSidePanelStyle} aria-label="Candidate review panel">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: "#8b7d6d", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
+            Candidate
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 750, color: "#2b2119", lineHeight: 1.15, overflowWrap: "anywhere" }}>
+            {submission.candidate?.name ?? "Candidate"}
+          </div>
+          {submission.candidate?.currentRole && (
+            <div style={{ color: "#73695d", fontSize: 12, marginTop: 3 }}>{submission.candidate.currentRole}</div>
+          )}
+        </div>
+        <button type="button" onClick={onClose} style={{ ...actionButtonStyle, fontSize: 14, lineHeight: 1 }}>
+          x
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+        <Badge tone={status.tone}>{status.label}</Badge>
+        <Badge tone={chip.tone}>{chip.label}</Badge>
+        <span style={{ color: "#8b7d6d", fontSize: 12 }}>{formatSubmittedDate(submission.createdAtMs ?? 0)}</span>
+      </div>
+
+      <div style={reviewSectionStyle}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {href && (
+            <a href={href} target="_blank" rel="noopener noreferrer" style={actionButtonStyle}>
+              LinkedIn
+            </a>
+          )}
+          {resumeHref && (
+            <a href={resumeHref} target="_blank" rel="noopener noreferrer" style={actionButtonStyle}>
+              Resume
+            </a>
+          )}
+          {email && (
+            <a href={`mailto:${email}`} style={actionButtonStyle}>
+              Email
+            </a>
+          )}
+        </div>
+        <div style={fieldGridStyle}>
+          <ReviewField label="Email" value={submission.candidate?.email} />
+          <ReviewField label="YoE" value={submission.candidate?.yoe} />
+          <ReviewField label="Company" value={submission.candidate?.currentCompany} />
+          <ReviewField label="Location" value={submission.candidate?.location} />
+          <ReviewField label="Work auth" value={submission.candidate?.workAuthorization} />
+          <ReviewField label="Employment" value={submission.candidate?.employmentStatus} />
+          <ReviewField label="Comp" value={submission.candidate?.compensationExpectation} />
+          <ReviewField label="Notice" value={submission.candidate?.noticePeriod} />
+        </div>
+        {submission.candidate?.notes && (
+          <div style={{ color: "#4e443a", fontSize: 12, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+            {submission.candidate.notes}
+          </div>
+        )}
+      </div>
+
+      <div style={reviewSectionStyle}>
+        <div style={{ fontWeight: 700, fontSize: 12, color: "#4b3a2e" }}>Decision</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {stage !== "terminal" && (
+            <button
+              type="button"
+              disabled={blocked}
+              aria-disabled={blocked}
+              onClick={() => onApplyAction(STAGE_PRIMARY_ACTION[stage].action)}
+              style={{ ...actionButtonStyle, border: "1px solid #9bc09b", background: "#f1f8f1", color: "#1d5c2c", ...dim }}
+            >
+              {busy ? "Working..." : STAGE_PRIMARY_ACTION[stage].label}
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={blocked}
+            aria-disabled={blocked}
+            onClick={() => onOpenReject(!rejectOpen)}
+            style={{ ...actionButtonStyle, border: "1px solid #d9a8a0", background: "#fdf3f1", color: "#9c3a1d", ...dim }}
+          >
+            Reject
+          </button>
+          {stage === "pending" && (
+            <button
+              type="button"
+              disabled={blocked}
+              aria-disabled={blocked}
+              onClick={() => onRequestInfoOpen(!requestInfoOpen)}
+              style={{ ...actionButtonStyle, ...dim }}
+            >
+              Request info
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={blocked}
+            aria-disabled={blocked}
+            onClick={() => onApplyAction("reviewing")}
+            style={{ ...actionButtonStyle, ...dim }}
+          >
+            Reviewing
+          </button>
+          <button
+            type="button"
+            disabled={blocked}
+            aria-disabled={blocked}
+            onClick={() => onApplyAction("duplicate")}
+            style={{ ...actionButtonStyle, ...dim }}
+          >
+            Duplicate
+          </button>
+        </div>
+
+        {rejectOpen && (
+          <div style={{ display: "grid", gap: 8, border: "1px solid #ead8d3", borderRadius: 8, padding: 10, background: "#fff8f6" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#6f6256", fontWeight: 700 }}>
+                Type
+                <select
+                  value={rejectCategory}
+                  onChange={(e) => onRejectCategory(e.target.value as RecruiterCandidateRejectionCategory)}
+                  style={{ padding: "6px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
+                >
+                  <option value="role_fit">Role fit</option>
+                  <option value="quality">Quality</option>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#6f6256", fontWeight: 700 }}>
+                Tier
+                <select
+                  value={rejectTier}
+                  onChange={(e) => onRejectTier(e.target.value as RecruiterCandidateTier)}
+                  style={{ padding: "6px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
+                >
+                  <option value="tier_1">Tier 1 reusable</option>
+                  <option value="tier_2">Tier 2 possible</option>
+                  <option value="tier_3">Tier 3 hard reject</option>
+                </select>
+              </label>
+            </div>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => onRejectReason(e.target.value)}
+              rows={4}
+              maxLength={4000}
+              placeholder="Why this candidate is rejected"
+              aria-label="Rejection reason"
+              style={{ width: "100%", padding: "7px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
+            />
+            <button
+              type="button"
+              disabled={rejectDisabled}
+              aria-disabled={rejectDisabled}
+              onClick={() => onApplyAction("reject", {
+                rejection: { category: rejectCategory, candidateTier: rejectTier, reason: rejectReason.trim() },
+              })}
+              style={{ ...actionButtonStyle, justifySelf: "start", border: "1px solid #d9a8a0", background: "#fdf3f1", color: "#9c3a1d", ...dim }}
+            >
+              {busy ? "Rejecting..." : "Save rejection"}
+            </button>
+          </div>
+        )}
+
+        {requestInfoOpen && stage === "pending" && (
+          <div style={{ display: "grid", gap: 8, border: "1px solid #e7dccb", borderRadius: 8, padding: 10, background: "#fffaf0" }}>
+            <textarea
+              value={requestMessage}
+              onChange={(e) => onRequestMessage(e.target.value)}
+              rows={3}
+              style={{ width: "100%", padding: "7px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
+            />
+            <button
+              type="button"
+              disabled={blocked || !requestMessage.trim()}
+              aria-disabled={blocked || !requestMessage.trim()}
+              onClick={() => onApplyAction("request_info", { requestMessage: requestMessage.trim() })}
+              style={{ ...actionButtonStyle, justifySelf: "start", ...dim }}
+            >
+              {busy ? "Sending..." : "Send request"}
+            </button>
+          </div>
+        )}
+        {actionError && <div style={{ color: "#9c3a1d", fontSize: 11 }}>Action failed: {actionError}</div>}
+      </div>
+
+      <div style={reviewSectionStyle}>
+        <ExtraFieldsDetail extraFields={submission.extraFields} />
+        <AiDetail submission={submission} />
+      </div>
+      <div style={reviewSectionStyle}>
+        <ConversationSection submission={submission} onCommentCount={onCommentCount} />
+      </div>
+    </aside>
   )
 }
 
@@ -753,10 +1169,14 @@ export default function RecruiterBoardOps() {
   const [err, setErr] = useState<string | null>(null)
   const [submissions, setSubmissions] = useState<BoardSubmissionDoc[]>([])
   const [recruiters, setRecruiters] = useState<BoardRecruiterDoc[]>([])
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [overflowId, setOverflowId] = useState<string | null>(null)
-  const [requestInfoId, setRequestInfoId] = useState<string | null>(null)
+  const [jobDocs, setJobDocs] = useState<Record<string, BoardJobDoc>>({})
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [requestInfoOpen, setRequestInfoOpen] = useState(false)
   const [requestMessage, setRequestMessage] = useState(DEFAULT_REQUEST_MESSAGE)
+  const [rejectOpen, setRejectOpen] = useState(false)
+  const [rejectCategory, setRejectCategory] = useState<RecruiterCandidateRejectionCategory>("role_fit")
+  const [rejectTier, setRejectTier] = useState<RecruiterCandidateTier>("tier_1")
+  const [rejectReason, setRejectReason] = useState("")
   const [inFlightId, setInFlightId] = useState<string | null>(null)
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [reloadKey, setReloadKey] = useState(0)
@@ -777,11 +1197,21 @@ export default function RecruiterBoardOps() {
           getDocs(collection(db(), "pa-recruiter-users")),
         ])
         if (cancelled) return
-        setSubmissions(submissionSnap.docs.map((d) => {
+        const loadedSubmissions = submissionSnap.docs.map((d) => {
           const data = d.data() as Omit<BoardSubmissionDoc, "id">
           return { id: d.id, ...data, createdAtMs: timestampToMs(data.createdAt) }
-        }))
+        })
+        const jobIds = [...new Set(loadedSubmissions.flatMap((s) => (s.jobId?.trim() ? [s.jobId.trim()] : [])))]
+        const loadedJobs = await Promise.all(
+          jobIds.map(async (jobId) => {
+            const snap = await getDoc(doc(db(), "pa-jobs", jobId))
+            return snap.exists() ? [jobId, { id: snap.id, ...(snap.data() as Omit<BoardJobDoc, "id">) }] as const : null
+          }),
+        )
+        if (cancelled) return
+        setSubmissions(loadedSubmissions)
         setRecruiters(recruiterSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardRecruiterDoc, "id">) })))
+        setJobDocs(Object.fromEntries(loadedJobs.filter((entry): entry is readonly [string, BoardJobDoc] => entry !== null)))
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
       } finally {
@@ -798,13 +1228,36 @@ export default function RecruiterBoardOps() {
     [recruiters, submissions],
   )
   const pendingTotal = submissions.filter(isPending).length
+  const selectedSubmission = useMemo(
+    () => submissions.find((submission) => submission.id === selectedId) ?? null,
+    [selectedId, submissions],
+  )
+  const selectedJob = selectedSubmission ? jobDocs[jobLookupKey(selectedSubmission) ?? ""] : undefined
 
-  async function applyAction(submission: BoardSubmissionDoc, action: RecruiterSubmissionAction, message?: string) {
+  useEffect(() => {
+    if (selectedId && !submissions.some((submission) => submission.id === selectedId)) {
+      setSelectedId(null)
+    }
+  }, [selectedId, submissions])
+
+  useEffect(() => {
+    setRejectOpen(false)
+    setRejectCategory("role_fit")
+    setRejectTier("tier_1")
+    setRejectReason("")
+    setRequestInfoOpen(false)
+    setRequestMessage(DEFAULT_REQUEST_MESSAGE)
+  }, [selectedId])
+
+  async function applyAction(
+    submission: BoardSubmissionDoc,
+    action: RecruiterSubmissionAction,
+    options?: { requestMessage?: string; rejection?: RecruiterSubmissionRejectionInput },
+  ) {
     if (inFlightId) return
     const priorStatus = submission.status
     const optimisticStatus = RECRUITER_SUBMISSION_ACTION_TO_STATUS[action]
     setInFlightId(submission.id)
-    setOverflowId(null)
     setActionErrors((prev) => {
       const next = { ...prev }
       delete next[submission.id]
@@ -815,7 +1268,8 @@ export default function RecruiterBoardOps() {
       const result = await runRecruiterSubmissionAction({
         submissionId: submission.id,
         action,
-        ...(action === "request_info" && message ? { requestMessage: message } : {}),
+        ...(action === "request_info" && options?.requestMessage ? { requestMessage: options.requestMessage } : {}),
+        ...(action === "reject" && options?.rejection ? { rejection: options.rejection } : {}),
       })
       setSubmissions((prev) =>
         prev.map((s) =>
@@ -823,16 +1277,20 @@ export default function RecruiterBoardOps() {
             ? {
                 ...s,
                 status: result.status,
-                ...(action === "request_info" && message
-                  ? { requestedInfo: [...(s.requestedInfo ?? []), { message, at: new Date().toISOString(), by: "WeKruit" }] }
+                ...(action === "request_info" && options?.requestMessage
+                  ? { requestedInfo: [...(s.requestedInfo ?? []), { message: options.requestMessage, at: new Date().toISOString(), by: "WeKruit" }] }
                   : {}),
               }
             : s,
         ),
       )
       if (action === "request_info") {
-        setRequestInfoId(null)
+        setRequestInfoOpen(false)
         setRequestMessage(DEFAULT_REQUEST_MESSAGE)
+      }
+      if (action === "reject") {
+        setRejectOpen(false)
+        setRejectReason("")
       }
     } catch (e) {
       setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, status: priorStatus } : s)))
@@ -875,188 +1333,79 @@ export default function RecruiterBoardOps() {
     const href = candidateHref(submission)
     const chip = verdictChip(submission.aiEvaluation)
     const busy = inFlightId === submission.id
-    const expanded = expandedId === submission.id
+    const selected = selectedId === submission.id
     const actionError = actionErrors[submission.id]
-    const stage = submissionStage(submission.status)
     const status = statusDisplay(submission.status)
     const othersBlocked = inFlightId !== null && !busy
     const blocked = busy || othersBlocked
     const dim = othersBlocked ? blockedButtonStyle : null
     return (
-      <Fragment key={submission.id}>
-        <tr
-          onClick={() => setExpandedId(expanded ? null : submission.id)}
-          style={{ borderBottom: "1px solid #f1f1f1", cursor: "pointer", background: expanded ? "#faf7f2" : undefined }}
-        >
-          <td style={cellStyle}>
-            <div style={{ fontWeight: 600 }}>
-              {href ? (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ color: "#2a5fb8" }}
-                >
-                  {submission.candidate?.name ?? "Candidate"}
-                </a>
-              ) : (
-                submission.candidate?.name ?? "—"
-              )}
-            </div>
-            {submission.candidate?.currentRole && (
-              <div style={{ color: "#777", fontSize: 11 }}>{submission.candidate.currentRole}</div>
-            )}
-          </td>
-          <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{formatSubmittedDate(submission.createdAtMs ?? 0)}</td>
-          <td style={{ ...cellStyle, whiteSpace: "nowrap", color: "#555", fontSize: 12 }}>
-            {selfScoreLabel(submission.score)}
-          </td>
-          <td style={cellStyle}>
-            <Badge tone={chip.tone}>{chip.label}</Badge>
-          </td>
-          <td style={cellStyle}>
-            <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "nowrap" }}>
-              <Badge tone={status.tone}>{status.label}</Badge>
-              {(commentCounts[submission.id] ?? 0) > 0 && (
-                <span
-                  title={`${commentCounts[submission.id]} comment${commentCounts[submission.id] === 1 ? "" : "s"}`}
-                  style={{
-                    fontSize: 11,
-                    color: "#555",
-                    border: "1px solid #e2ddd4",
-                    borderRadius: 999,
-                    padding: "1px 7px",
-                    background: "#fff",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  💬 {commentCounts[submission.id]}
-                </span>
-              )}
-            </div>
-          </td>
-          <td style={cellStyle} onClick={(e) => e.stopPropagation()}>
-            {stage === "terminal" ? (
-              <span style={{ color: "#999", fontSize: 12 }}>—</span>
+      <tr
+        key={submission.id}
+        onClick={() => setSelectedId(selected ? null : submission.id)}
+        style={{ borderBottom: "1px solid #f1f1f1", cursor: "pointer", background: selected ? "#faf4ea" : undefined }}
+      >
+        <td style={cellStyle}>
+          <div style={{ fontWeight: 700, overflowWrap: "anywhere" }}>
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                style={{ color: "#2a5fb8" }}
+              >
+                {submission.candidate?.name ?? "Candidate"}
+              </a>
             ) : (
-              <div style={{ display: "flex", gap: 4, flexWrap: "nowrap", alignItems: "center" }}>
-                <button
-                  type="button"
-                  disabled={blocked}
-                  aria-disabled={blocked}
-                  title={STAGE_PRIMARY_ACTION[stage].label}
-                  onClick={() => void applyAction(submission, STAGE_PRIMARY_ACTION[stage].action)}
-                  style={{ ...actionButtonStyle, border: "1px solid #9bc09b", background: "#f1f8f1", color: "#1d5c2c", ...dim }}
-                >
-                  {busy ? "…" : primaryActionShortLabel(stage)}
-                </button>
-                <button
-                  type="button"
-                  disabled={blocked}
-                  aria-disabled={blocked}
-                  title="Reject"
-                  onClick={() => void applyAction(submission, "reject")}
-                  style={{ ...actionButtonStyle, border: "1px solid #d9a8a0", background: "#fdf3f1", color: "#9c3a1d", ...dim }}
-                >
-                  {busy ? "…" : "Reject"}
-                </button>
-                {stage === "pending" && (
-                  <button
-                    type="button"
-                    disabled={blocked}
-                    aria-disabled={blocked}
-                    title="Request info"
-                    onClick={() => {
-                      setRequestInfoId(requestInfoId === submission.id ? null : submission.id)
-                      setRequestMessage(DEFAULT_REQUEST_MESSAGE)
-                    }}
-                    style={{ ...actionButtonStyle, ...dim }}
-                  >
-                    Info
-                  </button>
-                )}
-                <button
-                  type="button"
-                  disabled={blocked}
-                  aria-disabled={blocked}
-                  aria-label="More actions"
-                  onClick={() => setOverflowId(overflowId === submission.id ? null : submission.id)}
-                  style={{ ...actionButtonStyle, ...dim }}
-                >
-                  ⋯
-                </button>
-                {overflowId === submission.id && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={blocked}
-                      aria-disabled={blocked}
-                      onClick={() => void applyAction(submission, "reviewing")}
-                      style={{ ...actionButtonStyle, ...dim }}
-                    >
-                      Mark reviewing
-                    </button>
-                    <button
-                      type="button"
-                      disabled={blocked}
-                      aria-disabled={blocked}
-                      onClick={() => void applyAction(submission, "duplicate")}
-                      style={{ ...actionButtonStyle, ...dim }}
-                    >
-                      Duplicate
-                    </button>
-                  </>
-                )}
-              </div>
+              submission.candidate?.name ?? "—"
             )}
-            {requestInfoId === submission.id && stage === "pending" && (
-              <div style={{ marginTop: 8, display: "grid", gap: 6, maxWidth: 360 }}>
-                <textarea
-                  value={requestMessage}
-                  onChange={(e) => setRequestMessage(e.target.value)}
-                  rows={3}
-                  style={{ width: "100%", padding: "6px 8px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}
-                />
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    type="button"
-                    disabled={blocked || !requestMessage.trim()}
-                    aria-disabled={blocked || !requestMessage.trim()}
-                    onClick={() => void applyAction(submission, "request_info", requestMessage.trim())}
-                    style={{ ...actionButtonStyle, ...dim }}
-                  >
-                    {busy ? "Sending…" : "Send request"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={blocked}
-                    aria-disabled={blocked}
-                    onClick={() => setRequestInfoId(null)}
-                    style={{ ...actionButtonStyle, ...dim }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
+          </div>
+          {submission.candidate?.currentRole && (
+            <div style={{ color: "#777", fontSize: 11 }}>{submission.candidate.currentRole}</div>
+          )}
+        </td>
+        <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{formatSubmittedDate(submission.createdAtMs ?? 0)}</td>
+        <td style={{ ...cellStyle, whiteSpace: "nowrap", color: "#555", fontSize: 12 }}>
+          {selfScoreLabel(submission.score)}
+        </td>
+        <td style={cellStyle}>
+          <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+            <Badge tone={chip.tone}>{chip.label}</Badge>
+            <Badge tone={status.tone}>{status.label}</Badge>
+            {(commentCounts[submission.id] ?? 0) > 0 && (
+              <span
+                title={`${commentCounts[submission.id]} comment${commentCounts[submission.id] === 1 ? "" : "s"}`}
+                style={{
+                  fontSize: 11,
+                  color: "#555",
+                  border: "1px solid #e2ddd4",
+                  borderRadius: 999,
+                  padding: "1px 7px",
+                  background: "#fff",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {commentCounts[submission.id]} msg
+              </span>
             )}
-            {actionError && (
-              <div style={{ marginTop: 6, color: "#9c3a1d", fontSize: 11 }}>Action failed: {actionError}</div>
-            )}
-          </td>
-        </tr>
-        {expanded && (
-          <tr style={{ borderBottom: "1px solid #f1f1f1", background: "#faf7f2" }}>
-            <td colSpan={6} style={{ padding: "12px 10px" }}>
-              <div style={{ display: "grid", gap: 12 }}>
-                <ExtraFieldsDetail extraFields={submission.extraFields} />
-                <AiDetail submission={submission} />
-                <ConversationSection submission={submission} onCommentCount={handleCommentCount} />
-              </div>
-            </td>
-          </tr>
-        )}
-      </Fragment>
+          </div>
+        </td>
+        <td style={cellStyle} onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            disabled={blocked}
+            aria-disabled={blocked}
+            onClick={() => setSelectedId(submission.id)}
+            style={{ ...actionButtonStyle, ...dim }}
+          >
+            {busy ? "Working..." : selected ? "Open" : "Review"}
+          </button>
+          {actionError && (
+            <div style={{ marginTop: 6, color: "#9c3a1d", fontSize: 11 }}>Action failed: {actionError}</div>
+          )}
+        </td>
+      </tr>
     )
   }
 
@@ -1093,12 +1442,11 @@ export default function RecruiterBoardOps() {
                 <table style={boardTableStyle}>
                   <thead>
                     <tr>
-                      <th style={{ ...boardHeaderCellStyle, width: "24%" }}>Candidate</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "12%" }}>Submitted</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "13%" }}>Self-score</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "12%" }}>AI verdict</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "13%" }}>Status</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "26%" }}>Actions</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "28%" }}>Review</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "10%" }}>Open</th>
                     </tr>
                   </thead>
                   <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
@@ -1123,59 +1471,86 @@ export default function RecruiterBoardOps() {
           body="Recruiter profiles and submissions will appear here as soon as the first one lands."
         />
       ) : (
-        <div style={{ display: "grid", gap: 16 }}>
-          {recruiterGroups.map(renderGroup)}
-          {unclaimedGroups.length > 0 && (
-            <Panel
-              title="Unclaimed submitters"
-              eyebrow="No matching recruiter profile"
-              actions={
-                <Badge tone="info">
-                  {unclaimedGroups.reduce((n, g) => n + g.totalCount, 0)} submissions
-                </Badge>
-              }
-            >
-              <div style={boardGroupBodyStyle}>
-                {unclaimedGroups.map((group) => (
-                  <div key={group.key}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 6 }}>
-                      <span style={{ fontWeight: 700, fontSize: 13 }}>{group.name}</span>
-                      {group.email && group.email !== group.name && (
-                        <span style={{ color: "#777", fontSize: 12 }}>{group.email}</span>
-                      )}
-                      <Badge tone={group.pendingCount ? "info" : "muted"}>
-                        {group.pendingCount} pending · {group.totalCount} total
-                      </Badge>
-                    </div>
-                    <div style={{ display: "grid", gap: 10 }}>
-                      {group.jobs.map((job) => (
-                        <div key={job.key}>
-                          <div style={boardJobHeaderStyle}>
-                            <span style={{ fontWeight: 600, fontSize: 13 }}>{job.title}</span>
-                            {job.company && <span style={{ color: "#777", fontSize: 12 }}>{job.company}</span>}
-                          </div>
-                          <div style={boardTableShellStyle}>
-                            <table style={boardTableStyle}>
-                              <thead>
-                                <tr>
-                                  <th style={{ ...boardHeaderCellStyle, width: "24%" }}>Candidate</th>
-                                  <th style={{ ...boardHeaderCellStyle, width: "12%" }}>Submitted</th>
-                                  <th style={{ ...boardHeaderCellStyle, width: "13%" }}>Self-score</th>
-                                  <th style={{ ...boardHeaderCellStyle, width: "12%" }}>AI verdict</th>
-                                  <th style={{ ...boardHeaderCellStyle, width: "13%" }}>Status</th>
-                                  <th style={{ ...boardHeaderCellStyle, width: "26%" }}>Actions</th>
-                                </tr>
-                              </thead>
-                              <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
-                            </table>
-                          </div>
+        <div style={selectedSubmission ? reviewWorkspaceStyle : { display: "grid", gap: 16 }}>
+          <div style={selectedSubmission ? reviewLeftColumnStyle : { display: "grid", gap: 16 }}>
+            {selectedSubmission && <JobContextPanel job={selectedJob} submission={selectedSubmission} />}
+            <div style={{ display: "grid", gap: 16 }}>
+              {recruiterGroups.map(renderGroup)}
+              {unclaimedGroups.length > 0 && (
+                <Panel
+                  title="Unclaimed submitters"
+                  eyebrow="No matching recruiter profile"
+                  actions={
+                    <Badge tone="info">
+                      {unclaimedGroups.reduce((n, g) => n + g.totalCount, 0)} submissions
+                    </Badge>
+                  }
+                >
+                  <div style={boardGroupBodyStyle}>
+                    {unclaimedGroups.map((group) => (
+                      <div key={group.key}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 6 }}>
+                          <span style={{ fontWeight: 700, fontSize: 13 }}>{group.name}</span>
+                          {group.email && group.email !== group.name && (
+                            <span style={{ color: "#777", fontSize: 12 }}>{group.email}</span>
+                          )}
+                          <Badge tone={group.pendingCount ? "info" : "muted"}>
+                            {group.pendingCount} pending · {group.totalCount} total
+                          </Badge>
                         </div>
-                      ))}
-                    </div>
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {group.jobs.map((job) => (
+                            <div key={job.key}>
+                              <div style={boardJobHeaderStyle}>
+                                <span style={{ fontWeight: 600, fontSize: 13 }}>{job.title}</span>
+                                {job.company && <span style={{ color: "#777", fontSize: 12 }}>{job.company}</span>}
+                              </div>
+                              <div style={boardTableShellStyle}>
+                                <table style={boardTableStyle}>
+                                  <thead>
+                                    <tr>
+                                      <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
+                                      <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
+                                      <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
+                                      <th style={{ ...boardHeaderCellStyle, width: "28%" }}>Review</th>
+                                      <th style={{ ...boardHeaderCellStyle, width: "10%" }}>Open</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </Panel>
+                </Panel>
+              )}
+            </div>
+          </div>
+          {selectedSubmission && (
+            <CandidateReviewPanel
+              submission={selectedSubmission}
+              busy={inFlightId === selectedSubmission.id}
+              blocked={inFlightId !== null}
+              actionError={actionErrors[selectedSubmission.id]}
+              rejectOpen={rejectOpen}
+              rejectCategory={rejectCategory}
+              rejectTier={rejectTier}
+              rejectReason={rejectReason}
+              requestInfoOpen={requestInfoOpen}
+              requestMessage={requestMessage}
+              onClose={() => setSelectedId(null)}
+              onOpenReject={setRejectOpen}
+              onRejectCategory={setRejectCategory}
+              onRejectTier={setRejectTier}
+              onRejectReason={setRejectReason}
+              onRequestInfoOpen={setRequestInfoOpen}
+              onRequestMessage={setRequestMessage}
+              onApplyAction={(action, options) => void applyAction(selectedSubmission, action, options)}
+              onCommentCount={handleCommentCount}
+            />
           )}
         </div>
       )}

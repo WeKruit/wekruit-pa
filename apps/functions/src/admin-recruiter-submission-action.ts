@@ -27,6 +27,13 @@ import { defineSecret } from "firebase-functions/params"
 import { HttpsError, onCall } from "firebase-functions/v2/https"
 import { z } from "zod"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
+import {
+  RECRUITER_CANDIDATE_REJECTION_CATEGORIES,
+  RECRUITER_CANDIDATE_TIERS,
+  recordRecruiterSubmissionRejection,
+  recruiterFeedbackForRejection,
+  reusableForCandidateTier,
+} from "./recruiter-candidate-tracking.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
@@ -34,12 +41,19 @@ const SUBMISSIONS_COLLECTION = "pa-recruiter-submissions"
 const COMMENTS_SUBCOLLECTION = "comments"
 const COMMENT_MESSAGE_MAX = 4_000
 
+const RecruiterCandidateRejectionSchema = z.object({
+  category: z.enum(RECRUITER_CANDIDATE_REJECTION_CATEGORIES),
+  candidateTier: z.enum(RECRUITER_CANDIDATE_TIERS),
+  reason: z.string().transform((value) => value.trim()).pipe(z.string().min(1).max(4_000)),
+})
+
 export const AdminRecruiterSubmissionActionInputSchema = z.object({
   submissionId: z.string().transform((value) => value.trim()).pipe(z.string().min(1)),
   action: z.enum(["advance", "reject", "reviewing", "duplicate", "request_info", "wekruit_interview", "client_review", "hired", "comment"]),
   note: z.string().max(4_000).optional(),
   requestMessage: z.string().max(4_000).optional(),
   message: z.string().optional(),
+  rejection: RecruiterCandidateRejectionSchema.optional(),
   adminToken: z.string().optional(),
 })
 export type AdminRecruiterSubmissionActionInput = z.infer<typeof AdminRecruiterSubmissionActionInputSchema>
@@ -84,7 +98,11 @@ export async function runAdminRecruiterSubmissionAction(
     throw new HttpsError("invalid-argument", parsed.error.message)
   }
   const { submissionId, action } = parsed.data
-  const note = cleanString(parsed.data.note)
+  const rejection = parsed.data.rejection
+  if (action === "reject" && !rejection) {
+    throw new HttpsError("invalid-argument", "rejection_required")
+  }
+  const note = action === "reject" ? rejection?.reason : cleanString(parsed.data.note)
   const requestMessage = cleanString(parsed.data.requestMessage)
   if (action === "request_info" && !requestMessage) {
     throw new HttpsError("invalid-argument", "requestMessage_required")
@@ -127,6 +145,20 @@ export async function runAdminRecruiterSubmissionAction(
   const currentStatus = cleanString(data.status) ?? ""
 
   const patch: Record<string, unknown> = { updatedAt: at }
+  if (action === "reject" && rejection) {
+    const feedback = recruiterFeedbackForRejection(rejection.category, rejection.candidateTier)
+    patch.rejection = {
+      category: rejection.category,
+      candidateTier: rejection.candidateTier,
+      reusableForOtherCompanies: reusableForCandidateTier(rejection.candidateTier),
+      reason: rejection.reason,
+      by,
+      at,
+    }
+    patch.recruiterFeedbackNote = rejection.reason
+    patch.recruiterFeedbackRating = feedback.rating
+    patch.recruiterFeedbackReasons = feedback.reasons
+  }
 
   if (action === "request_info") {
     const existing = Array.isArray(data.requestedInfo)
@@ -161,6 +193,15 @@ export async function runAdminRecruiterSubmissionAction(
   }
 
   await ref.set(patch, { merge: true })
+  if (action === "reject" && rejection) {
+    await recordRecruiterSubmissionRejection(deps.db, {
+      submissionId,
+      submission: data,
+      rejection,
+      actorEmail: by,
+      now: at,
+    })
+  }
   return { ok: true, submissionId, status: targetStatus }
 }
 

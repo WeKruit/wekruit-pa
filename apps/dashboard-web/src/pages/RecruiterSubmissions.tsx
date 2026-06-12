@@ -438,7 +438,7 @@ const KNOWN_RECRUITER_INVITE_CODES_KEY = "wekruit.admin.recruiterInviteCodes.v1"
 const RECRUITER_INVITE_BASE_URL = "https://wekruit-recruiters.web.app/recruiters"
 
 const recruiterAccessScrollPaneStyle: CSSProperties = {
-  maxHeight: 430,
+  maxHeight: 360,
   overflow: "auto",
   scrollbarWidth: "thin",
 }
@@ -1559,7 +1559,6 @@ function RecruiterOpsPanel() {
   const failedNotifications = notifications.filter((n) => n.status === "failed").length
   const sortedCodes = [...codes].sort((a, b) => timestampToMs(b.createdAt) - timestampToMs(a.createdAt))
   const resendableInviteCodes = sortedCodes.filter(recruiterInviteCanResend)
-  const sortedProfiles = [...profiles].sort((a, b) => (a.email ?? "").localeCompare(b.email ?? ""))
   const recruiterByUid = new Map<string, { name?: string; email?: string }>()
   for (const profile of profiles) {
     const entry = { name: profile.name, email: profile.email }
@@ -1780,13 +1779,12 @@ function RecruiterOpsPanel() {
           )}
           {sortedCodes.length ? (
             <div style={{ ...recruiterAccessScrollPaneStyle, overflowX: "auto" }}>
-              <table style={{ width: "100%", minWidth: 920, borderCollapse: "collapse", fontSize: 11.5, lineHeight: 1.25 }}>
+              <table style={{ width: "100%", minWidth: 760, borderCollapse: "collapse", fontSize: 11.5, lineHeight: 1.25 }}>
                 <thead>
                   <tr style={{ color: "#777", textAlign: "left", borderBottom: "1px solid #eee" }}>
                     <th style={recruiterInviteHeaderCellStyle}>Full code</th>
-                    <th style={{ ...recruiterInviteHeaderCellStyle, width: 176 }}>Action</th>
+                    <th style={{ ...recruiterInviteHeaderCellStyle, width: 156 }}>Action</th>
                     <th style={recruiterInviteHeaderCellStyle}>Recruiter</th>
-                    <th style={recruiterInviteHeaderCellStyle}>Label</th>
                     <th style={recruiterInviteHeaderCellStyle}>Email</th>
                     <th style={recruiterInviteHeaderCellStyle}>Status</th>
                     <th style={recruiterInviteHeaderCellStyle}>Expires</th>
@@ -1892,10 +1890,10 @@ function RecruiterOpsPanel() {
                             <span style={{ color: "#999" }}>—</span>
                           )}
                         </td>
-                        <td style={{ ...recruiterInviteCellStyle, color: code.recruiterEmail ? "#333" : "#999", whiteSpace: "nowrap" }}>
-                          {code.recruiterEmail ?? "—"}
+                        <td style={{ ...recruiterInviteCellStyle, color: code.recruiterEmail ? "#333" : "#999", minWidth: 150 }}>
+                          <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{code.recruiterEmail ?? "—"}</div>
+                          {code.label && <div style={{ color: "#777", fontSize: 11, marginTop: 2 }}>{code.label}</div>}
                         </td>
-                        <td style={recruiterInviteCellStyle}>{code.label || "—"}</td>
                         <td style={recruiterInviteCellStyle}>
                           {(() => {
                             const emailStatus = inviteEmailBadge(code.inviteEmailStatus)
@@ -1955,28 +1953,7 @@ function RecruiterOpsPanel() {
           </div>
         </Panel>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 18 }}>
-        <OpsSection title="Recruiter accounts" subtitle="Firebase-bound recruiter users who can submit candidates.">
-          {sortedProfiles.length ? (
-            <div style={{ display: "grid", gap: 4, maxHeight: 320, overflow: "auto", paddingRight: 4, scrollbarWidth: "thin" }}>
-              {sortedProfiles.map((profile) => (
-                <div key={profile.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, borderTop: "1px solid #eee", padding: "6px 0", fontSize: 12 }}>
-                  <span>
-                    <b>{profile.name || profile.email || "Recruiter"}</b>
-                    <br />
-                    <span style={{ color: "#777" }}>{profile.email ?? profile.firebaseUid ?? profile.id}</span>
-                  </span>
-                  <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <Badge tone={profile.status === "disabled" ? "warn" : "ok"}>{profile.status ?? "active"}</Badge>
-                    <Badge tone={profile.notificationPreferences?.newRolesEmail === false ? "muted" : "info"}>{profile.notificationPreferences?.newRolesEmail === false ? "email off" : "email on"}</Badge>
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyOpsText>No recruiter accounts yet. A recruiter appears here after signup.</EmptyOpsText>
-          )}
-        </OpsSection>
+      <div style={{ marginTop: 18 }}>
         <OpsSection title="Role alerts" subtitle="One alert is created per active recruiter when a recruiter-board role is released.">
           {notifications.length ? (
             <div style={{ maxHeight: 320, overflow: "auto", paddingRight: 4, scrollbarWidth: "thin" }}>

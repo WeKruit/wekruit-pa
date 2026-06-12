@@ -54,7 +54,6 @@ describe("runAdminRecruiterSubmissionAction", () => {
 
   it("reject / reviewing / duplicate map to their statuses", async () => {
     for (const [action, status] of [
-      ["reject", "rejected"],
       ["reviewing", "reviewing"],
       ["duplicate", "duplicate"],
     ] as const) {
@@ -68,6 +67,100 @@ describe("runAdminRecruiterSubmissionAction", () => {
       assert.equal(doc.status, status)
       assert.deepEqual(doc.adminDecision, { by: "admin1@wekruit.com", at: now })
     }
+  })
+
+  it("reject requires structured category, reusable tier, and reason", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    for (const input of [
+      { submissionId: "sub-1", action: "reject" },
+      { submissionId: "sub-1", action: "reject", rejection: { category: "quality", candidateTier: "tier_1" } },
+      { submissionId: "sub-1", action: "reject", rejection: { category: "unknown", candidateTier: "tier_1", reason: "weak" } },
+      { submissionId: "sub-1", action: "reject", rejection: { category: "quality", candidateTier: "tier_4", reason: "weak" } },
+    ]) {
+      await assert.rejects(
+        () => run(mfs, input),
+        (err) => err instanceof HttpsError && err.code === "invalid-argument",
+      )
+    }
+  })
+
+  it("reject stores why, reusable tier, and a global tracked candidate record", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs, {
+      recruiterId: "rec-1",
+      recruiterEmail: "sloane@agency.com",
+      candidate: {
+        name: "Yue H",
+        email: "yue@example.com",
+        link: "https://www.linkedin.com/in/yue-h",
+        linkedinUrl: "https://www.linkedin.com/in/yue-h?trk=public_profile",
+        currentRole: "Staff Product Engineer",
+      },
+    })
+
+    const result = await run(mfs, {
+      submissionId: "sub-1",
+      action: "reject",
+      rejection: {
+        category: "role_fit",
+        candidateTier: "tier_1",
+        reason: "Great engineer, but this role needs direct fintech infra experience.",
+      },
+    })
+
+    assert.deepEqual(result, { ok: true, submissionId: "sub-1", status: "rejected" })
+    const doc = await readDoc(mfs)
+    assert.equal(doc.status, "rejected")
+    assert.deepEqual(doc.adminDecision, {
+      by: "admin1@wekruit.com",
+      at: now,
+      note: "Great engineer, but this role needs direct fintech infra experience.",
+    })
+    assert.deepEqual(doc.rejection, {
+      category: "role_fit",
+      candidateTier: "tier_1",
+      reusableForOtherCompanies: true,
+      reason: "Great engineer, but this role needs direct fintech infra experience.",
+      by: "admin1@wekruit.com",
+      at: now,
+    })
+    assert.equal(doc.recruiterFeedbackNote, "Great engineer, but this role needs direct fintech infra experience.")
+    assert.equal(doc.recruiterFeedbackRating, 3)
+    assert.deepEqual(doc.recruiterFeedbackReasons, ["role_fit", "tier_1_reusable"])
+
+    const users = mfs.store.get("pa-users")
+    assert.equal(users?.size, 1)
+    const [candidateId, user] = [...users!.entries()][0]!
+    assert.equal(user.candidateLifecycleState, "prospect")
+    assert.equal(user.linkedinUrl, "https://linkedin.com/in/yue-h")
+    assert.equal(user.email, "yue@example.com")
+    assert.deepEqual(user.recruiterSubmissionDisposition, {
+      lastSubmissionId: "sub-1",
+      lastStatus: "rejected",
+      lastRejectionCategory: "role_fit",
+      candidateTier: "tier_1",
+      reusableForOtherCompanies: true,
+      lastRejectionReason: "Great engineer, but this role needs direct fintech infra experience.",
+      updatedAt: now,
+    })
+
+    const handles = mfs.store.get("pa-candidate-handles")
+    assert.equal(handles?.size, 1)
+    const handle = [...handles!.values()][0]!
+    assert.equal(handle.kind, "linkedin")
+    assert.equal(handle.candidateId, candidateId)
+    assert.equal(handle.normalizedValue, "https://linkedin.com/in/yue-h")
+
+    const events = mfs.store.get("pa-recruiter-candidate-events")
+    assert.equal(events?.size, 1)
+    const event = [...events!.values()][0]!
+    assert.equal(event.kind, "recruiter_submission_rejected")
+    assert.equal(event.candidateId, candidateId)
+    assert.equal(event.reusableForOtherCompanies, true)
+    assert.equal(event.rejectionCategory, "role_fit")
+    assert.equal(event.candidateTier, "tier_1")
   })
 
   it("wekruit_interview / client_review / hired set status to the action name", async () => {
@@ -179,15 +272,15 @@ describe("runAdminRecruiterSubmissionAction", () => {
     assert.equal(doc.updatedAt, later)
   })
 
-  it("re-apply without a note keeps the existing note", async () => {
+  it("non-reject re-apply without a note keeps the existing note", async () => {
     const mfs = new MockFirestore()
     await seedSubmission(mfs)
 
-    await run(mfs, { submissionId: "sub-1", action: "reject", note: "wrong stack" })
-    await run(mfs, { submissionId: "sub-1", action: "reject" }, { now: later })
+    await run(mfs, { submissionId: "sub-1", action: "advance", note: "strong signal" })
+    await run(mfs, { submissionId: "sub-1", action: "advance" }, { now: later })
 
     const doc = await readDoc(mfs)
-    assert.deepEqual(doc.adminDecision, { by: "admin1@wekruit.com", at: now, note: "wrong stack" })
+    assert.deepEqual(doc.adminDecision, { by: "admin1@wekruit.com", at: now, note: "strong signal" })
   })
 
   it("a different action after a decision moves status and rewrites the decision", async () => {

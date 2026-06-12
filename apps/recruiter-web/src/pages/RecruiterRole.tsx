@@ -89,7 +89,7 @@ interface FormState {
 }
 
 function looksLikeLinkedinUrl(value: string): boolean {
-  return value.toLowerCase().includes("linkedin.")
+  return value.toLowerCase().includes("linkedin.") && /\/in\//i.test(value)
 }
 
 function splitCandidateLink(link: string | undefined): Pick<FormState, "candidateLinkedinUrl" | "candidateResumeUrl"> {
@@ -101,7 +101,7 @@ function splitCandidateLink(link: string | undefined): Pick<FormState, "candidat
 }
 
 function candidateLinkValue(form: Pick<FormState, "candidateLinkedinUrl" | "candidateResumeUrl">): string {
-  return form.candidateLinkedinUrl.trim() || form.candidateResumeUrl.trim()
+  return form.candidateLinkedinUrl.trim()
 }
 
 type RoleSubmitField = NonNullable<CollabJob["recruiterBoard"]["submitFields"]>[number]
@@ -579,7 +579,7 @@ function buildRoleQuickCandidateProof(draft: RoleQuickCandidateDraft): RoleQuick
       ? "Screened and ready candidates need role-fit evidence in the note before entering that stage."
       : hasIdentity
         ? `${stageLabel} will be saved to this role and prefilled into the packet workspace.`
-        : "Name and LinkedIn or resume link are required before this role can own the prospect."
+    : "Name and LinkedIn profile URL are required before this role can own the prospect."
   return {
     tone,
     title,
@@ -616,6 +616,8 @@ function formatSubmissionFailure(reason?: string): string {
   }
   if (reason === "missing_candidate_email") return "Add the candidate email so WeKruit can confirm consent."
   if (reason === "invalid_candidate_email") return "Enter a valid candidate email."
+  if (reason === "candidate_linkedin_url_required") return "Add the candidate LinkedIn profile URL. Resume links are supporting evidence, not identity."
+  if (reason === "invalid_candidate_linkedin_url") return "Use a valid LinkedIn /in/ profile URL for the candidate."
   if (reason === "candidate_consent_required") return "Confirm candidate consent before submitting."
   return reason ?? "submission_failed"
 }
@@ -869,7 +871,7 @@ function buildRoleSourcingKit(job: CollabJob, brief: RoleCalibrationBrief): Role
   ].slice(0, 6)
   const proofPlan = [
     "Confirm candidate consent before submitting.",
-    "Save LinkedIn or resume link in Candidate CRM before formal submission.",
+    "Save the LinkedIn profile URL in Candidate CRM before formal submission.",
     `Capture proof for: ${firstSignal}.`,
     `Capture proof for: ${secondSignal}.`,
     brief.nextMove,
@@ -1055,7 +1057,7 @@ function buildRoleSubmissionPacket(input: {
   if (!candidateName) blockers.push("Candidate name is missing.")
   if (!candidateEmail) blockers.push("Candidate email is missing.")
   else if (!candidateEmailValid) blockers.push("Candidate email is invalid.")
-  if (!candidateLink) blockers.push("LinkedIn or resume link is missing.")
+  if (!candidateLink) blockers.push("LinkedIn profile URL is missing.")
   for (const field of roleSubmitFields(job)) {
     const value = (form.extraFields[field.id] ?? "").trim()
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
@@ -1101,7 +1103,7 @@ function buildRoleSubmissionPacket(input: {
       label: "Candidate identity",
       value: !candidateEmail || !candidateLink ? "Incomplete" : "Invalid email",
       detail: !candidateEmail || !candidateLink
-        ? "Candidate email and LinkedIn or resume link are required before ownership can be checked."
+        ? "Candidate email and LinkedIn profile URL are required before ownership can be checked."
         : "Fix the candidate email before running the ownership check.",
       tone: "blocked",
     }
@@ -1109,7 +1111,7 @@ function buildRoleSubmissionPacket(input: {
     identityGate = {
       label: "Candidate identity",
       value: "Clear",
-      detail: "Email and profile link passed the role ownership preflight.",
+      detail: "Email and LinkedIn profile passed the role ownership preflight.",
       tone: "ready",
     }
   } else if (identityCheck.status === "conflict" && identityMatchesPacket) {
@@ -2633,7 +2635,11 @@ export default function RecruiterRole() {
       return
     }
     if (!link) {
-      setQuickCandidateError("LinkedIn or resume link is required.")
+      setQuickCandidateError("LinkedIn profile URL is required.")
+      return
+    }
+    if (!looksLikeLinkedinUrl(link)) {
+      setQuickCandidateError("Use the candidate's LinkedIn /in/ profile URL.")
       return
     }
     if (email && !isValidEmail(email)) {
@@ -2687,7 +2693,7 @@ export default function RecruiterRole() {
   const updateRoleCandidateStage = async (candidate: RecruiterSourcedCandidateItem, stage: RecruiterSourcedCandidateStage) => {
     const link = candidate.candidate?.link?.trim()
     if (!link) {
-      setStageUpdateError("This saved candidate is missing the LinkedIn or resume link needed to update the pipeline.")
+      setStageUpdateError("This saved candidate is missing the LinkedIn profile URL needed to update the pipeline.")
       return
     }
     setStageUpdatingCandidateId(candidate.id)
@@ -2822,7 +2828,7 @@ export default function RecruiterRole() {
         candidate: {
           name: form.candidateName.trim(),
           email: form.candidateEmail.trim().toLowerCase(),
-          link: candidateLinkedinUrl || candidateResumeUrl,
+          link: candidateLinkedinUrl,
           currentRole: form.candidateCurrentRole.trim() || undefined,
           yoe: form.candidateYoe.trim() || undefined,
           notes: form.candidateNotes.trim() || undefined,
@@ -2843,7 +2849,7 @@ export default function RecruiterRole() {
         const submittedCandidate = {
           name: form.candidateName.trim(),
           email: form.candidateEmail.trim().toLowerCase(),
-          link: candidateLinkedinUrl || candidateResumeUrl,
+          link: candidateLinkedinUrl,
           currentRole: form.candidateCurrentRole.trim() || undefined,
           yoe: form.candidateYoe.trim() || undefined,
           notes: form.candidateNotes.trim() || undefined,
@@ -3127,10 +3133,10 @@ export default function RecruiterRole() {
             />
           </div>
           <div className="field">
-            <label>LinkedIn URL</label>
+            <label>LinkedIn URL *</label>
             <input
               type="text"
-              required={!form.candidateResumeUrl.trim()}
+              required
               placeholder="https://linkedin.com/in/…"
               value={form.candidateLinkedinUrl}
               onChange={(e) => setForm({ ...form, candidateLinkedinUrl: e.target.value })}
@@ -3140,12 +3146,11 @@ export default function RecruiterRole() {
             <label>Resume link</label>
             <input
               type="text"
-              required={!form.candidateLinkedinUrl.trim()}
               placeholder="https://drive.google.com/…"
               value={form.candidateResumeUrl}
               onChange={(e) => setForm({ ...form, candidateResumeUrl: e.target.value })}
             />
-            <p className="rb-form-note">At least one of LinkedIn URL or resume link is required. Provide both when you have them.</p>
+            <p className="rb-form-note">LinkedIn is required for identity and enrichment. Resume links are optional supporting evidence.</p>
           </div>
           <button
             type="button"
@@ -3372,7 +3377,7 @@ export default function RecruiterRole() {
                   />
                 </label>
                 <label>
-                  <span>LinkedIn / resume *</span>
+                  <span>LinkedIn URL *</span>
                   <input
                     value={quickCandidate.link}
                     onChange={(event) => setQuickCandidate({ ...quickCandidate, link: event.target.value })}
@@ -3543,7 +3548,7 @@ function CandidateOwnershipGuardPanel({
         <div>
           <span>Candidate ownership</span>
           <strong>Checking candidate lane...</strong>
-          <p>We are checking this email and profile link against existing sourced candidates and submissions for the role.</p>
+          <p>We are checking this email and LinkedIn profile against existing sourced candidates and submissions for the role.</p>
         </div>
       </section>
     )
@@ -3578,7 +3583,7 @@ function CandidateOwnershipGuardPanel({
       <div>
         <span>Candidate ownership</span>
         <strong>Add candidate identity to verify the lane</strong>
-        <p>{hasLink || hasEmail ? "Finish the candidate email and profile link to check for duplicate ownership." : "Enter a candidate email and LinkedIn or resume link before submitting."}</p>
+        <p>{hasLink || hasEmail ? "Finish the candidate email and LinkedIn profile to check for duplicate ownership." : "Enter a candidate email and LinkedIn profile URL before submitting."}</p>
       </div>
     </section>
   )

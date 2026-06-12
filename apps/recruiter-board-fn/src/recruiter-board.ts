@@ -2393,6 +2393,36 @@ function sanitizeOptionalString(v: unknown, max: number): string | undefined {
   return trimmed.slice(0, max)
 }
 
+export function canonicalizeRecruiterLinkedInProfileUrl(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== "string") return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) {
+    return null
+  }
+  let candidate = trimmed
+  if (/^\/\//.test(candidate)) {
+    candidate = `https:${candidate}`
+  } else if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(candidate)
+  } catch {
+    return null
+  }
+  const host = parsed.hostname.toLowerCase()
+  if (!/(^|\.)linkedin\.com$/.test(host)) return null
+  let path = parsed.pathname
+  const localeMatch = /^\/[a-z]{2,3}\/in\//i.exec(path)
+  if (localeMatch) path = path.slice(localeMatch[0].length - "/in/".length)
+  const match = /^\/in\/([A-Za-z0-9\-_%]+)\/?$/.exec(path)
+  if (!match) return null
+  return `https://linkedin.com/in/${match[1]!.toLowerCase()}`
+}
+
 export function validateRecruiterSourcedCandidateInput(input: unknown):
   | { ok: true; value: RecruiterSourcedCandidateInput }
   | { ok: false; reason: string } {
@@ -2419,6 +2449,8 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
   if (!isNonEmptyString(c.link)) return { ok: false, reason: "missing_candidate_link" }
   if (c.name.length > 200) return { ok: false, reason: "candidate_name_too_long" }
   if (c.link.length > 2000) return { ok: false, reason: "candidate_link_too_long" }
+  const canonicalCandidateLink = canonicalizeRecruiterLinkedInProfileUrl(c.link)
+  if (!canonicalCandidateLink) return { ok: false, reason: "candidate_linkedin_url_required" }
   if (c.email !== undefined && c.email !== null && c.email !== "") {
     if (typeof c.email !== "string" || !validRecruiterCandidateEmail(c.email)) {
       return { ok: false, reason: "invalid_candidate_email" }
@@ -2485,7 +2517,7 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
 
   const candidate: RecruiterSourcedCandidateInput["candidate"] = {
     name: c.name.trim(),
-    link: c.link.trim(),
+    link: canonicalCandidateLink,
   }
   const candidateEmail = typeof c.email === "string" ? normalizeRecruiterCandidateEmail(c.email) : ""
   const currentRole = sanitizeOptionalString(c.currentRole, 4000)
@@ -3991,6 +4023,8 @@ export function validateRecruiterCandidateIdentityCheckInput(input: unknown):
   if (!c || typeof c !== "object") return { ok: false, reason: "missing_candidate" }
   if (!isNonEmptyString(c.link)) return { ok: false, reason: "missing_candidate_link" }
   if (c.link.length > 2000) return { ok: false, reason: "candidate_link_too_long" }
+  const canonicalCandidateLink = canonicalizeRecruiterLinkedInProfileUrl(c.link)
+  if (!canonicalCandidateLink) return { ok: false, reason: "candidate_linkedin_url_required" }
   const candidateEmail = typeof c.email === "string" ? normalizeRecruiterCandidateEmail(c.email) : ""
   if (c.email !== undefined && c.email !== null && c.email !== "" && !validRecruiterCandidateEmail(String(c.email))) {
     return { ok: false, reason: "invalid_candidate_email" }
@@ -4000,7 +4034,7 @@ export function validateRecruiterCandidateIdentityCheckInput(input: unknown):
     value: {
       jobId: b.jobId.trim(),
       candidate: {
-        link: (c.link as string).trim(),
+        link: canonicalCandidateLink,
         ...(candidateEmail ? { email: candidateEmail } : {}),
       },
     },
@@ -4112,9 +4146,9 @@ export function validateSubmission(input: unknown):
       return { ok: false, reason: `${k}_too_long` }
     }
   }
-  // Optional candidate URLs. Accepted both as top-level `candidateLinkedinUrl`
-  // / `candidateResumeUrl` and nested `candidate.linkedinUrl` /
-  // `candidate.resumeUrl` so old and new clients interop.
+  // Candidate LinkedIn is the identity URL. It can arrive as top-level
+  // `candidateLinkedinUrl`, nested `candidate.linkedinUrl`, or the legacy
+  // `candidate.link` field. Resume URLs remain separate evidence links.
   const optionalCandidateUrl = (raw: unknown, field: string):
     | { ok: true; value?: string }
     | { ok: false; reason: string } => {
@@ -4125,8 +4159,16 @@ export function validateSubmission(input: unknown):
     if (trimmed.length > 500) return { ok: false, reason: `${field}_too_long` }
     return { ok: true, value: trimmed }
   }
-  const linkedinUrl = optionalCandidateUrl(b.candidateLinkedinUrl ?? c.linkedinUrl, "candidate_linkedin_url")
+  const explicitLinkedInRaw = b.candidateLinkedinUrl ?? c.linkedinUrl
+  const linkedinUrl = optionalCandidateUrl(explicitLinkedInRaw, "candidate_linkedin_url")
   if (!linkedinUrl.ok) return linkedinUrl
+  const canonicalLinkedIn = canonicalizeRecruiterLinkedInProfileUrl(linkedinUrl.value ?? c.link)
+  if (!canonicalLinkedIn) {
+    return {
+      ok: false,
+      reason: linkedinUrl.value ? "invalid_candidate_linkedin_url" : "candidate_linkedin_url_required",
+    }
+  }
   const resumeUrl = optionalCandidateUrl(b.candidateResumeUrl ?? c.resumeUrl, "candidate_resume_url")
   if (!resumeUrl.ok) return resumeUrl
 
@@ -4194,8 +4236,8 @@ export function validateSubmission(input: unknown):
       candidate: {
         name: (c.name as string).trim(),
         ...(candidateEmail ? { email: candidateEmail } : {}),
-        link: (c.link as string).trim(),
-        ...(linkedinUrl.value ? { linkedinUrl: linkedinUrl.value } : {}),
+        link: canonicalLinkedIn,
+        linkedinUrl: canonicalLinkedIn,
         ...(resumeUrl.value ? { resumeUrl: resumeUrl.value } : {}),
         ...(currentRole ? { currentRole } : {}),
         ...(yoe ? { yoe } : {}),
