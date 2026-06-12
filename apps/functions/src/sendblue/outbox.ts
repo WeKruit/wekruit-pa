@@ -146,26 +146,70 @@ export function _resetPriorInboundEvidenceCache(): void {
  * handles → `sendblue 400: INBOUND_ONLY_PLAN`, would be unsolicited cold texts
  * on a richer plan).
  *
- * Evidence = ANY `pa-inbound-events` row whose sender handle equals the
- * outbound recipient. The webhook writes the sender into
- * `rawPayload.participant` (canonical, also the broker schema field) and
- * `rawPayload.fromNumber` (Sendblue path); two limit-1 equality queries, no
- * composite index needed. There is NO maintained user-doc verified-inbound
- * marker (grepped phoneVerifiedAt / firstInboundAt — none exists), so the
- * events query is the single arm.
+ * Evidence = ANY `pa-inbound-events` row whose ACTUAL transport sender handle
+ * equals the outbound recipient. Prefer provider-preserved fields
+ * (`rawSenderHandle`, `original.from_number`, etc.). Only fall back to the
+ * canonical pipeline fields (`participant`, `fromNumber`) when the row has no
+ * contradictory provider sender. This matters because email Apple-ID senders
+ * are intentionally rewritten to a candidate profile phone for downstream
+ * trigger resolution; that profile phone is NOT SMS/iMessage consent.
  *
- * FAIL-OPEN ONLY ON QUERY ERROR (matches the duplicate-guard convention —
- * most outbox traffic is replies; blocking every send during a Firestore blip
- * is worse than the rare unsolicited send). An EMPTY result is a hard block.
+ * Fail closed on query errors: if we cannot prove prior inbound, the outbox
+ * must not POST to Sendblue.
  */
+const INBOUND_PROVIDER_SENDER_FIELDS = [
+  "rawPayload.rawSenderHandle",
+  "rawPayload.original.from_number",
+  "rawPayload.original.fromNumber",
+  "rawPayload.original.number",
+] as const
+
+const INBOUND_CANONICAL_SENDER_FIELDS = [
+  "rawPayload.participant",
+  "rawPayload.fromNumber",
+] as const
+
+function readDottedField(data: Record<string, unknown>, path: string): unknown {
+  let cur: unknown = data
+  for (const part of path.split(".")) {
+    if (!cur || typeof cur !== "object") return undefined
+    cur = (cur as Record<string, unknown>)[part]
+  }
+  return cur
+}
+
+function normalizedNonEmptyHandles(values: unknown[]): string[] {
+  const handles: string[] = []
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const normalized = normalizePeer(value)
+    if (normalized) handles.push(normalized)
+  }
+  return handles
+}
+
+export function inboundEventMatchesOutboundHandle(data: Record<string, unknown>, toHandle: string): boolean {
+  const actualTransportHandles = normalizedNonEmptyHandles(
+    INBOUND_PROVIDER_SENDER_FIELDS.map((field) => readDottedField(data, field))
+  )
+  if (actualTransportHandles.length > 0) {
+    return actualTransportHandles.includes(toHandle)
+  }
+
+  const canonicalHandles = normalizedNonEmptyHandles(
+    INBOUND_CANONICAL_SENDER_FIELDS.map((field) => readDottedField(data, field))
+  )
+  return canonicalHandles.includes(toHandle)
+}
+
 export async function hasPriorInboundEvidence(
   db: Firestore,
   toHandle: string,
   log: (...args: unknown[]) => void
-): Promise<{ ok: boolean; failOpen?: boolean }> {
+): Promise<{ ok: boolean; checkFailed?: boolean }> {
   if (priorInboundEvidenceCache.has(toHandle)) return { ok: true }
   try {
-    for (const field of ["rawPayload.participant", "rawPayload.fromNumber"] as const) {
+    for (const field of INBOUND_PROVIDER_SENDER_FIELDS) {
       // eslint-disable-next-line no-await-in-loop
       const snap = await db
         .collection(PA_COLLECTIONS.inboundEvents)
@@ -177,13 +221,25 @@ export async function hasPriorInboundEvidence(
         return { ok: true }
       }
     }
+    for (const field of INBOUND_CANONICAL_SENDER_FIELDS) {
+      // eslint-disable-next-line no-await-in-loop
+      const snap = await db
+        .collection(PA_COLLECTIONS.inboundEvents)
+        .where(field, "==", toHandle)
+        .limit(5)
+        .get()
+      if (snap.docs.some((doc) => inboundEventMatchesOutboundHandle(doc.data(), toHandle))) {
+        priorInboundEvidenceCache.add(toHandle)
+        return { ok: true }
+      }
+    }
     return { ok: false }
   } catch (err) {
-    log("pa.outbox.inbound_evidence_check_failed (fail-open)", {
+    log("pa.outbox.inbound_evidence_check_failed (fail-closed)", {
       toHandle,
       error: err instanceof Error ? err.message : String(err),
     })
-    return { ok: true, failOpen: true }
+    return { ok: false, checkFailed: true }
   }
 }
 
@@ -745,10 +801,13 @@ export async function paSendblueOutboxHandler(
   if (!ruleOneDevPhoneExempt && !ruleOneIdentityNoticeExempt) {
     const evidence = await hasPriorInboundEvidence(deps.db, toPeer, log)
     if (!evidence.ok) {
+      const error = evidence.checkFailed
+        ? "blocked: prior inbound evidence check failed (RULE 1 fail-closed)"
+        : "blocked: recipient handle has no prior inbound message (RULE 1)"
       await ref.set(
         {
           status: "blocked_no_inbound",
-          error: "blocked: recipient handle has no prior inbound message (RULE 1)",
+          error,
           updatedAt: now().toISOString(),
           expiresAtTs: outboundExpiresAtTs(now()),
         },

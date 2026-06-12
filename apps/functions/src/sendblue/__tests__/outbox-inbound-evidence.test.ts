@@ -15,7 +15,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
 
-import { paSendblueOutboxHandler, _resetPriorInboundEvidenceCache } from "../outbox.js"
+import { paSendblueOutboxHandler, hasPriorInboundEvidence, _resetPriorInboundEvidenceCache } from "../outbox.js"
 import { _resetPoolCache, _resetCountersCache } from "../pool.js"
 
 type DocData = Record<string, unknown>
@@ -203,7 +203,7 @@ describe("RULE 1 — outbox prior-inbound evidence gate (2026-06-11 incident)", 
     assert.equal([...pickStore("pa-candidate-identity-conflicts").values()].length, 1, "deterministic doc id — still one item")
   })
 
-  it("ALLOWS a recipient with a pa-inbound-events row (rawPayload.participant == toE164)", async () => {
+  it("ALLOWS a recipient with a pa-inbound-events row from the same phone transport handle", async () => {
     const row = pendingRow(HAS_INBOUND)
     const { db, pickStore } = makeFakeDb({
       "pa-outbound": { "doc-a1": row },
@@ -211,7 +211,13 @@ describe("RULE 1 — outbox prior-inbound evidence gate (2026-06-11 incident)", 
         inb_1: {
           userId: "u-1",
           createdAt: "2026-06-11T20:00:00.000Z",
-          rawPayload: { kind: "imessage", participant: HAS_INBOUND, fromNumber: HAS_INBOUND, toNumber: "+17174919939" },
+          rawPayload: {
+            kind: "imessage",
+            participant: HAS_INBOUND,
+            fromNumber: HAS_INBOUND,
+            toNumber: "+17174919939",
+            original: { from_number: HAS_INBOUND, number: HAS_INBOUND },
+          },
         },
       },
     })
@@ -220,6 +226,44 @@ describe("RULE 1 — outbox prior-inbound evidence gate (2026-06-11 incident)", 
     assert.equal(sb.sendCalls.length, 1, "send proceeds with inbound evidence")
     assert.equal(pickStore("pa-outbound").get("doc-a1")!.status, "sent")
     assert.equal([...pickStore("pa-candidate-identity-conflicts").values()].length, 0)
+  })
+
+  it("BLOCKS a normalized profile phone when the actual inbound transport handle was email", async () => {
+    const row = pendingRow(HAS_INBOUND, {
+      runtimeSource: "pa_prescreen_runtime",
+      idempotencyKey: "prescreen_config_missing:voicecursor-founding-pm:u-1",
+    })
+    const { db, pickStore } = makeFakeDb({
+      "pa-outbound": { "doc-email-actual": row },
+      "pa-inbound-events": {
+        inb_email_actual: {
+          userId: "u-1",
+          createdAt: "2026-06-12T04:35:00.000Z",
+          completedReason: "trigger_control_message",
+          rawPayload: {
+            kind: "imessage",
+            source: "sendblue",
+            participant: HAS_INBOUND,
+            fromNumber: HAS_INBOUND,
+            rawSenderHandle: "yashumohan02@gmail.com",
+            toNumber: "+16146202403",
+            text: "WeKruit_voicecursor-founding-pm_u-1_Job",
+            original: {
+              from_number: "yashumohan02@gmail.com",
+              number: "yashumohan02@gmail.com",
+              plan: "inbound_only",
+            },
+          },
+        },
+      },
+    })
+    const sb = makeSendblueMock()
+    await paSendblueOutboxHandler(makeEvent("doc-email-actual", row) as never, baseDeps(db, sb) as never)
+
+    assert.equal(sb.sendCalls.length, 0, "rewritten profile phone must not authorize an outbound SMS/iMessage POST")
+    const final = pickStore("pa-outbound").get("doc-email-actual")!
+    assert.equal(final.status, "blocked_no_inbound")
+    assert.match(String(final.error), /no prior inbound/)
   })
 
   it("ALLOWS a dev phone with zero inbound evidence (standing authorization)", async () => {
@@ -247,5 +291,19 @@ describe("RULE 1 — outbox prior-inbound evidence gate (2026-06-11 incident)", 
     await paSendblueOutboxHandler(makeEvent("doc-op", row) as never, baseDeps(db, sb) as never)
     assert.equal(sb.sendCalls.length, 0)
     assert.equal(pickStore("pa-outbound").get("doc-op")!.status, "blocked_no_inbound")
+  })
+
+  it("FAILS CLOSED when prior-inbound evidence cannot be queried", async () => {
+    const logs: unknown[][] = []
+    const throwingDb = {
+      collection() {
+        throw new Error("firestore unavailable")
+      },
+    }
+
+    const result = await hasPriorInboundEvidence(throwingDb as never, HAS_INBOUND, (...args) => logs.push(args))
+
+    assert.deepEqual(result, { ok: false, checkFailed: true })
+    assert.equal(String(logs[0]?.[0] ?? ""), "pa.outbox.inbound_evidence_check_failed (fail-closed)")
   })
 })
