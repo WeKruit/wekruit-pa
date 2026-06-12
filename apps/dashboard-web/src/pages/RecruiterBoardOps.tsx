@@ -561,7 +561,8 @@ const reviewSidePanelStyle: CSSProperties = {
 }
 
 const reviewContextStyle: CSSProperties = {
-  maxHeight: 420,
+  minHeight: 560,
+  maxHeight: "min(720px, calc(100vh - 120px))",
   overflow: "auto",
   border: "1px solid #e5ded2",
   borderRadius: 12,
@@ -586,8 +587,8 @@ const roleContextSectionTitleStyle: CSSProperties = {
 
 const roleContextTextStyle: CSSProperties = {
   color: "#4e443a",
-  fontSize: 13,
-  lineHeight: 1.45,
+  fontSize: 14,
+  lineHeight: 1.55,
 }
 
 const roleContextListStyle: CSSProperties = {
@@ -723,8 +724,26 @@ function AiDetail({ submission }: { submission: BoardSubmissionDoc }) {
   )
 }
 
+function jobLookupKeys(submission: BoardSubmissionDoc): string[] {
+  const keys = [submission.jobId?.trim(), submission.inboundJobId?.trim()].filter(
+    (key): key is string => Boolean(key),
+  )
+  return [...new Set(keys)]
+}
+
 function jobLookupKey(submission: BoardSubmissionDoc): string | null {
-  return submission.jobId?.trim() || submission.inboundJobId?.trim() || null
+  return jobLookupKeys(submission)[0] ?? null
+}
+
+function findSubmissionJob(
+  jobDocs: Record<string, BoardJobDoc>,
+  submission: BoardSubmissionDoc,
+): BoardJobDoc | undefined {
+  for (const key of jobLookupKeys(submission)) {
+    const job = jobDocs[key]
+    if (job) return job
+  }
+  return undefined
 }
 
 function ReviewField({ label, value, href }: { label: string; value?: string; href?: string | null }) {
@@ -1239,7 +1258,7 @@ export default function RecruiterBoardOps() {
           const data = d.data() as Omit<BoardSubmissionDoc, "id">
           return { id: d.id, ...data, createdAtMs: timestampToMs(data.createdAt) }
         })
-        const jobIds = [...new Set(loadedSubmissions.flatMap((s) => (s.jobId?.trim() ? [s.jobId.trim()] : [])))]
+        const jobIds = [...new Set(loadedSubmissions.flatMap(jobLookupKeys))]
         const loadedJobs = await Promise.all(
           jobIds.map(async (jobId) => {
             const snap = await getDoc(doc(db(), "pa-jobs", jobId))
@@ -1270,7 +1289,7 @@ export default function RecruiterBoardOps() {
     () => submissions.find((submission) => submission.id === selectedId) ?? null,
     [selectedId, submissions],
   )
-  const selectedJob = selectedSubmission ? jobDocs[jobLookupKey(selectedSubmission) ?? ""] : undefined
+  const selectedJob = selectedSubmission ? findSubmissionJob(jobDocs, selectedSubmission) : undefined
 
   useEffect(() => {
     if (selectedId && !submissions.some((submission) => submission.id === selectedId)) {
