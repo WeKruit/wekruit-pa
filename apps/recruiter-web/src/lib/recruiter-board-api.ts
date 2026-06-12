@@ -83,6 +83,8 @@ export interface SubmissionCandidateCells {
   name?: string
   email?: string
   link?: string
+  linkedinUrl?: string
+  resumeUrl?: string
   currentRole?: string
   yoe?: string
   notes?: string
