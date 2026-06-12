@@ -281,9 +281,9 @@ describe("prescreen-seam retention handoff", () => {
     assert.equal(typeof session?.reviewPendingFollowupAt, "string")
   })
 
-  // ── T5 — reducer untouched: a mid-screen expiry PAUSE still fires the deterministic terminal action ──
-  it("T5: canary — an expired active screen still fires the deterministic PAUSE terminal action; only the reply defers", async () => {
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+  // ── T5 — reducer untouched: a true expiry PAUSE still fires the deterministic terminal action ──
+  it("T5: canary — an expired active screen sends deterministic restart copy, never generic matching", async () => {
+    const stale = new Date(Date.now() - 22 * 24 * 60 * 60 * 1000).toISOString()
     const { db, docs } = makeFakeDb({
       "pa-prescreen-sessions/ps_idle": {
         sessionId: "ps_idle",
@@ -291,9 +291,9 @@ describe("prescreen-seam retention handoff", () => {
         jobId: "invoko-product-designer",
         terminal: null,
         currentQId: "role_fit",
-        createdAt: twoHoursAgo,
-        updatedAt: twoHoursAgo,
-        workSession: { kind: "job_prescreen", status: "active", startedAt: twoHoursAgo, boundary: "trigger" },
+        createdAt: stale,
+        updatedAt: stale,
+        workSession: { kind: "job_prescreen", status: "active", startedAt: stale, boundary: "trigger" },
       },
     })
     const terminalCalls: Array<Record<string, unknown>> = []
@@ -318,9 +318,10 @@ describe("prescreen-seam retention handoff", () => {
     const session = docs.get("pa-prescreen-sessions/ps_idle")?.data
     assert.equal(session?.terminal, "PAUSE")
     assert.equal(session?.terminalReason, "expired_inactive_prescreen_session")
-    // … but the candidate-facing reply DEFERS to thin (no canned expiredSessionText).
-    assert.equal(result.handled, false, "canary expired turn defers the reply to thin")
-    assert.equal(sent.length, 0, "no canned expiredSessionText on the canary path")
+    assert.equal(result.handled, true, "canary expired turn is owned by the deterministic prescreen seam")
+    assert.equal(sent.length, 1, "expired screens get one explicit restart prompt")
+    assert.match(sent[0]!, /reply "restart screen"/)
+    assert.doesNotMatch(sent[0]!, /matching/i)
   })
 
   // ── T6 — user_exit MEANING: an on-topic role answer is NOT regex-force-PAUSED for canary ──

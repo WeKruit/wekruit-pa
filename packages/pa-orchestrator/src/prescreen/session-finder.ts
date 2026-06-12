@@ -17,8 +17,8 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 
-/** Active-session inactivity timeout (1hr). */
-export const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
+/** Active-session inactivity timeout (21 days). */
+export const ACTIVE_PRESCREEN_TIMEOUT_MS = 21 * 24 * 60 * 60 * 1000
 
 /** Window in which a recently-terminated session still suppresses Claire. */
 export const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000

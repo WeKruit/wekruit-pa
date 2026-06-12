@@ -129,7 +129,7 @@ export function isUserExitPrescreenReply(reply: string): boolean {
 // zero ding on the candidate, restart anytime, and Claire keeps matching them meanwhile.
 // KEEP IN SYNC with the duplicates in apps/functions/src/prescreen-turn-handler.ts.
 export function expiredSessionText(_lang: Lang): string {
-  return "heads up — that screen timed out on my side, so i closed it rather than mix two conversations. zero ding on you: reopen the job link (or just ask me) whenever you want a fresh run, and i'm still matching you to other roles in the meantime."
+  return "heads up — this role screen timed out, so i closed it instead of mixing old answers into a stale screen. zero ding on you. reply \"restart screen\" and i'll start a fresh run for this role."
 }
 
 export function userExitSessionText(_lang: Lang): string {

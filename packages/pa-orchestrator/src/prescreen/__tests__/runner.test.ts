@@ -146,7 +146,7 @@ test("prescreenTurnRecordQId returns advance.fromQId for advance action", () => 
 
 test("copy is English-only regardless of lang: expired", () => {
   assert.equal(expiredSessionText("zh"), expiredSessionText("en"))
-  assert.match(expiredSessionText("en"), /timed out on my side/)
+  assert.match(expiredSessionText("en"), /reply "restart screen"/)
 })
 
 test("copy is English-only regardless of lang: user-exit + recent-terminal", () => {

@@ -211,8 +211,8 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(prescreenTurnRecordQId({ kind: "error", reason: "session_not_found" }, null), "terminal")
   })
 
-  it("expires idle prescreen sessions instead of routing a late reply into the old job", async () => {
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+  it("expires truly stale prescreen sessions and asks the candidate to restart the role screen", async () => {
+    const stale = new Date(Date.now() - 22 * 24 * 60 * 60 * 1000).toISOString()
     const { db, docs } = makeFakeDb({
       "pa-prescreen-sessions/ps_old": {
         sessionId: "ps_old",
@@ -220,9 +220,9 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
         jobId: "job-old",
         terminal: null,
         currentQId: "role_fit",
-        createdAt: twoHoursAgo,
-        updatedAt: twoHoursAgo,
-        workSession: { kind: "job_prescreen", status: "active", startedAt: twoHoursAgo, boundary: "trigger" },
+        createdAt: stale,
+        updatedAt: stale,
+        workSession: { kind: "job_prescreen", status: "active", startedAt: stale, boundary: "trigger" },
       },
     })
 
@@ -257,11 +257,131 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(terminalCalls[0].terminal, "PAUSE")
     assert.equal(terminalCalls[0].jobId, "job-old")
     assert.equal(sent.length, 1)
-    assert.match(sent[0], /timed out on my side/)
+    assert.match(sent[0], /reply "restart screen"/)
     const session = docs.get("pa-prescreen-sessions/ps_old")?.data
     assert.equal(session?.terminal, "PAUSE")
     assert.equal(session?.terminalReason, "expired_inactive_prescreen_session")
     assert.equal((session?.workSession as { boundary?: string }).boundary, "timeout")
+  })
+
+  it("keeps a two-hour-old active prescreen alive and advances to the next role question", async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_invoko_live": {
+        sessionId: "ps_invoko_live",
+        userId: "wQfGZlttRQltMPv4NU6e",
+        jobId: "hs-10996795-invoko-product-manager",
+        terminal: null,
+        currentQId: "q_consumer_product_experience",
+        createdAt: twoHoursAgo,
+        updatedAt: twoHoursAgo,
+        score: 0,
+        scoreMax: 3,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 3,
+        qOrder: ["q_consumer_product_experience", "q_ship_taste"],
+        questions: {
+          q_consumer_product_experience: {
+            qId: "q_consumer_product_experience",
+            type: "MUST_HAVE",
+            weight: 2,
+            matchThreshold: 0.85,
+            clarifyRounds: 0,
+          },
+          q_ship_taste: {
+            qId: "q_ship_taste",
+            type: "MUST_HAVE",
+            weight: 1,
+            matchThreshold: 0.85,
+            clarifyRounds: 0,
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: twoHoursAgo, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "q_consumer_product_experience",
+              prompt: {
+                en: "Tell me about consumer product work you've done - PM, design, or eng role on a real user-facing product. What did you ship and what feedback did it drive?",
+                zh: "Tell me about consumer product work you've done - PM, design, or eng role on a real user-facing product. What did you ship and what feedback did it drive?",
+              },
+              clarifyPrompt: { en: "What did you ship and what feedback did it drive?", zh: "What did you ship and what feedback did it drive?" },
+              keywords: [{ keyword: "consumer_product_shipping", weight: 1 }],
+            },
+            {
+              qId: "q_ship_taste",
+              prompt: {
+                en: "How do you decide what to ship next when you have more ideas than time? Walk me through your prioritization.",
+                zh: "How do you decide what to ship next when you have more ideas than time? Walk me through your prioritization.",
+              },
+              clarifyPrompt: { en: "Give me the smallest slice you shipped and why.", zh: "Give me the smallest slice you shipped and why." },
+              keywords: [{ keyword: "prioritization_taste", weight: 1 }],
+            },
+          ],
+        },
+      },
+    })
+
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        return {
+          perKeyword: [
+            {
+              keyword: "consumer_product_shipping",
+              match: 0.95,
+              confidence: 0.9,
+              evidence: "supported launch of user-facing dealership workflows",
+              reasoning: "clear shipped user-facing product example",
+            },
+          ],
+          summary: "Strong enough to advance to product judgment.",
+          answered: true,
+        }
+      },
+    }
+    const sent: string[] = []
+    const terminalCalls: Array<Record<string, unknown>> = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "wQfGZlttRQltMPv4NU6e",
+      toE164: "+12026571666",
+      replyText:
+        "I supported a PoS platform for automotive dealerships, translated business needs into product requirements, worked with engineering through testing, and used post-launch feedback to prioritize workflow changes.",
+      keywordSetCaller: caller,
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, null)
+    assert.equal(result.textSent, "How do you decide what to ship next when you have more ideas than time? Walk me through your prioritization.")
+    assert.deepEqual(sent, ["How do you decide what to ship next when you have more ideas than time? Walk me through your prioritization."])
+    assert.deepEqual(terminalCalls, [])
+    const session = docs.get("pa-prescreen-sessions/ps_invoko_live")?.data
+    assert.equal(session?.terminal, null)
+    assert.equal(session?.currentQId, "q_ship_taste")
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_invoko_live/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.deepEqual(turnEntries[0][1].data.action, {
+      kind: "advance",
+      fromQId: "q_consumer_product_experience",
+      toQId: "q_ship_taste",
+    })
   })
 
   it("ignores stale prescreen docs whose active question is already cleared", async () => {

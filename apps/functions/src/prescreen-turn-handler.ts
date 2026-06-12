@@ -57,7 +57,7 @@ import {
   type AgenticRunTurnResult,
 } from "./prescreen-agentic-turn.js"
 
-const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
+const ACTIVE_PRESCREEN_TIMEOUT_MS = 21 * 24 * 60 * 60 * 1000
 const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
 
 type RuntimeSmsSender = (args: {
@@ -1199,18 +1199,6 @@ export async function runPrescreenTurnIfActive(
         error: err instanceof Error ? err.message : String(err),
       })
     }
-    // RETENTION HANDOFF (canary, Adam 2026-06-05): the deterministic PAUSE write + retain/match action
-    // ALREADY fired above (reducer owns state). For the dev cohort, DEFER the candidate-facing reply to
-    // the thin context-complete agent (it composes "I paused that older screen — want to pick up where we
-    // left off or see other roles?" with full context) instead of the canned expiredSessionText. Non-canary
-    // keeps the canned notice below byte-for-byte.
-    if (isPrescreenRetentionHandoffCanary(args.userId)) {
-      log("prescreen.turn.expired_deferred_to_thin", {
-        sessionId: lookup.sessionId,
-        userId: args.userId,
-      })
-      return { handled: false }
-    }
     const text = expiredSessionText(args.lang ?? "en")
     try {
       await sendSms({
@@ -1567,7 +1555,7 @@ async function finalizePrescreenTurnResult(params: {
 // zero ding on the candidate, restart anytime, and Claire keeps matching them meanwhile.
 // KEEP IN SYNC with the duplicates in packages/pa-orchestrator/src/prescreen/runner.ts.
 function expiredSessionText(_lang: "zh" | "en"): string {
-  return "heads up — that screen timed out on my side, so i closed it rather than mix two conversations. zero ding on you: reopen the job link (or just ask me) whenever you want a fresh run, and i'm still matching you to other roles in the meantime."
+  return "heads up — this role screen timed out, so i closed it instead of mixing old answers into a stale screen. zero ding on you. reply \"restart screen\" and i'll start a fresh run for this role."
 }
 
 function userExitSessionText(_lang: "zh" | "en"): string {
