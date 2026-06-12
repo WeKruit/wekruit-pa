@@ -26,6 +26,7 @@ import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 
 import { handleSendblueWebhook } from "../webhook.js"
+import { inboundEventMatchesOutboundHandle } from "../outbox.js"
 import { hashCandidateHandle, _clearFeatureFlagCache } from "@pa/pa-persistence"
 
 const SECRET = "test-webhook-secret"
@@ -222,6 +223,53 @@ describe("Email-sender resolution — Sendblue webhook gate rework (SEV 2026-06-
     const resolved = auditRows().filter((a) => a.type === "email_sender_resolved")
     assert.equal(resolved.length, 1, "email_sender_resolved audit recorded")
     assert.equal((resolved[0]!.payload as DocData).method, "uid_token")
+  })
+
+  it("RULE-1 consent (email origin): trigger evidence counts as EMAIL consent only — never authorizes the rewritten profile phone", async () => {
+    // Consent model (11edbd4a): email-sender resolution rewrites
+    // normalized.fromNumber onto the profile PHONE so the trigger pipeline
+    // runs, but the profile phone never texted us. The evidence row must keep
+    // the ACTUAL transport sender (rawSenderHandle + original.from_number =
+    // the email) so the outbox gate's provider-field preference yields: Q1 to
+    // the phone BLOCKED (+ review item downstream), email handle = the only
+    // consented handle. Never cold-open a phone that didn't text.
+    const { db, inbound } = makeFakeDb({
+      users: { [UID]: { phoneE164: PHONE, email: EMAIL } },
+    })
+    const body = inboundPayload(`WeKruit_job-123_${UID}_Job`, EMAIL, "msg-email-trigger-consent-1")
+    const res = makeRes()
+    await handleSendblueWebhook(makeReq(body), res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async (_db, phone) => (phone === PHONE ? UID : null),
+      runPreScreenForUser: (async () => ({ ok: true, sessionId: "sess-consent-1" })) as never,
+    })
+
+    assert.equal(res.statusCode, 200)
+    const evidenceRows = [...inbound.values()].filter(
+      (r) => r.completedReason === "trigger_control_message",
+    )
+    assert.equal(evidenceRows.length, 1, "trigger paste writes exactly one evidence row")
+    const evidence = evidenceRows[0]!
+    const raw = evidence.rawPayload as DocData
+    assert.equal(raw.fromNumber, PHONE, "pipeline fields carry the rewritten canonical phone")
+    assert.equal(raw.participant, PHONE)
+    assert.equal(raw.rawSenderHandle, EMAIL, "ACTUAL transport sender preserved")
+    assert.equal(
+      (raw.original as DocData).from_number,
+      EMAIL,
+      "original.from_number is the email Apple-ID transport sender",
+    )
+    assert.equal(
+      inboundEventMatchesOutboundHandle(evidence, PHONE),
+      false,
+      "email-origin trigger evidence must NOT count as phone consent — Q1 to the phone stays blocked",
+    )
+    assert.equal(
+      inboundEventMatchesOutboundHandle(evidence, EMAIL),
+      true,
+      "email-origin trigger evidence counts as consent for the email handle only",
+    )
   })
 
   it("email sender + verification-code content → resolves uid, enqueues on canonical phone with rawSenderHandle", async () => {

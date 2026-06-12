@@ -127,6 +127,41 @@ test("Phase 77: router swallows match() throw and tries next trigger", async () 
   assert.equal(r.triggerName, "ok")
 })
 
+test("RULE-1 evidence: matchesAny(text) mirrors dispatch matching without side effects", () => {
+  let fired = 0
+  const router = new TriggerRouter({
+    triggers: [
+      new StubTrigger("a", /TOKEN/, async () => {
+        fired++
+        return { kind: "handled" as const, action: "a_action" }
+      }),
+    ],
+  })
+  assert.equal(router.matchesAny("contains TOKEN"), true)
+  assert.equal(router.matchesAny("nothing here"), false)
+  assert.equal(fired, 0, "matchesAny must never invoke handle()")
+})
+
+test("RULE-1 evidence: matchesAny swallows match() throws and still finds a later match", () => {
+  const evil: Trigger = {
+    name: "evil",
+    match() {
+      throw new Error("regex blew up")
+    },
+    async handle() {
+      return { kind: "handled" as const, action: "should_not_reach" }
+    },
+  }
+  const router = new TriggerRouter({
+    triggers: [
+      evil,
+      new StubTrigger("ok", /OK/, async () => ({ kind: "handled" as const, action: "ok_action" })),
+    ],
+  })
+  assert.equal(router.matchesAny("OK ping"), true)
+  assert.equal(router.matchesAny("no match"), false)
+})
+
 // ════════════════════════════════════════════════════════════════════════════
 // PrescreenTrigger
 // ════════════════════════════════════════════════════════════════════════════
