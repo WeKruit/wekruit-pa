@@ -21,6 +21,7 @@ export {
   paRecruiterCandidateCalibrationNotify,
   paRecruiterCandidateConsentResend,
   paRecruiterInviteCodeCreate,
+  paRecruiterInviteCodeResend,
   paRecruiterInviteCodeReplace,
   paRecruiterInviteCodeRestore,
   paRecruiterMe,

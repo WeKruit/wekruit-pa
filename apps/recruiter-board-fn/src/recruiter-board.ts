@@ -10,6 +10,7 @@
  *                                     (supports ?limit, ?offset, ?since, ?status)
  *   POST paRecruiterInviteCodeCreate -> admin creates one-use recruiter invite code
  *                                      and can email it to the recruiter
+ *   POST paRecruiterInviteCodeResend -> admin resends an existing sent-but-unclaimed invite
  *   POST paRecruiterInviteCodeReplace -> admin replaces a legacy unrecoverable invite code
  *   POST paRecruiterInviteCodeRestore -> admin stores a known raw code on a preview-only row
  *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
@@ -342,6 +343,10 @@ interface RecruiterInviteCodeReplaceInput {
   inviteCodeId: string
 }
 
+interface RecruiterInviteCodeResendInput {
+  inviteCodeId: string
+}
+
 interface RecruiterInviteCodeRestoreInput {
   inviteCodeId: string
   inviteCode: string
@@ -482,6 +487,12 @@ export function validateInviteCodeReplace(input: unknown):
   const inviteCodeId = b.inviteCodeId.trim()
   if (!/^[a-f0-9]{64}$/i.test(inviteCodeId)) return { ok: false, reason: "invalid_invite_code_id" }
   return { ok: true, value: { inviteCodeId } }
+}
+
+export function validateInviteCodeResend(input: unknown):
+  | { ok: true; value: RecruiterInviteCodeResendInput }
+  | { ok: false; reason: string } {
+  return validateInviteCodeReplace(input)
 }
 
 export function validateInviteCodeRestore(input: unknown):
@@ -1417,6 +1428,48 @@ export const paRecruiterInviteCodeCreate = onRequest(
       }
     }
     res.status(500).json({ ok: false, reason: "code_generation_collision" })
+  },
+)
+
+export const paRecruiterInviteCodeResend = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: [...MAILGUN_SECRETS, PA_ADMIN_TOKEN_SECRET] },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const adminEmail = await hiringBoardAdminEmail(req)
+    if (!adminEmail) {
+      res.status(403).json({ ok: false, reason: "forbidden" })
+      return
+    }
+    const validated = validateInviteCodeResend(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+
+    const result = await resendRecruiterInviteCodeEmail(getFirestore(), {
+      inviteCodeId: validated.value.inviteCodeId,
+      adminEmail,
+    })
+    res.set("Cache-Control", "private, max-age=0, no-store")
+    if (!result.ok) {
+      res.status(result.status).json({ ok: false, reason: result.reason })
+      return
+    }
+    res.status(200).json({
+      ok: true,
+      inviteCodeId: result.inviteCodeId,
+      recruiterEmail: result.recruiterEmail,
+      emailStatus: result.emailStatus,
+      emailMessageId: result.emailMessageId,
+    })
   },
 )
 
@@ -4996,6 +5049,62 @@ async function sendRecruiterInviteEmailForCode(
   } catch (err) {
     await markInviteEmailFailed(inviteRef, String(err), "mailgun")
     return { ok: false, reason: "invite_email_failed", status: 500 }
+  }
+}
+
+type RecruiterInviteEmailSender = (
+  inviteRef: DocumentReference,
+  input: RecruiterInviteEmailInput,
+) => Promise<{ ok: true; messageId?: string } | { ok: false; reason: string; status: number }>
+
+export async function resendRecruiterInviteCodeEmail(
+  db: Firestore,
+  input: { inviteCodeId: string; adminEmail: string },
+  sendInviteEmail: RecruiterInviteEmailSender = sendRecruiterInviteEmailForCode,
+): Promise<
+  | { ok: true; inviteCodeId: string; recruiterEmail: string; emailStatus: "sent"; emailMessageId?: string }
+  | { ok: false; status: number; reason: string }
+> {
+  const ref = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(input.inviteCodeId)
+  const snap = await ref.get()
+  if (!snap.exists) return { ok: false, status: 404, reason: "invite_code_not_found" }
+
+  const data = snap.data() as Record<string, unknown>
+  if (!inviteCodeUsable(data, Date.now())) {
+    return { ok: false, status: 409, reason: "invite_code_not_usable" }
+  }
+  const rawCode = typeof data.inviteCode === "string" ? normalizeRecruiterInviteCode(data.inviteCode) : ""
+  if (!isNonEmptyString(rawCode) || hashRecruiterInviteCode(rawCode) !== input.inviteCodeId) {
+    return { ok: false, status: 409, reason: "invite_code_not_visible" }
+  }
+  const recruiterEmail = typeof data.recruiterEmail === "string" ? normalizeRecruiterEmail(data.recruiterEmail) : ""
+  if (!validEmail(recruiterEmail)) {
+    return { ok: false, status: 409, reason: "missing_recruiter_email" }
+  }
+  if (data.inviteEmailStatus !== "sent") {
+    return { ok: false, status: 409, reason: "invite_email_not_sent" }
+  }
+
+  const sent = await sendInviteEmail(ref, {
+    recruiterEmail,
+    inviteCode: rawCode,
+    expiresAt: coerceToIso(data.expiresAt) ?? null,
+  })
+  if (!sent.ok) return { ok: false, status: sent.status, reason: sent.reason }
+
+  await ref.set({
+    inviteEmailLastResentAt: FieldValue.serverTimestamp(),
+    inviteEmailLastResentByEmail: input.adminEmail,
+    inviteEmailResendCount: FieldValue.increment(1),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true })
+
+  return {
+    ok: true,
+    inviteCodeId: input.inviteCodeId,
+    recruiterEmail,
+    emailStatus: "sent",
+    emailMessageId: sent.messageId,
   }
 }
 

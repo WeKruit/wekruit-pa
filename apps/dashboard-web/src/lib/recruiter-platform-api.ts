@@ -24,6 +24,13 @@ export interface CreateRecruiterInviteCodeResult {
   replacedInviteCodeId?: string
 }
 
+export interface ResendRecruiterInviteCodeResult {
+  inviteCodeId: string
+  recruiterEmail: string
+  emailStatus: "sent"
+  emailMessageId?: string
+}
+
 export async function createRecruiterInviteCode(
   input: CreateRecruiterInviteCodeInput,
 ): Promise<CreateRecruiterInviteCodeResult> {
@@ -66,6 +73,34 @@ export async function sendRecruiterInviteEmail(
     expiresAt: input.expiresAt,
     sendEmail: true,
   })
+}
+
+export async function resendRecruiterInviteCodeEmail(
+  inviteCodeId: string,
+): Promise<ResendRecruiterInviteCodeResult> {
+  const token = await auth().currentUser?.getIdToken()
+  if (!token) throw new Error("admin_auth_required")
+  const res = await fetch(`${FUNCTIONS_BASE}/paRecruiterInviteCodeResend`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ inviteCodeId }),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+  } & Partial<ResendRecruiterInviteCodeResult>
+  if (!res.ok || !body.ok || !body.inviteCodeId || !body.recruiterEmail || body.emailStatus !== "sent") {
+    throw new Error(body.reason ?? `paRecruiterInviteCodeResend HTTP ${res.status}`)
+  }
+  return {
+    inviteCodeId: body.inviteCodeId,
+    recruiterEmail: body.recruiterEmail,
+    emailStatus: body.emailStatus,
+    emailMessageId: body.emailMessageId,
+  }
 }
 
 export async function replaceRecruiterInviteCode(
