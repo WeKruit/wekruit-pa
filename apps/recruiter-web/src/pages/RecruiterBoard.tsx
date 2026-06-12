@@ -4222,7 +4222,7 @@ function RecruiterAccessWorkspacePreview() {
       <header>
         <span>Workspace preview</span>
         <strong>Released role: Founding AI Engineer</strong>
-        <p>Approved recruiters see the role brief, candidate lanes, market feedback, and submission status in one workspace.</p>
+        <p>Signed-in recruiters see the role brief, candidate lanes, market feedback, and submission status in one workspace.</p>
       </header>
       <div className="rb-access-preview__pipeline" aria-label="Candidate pipeline">
         {["Sourced", "Screened", "Submitted", "In review", "Interviewing", "Hired"].map((stage, index) => (

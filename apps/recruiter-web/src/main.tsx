@@ -5,7 +5,6 @@ import "./lib/auth-redirect-bootstrap.js"
 import { initAnalytics } from "./lib/analytics.js"
 import { RecruiterSessionProvider } from "./lib/recruiter-session-context.js"
 import OpenJobsPage from "./pages/OpenJobsPage.js"
-import RecruiterBoard from "./pages/RecruiterBoard.js"
 import RecruiterWorkspace from "./pages/RecruiterWorkspace.js"
 import RoleSheetPage from "./pages/RoleSheetPage.js"
 import SubmissionDetailPage from "./pages/SubmissionDetailPage.js"
@@ -20,7 +19,7 @@ const routes = (
     <Route path="/" element={<Navigate to="/recruiters/jobs" replace />} />
     <Route path="/recruiters" element={<RecruiterWorkspace />} />
     <Route path="/recruiters/jobs" element={<OpenJobsPage />} />
-    <Route path="/recruiters/classic" element={<RecruiterBoard />} />
+    <Route path="/recruiters/classic" element={<Navigate to="/recruiters" replace />} />
     <Route path="/recruiters/job/:jobId" element={<RoleSheetPage />} />
     <Route path="/recruiters/submission/:submissionId" element={<SubmissionDetailPage />} />
     <Route path="*" element={<Navigate to="/recruiters/jobs" replace />} />

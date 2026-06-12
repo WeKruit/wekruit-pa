@@ -21,14 +21,12 @@ import {
 import {
   addRecruiterSubmissionComment,
   fetchCollabJobs,
-  fetchRecruiterRoleApplications,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissionComments,
   fetchRecruiterSubmissions,
   resendRecruiterCandidateConfirmation,
   updateRecruiterPreferences,
   type CollabJob,
-  type RecruiterRoleApplicationItem,
   type RecruiterSubmissionComment,
   type RecruiterSubmissionItem,
 } from "../lib/recruiter-board-api.js"
@@ -288,7 +286,7 @@ const ICONS = {
 
 type View = "submissions" | "roles" | "role"
 type ListFilter = "all" | "needs" | "feedback" | "passed" | "submitted" | "review" | "interview" | "client" | "offer" | "hired"
-type RoleFilter = "all" | "approved" | "new"
+type RoleFilter = "all" | "new"
 
 export default function RecruiterWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -299,7 +297,6 @@ export default function RecruiterWorkspace() {
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [sourcedCount, setSourcedCount] = useState(0)
-  const [roleApplications, setRoleApplications] = useState<RecruiterRoleApplicationItem[]>([])
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -373,7 +370,6 @@ export default function RecruiterWorkspace() {
     if (!session) {
       setSubmissions([])
       setSourcedCount(0)
-      setRoleApplications([])
       setLoaded(false)
       return
     }
@@ -386,15 +382,13 @@ export default function RecruiterWorkspace() {
     if (!session) return
     try {
       setLoadError(null)
-      const [subs, sourced, apps] = await Promise.all([
+      const [subs, sourced] = await Promise.all([
         fetchRecruiterSubmissions(),
         fetchRecruiterSourcedCandidates(),
-        fetchRecruiterRoleApplications(),
       ])
       const sorted = [...subs].sort((a, b) => toMs(b.updatedAt ?? b.createdAt) - toMs(a.updatedAt ?? a.createdAt))
       setSubmissions(sorted)
       setSourcedCount(sourced.length)
-      setRoleApplications(apps)
       setLoaded(true)
       setSelectedId((prev) => prev && sorted.some((s) => s.id === prev) ? prev : (sorted[0]?.id ?? null))
     } catch (e) {
@@ -421,14 +415,6 @@ export default function RecruiterWorkspace() {
     for (const j of jobs ?? []) map.set(j.jobId, j)
     return map
   }, [jobs])
-
-  const approvedJobIds = useMemo(() => {
-    const set = new Set<string>()
-    for (const app of roleApplications) {
-      if (app.status === "approved" && app.jobId) set.add(app.jobId)
-    }
-    return set
-  }, [roleApplications])
 
   const needsCount = useMemo(() => submissions.filter(needsYou).length, [submissions])
 
@@ -592,7 +578,6 @@ export default function RecruiterWorkspace() {
   // roles view-model
   const roleFilterDefs: Array<{ id: RoleFilter; label: string; match: (j: CollabJob) => boolean }> = [
     { id: "all", label: "All roles", match: () => true },
-    { id: "approved", label: "Approved access", match: (j) => approvedJobIds.has(j.jobId) },
     { id: "new", label: "New this week", match: (j) => Date.now() - toMs(j.updatedAt) < 7 * 86_400_000 },
   ]
   const q = search.trim().toLowerCase()
@@ -886,7 +871,6 @@ export default function RecruiterWorkspace() {
               <section className="rw-roles">
                 {visibleRoles.map((j) => {
                   const label = j.recruiterBoard?.label
-                  const isApproved = approvedJobIds.has(j.jobId)
                   const isNew = Date.now() - toMs(j.updatedAt) < 7 * 86_400_000
                   const subCount = submissions.filter((s) => s.jobId === j.jobId).length
                   return (
@@ -895,9 +879,7 @@ export default function RecruiterWorkspace() {
                       <span className="rw-role-card-main">
                         <span className="rw-role-card-title">
                           <strong>{j.title}</strong>
-                          {isApproved
-                            ? <span style={pillStyle("success")}>Approved</span>
-                            : <span style={pillStyle("mute")}>Single-submit</span>}
+                          <span style={pillStyle("success")}>Open</span>
                           {isNew && <span style={pillStyle("live")}>New</span>}
                         </span>
                         <span className="rw-role-card-meta">

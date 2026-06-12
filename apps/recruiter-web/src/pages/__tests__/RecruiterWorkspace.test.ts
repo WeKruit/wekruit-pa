@@ -13,10 +13,12 @@ import { fileURLToPath } from "node:url"
 const here = dirname(fileURLToPath(import.meta.url))
 const workspaceSrc = readFileSync(join(here, "..", "RecruiterWorkspace.tsx"), "utf8")
 const mainSrc = readFileSync(join(here, "..", "..", "main.tsx"), "utf8")
+const boardSrc = readFileSync(join(here, "..", "RecruiterBoard.tsx"), "utf8")
 
-test("workspace owns /recruiters and the classic board stays reachable", () => {
+test("workspace owns /recruiters and the legacy classic board is not reachable", () => {
   assert.match(mainSrc, /path="\/recruiters" element={<RecruiterWorkspace \/>}/)
-  assert.match(mainSrc, /path="\/recruiters\/classic" element={<RecruiterBoard \/>}/)
+  assert.match(mainSrc, /path="\/recruiters\/classic" element={<Navigate to="\/recruiters" replace \/>}/)
+  assert.doesNotMatch(mainSrc, /import RecruiterBoard/)
   assert.match(mainSrc, /path="\/recruiters\/job\/:jobId" element={<RoleSheetPage \/>}/)
   assert.match(mainSrc, /path="\/recruiters\/submission\/:submissionId"/)
 })
@@ -28,8 +30,6 @@ test("workspace is wired to the real API — every data surface has a live sourc
   assert.match(workspaceSrc, /fetchCollabJobs\(\)/)
   // sourced count for the quarter goal
   assert.match(workspaceSrc, /fetchRecruiterSourcedCandidates\(\)/)
-  // approved-access tags
-  assert.match(workspaceSrc, /fetchRecruiterRoleApplications\(\)/)
   // Ask WeKruit thread
   assert.match(workspaceSrc, /fetchRecruiterSubmissionComments\(/)
   assert.match(workspaceSrc, /addRecruiterSubmissionComment\(/)
@@ -77,4 +77,12 @@ test("submit flow stays on the role sheet — workspace links, never reimplement
 
 test("email deep links keep working: ?tab=submissions opens the submissions view", () => {
   assert.match(workspaceSrc, /tabParam === "submissions" \? "submissions"/)
+})
+
+test("workspace presents active roles as open, not approved-access gated", () => {
+  assert.doesNotMatch(workspaceSrc, /Approved access/)
+  assert.doesNotMatch(workspaceSrc, /Single-submit/)
+  assert.doesNotMatch(workspaceSrc, /approvedJobIds/)
+  assert.doesNotMatch(workspaceSrc, /fetchRecruiterRoleApplications\(\)/)
+  assert.doesNotMatch(boardSrc, /Approved recruiters see/)
 })
