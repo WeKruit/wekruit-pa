@@ -139,16 +139,16 @@ Claire must understand and explain downstream prescreen outcomes, not only the l
 
 1. **Rejected / not moving forward.**
    - A rejection can be initiated from dashboard review or by timeout.
-   - If a hiring-manager/recruiter decision is still absent after 21 days, WeKruit auto-rejects rather than leaving the candidate in limbo.
+   - If a WeKruit-team outcome update is still absent after 21 days, WeKruit auto-rejects rather than leaving the candidate in limbo.
    - The outbound rejection must include a comprehensive, personalized, evidence-backed reason.
-   - Phrase the rationale as hiring-manager notes / role-team feedback, not as an internal model score.
-   - If the candidate asks later, Claire should consistently explain it as notes from the hiring manager / role team.
+   - Phrase the rationale as WeKruit team notes prepared to help pitch the hiring manager, not as an internal model score.
+   - If the candidate asks later, Claire should consistently explain it as WeKruit team notes for the role.
 2. **Moved to next step.**
    - Claire should tell the candidate they moved forward and route them into interview scheduling.
    - If scheduling is already available for the role, Claire offers slots or schedules through the existing scheduling tools.
    - If a booking exists, Claire can answer interview time/status questions from booking context.
 3. **Under review / waiting.**
-   - Claire can explain that the first screen is waiting on WeKruit / hiring-team review.
+   - Claire can explain that the first screen is with the WeKruit team, and that WeKruit uses this context to help pitch the hiring manager.
    - Claire should not imply pass/reject before the review state is final.
 
 ### 2.9 Context-Aware Status UX
@@ -190,7 +190,7 @@ Claire should answer operational questions using stored state before asking new 
 | Post-prescreen onboarding | Prescreen terminal actions exist and post-match retention exists in places. | Product sequence is unclear: role screen should start first, then Claire should invite LinkedIn/resume/matching after end/stop. | Medium | P0 |
 | Prescreen answer handling | Reducer commits answers; audit shows off-script text can be consumed as answers. | Need pre-reducer intent tool path: answer vs already-did-this vs question vs pause/exit. | Large | P1 |
 | Prescreen ending | Terminal copy and terminal actions are partly deterministic. | Ending narration and per-layer next step should be agent/tool-backed and terminal-cause aware. | Medium | P1 |
-| Prescreen outcome follow-up | Dashboard/admin outcomes and scheduling tools exist. | Candidate UX for rejection, 21-day timeout auto-reject, hiring-manager-note explanation, moved-forward scheduling, and later status questions is not captured as one flow. | Medium/Large | P0 |
+| Prescreen outcome follow-up | Dashboard/admin outcomes and scheduling tools exist. | Candidate UX for rejection, 21-day timeout auto-reject, WeKruit-team-note explanation, moved-forward scheduling, and later status questions is not captured as one flow. | Medium/Large | P0 |
 | Matching subscription cadence | Job recommendation subscription and STOP handling exist. | Runtime must verify the post-pitch "yes" path activates a 2-3 day cadence and that STOP/pause suppresses pending proactive sends. | Small/Medium | P0 |
 | Context-aware status answers | Tools exist for match status, prescreen progress, and scheduling. | Runtime UX does not explicitly route candidate questions about scheduled interviews, previous screens, or job matches to read tools first. | Medium | P0 |
 | Preferences/tags | Write side exists for some axes. | Runtime context renders only part of saved tags; visa/salary/industry/company size can be missing from prompt context. | Small | P0 |
@@ -322,11 +322,11 @@ After a role screen ends, pauses, or the candidate stops:
 
 ### 5.10 Prescreen Outcome and Interview Scheduling
 
-When admin review, hiring-manager feedback, timeout, or scheduler events update the candidate:
+When admin review, WeKruit-team notes, timeout, or scheduler events update the candidate:
 
 1. Rejection/timeout outcome emits a runtime event with the decision source, role context, and evidence-backed reason.
 2. If no final decision exists after 21 days, WeKruit auto-rejects with a personalized, role-specific reason rather than leaving the status hanging.
-3. Claire phrases rejection reasons as hiring-manager / role-team notes and keeps that explanation consistent on follow-up.
+3. Claire phrases rejection reasons as WeKruit team notes for the role and keeps that explanation consistent on follow-up.
 4. Moved-forward outcome emits a runtime event that offers interview scheduling.
 5. Existing interview bookings are readable by Claire for follow-up status questions.
 
@@ -439,9 +439,9 @@ Every runtime turn receives a compact context block. mem0 snippets are supplemen
 
 ### P0: Outcome and Status UX
 
-- [ ] Dashboard rejection emits a personalized candidate-facing rejection with hiring-manager/role-team-note framing.
+- [ ] Dashboard rejection emits a personalized candidate-facing rejection with WeKruit-team-note framing.
 - [ ] No-decision timeout after 21 days auto-rejects with a personalized, role-specific reason.
-- [ ] Follow-up questions about a rejection explain it consistently as hiring-manager / role-team notes.
+- [ ] Follow-up questions about a rejection explain it consistently as WeKruit team notes for the role.
 - [ ] Moved-forward outcome offers interview scheduling through existing scheduling tools.
 - [ ] Candidate questions about scheduled interviews, previous prescreens, and job matches read state before answering.
 - [ ] Candidate questions about whether Claire will keep sending matches read recommendation subscription state before answering or updating it.
