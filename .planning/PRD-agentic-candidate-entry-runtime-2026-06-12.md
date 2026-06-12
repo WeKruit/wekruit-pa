@@ -72,12 +72,15 @@ When the candidate signs in through Gmail/Google, LinkedIn, or magic link, then 
 3. The system emits a runtime entry event with enough context to run the same pitch turn used after SMS LinkedIn/resume uptake.
 4. If a phone/iMessage thread is already bound and allowed, Claire can send the pitch proactively.
 5. If no outbound-capable thread exists yet, the website must preserve a pending Claire continuation. When the candidate clicks "Talk to Claire" and sends the first message, runtime treats that message as a continuation of the signed-in profile/resume state and pitches as known, not as a stranger flow.
+6. If resume parsing, LinkedIn import, or Coresignal enrichment is still in progress and the candidate sends "hi" / "what now?" / "Talk to Claire", Claire sends one short progress message instead of pitching from incomplete data: she is still pulling/reading their info, will use it to understand them first, and will continue when it lands.
+7. When the enrichment finishes, the completion runtime event resumes the candidate entry flow: pitch/next action for general website entry, or prescreen Q1 for role entry.
 
 The first Claire reply after website-origin signup should therefore feel like:
 
 - "I read/pulled your background."
 - "Here is the pitch/profile I would use."
 - "Do you want me to pull roles or start this role screen?"
+- If data is still loading: "I am still reading/pulling your background, one sec. Let me understand you first, then I will continue."
 
 It should not feel like:
 
@@ -104,6 +107,7 @@ On the first candidate message after this click, runtime must call the entry/pit
 - known + pitched + no role context: offer roles/tweaks
 - known + pitched + role context: connect the pitch to the role and start/resume prescreen
 - known + resume parse still pending: acknowledge the pending parse and ask only for missing context that cannot come from the resume
+- known + LinkedIn/Coresignal enrichment still pending: acknowledge the in-progress import, avoid re-auth/re-upload asks, and wait for the completion event before pitching or matching from that evidence
 
 ### 2.5 Phone Binding and "No Re-Onboarding" UX
 
@@ -120,9 +124,11 @@ For a role-specific "Talk to Claire" or prescreen trigger, Claire starts the rol
 
 1. Do not block the first prescreen on LinkedIn login, resume upload, profile pitch, or broad onboarding.
 2. Before Q1, Claire should still load known resume/LinkedIn/conversation evidence and adapt the role probe when evidence already exists.
-3. If prior evidence covers the role probe, Claire asks for additions/corrections/fresher details. If not, Claire asks the role's evidence probe directly.
-4. When the prescreen ends, pauses, or the candidate stops, Claire transitions into the candidate-retention flow: "I can keep matching you to better-fit roles if you connect LinkedIn or send a resume."
-5. The post-prescreen retention ask is conversational and optional. It is not a login wall before the role screen.
+3. If resume parsing or LinkedIn/Coresignal enrichment is actively in progress before Q1, Claire sends one short status message and defers Q1 until the completion runtime event. This is a prescreen-readiness hold, not onboarding and not a pitch.
+4. When the completion event lands, Claire starts Q1 directly from the role screen. She does not send the general candidate pitch before Q1.
+5. If prior evidence covers the role probe, Claire asks for additions/corrections/fresher details. If not, Claire asks the role's evidence probe directly.
+6. When the prescreen ends, pauses, or the candidate stops, Claire transitions into the candidate-retention flow: "I can keep matching you to better-fit roles if you connect LinkedIn or send a resume."
+7. The post-prescreen retention ask is conversational and optional. It is not a login wall before the role screen.
 
 ### 2.7 Post-Pitch Matching Subscription UX
 
@@ -186,7 +192,9 @@ Claire should answer operational questions using stored state before asking new 
 | LinkedIn connect URL flow | `paLinkedinConnectSubmit` links URL, can enrich via Coresignal, and can emit a runtime event for canary. | Behavior is path/canary specific and not unified with first-party website login. | Medium | P1 |
 | Resume upload from public job | Inline job page says resume is saved/processing; legacy `/j/:jobId/cv` still says "Resume uploaded. You can close this tab." | Resume upload does not consistently trigger Claire's runtime pitch/start decision. | Medium | P0 |
 | Coresignal enrichment | Admin/external-supply adapters, collect client, mirror, tag bridge, and experience merge exist. | First-party self-signup enrichment is not one unified product path tied to Claire's first pitch. | Medium/Large | P1 |
+| In-progress enrichment UX | Async resume/LinkedIn discussion patterns and in-flight markers exist. | Website-origin "hi" / Talk-to-Claire can still look idle, generic, or stranger-like while enrichment is running instead of saying Claire is still reading/pulling the candidate's info. | Small/Medium | P0 |
 | Prescreen start | Trigger starts deterministic prescreen runtime. | Kickoff does not consistently load global profile/tags/memory/prior answers before asking Q1. | Large | P1 |
+| Prescreen pre-start readiness | Prescreen can start as soon as trigger routing succeeds. | If resume/LinkedIn enrichment is actively running, Claire can ask Q1 too early or pitch too early instead of sending a short readiness hold and starting Q1 when evidence lands. | Medium | P0 |
 | Post-prescreen onboarding | Prescreen terminal actions exist and post-match retention exists in places. | Product sequence is unclear: role screen should start first, then Claire should invite LinkedIn/resume/matching after end/stop. | Medium | P0 |
 | Prescreen answer handling | Reducer commits answers; audit shows off-script text can be consumed as answers. | Need pre-reducer intent tool path: answer vs already-did-this vs question vs pause/exit. | Large | P1 |
 | Prescreen ending | Terminal copy and terminal actions are partly deterministic. | Ending narration and per-layer next step should be agent/tool-backed and terminal-cause aware. | Medium | P1 |
@@ -207,7 +215,18 @@ Read-only code audit classifies the website-origin surfaces as present but not r
 - **Public resume upload is partial.** `apps/functions/src/public-cv-ingest.ts` resolves the signed-in candidate and writes resume/profile state, but website upload uses `followupDeliveryMode: "none"`. `apps/functions/src/cv-ingest/cv-ingest.ts` only emits `resume_parse_completed` when delivery mode is runtime.
 - **Phone/SMS connect is partial.** `apps/functions/src/connect-phone/connect-phone-start.ts`, `connect-phone-verify.ts`, and `apps/functions/src/identity/candidate-phone-link.ts` deliver and verify identity codes. They bind identity, but do not themselves create the initial Claire pitch runtime turn.
 - **Coresignal/LinkedIn enrichment is partial.** `apps/functions/src/linkedin-connect/linkedin-connect-submit.ts` can enrich through Coresignal, mirror experience, dual-write tags, and emit runtime handoff, but the new enrich+emit path is canary-gated and tied to `/connect-linkedin`, not normal `/login` LinkedIn OAuth.
+- **In-progress enrichment UX exists but is not unified.** `apps/functions/src/claire-agent/enrichment-inflight.ts`, `apps/functions/src/claire-agent/prompt.ts`, and `packages/pa-orchestrator/src/onboarding/discussion-phase.ts` already model "still reading/pulling your info" while async work runs. The missing product contract is to reuse that state for website-origin entry and prescreen pre-start readiness, not only the current canary/thin or tutorial-style path.
 - **Initial Claire pitch is missing for normal website sign-in and upload.** The runtime handoff mechanism exists in `apps/functions/src/runtime-event-handoff.ts`, and the thin pitch path can fire for `resume_parse_completed`, but normal sign-in and public upload do not currently invoke it.
+
+### 4.2 UX Gap Analysis
+
+The candidate-visible gaps are:
+
+1. **Silent loading gap.** A candidate can sign in, upload a resume, connect LinkedIn, then say "hi" while WeKruit is still parsing/importing. Today that can feel like Claire is idle or forgot the action. Required UX: one short progress turn that says Claire is still reading/pulling their info and will continue when it lands.
+2. **Premature pitch gap.** If Claire pitches before enrichment lands, the pitch sounds generic and can miss the strongest evidence. Required UX: wait for the completion event before the general pitch when enrichment is actively in progress.
+3. **Premature prescreen gap.** If a role screen starts before actively-running resume/LinkedIn evidence lands, Q1 can ask for something the candidate already provided. Required UX: send a readiness hold, then start Q1 directly once the evidence lands.
+4. **Wrong sequence gap.** Website role entry must not become pitch -> onboarding -> prescreen. Required UX: role screen first; candidate retention pitch/onboarding after prescreen end, pause, or stop.
+5. **Re-ask gap.** In-progress state must never turn into "upload again" or "sign in again." Required UX: Claire acknowledges the action already happened and explains the current processing state.
 
 ---
 
@@ -238,9 +257,10 @@ On successful candidate verify:
 2. Runtime loads context and chooses the same pitch path used by direct SMS LinkedIn/resume uptake.
 3. If no outbound-capable thread exists, persist `pendingClaireContinuation` so "Talk to Claire" resumes as a known candidate.
 4. If the candidate clicks "Talk to Claire" and no phone is bound, start/continue phone binding before treating the iMessage thread as established.
-5. If job context exists, runtime starts/resumes the role prescreen directly. Do not force profile pitch/onboarding before Q1.
-6. If no job context exists and profile evidence is available, runtime uses the existing pitch path and offers matching.
-7. If profile is missing key info, runtime asks for the smallest missing item.
+5. If enrichment or resume parsing is actively in progress and the candidate says hi before it finishes, runtime sends a single progress/status turn and waits for the completion event before pitching from that evidence.
+6. If job context exists, runtime starts/resumes the role prescreen directly. Do not force profile pitch/onboarding before Q1.
+7. If no job context exists and profile evidence is available, runtime uses the existing pitch path and offers matching.
+8. If profile is missing key info, runtime asks for the smallest missing item.
 
 ### 5.3 Website Login: LinkedIn OAuth
 
@@ -249,7 +269,7 @@ On successful LinkedIn login:
 1. Candidate verify records LinkedIn OAuth identity on `pa-users`.
 2. Runtime event fires immediately: `candidate_entry_completed` with `entrySource: linkedin_oauth`.
 3. Coresignal enrichment is started through an enrichment tool/job.
-4. First pitch does not wait indefinitely for enrichment. It uses the existing pitch posture from currently available evidence and can mention that more detail is being pulled only as context, not as a receipt.
+4. If the candidate sends a message while enrichment is in progress, Claire says she is still pulling their info and will use it to understand them first. She does not pitch, match, or ask them to connect LinkedIn again from incomplete evidence.
 5. When enrichment completes, emit `enrichment_completed` runtime event; Claire updates the candidate and asks for additions/corrections.
 6. Do not ask the candidate to sign in again.
 
@@ -260,7 +280,7 @@ On successful resume upload:
 1. Ingest writes resume artifact and parse status.
 2. Emit `resume_uploaded` runtime event with `candidateId`, `resumeArtifactId`, `jobIdContext`, and upload source.
 3. Claire's runtime pitch uses the existing resume-style pitch posture: acknowledge the resume, compose/refresh the evidence-backed pitch, then offer the next action.
-4. If parse is still running, Claire says it is reading the resume and asks only for missing context that cannot be parsed.
+4. If parse is still running, Claire sends a single progress/status turn that she is reading the resume and will use it to understand the candidate first. She asks only for missing context that cannot be parsed and does not pitch/match blind.
 5. Legacy "close this tab" dead-end is removed from the product path.
 
 ### 5.5 Website "Talk to Claire" After Login/Upload
@@ -270,10 +290,11 @@ When a candidate signs in or uploads a resume on the website and then clicks "Ta
 1. The click/message carries `candidateId`, `entryEventId`, and optional `jobIdContext`.
 2. If no phone/Claire thread is bound, runtime starts or resumes phone binding and links the resulting handle to the same candidate.
 3. Runtime reads the pending website-entry state before treating the message as a normal free-form chat.
-4. If a role is attached, runtime starts/resumes the prescreen directly and defers onboarding/pitch until after the screen ends or pauses.
-5. If no role is attached and the candidate has not received the pitch, runtime sends the existing pitch turn.
-6. If the candidate has already received the pitch, runtime references that state and offers the next action.
-7. The reply must not ask for login, LinkedIn, or resume when the website already supplied those signals.
+4. If resume/LinkedIn enrichment is actively in progress, runtime sends the progress/status turn and records the next action to resume after completion.
+5. If a role is attached and no enrichment is actively in progress, runtime starts/resumes the prescreen directly and defers onboarding/pitch until after the screen ends or pauses.
+6. If no role is attached and the candidate has not received the pitch, runtime sends the existing pitch turn.
+7. If the candidate has already received the pitch, runtime references that state and offers the next action.
+8. The reply must not ask for login, LinkedIn, or resume when the website already supplied those signals.
 
 ### 5.6 LinkedIn Connect URL
 
@@ -291,8 +312,10 @@ Before the first prescreen question:
 1. Runtime calls `read_candidate_context`.
 2. Runtime calls `read_prescreen_history(jobId)` and `read_recommendation_history`.
 3. Runtime calls `read_memory`.
-4. Runtime calls `start_prescreen(jobId, candidateId)` after checking duplicate/completed/paused state. A missing LinkedIn/resume/profile pitch must not block Q1.
-5. The first question is adapted:
+4. Runtime calls `read_enrichment_status(candidateId)`.
+5. If resume parsing, LinkedIn import, or Coresignal enrichment is actively in progress and expected to affect Q1, runtime sends one short readiness hold and waits for `resume_parse_completed` / `enrichment_completed` before starting Q1. This hold must not contain the general candidate pitch.
+6. Runtime calls `start_prescreen(jobId, candidateId)` after checking duplicate/completed/paused state. A missing LinkedIn/resume/profile pitch must not block Q1.
+7. The first question is adapted:
    - If resume/LinkedIn/tags already answer it, Claire cites the evidence and asks for additions or confirmation.
    - If prior answer exists for same topic, Claire asks "anything new to add?" instead of asking from scratch.
    - If evidence conflicts, Claire asks the candidate to resolve it.
@@ -428,11 +451,15 @@ Every runtime turn receives a compact context block. mem0 snippets are supplemen
 - [ ] Returning signed-in candidate sees status/next action, not a full re-introduction.
 - [ ] "Talk to Claire" binds or resumes the candidate phone/Claire thread before any generic chat path.
 - [ ] A candidate with a verified Claire phone thread or website identity never cold-starts onboarding again.
+- [ ] If resume parsing or LinkedIn/Coresignal enrichment is still running and the candidate says hi, Claire sends one progress/status turn and does not pitch or match from incomplete evidence.
+- [ ] When the completion runtime event lands, Claire resumes the correct website-entry next action without asking the candidate to upload/sign in again.
 
 ### P0: Prescreen-First Flow
 
 - [ ] Role prescreen trigger starts Q1 directly even when LinkedIn/resume/pitch is missing.
 - [ ] Missing LinkedIn/resume/profile pitch never blocks the first role screen.
+- [ ] If resume/LinkedIn enrichment is actively running before Q1, Claire sends a one-turn readiness hold, then starts Q1 from the completion event.
+- [ ] The pre-Q1 readiness hold must not include the general candidate pitch or onboarding ask.
 - [ ] After prescreen end, pause, or user stop, Claire invites LinkedIn/resume/profile enrichment for future matching.
 - [ ] If the candidate accepts matching after the pitch, job recommendations activate on a 2-3 day cadence.
 - [ ] STOP / pause requests pause recommendation subscription and pending sends.
@@ -491,7 +518,16 @@ Wire candidate verify, public resume upload, and LinkedIn login to emit the even
 
 The event handler must prefer the existing pitch engine/posture over new copy. If an outbound thread is unavailable, it records a pending website-origin continuation consumed by the next "Talk to Claire" message.
 
-### Phase 0C: Talk-to-Claire Phone Binding
+### Phase 0C: In-Progress Enrichment UX
+
+Reuse the existing async discussion/in-flight pattern for website and prescreen entry:
+
+- when resume parsing or LinkedIn/Coresignal enrichment is running, render one short progress/status turn
+- do not pitch, match, re-auth, or re-upload while evidence is still loading
+- on `resume_parse_completed` / `enrichment_completed`, resume the pending next action
+- for general website entry, the next action is pitch/offer; for role entry, the next action is prescreen Q1
+
+### Phase 0D: Talk-to-Claire Phone Binding
 
 Make Talk-to-Claire identity-safe:
 
@@ -500,15 +536,16 @@ Make Talk-to-Claire identity-safe:
 - once bound, mark the user as known/portal-ready enough to avoid cold onboarding
 - preserve job context across the binding step
 
-### Phase 0D: Prescreen-First Retention Handoff
+### Phase 0E: Prescreen-First Retention Handoff
 
 Correct the role flow:
 
 - start prescreen directly from role trigger / Talk-to-Claire job context
+- if enrichment is actively running, wait with a one-turn readiness hold and then start Q1 from the completion event
 - after terminal/pause/stop, emit a retention handoff asking for LinkedIn/resume or offering matching
 - when the user accepts matching, activate 2-3 day job recommendation cadence with STOP compliance
 
-### Phase 0E: Prescreen Outcome Runtime Events
+### Phase 0F: Prescreen Outcome Runtime Events
 
 Unify candidate-facing post-screen outcomes:
 
@@ -517,7 +554,7 @@ Unify candidate-facing post-screen outcomes:
 - moved-forward / schedule-interview event
 - context read tools for later status questions
 
-### Phase 0F: Context Completion
+### Phase 0G: Context Completion
 
 Extend runtime context with:
 
