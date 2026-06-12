@@ -15,4 +15,10 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.match(source, /const selectedBoardTableStyle: CSSProperties = \{[\s\S]*minWidth: 620/)
     assert.match(source, /selectedSubmission \? selectedBoardTableStyle : boardTableStyle/)
   })
+
+  it("keeps the selected role context readable", () => {
+    assert.match(source, /const roleContextTextStyle: CSSProperties = \{[\s\S]*fontSize: 13,[\s\S]*lineHeight: 1\.45/)
+    assert.match(source, /const reviewContextStyle: CSSProperties = \{[\s\S]*maxHeight: 420/)
+    assert.match(source, /gridTemplateColumns: "repeat\(auto-fit, minmax\(220px, 1fr\)\)"/)
+  })
 })

@@ -561,13 +561,46 @@ const reviewSidePanelStyle: CSSProperties = {
 }
 
 const reviewContextStyle: CSSProperties = {
-  maxHeight: 300,
+  maxHeight: 420,
   overflow: "auto",
   border: "1px solid #e5ded2",
   borderRadius: 12,
   background: "#fffdf9",
-  padding: 14,
+  padding: 16,
   scrollbarWidth: "thin",
+}
+
+const roleContextLabelStyle: CSSProperties = {
+  color: "#8b7d6d",
+  fontSize: 12,
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: 0,
+}
+
+const roleContextSectionTitleStyle: CSSProperties = {
+  fontWeight: 700,
+  fontSize: 13,
+  color: "#4b3a2e",
+}
+
+const roleContextTextStyle: CSSProperties = {
+  color: "#4e443a",
+  fontSize: 13,
+  lineHeight: 1.45,
+}
+
+const roleContextListStyle: CSSProperties = {
+  ...roleContextTextStyle,
+  margin: "8px 0 0",
+  paddingLeft: 18,
+}
+
+const roleContextCardStyle: CSSProperties = {
+  border: "1px solid #eee6da",
+  borderRadius: 8,
+  padding: 10,
+  background: "#fff",
 }
 
 const reviewSectionStyle: CSSProperties = {
@@ -724,24 +757,20 @@ function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: B
     <div style={reviewContextStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
         <div>
-          <div style={{ color: "#8b7d6d", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
-            Role context
-          </div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "#2b2119", lineHeight: 1.2 }}>{title}</div>
-          {company && <div style={{ color: "#7b6f61", fontSize: 12, marginTop: 2 }}>{company}</div>}
+          <div style={roleContextLabelStyle}>Role context</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#2b2119", lineHeight: 1.2 }}>{title}</div>
+          {company && <div style={{ color: "#7b6f61", fontSize: 13, marginTop: 2 }}>{company}</div>}
         </div>
         <Badge tone="info">{selfScoreLabel(submission.score)}</Badge>
       </div>
       {groups.length > 0 && (
         <div style={reviewSectionStyle}>
-          <div style={{ fontWeight: 700, fontSize: 12, color: "#4b3a2e" }}>Checklist</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
+          <div style={roleContextSectionTitleStyle}>Checklist</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
             {groups.map((group, index) => (
-              <div key={`${group.kind ?? "group"}-${index}`} style={{ border: "1px solid #eee6da", borderRadius: 8, padding: 8, background: "#fff" }}>
-                <div style={{ fontSize: 11, color: "#8b7d6d", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
-                  {group.heading ?? group.kind ?? "Checklist"}
-                </div>
-                <ul style={{ margin: "6px 0 0", paddingLeft: 16, color: "#4e443a", fontSize: 12, lineHeight: 1.35 }}>
+              <div key={`${group.kind ?? "group"}-${index}`} style={roleContextCardStyle}>
+                <div style={roleContextLabelStyle}>{group.heading ?? group.kind ?? "Checklist"}</div>
+                <ul style={roleContextListStyle}>
                   {(group.items ?? []).slice(0, 8).map((item, i) => (
                     <li key={item.id ?? i}>{item.text ?? item.id}</li>
                   ))}
@@ -753,15 +782,15 @@ function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: B
       )}
       {blocks.length > 0 && (
         <div style={reviewSectionStyle}>
-          <div style={{ fontWeight: 700, fontSize: 12, color: "#4b3a2e" }}>Job description</div>
+          <div style={roleContextSectionTitleStyle}>Job description</div>
           {blocks.slice(0, 6).map((block, index) => (
             <div key={`${block.heading ?? "block"}-${index}`}>
-              {block.heading && <div style={{ fontSize: 12, fontWeight: 700, color: "#4b3a2e" }}>{block.heading}</div>}
+              {block.heading && <div style={roleContextSectionTitleStyle}>{block.heading}</div>}
               {block.body && (
-                <div style={{ whiteSpace: "pre-wrap", color: "#5d5248", fontSize: 12, lineHeight: 1.45 }}>{block.body}</div>
+                <div style={{ ...roleContextTextStyle, whiteSpace: "pre-wrap" }}>{block.body}</div>
               )}
               {Array.isArray(block.items) && block.items.length > 0 && (
-                <ul style={{ margin: "6px 0 0", paddingLeft: 16, color: "#5d5248", fontSize: 12, lineHeight: 1.4 }}>
+                <ul style={roleContextListStyle}>
                   {block.items.slice(0, 10).map((item, itemIndex) => <li key={`${index}-${itemIndex}`}>{item}</li>)}
                 </ul>
               )}
