@@ -55,6 +55,7 @@ import {
   recruiterInviteUrl,
   recruiterInviteCodeMatchesBoundUser,
   registerRecruiterAccess,
+  resendRecruiterInviteCodeEmail,
   recruiterIdentityFromFirebaseBearer,
   recruiterSubmissionUpdateEmailsEnabled,
   resolveSubmissionExtraFields,
@@ -73,6 +74,7 @@ import {
   validateRecruiterSubmissionUpdateInput,
   validateInviteCodeCreate,
   validateInviteCodeReplace,
+  validateInviteCodeResend,
   validateInviteCodeRestore,
   validateRecruiterNotificationsReadInput,
   validateRecruiterRegistration,
@@ -308,6 +310,18 @@ describe("recruiter access helpers", () => {
       value: { inviteCodeId },
     })
     assert.deepEqual(validateInviteCodeReplace({ inviteCodeId: "WK-CDKE-AUC5" }), {
+      ok: false,
+      reason: "invalid_invite_code_id",
+    })
+  })
+
+  it("validates invite resend requests by hashed id", () => {
+    const inviteCodeId = hashRecruiterInviteCode("WK-CDKE-AUC5")
+    assert.deepEqual(validateInviteCodeResend({ inviteCodeId }), {
+      ok: true,
+      value: { inviteCodeId },
+    })
+    assert.deepEqual(validateInviteCodeResend({ inviteCodeId: "WK-CDKE-AUC5" }), {
       ok: false,
       reason: "invalid_invite_code_id",
     })
@@ -827,6 +841,66 @@ describe("registerRecruiterAccess codeless email-bound claims", () => {
     })
     const recruiter = await registerRecruiterAccess(db, identity, { name: "Sloane", email: "sloane@agency.com", inviteCode: "WK-WRONG-CODE" })
     assert.equal(recruiter, null)
+  })
+})
+
+describe("resendRecruiterInviteCodeEmail", () => {
+  const inviteCode = "WK-CDKE-AUC5"
+  const inviteCodeId = hashRecruiterInviteCode(inviteCode)
+
+  const resendableInvite = (overrides: Record<string, unknown> = {}) => ({
+    inviteCodeId,
+    inviteCode,
+    recruiterEmail: "sloane@agency.com",
+    active: true,
+    maxUses: 1,
+    usedCount: 0,
+    expiresAt: "2027-06-09T12:00:00.000Z",
+    inviteEmailStatus: "sent",
+    ...overrides,
+  })
+
+  it("resends a sent but unclaimed invite using the existing code", async () => {
+    const { db, writes } = recruiterAccessFakeDb({
+      [`pa-recruiter-invite-codes/${inviteCodeId}`]: resendableInvite(),
+    })
+    const sent: Array<{ recruiterEmail: string; inviteCode: string; expiresAt?: string | null }> = []
+
+    const result = await resendRecruiterInviteCodeEmail(db, { inviteCodeId, adminEmail: "admin@wekruit.com" }, async (_ref, input) => {
+      sent.push(input)
+      return { ok: true, messageId: "mailgun-2" }
+    })
+
+    assert.deepEqual(result, {
+      ok: true,
+      inviteCodeId,
+      recruiterEmail: "sloane@agency.com",
+      emailStatus: "sent",
+      emailMessageId: "mailgun-2",
+    })
+    assert.deepEqual(sent, [{
+      recruiterEmail: "sloane@agency.com",
+      inviteCode,
+      expiresAt: "2027-06-09T12:00:00.000Z",
+    }])
+    const auditWrite = writes.find((write) => write.key === `pa-recruiter-invite-codes/${inviteCodeId}` && write.data.inviteEmailLastResentByEmail)
+    assert.equal(auditWrite?.data.inviteEmailLastResentByEmail, "admin@wekruit.com")
+    assert.ok("inviteEmailResendCount" in (auditWrite?.data ?? {}))
+  })
+
+  it("does not resend an already activated invite", async () => {
+    const { db } = recruiterAccessFakeDb({
+      [`pa-recruiter-invite-codes/${inviteCodeId}`]: resendableInvite({ usedCount: 1 }),
+    })
+    let sendCount = 0
+
+    const result = await resendRecruiterInviteCodeEmail(db, { inviteCodeId, adminEmail: "admin@wekruit.com" }, async () => {
+      sendCount += 1
+      return { ok: true }
+    })
+
+    assert.deepEqual(result, { ok: false, status: 409, reason: "invite_code_not_usable" })
+    assert.equal(sendCount, 0)
   })
 })
 

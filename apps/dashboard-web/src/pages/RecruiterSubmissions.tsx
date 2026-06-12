@@ -12,7 +12,7 @@ import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../component
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
-import { replaceRecruiterInviteCode, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
+import { replaceRecruiterInviteCode, resendRecruiterInviteCodeEmail, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 import {
   buildRoleApplicationReview,
   type RoleApplicationReview,
@@ -258,6 +258,8 @@ interface RecruiterInviteCodeDoc {
   inviteEmailStatus?: string | null
   inviteEmailSentAt?: { seconds?: number } | string | null
   inviteEmailFailedAt?: { seconds?: number } | string | null
+  inviteEmailLastResentAt?: { seconds?: number } | string | null
+  inviteEmailResendCount?: number
   inviteEmailLastError?: string | null
   createdAt?: { seconds?: number } | string | null
   createdByEmail?: string | null
@@ -508,6 +510,16 @@ function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parame
   if ((code.usedCount ?? 0) >= 1) return { label: "used", tone: "info" }
   if (code.expiresAt && Date.parse(code.expiresAt) <= Date.now()) return { label: "expired", tone: "warn" }
   return { label: "usable", tone: "ok" }
+}
+
+function recruiterInviteCanResend(code: RecruiterInviteCodeDoc): boolean {
+  const email = code.recruiterEmail?.trim()
+  return (
+    codeStatus(code).label === "usable" &&
+    code.inviteEmailStatus === "sent" &&
+    isFullRecruiterInviteCode(code.inviteCode) &&
+    Boolean(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+  )
 }
 
 function inviteEmailBadge(status?: string | null): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
@@ -1423,6 +1435,9 @@ function RecruiterOpsPanel() {
   const [creating, setCreating] = useState(false)
   const [replacingCodeId, setReplacingCodeId] = useState<string | null>(null)
   const [restoringCodeId, setRestoringCodeId] = useState<string | null>(null)
+  const [resendingCodeId, setResendingCodeId] = useState<string | null>(null)
+  const [resendingAll, setResendingAll] = useState(false)
+  const [resendNotice, setResendNotice] = useState<string | null>(null)
   const [restoreInputs, setRestoreInputs] = useState<Record<string, string>>({})
   const [err, setErr] = useState<string | null>(null)
 
@@ -1521,12 +1536,29 @@ function RecruiterOpsPanel() {
     }
   }
 
+  const resendInvite = async (inviteCodeId: string) => {
+    setResendingCodeId(inviteCodeId)
+    setErr(null)
+    setResendNotice(null)
+    try {
+      const result = await resendRecruiterInviteCodeEmail(inviteCodeId)
+      setResendNotice(`Resent invite to ${result.recruiterEmail}.`)
+      await reload()
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+      await reload().catch(() => undefined)
+    } finally {
+      setResendingCodeId(null)
+    }
+  }
+
   const activeRecruiters = profiles.filter((p) => p.status !== "disabled").length
   const emailOn = profiles.filter((p) => p.status !== "disabled" && p.notificationPreferences?.newRolesEmail !== false).length
   const activeCodes = codes.filter((c) => c.active !== false && (c.usedCount ?? 0) < 1).length
   const sentNotifications = notifications.filter((n) => n.status === "sent").length
   const failedNotifications = notifications.filter((n) => n.status === "failed").length
   const sortedCodes = [...codes].sort((a, b) => timestampToMs(b.createdAt) - timestampToMs(a.createdAt))
+  const resendableInviteCodes = sortedCodes.filter(recruiterInviteCanResend)
   const sortedProfiles = [...profiles].sort((a, b) => (a.email ?? "").localeCompare(b.email ?? ""))
   const recruiterByUid = new Map<string, { name?: string; email?: string }>()
   for (const profile of profiles) {
@@ -1542,6 +1574,33 @@ function RecruiterOpsPanel() {
       : knownInviteCodes[code.id]
     return status.label === "usable" && !isFullRecruiterInviteCode(rawInviteCode)
   }).length
+
+  const resendPendingInvites = async () => {
+    if (!resendableInviteCodes.length) return
+    setResendingAll(true)
+    setErr(null)
+    setResendNotice(null)
+    let sent = 0
+    const failures: string[] = []
+    try {
+      for (const code of resendableInviteCodes) {
+        try {
+          await resendRecruiterInviteCodeEmail(code.id)
+          sent += 1
+        } catch (error) {
+          failures.push(`${code.recruiterEmail ?? code.id}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+      if (failures.length) {
+        setErr(`Resent ${sent}; failed ${failures.length}. ${failures.slice(0, 3).join(" | ")}`)
+      } else {
+        setResendNotice(`Resent ${sent} pending invite${sent === 1 ? "" : "s"}.`)
+      }
+      await reload()
+    } finally {
+      setResendingAll(false)
+    }
+  }
 
   const rosterColumns: Column<RecruiterProfileDoc>[] = [
     {
@@ -1687,6 +1746,31 @@ function RecruiterOpsPanel() {
           )}
         </form>
         <OpsSection title="Recruiter invites" subtitle="One email invite creates one one-time code. Legacy hash-only rows remain here only for support and recovery.">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ color: "#777", fontSize: 12 }}>
+              {resendableInviteCodes.length} sent invite{resendableInviteCodes.length === 1 ? "" : "s"} still unclaimed.
+            </span>
+            <button
+              type="button"
+              onClick={() => void resendPendingInvites()}
+              disabled={resendingAll || !resendableInviteCodes.length}
+              style={{
+                padding: "6px 9px",
+                border: "1px solid #ccc",
+                borderRadius: 6,
+                background: resendableInviteCodes.length ? "#fff" : "#f7f7f7",
+                color: resendableInviteCodes.length ? "#333" : "#999",
+                fontSize: 12,
+              }}
+            >
+              {resendingAll ? "Resending..." : `Resend all pending (${resendableInviteCodes.length})`}
+            </button>
+          </div>
+          {resendNotice && (
+            <div style={{ marginBottom: 10, padding: "8px 10px", border: "1px solid #b8dfc2", borderRadius: 8, background: "#f1fbf3", color: "#24663a", fontSize: 12 }}>
+              {resendNotice}
+            </div>
+          )}
           {unrecoverableUsableCodes > 0 && (
             <div style={{ marginBottom: 10, padding: "10px 12px", border: "1px solid #f1c48a", borderRadius: 8, background: "#fff8ed", color: "#7a3e10", fontSize: 12, lineHeight: 1.45 }}>
               {unrecoverableUsableCodes} usable legacy code{unrecoverableUsableCodes === 1 ? "" : "s"} only exist as a hash.
@@ -1700,7 +1784,7 @@ function RecruiterOpsPanel() {
                 <thead>
                   <tr style={{ color: "#777", textAlign: "left", borderBottom: "1px solid #eee" }}>
                     <th style={recruiterInviteHeaderCellStyle}>Full code</th>
-                    <th style={{ ...recruiterInviteHeaderCellStyle, width: 92 }}>Action</th>
+                    <th style={{ ...recruiterInviteHeaderCellStyle, width: 176 }}>Action</th>
                     <th style={recruiterInviteHeaderCellStyle}>Recruiter</th>
                     <th style={recruiterInviteHeaderCellStyle}>Label</th>
                     <th style={recruiterInviteHeaderCellStyle}>Email</th>
@@ -1744,7 +1828,7 @@ function RecruiterOpsPanel() {
                             </div>
                           )}
                         </td>
-                        <td style={{ ...recruiterInviteCellStyle, width: 92 }}>
+                        <td style={{ ...recruiterInviteCellStyle, width: 176 }}>
                           {canCopy ? (
                             <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                               <button
@@ -1769,6 +1853,20 @@ function RecruiterOpsPanel() {
                               >
                                 Link
                               </button>
+                              {recruiterInviteCanResend(code) && (
+                                <button
+                                  type="button"
+                                  title="Resend invite email"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void resendInvite(code.id)
+                                  }}
+                                  disabled={resendingAll || resendingCodeId === code.id}
+                                  style={recruiterInviteButtonStyle}
+                                >
+                                  {resendingCodeId === code.id ? "Sending..." : "Resend email"}
+                                </button>
+                              )}
                             </div>
                           ) : rawMissing ? (
                             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
