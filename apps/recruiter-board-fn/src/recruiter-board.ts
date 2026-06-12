@@ -79,6 +79,10 @@ const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
 const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
 const PA_ADMIN_TOKEN_SECRET = defineSecret("PA_ADMIN_TOKEN")
 const MAILGUN_SECRETS = [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION]
+const ADMIN_INVITE_ENDPOINT_SCALE = {
+  minInstances: 1,
+  maxInstances: 1,
+}
 const RECRUITER_PUBLIC_BASE_URL = "https://wekruit-recruiters.web.app"
 const RECRUITER_CANDIDATE_CONFIRM_URL =
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paRecruiterCandidateConsentConfirm"
@@ -1338,7 +1342,7 @@ export const paCollabJobsListSchema = onRequest(
 )
 
 export const paRecruiterInviteCodeCreate = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: [...MAILGUN_SECRETS, PA_ADMIN_TOKEN_SECRET] },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, ...ADMIN_INVITE_ENDPOINT_SCALE, secrets: [...MAILGUN_SECRETS, PA_ADMIN_TOKEN_SECRET] },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -1432,7 +1436,7 @@ export const paRecruiterInviteCodeCreate = onRequest(
 )
 
 export const paRecruiterInviteCodeResend = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: [...MAILGUN_SECRETS, PA_ADMIN_TOKEN_SECRET] },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, ...ADMIN_INVITE_ENDPOINT_SCALE, secrets: [...MAILGUN_SECRETS, PA_ADMIN_TOKEN_SECRET] },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
