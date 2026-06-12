@@ -17,9 +17,14 @@ When a candidate enters WeKruit from SMS, website login, Google/Gmail, LinkedIn,
 4. Start or resume the right tool-backed workflow: profile enrichment, match search, prescreen, preference update, or review status.
 5. Persist and reuse memory across later conversations, jobs, numbers, and sessions.
 
-Example behavior:
+The website path must converge with the existing direct-SMS product path:
 
-> "You are signed in and I have your resume on file. I will use it to match you to roles, remember your preferences, and run the first screen for roles you choose. I see you mentioned product work at X before; anything new to add before I start this role's screen?"
+- direct "hi" / QR / opener text starts the Claire thread
+- LinkedIn or resume evidence is pulled in
+- Claire briefly pitches the candidate from real evidence
+- Claire offers the next action: pull roles, tweak the profile, or run the chosen role screen
+
+The PRD must not introduce a new receipt-like website script such as "you are signed in and I have your resume on file." That phrasing is not the product. The product is Claire sounding like the same recruiter the candidate would meet after texting "hi" and connecting LinkedIn: she recognizes the person, shows the pitch she is using, then asks for the smallest missing/fresh input.
 
 Not acceptable:
 
@@ -30,7 +35,87 @@ Not acceptable:
 
 ---
 
-## 2. Non-Negotiable Design Rules
+## 2. Candidate Experience Contract
+
+### 2.1 Reuse the Existing Pitch Posture
+
+Website-origin entry must reuse the same pitch posture as the direct SMS path, not a separate website-auth receipt.
+
+Existing pitch contract to preserve:
+
+1. **Confirmation bubble.** A short acknowledgement of the source Claire just used:
+   - LinkedIn-style: Claire pulled the candidate's experience from LinkedIn.
+   - Resume-style: Claire read the resume and added technical detail to the pitch.
+2. **Candidate pitch bubble.** A compact evidence-backed pitch, composed from structured profile data. It should show the candidate Claire sees them, not explain WeKruit's internal state. The current `composePitchTurn` shape is the source contract: strongest hiring signal, full-time YoE/seniority, industry/track, and adjacent roles.
+3. **Action bubble.** A single clear next move:
+   - pull roles that fit now
+   - let the candidate tweak/add context
+   - if a role context exists, continue into that role's Claire screen
+
+Do not add a new deterministic "I have your resume on file / I will remember preferences" opener. Those ideas are internal capabilities; they should be expressed through the pitch and next action, not as product boilerplate.
+
+### 2.2 Direct SMS UX
+
+When the candidate starts by texting "hi" or an opener token:
+
+1. If they are unknown, Claire briefly explains the value and asks for the least-friction profile input.
+2. If they connect LinkedIn, Claire confirms the LinkedIn uptake, pitches them from the data, and offers to pull roles or add context.
+3. If they later add a resume, Claire treats it as pitch improvement: acknowledge the resume, sharpen the pitch with concrete technical/detail evidence, then offer the next action.
+4. The thread never becomes a form wall. If Claire needs target role or location, she asks one short conversational question.
+
+### 2.3 Website Login + Resume UX
+
+When the candidate signs in through Gmail/Google, LinkedIn, or magic link, then uploads a resume on the website:
+
+1. Website auth establishes identity. Claire must not ask them to sign in again.
+2. Resume upload establishes evidence. Claire must not ask them to upload a resume again.
+3. The system emits a runtime entry event with enough context to run the same pitch turn used after SMS LinkedIn/resume uptake.
+4. If a phone/iMessage thread is already bound and allowed, Claire can send the pitch proactively.
+5. If no outbound-capable thread exists yet, the website must preserve a pending Claire continuation. When the candidate clicks "Talk to Claire" and sends the first message, runtime treats that message as a continuation of the signed-in profile/resume state and pitches as known, not as a stranger flow.
+
+The first Claire reply after website-origin signup should therefore feel like:
+
+- "I read/pulled your background."
+- "Here is the pitch/profile I would use."
+- "Do you want me to pull roles or start this role screen?"
+
+It should not feel like:
+
+- "Please sign in."
+- "Please upload your resume."
+- "You are signed in and I have your resume on file."
+- "Tell me everything again."
+
+### 2.4 Website "Talk to Claire" Continuation
+
+"Talk to Claire" is not just a link to a generic chat. It carries the candidate entry state:
+
+1. `candidateId`
+2. auth provider and identity confidence
+3. resume artifact / parse status
+4. LinkedIn OAuth/connect state
+5. job or role context, if the click came from a job page or market card
+6. whether a pitch has already been sent
+7. whether Claire is waiting for target role, location, or a role-screen answer
+
+On the first candidate message after this click, runtime must call the entry/pitch tools before normal triage. The response should resume from the website state:
+
+- known + not pitched: run the pitch turn
+- known + pitched + no role context: offer roles/tweaks
+- known + pitched + role context: connect the pitch to the role and start/resume prescreen
+- known + resume parse still pending: acknowledge the pending parse and ask only for missing context that cannot come from the resume
+
+### 2.5 Role Screen UX After Known Profile
+
+For a role-specific "Talk to Claire" or prescreen trigger:
+
+1. Claire should not skip the candidate pitch if this is the first time the candidate's profile/resume/LinkedIn evidence became available.
+2. Claire should not ask broad onboarding questions if the website/resume already answered them.
+3. Before Q1, Claire should load prior resume/LinkedIn/conversation evidence and adapt the first role probe.
+4. If the candidate already gave relevant evidence, Claire asks for additions/corrections/fresher details. If not, Claire asks the role's evidence probe directly.
+5. The role screen starts only after the candidate understands the pitch/profile Claire is using, unless the user explicitly sent a role prescreen token and the profile is already pitched or intentionally skipped.
+
+## 3. Non-Negotiable Design Rules
 
 1. **Runtime owns conversation.** Candidate-facing content goes through the agent runtime except narrow transactional copy: verification code, STOP/START compliance, SMS deep-link control token, and transport errors.
 2. **Tools own side effects.** Database reads, database writes, memory read/write, tag update, recommendation lookup, prescreen start, prescreen answer, prescreen terminal action, enrichment handoff, and pitch generation are explicit tools with structured inputs/outputs.
@@ -42,12 +127,13 @@ Not acceptable:
 
 ---
 
-## 3. Current-State Gap Matrix
+## 4. Current-State Gap Matrix
 
 | Area | Current state | Gap | Fix size | Priority |
 |---|---|---:|---:|---:|
 | SMS prescreen/apply trigger evidence | `prescreen`/`apply` control texts are consumed inline by the webhook and historically did not create `pa-inbound-events` evidence. | Outbox RULE-1 can see "no prior inbound" for the exact person who just texted a valid token. | Small | P0 |
 | Website first pitch | Candidate verify creates/claims profile and returns portal flags. | No first-class runtime event that says "candidate entered from website with auth/resume/linkedin evidence; pitch and choose next action." | Medium | P0 |
+| Website "Talk to Claire" continuation | Site has CTAs and auth/profile state. | First user message after website login/upload is not guaranteed to resume the known candidate state and run the existing pitch turn. | Medium | P0 |
 | Google/Gmail login | `/login` signs in via Google or magic link and calls candidate verify. | Verify does not guarantee a Claire runtime pitch; web flow can land in portal/job page without contextual conversation. | Medium | P0 |
 | LinkedIn OAuth login | OAuth login exists and candidate verify detects `li_*` / `linkedinSignIn`. | OAuth profile is not enough by itself to guarantee canonical LinkedIn URL enrichment or Claire pitch. | Medium | P0 |
 | LinkedIn connect URL flow | `paLinkedinConnectSubmit` links URL, can enrich via Coresignal, and can emit a runtime event for canary. | Behavior is path/canary specific and not unified with first-party website login. | Medium | P1 |
@@ -62,7 +148,7 @@ Not acceptable:
 | mem0 | `remember_fact` writes; audit says no read path. | No top-K memory retrieval in normal runtime, prescreen, or web-origin pitch. | Medium | P0 |
 | Identity in-flight state | Candidate handles are read during inbound resolution. | Agent context does not read open verification/connect tokens; pre-bind users can be treated as strangers. | Medium | P1 |
 
-### 3.1 Code-Audit Evidence
+### 4.1 Code-Audit Evidence
 
 Read-only code audit classifies the website-origin surfaces as present but not runtime-complete:
 
@@ -74,9 +160,9 @@ Read-only code audit classifies the website-origin surfaces as present but not r
 
 ---
 
-## 4. Required Entry Flows
+## 5. Required Entry Flows
 
-### 4.1 Direct SMS "hi"
+### 5.1 Direct SMS "hi"
 
 When a candidate texts Claire without a token:
 
@@ -86,7 +172,7 @@ When a candidate texts Claire without a token:
 4. If not authenticated, Claire may pitch briefly and ask for the least-friction identity/profile action.
 5. Response is emitted through runtime `send_message`.
 
-### 4.2 Website Login: Google/Gmail/Magic Link
+### 5.2 Website Login: Google/Gmail/Magic Link
 
 On successful candidate verify:
 
@@ -98,32 +184,44 @@ On successful candidate verify:
    - `hasLinkedIn`
    - `senderNumber`
    - `jobIdContext` when entered from `/j/:jobId` or `/j/:jobId/cv`
-2. Runtime loads context and sends first pitch/status.
-3. If job context exists and profile is sufficient, runtime calls `start_prescreen`.
-4. If profile is missing key info, runtime asks for the smallest missing item.
+2. Runtime loads context and chooses the same pitch path used by direct SMS LinkedIn/resume uptake.
+3. If no outbound-capable thread exists, persist `pendingClaireContinuation` so "Talk to Claire" resumes as a known candidate.
+4. If job context exists and profile is sufficient, runtime pitches first when needed, then calls `start_prescreen`.
+5. If profile is missing key info, runtime asks for the smallest missing item.
 
-### 4.3 Website Login: LinkedIn OAuth
+### 5.3 Website Login: LinkedIn OAuth
 
 On successful LinkedIn login:
 
 1. Candidate verify records LinkedIn OAuth identity on `pa-users`.
 2. Runtime event fires immediately: `candidate_entry_completed` with `entrySource: linkedin_oauth`.
 3. Coresignal enrichment is started through an enrichment tool/job.
-4. First pitch does not wait indefinitely for enrichment. It says what is known now and what Claire is pulling.
+4. First pitch does not wait indefinitely for enrichment. It uses the existing pitch posture from currently available evidence and can mention that more detail is being pulled only as context, not as a receipt.
 5. When enrichment completes, emit `enrichment_completed` runtime event; Claire updates the candidate and asks for additions/corrections.
 6. Do not ask the candidate to sign in again.
 
-### 4.4 Website Resume Upload
+### 5.4 Website Resume Upload
 
 On successful resume upload:
 
 1. Ingest writes resume artifact and parse status.
 2. Emit `resume_uploaded` runtime event with `candidateId`, `resumeArtifactId`, `jobIdContext`, and upload source.
-3. Claire's runtime pitch acknowledges the upload and explains the next action.
+3. Claire's runtime pitch uses the existing resume-style pitch posture: acknowledge the resume, compose/refresh the evidence-backed pitch, then offer the next action.
 4. If parse is still running, Claire says it is reading the resume and asks only for missing context that cannot be parsed.
 5. Legacy "close this tab" dead-end is removed from the product path.
 
-### 4.5 LinkedIn Connect URL
+### 5.5 Website "Talk to Claire" After Login/Upload
+
+When a candidate signs in or uploads a resume on the website and then clicks "Talk to Claire":
+
+1. The click/message carries `candidateId`, `entryEventId`, and optional `jobIdContext`.
+2. Runtime reads the pending website-entry state before treating the message as a normal free-form chat.
+3. If the candidate has not received the pitch, runtime sends the existing pitch turn.
+4. If the candidate has already received the pitch, runtime references that state and offers the next action.
+5. If a role is attached, runtime transitions from pitch/status into prescreen start/resume.
+6. The reply must not ask for login, LinkedIn, or resume when the website already supplied those signals.
+
+### 5.6 LinkedIn Connect URL
 
 For SMS-origin one-tap LinkedIn connect:
 
@@ -132,7 +230,7 @@ For SMS-origin one-tap LinkedIn connect:
 3. Emit runtime event once URL is accepted, even if enrichment is still in progress.
 4. Claire pitches from known data and later follows up when enrichment lands.
 
-### 4.6 Prescreen Start
+### 5.7 Prescreen Start
 
 Before the first prescreen question:
 
@@ -145,7 +243,7 @@ Before the first prescreen question:
    - If prior answer exists for same topic, Claire asks "anything new to add?" instead of asking from scratch.
    - If evidence conflicts, Claire asks the candidate to resolve it.
 
-### 4.7 Prescreen Ending Per Layer
+### 5.8 Prescreen Ending Per Layer
 
 Ending is a tool-backed runtime action:
 
@@ -160,7 +258,7 @@ Ending is a tool-backed runtime action:
 
 ---
 
-## 5. Runtime Tool Contract
+## 6. Runtime Tool Contract
 
 ### Read tools
 
@@ -172,6 +270,7 @@ Ending is a tool-backed runtime action:
 | `read_prescreen_history(candidateId, jobId?)` | Active, completed, paused, pending-review screens and answers |
 | `read_recommendation_history(candidateId)` | Roles sent, status, token availability, suppressed/rejected roles |
 | `read_enrichment_status(candidateId)` | Resume parse, LinkedIn/Coresignal enrichment, conflicts, pending jobs |
+| `read_candidate_entry_state(candidateId, entryEventId?)` | Pending website-origin continuation, pitch status, source, and attached job context |
 
 ### Write/action tools
 
@@ -186,6 +285,7 @@ Ending is a tool-backed runtime action:
 | `write_memory(candidateId, memory, evidence, scope)` | Durable memory write |
 | `start_enrichment(candidateId, source)` | Resume/LinkedIn/Coresignal enrichment job |
 | `create_candidate_entry_event(candidateId, source, context)` | Website-origin runtime entry |
+| `mark_pitch_sent(candidateId, source, pitchTurnId)` | Durable pitch state so Talk-to-Claire can continue instead of re-pitching or re-onboarding |
 
 ### Tool-loop rule
 
@@ -199,7 +299,7 @@ If more work is needed, commit a pending state and resume from a runtime event. 
 
 ---
 
-## 6. Memory and Context Requirements
+## 7. Memory and Context Requirements
 
 Claire must remember and reuse:
 
@@ -215,7 +315,7 @@ Every runtime turn receives a compact context block. mem0 snippets are supplemen
 
 ---
 
-## 7. Acceptance Criteria
+## 8. Acceptance Criteria
 
 ### P0: Stop Blocking Valid Initial Prescreen
 
@@ -230,6 +330,9 @@ Every runtime turn receives a compact context block. mem0 snippets are supplemen
 - [ ] New Gmail/magic-link login receives the same runtime pitch.
 - [ ] New LinkedIn OAuth login receives a runtime pitch that acknowledges LinkedIn sign-in.
 - [ ] Resume upload from `/j/:jobId/cv` and inline `/j/:jobId` emits a runtime event; no "close this tab" dead-end.
+- [ ] The pitch turn reuses the existing `composePitchTurn` posture: confirmation, evidence-backed candidate pitch, and single next-action offer.
+- [ ] If no outbound-capable thread exists at website entry, "Talk to Claire" resumes the pending known-candidate state and sends the pitch on the first candidate message.
+- [ ] Website-origin Claire never asks for login, LinkedIn, or resume when those signals are already present.
 - [ ] Returning signed-in candidate sees status/next action, not a full re-introduction.
 
 ### P0: Context and Memory
@@ -255,7 +358,7 @@ Every runtime turn receives a compact context block. mem0 snippets are supplemen
 
 ---
 
-## 8. Implementation Plan
+## 9. Implementation Plan
 
 ### Phase 0A: Incident Reliability
 
@@ -274,6 +377,8 @@ Create one runtime event path for successful candidate verify and resume upload:
 - `enrichment_completed`
 
 Wire candidate verify, public resume upload, and LinkedIn login to emit the event. The event handler loads context and asks Claire to produce the pitch/next action.
+
+The event handler must prefer the existing pitch engine/posture over new copy. If an outbound thread is unavailable, it records a pending website-origin continuation consumed by the next "Talk to Claire" message.
 
 ### Phase 0C: Context Completion
 
@@ -295,10 +400,9 @@ Unify LinkedIn OAuth, LinkedIn connect URL, and Coresignal enrichment under the 
 
 ---
 
-## 9. Open Questions
+## 10. Open Questions
 
-1. Should the first website-origin pitch be delivered by SMS only when a phone binding exists, and by in-app thread otherwise?
-2. Should mem0 be enabled for all users immediately once read exists, or behind the same runtime cohort as the agentic entry event?
-3. What is the exact employer-visible snapshot boundary after a PASS terminal in the new terminal narration?
+1. Should mem0 be enabled for all users immediately once read exists, or behind the same runtime cohort as the agentic entry event?
+2. What is the exact employer-visible snapshot boundary after a PASS terminal in the new terminal narration?
 
 These are product routing questions. The technical direction above does not depend on new compatibility paths.
