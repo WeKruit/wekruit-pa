@@ -1680,7 +1680,7 @@ function RecruiterOpsPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedCodes.slice(0, 8).map((code) => {
+                  {sortedCodes.map((code) => {
                     const status = codeStatus(code)
                     const rawInviteCode = isFullRecruiterInviteCode(code.inviteCode)
                       ? code.inviteCode
@@ -1827,7 +1827,7 @@ function RecruiterOpsPanel() {
         <OpsSection title="Recruiter accounts" subtitle="Firebase-bound recruiter users who can submit candidates.">
           {sortedProfiles.length ? (
             <div style={{ display: "grid", gap: 8 }}>
-              {sortedProfiles.slice(0, 8).map((profile) => (
+              {sortedProfiles.map((profile) => (
                 <div key={profile.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, borderTop: "1px solid #eee", paddingTop: 8, fontSize: 12 }}>
                   <span>
                     <b>{profile.name || profile.email || "Recruiter"}</b>
