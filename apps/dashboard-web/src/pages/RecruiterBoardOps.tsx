@@ -515,6 +515,12 @@ const boardTableStyle: CSSProperties = {
   lineHeight: 1.25,
 }
 
+const selectedBoardTableStyle: CSSProperties = {
+  ...boardTableStyle,
+  minWidth: 620,
+  fontSize: 11,
+}
+
 const boardHeaderCellStyle: CSSProperties = {
   position: "sticky",
   top: 0,
@@ -525,9 +531,11 @@ const boardHeaderCellStyle: CSSProperties = {
   color: "#777",
 }
 
-const reviewWorkspaceStyle: CSSProperties = {
+const selectedReviewShellStyle: CSSProperties = {
+  width: "calc(100vw - 240px - 64px)",
+  maxWidth: "calc(100vw - 240px - 64px)",
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) minmax(360px, 440px)",
+  gridTemplateColumns: "minmax(620px, 1fr) minmax(520px, min(640px, 34vw))",
   gap: 16,
   alignItems: "start",
 }
@@ -541,6 +549,7 @@ const reviewLeftColumnStyle: CSSProperties = {
 const reviewSidePanelStyle: CSSProperties = {
   position: "sticky",
   top: 16,
+  minWidth: 0,
   maxHeight: "calc(100vh - 112px)",
   overflow: "auto",
   border: "1px solid #e5ded2",
@@ -1439,7 +1448,7 @@ export default function RecruiterBoardOps() {
                 </span>
               </div>
               <div style={boardTableShellStyle}>
-                <table style={boardTableStyle}>
+                <table style={selectedSubmission ? selectedBoardTableStyle : boardTableStyle}>
                   <thead>
                     <tr>
                       <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
@@ -1471,7 +1480,7 @@ export default function RecruiterBoardOps() {
           body="Recruiter profiles and submissions will appear here as soon as the first one lands."
         />
       ) : (
-        <div style={selectedSubmission ? reviewWorkspaceStyle : { display: "grid", gap: 16 }}>
+        <div style={selectedSubmission ? selectedReviewShellStyle : { display: "grid", gap: 16 }}>
           <div style={selectedSubmission ? reviewLeftColumnStyle : { display: "grid", gap: 16 }}>
             {selectedSubmission && <JobContextPanel job={selectedJob} submission={selectedSubmission} />}
             <div style={{ display: "grid", gap: 16 }}>
@@ -1506,7 +1515,7 @@ export default function RecruiterBoardOps() {
                                 {job.company && <span style={{ color: "#777", fontSize: 12 }}>{job.company}</span>}
                               </div>
                               <div style={boardTableShellStyle}>
-                                <table style={boardTableStyle}>
+                                <table style={selectedSubmission ? selectedBoardTableStyle : boardTableStyle}>
                                   <thead>
                                     <tr>
                                       <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
