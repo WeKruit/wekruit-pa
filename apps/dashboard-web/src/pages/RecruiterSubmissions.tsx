@@ -5,7 +5,7 @@
  * sortable columns, pagination, row drill-down. Backed by the unified DataTable
  * primitive + useTable hook.
  */
-import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { Fragment, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { arrayUnion, collection, doc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
 import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
@@ -434,6 +434,36 @@ function formatCodeExpiry(raw?: string | null): string {
 
 const KNOWN_RECRUITER_INVITE_CODES_KEY = "wekruit.admin.recruiterInviteCodes.v1"
 const RECRUITER_INVITE_BASE_URL = "https://wekruit-recruiters.web.app/recruiters"
+
+const recruiterAccessScrollPaneStyle: CSSProperties = {
+  maxHeight: 430,
+  overflow: "auto",
+  scrollbarWidth: "thin",
+}
+
+const recruiterInviteHeaderCellStyle: CSSProperties = {
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  padding: "6px 6px",
+  background: "#fff",
+  boxShadow: "0 1px 0 #eee",
+}
+
+const recruiterInviteCellStyle: CSSProperties = {
+  padding: "6px 6px",
+  verticalAlign: "middle",
+}
+
+const recruiterInviteButtonStyle: CSSProperties = {
+  padding: "3px 7px",
+  border: "1px solid #ccc",
+  borderRadius: 5,
+  background: "#fff",
+  fontSize: 11,
+  lineHeight: 1.15,
+  whiteSpace: "nowrap",
+}
 
 function isFullRecruiterInviteCode(raw?: string | null): raw is string {
   const trimmed = raw?.trim()
@@ -1568,7 +1598,7 @@ function RecruiterOpsPanel() {
         <OpsMetric label="Open invites" value={activeCodes} />
         <OpsMetric label="Notifications sent" value={sentNotifications} meta={failedNotifications ? `${failedNotifications} failed` : undefined} />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 320px) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
         <form id="recruiter-code-form" onSubmit={sendInvite} style={{ display: "grid", gap: 10, border: "1px solid #eee", borderRadius: 8, padding: 14, background: "#fff" }}>
           <div>
             <div style={{ fontWeight: 700 }}>Send recruiter invite</div>
@@ -1665,18 +1695,18 @@ function RecruiterOpsPanel() {
             </div>
           )}
           {sortedCodes.length ? (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <div style={{ ...recruiterAccessScrollPaneStyle, overflowX: "auto" }}>
+              <table style={{ width: "100%", minWidth: 920, borderCollapse: "collapse", fontSize: 11.5, lineHeight: 1.25 }}>
                 <thead>
                   <tr style={{ color: "#777", textAlign: "left", borderBottom: "1px solid #eee" }}>
-                    <th style={{ padding: "8px 6px" }}>Full code</th>
-                    <th style={{ padding: "8px 6px" }}>Action</th>
-                    <th style={{ padding: "8px 6px" }}>Recruiter</th>
-                    <th style={{ padding: "8px 6px" }}>Label</th>
-                    <th style={{ padding: "8px 6px" }}>Email</th>
-                    <th style={{ padding: "8px 6px" }}>Status</th>
-                    <th style={{ padding: "8px 6px" }}>Expires</th>
-                    <th style={{ padding: "8px 6px" }}>Bound to</th>
+                    <th style={recruiterInviteHeaderCellStyle}>Full code</th>
+                    <th style={{ ...recruiterInviteHeaderCellStyle, width: 92 }}>Action</th>
+                    <th style={recruiterInviteHeaderCellStyle}>Recruiter</th>
+                    <th style={recruiterInviteHeaderCellStyle}>Label</th>
+                    <th style={recruiterInviteHeaderCellStyle}>Email</th>
+                    <th style={recruiterInviteHeaderCellStyle}>Status</th>
+                    <th style={recruiterInviteHeaderCellStyle}>Expires</th>
+                    <th style={recruiterInviteHeaderCellStyle}>Bound to</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1690,7 +1720,7 @@ function RecruiterOpsPanel() {
                     const rawMissing = !canCopy && status.label === "usable"
                     return (
                       <tr key={code.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
-                        <td style={{ padding: "9px 6px", fontFamily: "monospace", fontWeight: 700, whiteSpace: "nowrap" }}>
+                        <td style={{ ...recruiterInviteCellStyle, fontFamily: "monospace", fontWeight: 700, whiteSpace: "nowrap" }}>
                           <div style={{ userSelect: "all" }}>{visibleCode}</div>
                           {!canCopy && code.codePreview && (
                             <div style={{ marginTop: 3, color: "#999", fontFamily: "Inter, system-ui, sans-serif", fontSize: 11, fontWeight: 500 }}>
@@ -1714,28 +1744,30 @@ function RecruiterOpsPanel() {
                             </div>
                           )}
                         </td>
-                        <td style={{ padding: "9px 6px" }}>
+                        <td style={{ ...recruiterInviteCellStyle, width: 92 }}>
                           {canCopy ? (
-                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
                               <button
                                 type="button"
+                                title="Copy code"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   void navigator.clipboard?.writeText(rawInviteCode)
                                 }}
-                                style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
+                                style={recruiterInviteButtonStyle}
                               >
-                                Copy code
+                                Code
                               </button>
                               <button
                                 type="button"
+                                title="Copy invite link"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   void navigator.clipboard?.writeText(recruiterInviteUrl(rawInviteCode))
                                 }}
-                                style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
+                                style={recruiterInviteButtonStyle}
                               >
-                                Copy invite link
+                                Link
                               </button>
                             </div>
                           ) : rawMissing ? (
@@ -1762,11 +1794,11 @@ function RecruiterOpsPanel() {
                             <span style={{ color: "#999" }}>—</span>
                           )}
                         </td>
-                        <td style={{ padding: "9px 6px", color: code.recruiterEmail ? "#333" : "#999", whiteSpace: "nowrap" }}>
+                        <td style={{ ...recruiterInviteCellStyle, color: code.recruiterEmail ? "#333" : "#999", whiteSpace: "nowrap" }}>
                           {code.recruiterEmail ?? "—"}
                         </td>
-                        <td style={{ padding: "9px 6px" }}>{code.label || "—"}</td>
-                        <td style={{ padding: "9px 6px" }}>
+                        <td style={recruiterInviteCellStyle}>{code.label || "—"}</td>
+                        <td style={recruiterInviteCellStyle}>
                           {(() => {
                             const emailStatus = inviteEmailBadge(code.inviteEmailStatus)
                             return (
@@ -1784,9 +1816,9 @@ function RecruiterOpsPanel() {
                             )
                           })()}
                         </td>
-                        <td style={{ padding: "9px 6px" }}><Badge tone={status.tone}>{status.label}</Badge></td>
-                        <td style={{ padding: "9px 6px", color: "#666" }}>{formatCodeExpiry(code.expiresAt)}</td>
-                        <td style={{ padding: "9px 6px", color: "#666" }}>
+                        <td style={recruiterInviteCellStyle}><Badge tone={status.tone}>{status.label}</Badge></td>
+                        <td style={{ ...recruiterInviteCellStyle, color: "#666" }}>{formatCodeExpiry(code.expiresAt)}</td>
+                        <td style={{ ...recruiterInviteCellStyle, color: "#666" }}>
                           {(() => {
                             const claimedBy = code.lastUsedByUid ? recruiterByUid.get(code.lastUsedByUid) : undefined
                             if (claimedBy && (claimedBy.name || claimedBy.email)) {
@@ -1815,20 +1847,22 @@ function RecruiterOpsPanel() {
       </div>
       <div style={{ marginTop: 18 }}>
         <Panel title="Recruiters" eyebrow={`${rosterRows.length} registered`}>
-          <DataTable<RecruiterProfileDoc>
-            columns={rosterColumns}
-            rows={rosterRows}
-            toolbar={false}
-            empty={<EmptyOpsText>No recruiter accounts yet. A recruiter appears here after signup.</EmptyOpsText>}
-          />
+          <div style={{ ...recruiterAccessScrollPaneStyle, maxHeight: 360 }}>
+            <DataTable<RecruiterProfileDoc>
+              columns={rosterColumns}
+              rows={rosterRows}
+              toolbar={false}
+              empty={<EmptyOpsText>No recruiter accounts yet. A recruiter appears here after signup.</EmptyOpsText>}
+            />
+          </div>
         </Panel>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 18 }}>
         <OpsSection title="Recruiter accounts" subtitle="Firebase-bound recruiter users who can submit candidates.">
           {sortedProfiles.length ? (
-            <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gap: 4, maxHeight: 320, overflow: "auto", paddingRight: 4, scrollbarWidth: "thin" }}>
               {sortedProfiles.map((profile) => (
-                <div key={profile.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, borderTop: "1px solid #eee", paddingTop: 8, fontSize: 12 }}>
+                <div key={profile.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, borderTop: "1px solid #eee", padding: "6px 0", fontSize: 12 }}>
                   <span>
                     <b>{profile.name || profile.email || "Recruiter"}</b>
                     <br />
@@ -1846,17 +1880,22 @@ function RecruiterOpsPanel() {
           )}
         </OpsSection>
         <OpsSection title="Role alerts" subtitle="One alert is created per active recruiter when a recruiter-board role is released.">
-          {notifications.slice(0, 6).map((n) => (
-            <div key={n.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: "8px 0", borderTop: "1px solid #eee", fontSize: 12 }}>
-              <span>
-                <b>{n.roleTitle ?? "Role"}</b>
-                <br />
-                <span style={{ color: "#777" }}>{n.recruiterEmail ?? "unknown recruiter"} · {formatOpsDate(n.createdAt)}</span>
-              </span>
-              <Badge tone={n.status === "sent" ? "ok" : n.status === "failed" ? "warn" : "muted"}>{n.status ?? "queued"}</Badge>
+          {notifications.length ? (
+            <div style={{ maxHeight: 320, overflow: "auto", paddingRight: 4, scrollbarWidth: "thin" }}>
+              {notifications.map((n) => (
+                <div key={n.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, padding: "6px 0", borderTop: "1px solid #eee", fontSize: 12 }}>
+                  <span>
+                    <b>{n.roleTitle ?? "Role"}</b>
+                    <br />
+                    <span style={{ color: "#777" }}>{n.recruiterEmail ?? "unknown recruiter"} · {formatOpsDate(n.createdAt)}</span>
+                  </span>
+                  <Badge tone={n.status === "sent" ? "ok" : n.status === "failed" ? "warn" : "muted"}>{n.status ?? "queued"}</Badge>
+                </div>
+              ))}
             </div>
-          ))}
-          {!notifications.length && <EmptyOpsText>No role notifications yet.</EmptyOpsText>}
+          ) : (
+            <EmptyOpsText>No role notifications yet.</EmptyOpsText>
+          )}
         </OpsSection>
       </div>
     </Panel>

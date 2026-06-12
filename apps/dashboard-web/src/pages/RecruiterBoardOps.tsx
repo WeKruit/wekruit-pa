@@ -10,7 +10,7 @@
  * emails with no matching recruiter profile land in an "Unclaimed
  * submitters" group.
  */
-import { Fragment, useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
@@ -229,6 +229,17 @@ const STAGE_PRIMARY_ACTION: Record<Exclude<SubmissionStage, "terminal">, { label
   client_review: { label: "Hired", action: "hired" },
 }
 
+function primaryActionShortLabel(stage: Exclude<SubmissionStage, "terminal">): string {
+  switch (stage) {
+    case "pending":
+      return "Interview"
+    case "wekruit_interview":
+      return "Client"
+    case "client_review":
+      return "Hired"
+  }
+}
+
 function recruiterAccountTone(status: string | null): Parameters<typeof Badge>[0]["tone"] {
   switch (status) {
     case "disabled":
@@ -424,13 +435,15 @@ export function buildBoardGroups(
   }
 }
 
-const cellStyle = { padding: "9px 6px", verticalAlign: "top" as const }
-const actionButtonStyle = {
-  padding: "5px 8px",
+const cellStyle: CSSProperties = { padding: "6px 6px", verticalAlign: "middle" }
+const actionButtonStyle: CSSProperties = {
+  padding: "3px 7px",
   border: "1px solid #ccc",
-  borderRadius: 6,
+  borderRadius: 5,
   background: "#fff",
-  fontSize: 12,
+  fontSize: 11,
+  lineHeight: 1.15,
+  whiteSpace: "nowrap",
   cursor: "pointer",
 }
 // P3 carry-over: while another row's action is in flight, this row's buttons
@@ -438,6 +451,48 @@ const actionButtonStyle = {
 const blockedButtonStyle = {
   opacity: 0.5,
   cursor: "default" as const,
+}
+
+const boardGroupBodyStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  maxHeight: 520,
+  overflow: "auto",
+  paddingRight: 6,
+  scrollbarWidth: "thin",
+}
+
+const boardJobHeaderStyle: CSSProperties = {
+  display: "flex",
+  gap: 8,
+  alignItems: "baseline",
+  flexWrap: "wrap",
+  marginBottom: 4,
+}
+
+const boardTableShellStyle: CSSProperties = {
+  maxHeight: 270,
+  overflow: "auto",
+  border: "1px solid #eee5d8",
+  borderRadius: 10,
+  scrollbarWidth: "thin",
+}
+
+const boardTableStyle: CSSProperties = {
+  minWidth: 940,
+  border: 0,
+  fontSize: 11.5,
+  lineHeight: 1.25,
+}
+
+const boardHeaderCellStyle: CSSProperties = {
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  padding: "6px 6px",
+  background: "#fff",
+  boxShadow: "0 1px 0 #eee",
+  color: "#777",
 }
 
 function GapList({ label, items }: { label: string; items: string[] }) {
@@ -861,7 +916,7 @@ export default function RecruiterBoardOps() {
             <Badge tone={chip.tone}>{chip.label}</Badge>
           </td>
           <td style={cellStyle}>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "nowrap" }}>
               <Badge tone={status.tone}>{status.label}</Badge>
               {(commentCounts[submission.id] ?? 0) > 0 && (
                 <span
@@ -885,20 +940,22 @@ export default function RecruiterBoardOps() {
             {stage === "terminal" ? (
               <span style={{ color: "#999", fontSize: 12 }}>—</span>
             ) : (
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 4, flexWrap: "nowrap", alignItems: "center" }}>
                 <button
                   type="button"
                   disabled={blocked}
                   aria-disabled={blocked}
+                  title={STAGE_PRIMARY_ACTION[stage].label}
                   onClick={() => void applyAction(submission, STAGE_PRIMARY_ACTION[stage].action)}
                   style={{ ...actionButtonStyle, border: "1px solid #9bc09b", background: "#f1f8f1", color: "#1d5c2c", ...dim }}
                 >
-                  {busy ? "…" : STAGE_PRIMARY_ACTION[stage].label}
+                  {busy ? "…" : primaryActionShortLabel(stage)}
                 </button>
                 <button
                   type="button"
                   disabled={blocked}
                   aria-disabled={blocked}
+                  title="Reject"
                   onClick={() => void applyAction(submission, "reject")}
                   style={{ ...actionButtonStyle, border: "1px solid #d9a8a0", background: "#fdf3f1", color: "#9c3a1d", ...dim }}
                 >
@@ -909,13 +966,14 @@ export default function RecruiterBoardOps() {
                     type="button"
                     disabled={blocked}
                     aria-disabled={blocked}
+                    title="Request info"
                     onClick={() => {
                       setRequestInfoId(requestInfoId === submission.id ? null : submission.id)
                       setRequestMessage(DEFAULT_REQUEST_MESSAGE)
                     }}
                     style={{ ...actionButtonStyle, ...dim }}
                   >
-                    Request info
+                    Info
                   </button>
                 )}
                 <button
@@ -1021,26 +1079,26 @@ export default function RecruiterBoardOps() {
       {group.jobs.length === 0 ? (
         <div style={{ color: "#777", fontSize: 12, padding: "4px 0" }}>No submissions yet.</div>
       ) : (
-        <div style={{ display: "grid", gap: 14 }}>
+        <div style={boardGroupBodyStyle}>
           {group.jobs.map((job) => (
             <div key={job.key}>
-              <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 4 }}>
+              <div style={boardJobHeaderStyle}>
                 <span style={{ fontWeight: 600, fontSize: 13 }}>{job.title}</span>
                 {job.company && <span style={{ color: "#777", fontSize: 12 }}>{job.company}</span>}
                 <span style={{ color: "#999", fontSize: 11 }}>
                   {job.pendingCount} pending · {job.submissions.length} total
                 </span>
               </div>
-              <div className="table-shell">
-                <table>
+              <div style={boardTableShellStyle}>
+                <table style={boardTableStyle}>
                   <thead>
                     <tr>
-                      <th>Candidate</th>
-                      <th>Submitted</th>
-                      <th>Self-score</th>
-                      <th>AI verdict</th>
-                      <th>Status</th>
-                      <th>Actions</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "24%" }}>Candidate</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "12%" }}>Submitted</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "13%" }}>Self-score</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "12%" }}>AI verdict</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "13%" }}>Status</th>
+                      <th style={{ ...boardHeaderCellStyle, width: "26%" }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
@@ -1077,7 +1135,7 @@ export default function RecruiterBoardOps() {
                 </Badge>
               }
             >
-              <div style={{ display: "grid", gap: 16 }}>
+              <div style={boardGroupBodyStyle}>
                 {unclaimedGroups.map((group) => (
                   <div key={group.key}>
                     <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 6 }}>
@@ -1089,23 +1147,23 @@ export default function RecruiterBoardOps() {
                         {group.pendingCount} pending · {group.totalCount} total
                       </Badge>
                     </div>
-                    <div style={{ display: "grid", gap: 14 }}>
+                    <div style={{ display: "grid", gap: 10 }}>
                       {group.jobs.map((job) => (
                         <div key={job.key}>
-                          <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 4 }}>
+                          <div style={boardJobHeaderStyle}>
                             <span style={{ fontWeight: 600, fontSize: 13 }}>{job.title}</span>
                             {job.company && <span style={{ color: "#777", fontSize: 12 }}>{job.company}</span>}
                           </div>
-                          <div className="table-shell">
-                            <table>
+                          <div style={boardTableShellStyle}>
+                            <table style={boardTableStyle}>
                               <thead>
                                 <tr>
-                                  <th>Candidate</th>
-                                  <th>Submitted</th>
-                                  <th>Self-score</th>
-                                  <th>AI verdict</th>
-                                  <th>Status</th>
-                                  <th>Actions</th>
+                                  <th style={{ ...boardHeaderCellStyle, width: "24%" }}>Candidate</th>
+                                  <th style={{ ...boardHeaderCellStyle, width: "12%" }}>Submitted</th>
+                                  <th style={{ ...boardHeaderCellStyle, width: "13%" }}>Self-score</th>
+                                  <th style={{ ...boardHeaderCellStyle, width: "12%" }}>AI verdict</th>
+                                  <th style={{ ...boardHeaderCellStyle, width: "13%" }}>Status</th>
+                                  <th style={{ ...boardHeaderCellStyle, width: "26%" }}>Actions</th>
                                 </tr>
                               </thead>
                               <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
