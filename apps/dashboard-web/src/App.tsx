@@ -1,4 +1,5 @@
 import { getRedirectResult, onAuthStateChanged, signOut } from "firebase/auth"
+import { completeAdminMagicLink } from "./lib/magic-link.js"
 import { useEffect, useState } from "react"
 import { Navigate, Route, Routes } from "react-router-dom"
 import { AppShell } from "./components/console/AppShell.js"
@@ -120,7 +121,7 @@ export default function App() {
   // SSO cookie in parallel so the admin survives navigating from another
   // wekruit.com subdomain without re-authenticating.
   useEffect(() => {
-    Promise.allSettled([getRedirectResult(auth()), bootstrapSsoFromCookie()])
+    Promise.allSettled([completeAdminMagicLink(), getRedirectResult(auth()), bootstrapSsoFromCookie()])
       .catch((e) => {
         console.warn("[auth] bootstrap", e)
       })

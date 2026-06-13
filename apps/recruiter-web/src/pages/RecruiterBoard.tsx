@@ -8,6 +8,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import {
   GoogleAuthProvider,
+  isSignInWithEmailLink,
+  sendSignInLinkToEmail,
+  signInWithEmailLink,
   signInWithPopup,
   signOut,
 } from "firebase/auth"
@@ -1133,12 +1136,20 @@ function createRecruiterGoogleProvider(): GoogleAuthProvider {
 }
 
 const RECRUITER_ACCESS_PENDING_KEY = "wk_recruiter_access_pending_v2"
+// Email the magic-link was sent to — read back when the user returns via the
+// link to complete sign-in (same-browser case).
+const RECRUITER_MAGIC_EMAIL_KEY = "wk_recruiter_magic_email"
 
 interface PendingRecruiterAccess {
   inviteCode: string
   name: string
   createdAtMs: number
   emailHint?: string
+  // Carried across the magic-link email round-trip so the claim that runs on
+  // return still has the TOS acceptance + optional agency name the recruiter
+  // entered before the link was sent.
+  legalEntityName?: string
+  tosAccepted?: boolean
 }
 
 export interface RecruiterInviteLink {
@@ -1166,7 +1177,10 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
     // An empty inviteCode is a codeless email-bound claim — keep the slot.
     if (typeof parsed.inviteCode !== "string") return null
     if (typeof parsed.name !== "string") return null
-    if (typeof parsed.createdAtMs !== "number" || Date.now() - parsed.createdAtMs > 10 * 60 * 1000) {
+    // 60-min window so a magic-link email opened a while after it was requested
+    // still carries the recruiter's TOS acceptance + agency name. The Google
+    // popup path resolves in seconds, so the longer cache is harmless there.
+    if (typeof parsed.createdAtMs !== "number" || Date.now() - parsed.createdAtMs > 60 * 60 * 1000) {
       storage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
       return null
     }
@@ -1177,6 +1191,10 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
       ...(typeof parsed.emailHint === "string" && parsed.emailHint
         ? { emailHint: cleanRecruiterEmail(parsed.emailHint) }
         : {}),
+      ...(typeof parsed.legalEntityName === "string" && parsed.legalEntityName
+        ? { legalEntityName: parsed.legalEntityName }
+        : {}),
+      ...(parsed.tosAccepted === true ? { tosAccepted: true } : {}),
     }
   }
 
@@ -1193,12 +1211,19 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
   }
 }
 
-export function writePendingRecruiterAccess(inviteCode: string, name: string, emailHint?: string) {
+export function writePendingRecruiterAccess(
+  inviteCode: string,
+  name: string,
+  emailHint?: string,
+  extra?: { legalEntityName?: string; tosAccepted?: boolean },
+) {
   const payload = JSON.stringify({
     inviteCode,
     name,
     createdAtMs: Date.now(),
     ...(emailHint ? { emailHint } : {}),
+    ...(extra?.legalEntityName ? { legalEntityName: extra.legalEntityName } : {}),
+    ...(extra?.tosAccepted ? { tosAccepted: true } : {}),
   })
   let wrote = false
   try {
@@ -4072,6 +4097,8 @@ export function RecruiterAccessGate({
   const [busy, setBusy] = useState(false)
   const [legalEntityName, setLegalEntityName] = useState("")
   const [tosChecked, setTosChecked] = useState(false)
+  const [magicEmail, setMagicEmail] = useState(inviteLink?.emailHint ?? "")
+  const [linkStatus, setLinkStatus] = useState<"idle" | "sending" | "sent" | "completing">("idle")
   const inviteEmailHint = inviteLink?.emailHint ?? ""
 
   useEffect(() => {
@@ -4110,6 +4137,103 @@ export function RecruiterAccessGate({
       setBusy(false)
     }
   }
+
+  // Post-sign-in claim shared by the email-link path. The backend authenticates
+  // by verified email, so a magic-link token registers exactly like a Google one.
+  const finishMagicClaim = async (claimEmail: string, displayName?: string) => {
+    const pending = readPendingRecruiterAccess()
+    const next = await registerRecruiterAccess({
+      name: pending?.name || cleanRecruiterName(displayName ?? "") || "Recruiter",
+      email: claimEmail,
+      ...(pending?.inviteCode ? { inviteCode: pending.inviteCode } : {}),
+      ...((pending?.legalEntityName || legalEntityName.trim())
+        ? { legalEntityName: pending?.legalEntityName || legalEntityName.trim() }
+        : {}),
+      tosAccepted: true,
+    })
+    clearPendingRecruiterAccess()
+    void trackEvent("recruiter_session_started")
+    void trackEvent("login", { method: "recruiter_magic_link" })
+    onSessionClaimed(next)
+  }
+
+  const sendMagicLink = async () => {
+    const target = cleanRecruiterEmail(magicEmail)
+    if (!target) {
+      setErr("Enter the email you were invited with.")
+      return
+    }
+    if (!tosChecked) {
+      setErr("Please accept the Terms of Service to continue.")
+      return
+    }
+    setLinkStatus("sending")
+    setErr(null)
+    const code = inviteLink?.code || ""
+    const hint = inviteLink?.emailHint || inviteEmailHint || undefined
+    try {
+      writePendingRecruiterAccess(code, "", hint, {
+        ...(legalEntityName.trim() ? { legalEntityName: legalEntityName.trim() } : {}),
+        tosAccepted: true,
+      })
+      try {
+        window.localStorage.setItem(RECRUITER_MAGIC_EMAIL_KEY, target)
+      } catch {
+        // private mode — completion will prompt for the email instead
+      }
+      await sendSignInLinkToEmail(auth(), target, {
+        url: `${window.location.origin}/recruiters`,
+        handleCodeInApp: true,
+      })
+      void trackEvent("recruiter_magic_link_requested")
+      setLinkStatus("sent")
+    } catch (error) {
+      setLinkStatus("idle")
+      setErr(formatRecruiterAuthError(error, hint))
+    }
+  }
+
+  // Complete an email-link sign-in when the recruiter returns via the link.
+  useEffect(() => {
+    if (!isSignInWithEmailLink(auth(), window.location.href)) return
+    let cancelled = false
+    void (async () => {
+      let stored = ""
+      try {
+        stored = cleanRecruiterEmail(window.localStorage.getItem(RECRUITER_MAGIC_EMAIL_KEY) ?? "")
+      } catch {
+        // private mode
+      }
+      // Cross-device / cleared-storage case: ask which email the link was for.
+      if (!stored) stored = cleanRecruiterEmail(window.prompt("Confirm the email this sign-in link was sent to") ?? "")
+      if (!stored) return
+      setLinkStatus("completing")
+      setErr(null)
+      try {
+        if (auth().currentUser) await signOut(auth())
+        const result = await signInWithEmailLink(auth(), stored, window.location.href)
+        try {
+          window.localStorage.removeItem(RECRUITER_MAGIC_EMAIL_KEY)
+        } catch {
+          // private mode
+        }
+        // Strip the link params so a refresh doesn't re-run completion.
+        window.history.replaceState({}, "", "/recruiters")
+        if (cancelled) return
+        await finishMagicClaim(cleanRecruiterEmail(result.user.email ?? stored), result.user.displayName ?? undefined)
+      } catch (error) {
+        if (cancelled) return
+        clearPendingRecruiterAccess()
+        await signOut(auth()).catch(() => undefined)
+        setLinkStatus("idle")
+        setErr(formatRecruiterAuthError(error, stored, { codeless: true, email: stored }))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const submitSignIn = async (e: FormEvent) => {
     e.preventDefault()
@@ -4174,8 +4298,8 @@ export function RecruiterAccessGate({
             <h2>{inviteLink ? "You're invited" : "Sign in to your recruiter workspace"}</h2>
             <p className="rb-access__hint">
               {inviteEmailHint
-                ? `This invite is for ${inviteEmailHint}. Sign in with that Google account.`
-                : "Access is by invitation — sign in with the email we invited."}
+                ? `This invite is for ${inviteEmailHint}. Sign in with Google or have a one-time link emailed to that address.`
+                : "Access is by invitation — sign in with Google or a one-time email link, using the address we invited."}
             </p>
             <label className="rb-access__field">
               <span className="rb-access__field-label">Agency / legal entity name <span className="rb-access__optional">(optional)</span></span>
@@ -4202,12 +4326,60 @@ export function RecruiterAccessGate({
               </span>
             </label>
             {err && <p className="rb-access__err">{err}</p>}
-            <button className="rb-btn primary rb-btn--block" disabled={busy || !tosChecked}>
+            <button className="rb-btn primary rb-btn--block" disabled={busy || linkStatus === "completing" || !tosChecked}>
               {busy ? "Opening Google..." : "Continue with Google"}
             </button>
             <button type="button" className="rb-access__reset" disabled={busy} onClick={() => void clearStuckGoogleState()}>
               Try a different Google account
             </button>
+
+            <div className="rb-access__divider"><span>or</span></div>
+
+            {linkStatus === "sent" ? (
+              <div className="rb-access__sent">
+                <strong>Check your email</strong>
+                <p>
+                  We sent a one-time sign-in link to {cleanRecruiterEmail(magicEmail)}. Open it on this
+                  device to finish — no password or Google account needed.
+                </p>
+                <button type="button" className="rb-access__reset" onClick={() => setLinkStatus("idle")}>
+                  Use a different email
+                </button>
+              </div>
+            ) : (
+              <div className="rb-access__magic">
+                <label className="rb-access__field">
+                  <span className="rb-access__field-label">No Google account? Email me a sign-in link</span>
+                  <input
+                    type="email"
+                    className="rb-access__input"
+                    placeholder="you@company.com"
+                    value={magicEmail}
+                    autoComplete="email"
+                    disabled={linkStatus === "completing"}
+                    onChange={(e) => setMagicEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        void sendMagicLink()
+                      }
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="rb-btn rb-btn--block"
+                  disabled={linkStatus === "sending" || linkStatus === "completing" || !tosChecked || !magicEmail.trim()}
+                  onClick={() => void sendMagicLink()}
+                >
+                  {linkStatus === "sending"
+                    ? "Sending link..."
+                    : linkStatus === "completing"
+                      ? "Signing you in..."
+                      : "Email me a sign-in link"}
+                </button>
+              </div>
+            )}
           </form>
           <RecruiterAccessWorkspacePreview />
         </div>
