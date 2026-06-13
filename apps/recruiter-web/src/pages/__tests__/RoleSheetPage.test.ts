@@ -91,7 +91,7 @@ test("the add-candidate form renders below the submissions table", () => {
   assert.match(source, /className="rs-add-form"/)
 })
 
-test("add form gates Submit on required identity URLs, required submit fields, and consent", () => {
+test("add form gates Submit on required identity URLs and required submit fields", () => {
   const blockersSlice = sliceBetween(source, "function addRowBlockers", "\nfunction ")
   assert.match(blockersSlice, /if \(!draft\.cells\.name\.trim\(\)\) blockers\.push\("Candidate name is required\."\)/)
   assert.match(blockersSlice, /if \(!email\) blockers\.push\("Candidate email is required\."\)/)
@@ -101,12 +101,8 @@ test("add form gates Submit on required identity URLs, required submit fields, a
   assert.match(blockersSlice, /else if \(!normalizeSheetUrl\(resume\) && !draft\.resumeFileName\) blockers\.push\("Resume must be a valid URL or an uploaded file\."\)/)
   assert.doesNotMatch(blockersSlice, /LinkedIn URL or resume link is required/)
   assert.match(blockersSlice, /if \(field\.required && !value\) blockers\.push\(`\$\{field\.label\} is required for this role\.`\)/)
-  assert.match(blockersSlice, /if \(!draft\.consent\) blockers\.push\("Candidate consent is required\."\)/)
   assert.match(source, /const addRowReady = addBlockers\.length === 0/)
   assert.match(source, /disabled=\{!ready \|\| submitting\}/)
-  const addFormSlice = sliceBetween(source, "function AddCandidateForm(", "\nfunction DetailDrawer(")
-  assert.match(addFormSlice, /className="rs-consent"/)
-  assert.match(addFormSlice, /has agreed to be submitted/)
 })
 
 test("disabled add-form submit explains the blocking fields inline", () => {
@@ -126,7 +122,6 @@ test("add row submits through paRecruiterSubmission with cells, graded checklist
   assert.match(submitSlice, /await submitRecruiterCandidate\(\{/)
   assert.match(submitSlice, /candidate: candidatePayload\(addDraft\),/)
   assert.match(submitSlice, /checklist: checklistPayload\(addDraft\),/)
-  assert.match(submitSlice, /candidateConsent: true,/)
   assert.match(submitSlice, /extraFields: extraFieldsPayload\(addDraft, extraFieldDefs\),/)
   // the seven sheet-only cells ride inside candidate{}
   const payloadSlice = sliceBetween(source, "function candidatePayload", "\nfunction checklistPayload")

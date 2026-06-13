@@ -164,7 +164,6 @@ export default function SubmissionDetailPage() {
               <dt>Role</dt><dd>{submission.jobTitleSnapshot ?? "—"}</dd>
               <dt>Company</dt><dd>{submission.companyLabelSnapshot ?? "—"}</dd>
               <dt>Status</dt><dd>{statusLabel(status)}</dd>
-              {submission.candidateConsentStatus && <><dt>Consent</dt><dd>{statusLabel(submission.candidateConsentStatus)}</dd></>}
               <dt>Submitted</dt><dd>{formatDate(submission.createdAt)}</dd>
               {submission.updatedAt && <><dt>Last update</dt><dd>{formatDate(submission.updatedAt)}</dd></>}
             </dl>

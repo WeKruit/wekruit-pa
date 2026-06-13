@@ -33,8 +33,9 @@ test("workspace is wired to the real API — every data surface has a live sourc
   // Ask WeKruit thread
   assert.match(workspaceSrc, /fetchRecruiterSubmissionComments\(/)
   assert.match(workspaceSrc, /addRecruiterSubmissionComment\(/)
-  // consent resend (Needs-you action)
-  assert.match(workspaceSrc, /resendRecruiterCandidateConfirmation\(/)
+  // candidate-consent surface is gone — WeKruit never emails candidates, so the
+  // workspace must not import or call the resend-confirmation path.
+  assert.doesNotMatch(workspaceSrc, /resendRecruiterCandidateConfirmation/)
   // email updates toggle
   assert.match(workspaceSrc, /updateRecruiterPreferences\(\{ notificationPreferences: \{ submissionUpdatesEmail/)
 })
