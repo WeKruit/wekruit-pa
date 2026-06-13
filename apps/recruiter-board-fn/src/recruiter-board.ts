@@ -4273,7 +4273,9 @@ export function validateSubmission(input: unknown):
       source = trimmed
     }
   }
-  if (b.candidateConsent !== true) return { ok: false, reason: "candidate_consent_required" }
+  // No candidate consent gate: submitting a candidate on the recruiter platform
+  // IS the consent (recruiter-asserted). WeKruit never contacts candidates, so we
+  // never block a submission on a candidateConsent flag. Stored as true downstream.
   if (!candidateEmail) return { ok: false, reason: "missing_candidate_email" }
 
   const currentRole = sanitizeOptionalString(c.currentRole, 4000)
