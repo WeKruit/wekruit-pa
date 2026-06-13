@@ -33,6 +33,61 @@
 .oj-error { color: #9a3b2a; }
 .oj-loading, .oj-empty { color: #8a8a82; font-size: 14px; }
 
+/* Filter toolbar */
+.oj-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.oj-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.oj-filter__label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #6a6a64;
+}
+.oj-filter__select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 7px 30px 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1a1a1a;
+  background: #fff
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236a6a64' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")
+    no-repeat right 11px center;
+  border: 1px solid #e6e6e2;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  max-width: 260px;
+}
+.oj-filter__select:hover { border-color: #c9c9c2; }
+.oj-filter__select:focus {
+  outline: none;
+  border-color: #9a4421;
+  box-shadow: 0 0 0 3px rgba(154, 68, 33, 0.12);
+}
+.oj-toolbar__count {
+  font-size: 12.5px;
+  color: #8a8a82;
+}
+.oj-filter__clear {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #9a4421;
+  cursor: pointer;
+}
+.oj-filter__clear:hover { text-decoration: underline; }
+
 .oj-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -55,6 +110,36 @@
   border-color: #c9c9c2;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
+
+/* Priority badge — sits above the title, sized to content */
+.oj-priority {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+.oj-priority::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.oj-priority.is-urgent { background: #fbe1da; color: #b3361b; }
+.oj-priority.is-high { background: #f7ecd2; color: #9a6a16; }
+.oj-priority.is-paused {
+  background: #ececea;
+  color: #8a8a82;
+  text-transform: none;
+  font-weight: 600;
+}
+.oj-priority.is-paused::before { display: none; }
 
 .oj-card__header h2 {
   margin: 0;

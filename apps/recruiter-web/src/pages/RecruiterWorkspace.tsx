@@ -63,7 +63,7 @@ const STATUS: Record<string, { label: string; tone: Tone; step: number }> = {
   advanced: { label: "Advanced", tone: "success", step: 2 },
   offer: { label: "Offer", tone: "success", step: 2 },
   hired: { label: "Hired", tone: "success", step: 3 },
-  rejected: { label: "Passed", tone: "danger", step: 3 },
+  rejected: { label: "Not moving forward", tone: "danger", step: 3 },
   duplicate: { label: "Duplicate", tone: "mute", step: 0 },
 }
 function statusMeta(s: string | undefined) {
@@ -764,7 +764,7 @@ export default function RecruiterWorkspace() {
                       { id: "all" as ListFilter, label: "All", count: submissions.length },
                       { id: "needs" as ListFilter, label: "Needs you", count: needsCount },
                       { id: "feedback" as ListFilter, label: "Has feedback", count: submissions.filter(hasFeedback).length },
-                      { id: "passed" as ListFilter, label: "Passed", count: submissions.filter((s) => s.status === "rejected").length },
+                      { id: "passed" as ListFilter, label: "Not moving forward", count: submissions.filter((s) => s.status === "rejected").length },
                     ]).map((f) => (
                       <button
                         key={f.id}
