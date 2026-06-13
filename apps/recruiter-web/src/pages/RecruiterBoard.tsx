@@ -10797,7 +10797,7 @@ function SubmissionRow({
       </div>
       {expanded && (
         <div className="rb-submission__detail">
-          <SubmissionStatusStepper status={submission.status} requestedInfo={submission.requestedInfo} />
+          <SubmissionStatusStepper status={submission.status} requestedInfo={submission.requestedInfo} statusHistory={submission.statusHistory} />
           <p><strong>Candidate:</strong> {submission.candidate?.currentRole || "Role not provided"}{submission.candidate?.yoe ? ` · ${submission.candidate.yoe} YOE` : ""}</p>
           {submission.candidate?.email && <p><strong>Email:</strong> {submission.candidate.email}</p>}
           {submission.candidate?.link && <a href={submission.candidate.link} target="_blank" rel="noopener noreferrer">{shortText(submission.candidate.link, submission.candidate.link, 80)}</a>}

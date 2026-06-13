@@ -244,14 +244,39 @@ function payoutModel(s: RecruiterSubmissionItem): {
 }
 
 // ---------- stepper ----------
+// Map each status to the stage it represents (Submitted=0, WeKruit interview=1,
+// With client=2). Terminal statuses have no stage of their own.
+const STAGE_STEP: Record<string, number> = {
+  new: 0, submitted: 0, reviewing: 0, backburner: 0,
+  wekruit_interview: 1, advanced: 2,
+  client_review: 2, interviewing: 2, offer: 2,
+}
 function buildSteps(s: RecruiterSubmissionItem) {
   const sm = statusMeta(s.status)
-  const cur = sm.step
-  const outcomeBad = s.status === "rejected"
-  const labels = ["Submitted", "WeKruit interview", "With client", sm.step === 3 ? sm.label : "Outcome"]
+  const terminal = s.status === "rejected" || s.status === "duplicate" || s.status === "hired"
+  const outcomeBad = s.status === "rejected" || s.status === "duplicate"
+
+  // Furthest stage the candidate ACTUALLY reached — from statusHistory + current
+  // status — so an early rejection never fake-completes later stages. A
+  // candidate rejected right after Submitted shows only Submitted as done.
+  const seen = [s.status, ...(s.statusHistory ?? []).map((h) => h.status)]
+  let reached = 0
+  for (const st of seen) {
+    const v = STAGE_STEP[st ?? ""]
+    if (typeof v === "number" && v > reached) reached = v
+  }
+  const curStage = terminal ? reached : (STAGE_STEP[s.status ?? ""] ?? 0)
+
+  const labels = ["Submitted", "WeKruit interview", "With client", terminal ? sm.label : "Outcome"]
   return labels.map((label, i) => {
-    const done = i < cur
-    const isCur = i === cur
+    let done = false
+    let isCur = false
+    if (i < 3) {
+      done = terminal ? i <= reached : i < curStage
+      isCur = !terminal && i === curStage
+    } else {
+      isCur = terminal // the outcome cell carries the terminal marker
+    }
     let dotBg = "#FFFFFF", dotBd = "#C9B69E", dotFg = "#B5A595", mark = String(i + 1)
     if (done) { dotBg = "#2D1A0A"; dotBd = "#2D1A0A"; dotFg = "#F5EDE3"; mark = "✓" }
     else if (isCur) {
@@ -259,7 +284,15 @@ function buildSteps(s: RecruiterSubmissionItem) {
       else if (i === 3) { dotBg = "#4F6B3C"; dotBd = "#4F6B3C"; dotFg = "#F5EDE3"; mark = "✓" }
       else { dotBg = "#2D1A0A"; dotBd = "#2D1A0A"; dotFg = "#F5EDE3" }
     }
-    return { label, mark, done, isCur, dotBg, dotBd, dotFg, lineLeftDone: i <= cur && i > 0, lineRightDone: i < cur }
+    // A connector is "traversed" only between stages the candidate actually
+    // reached — so the line into an un-reached stage (or into the outcome after
+    // an early rejection) stays grey.
+    const progressedTo = terminal ? reached : curStage
+    return {
+      label, mark, done, isCur, dotBg, dotBd, dotFg,
+      lineLeftDone: i > 0 && i <= progressedTo,
+      lineRightDone: i < progressedTo,
+    }
   })
 }
 

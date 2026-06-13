@@ -41,6 +41,15 @@ export function RecruiterShell({
   const location = useLocation()
   const recruiter = session?.recruiter ?? null
 
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return window.localStorage.getItem("wk_recruiter_sidebar_collapsed") === "1" } catch { return false }
+  })
+  const toggleCollapsed = () => setCollapsed((c) => {
+    const next = !c
+    try { window.localStorage.setItem("wk_recruiter_sidebar_collapsed", next ? "1" : "0") } catch { /* private mode */ }
+    return next
+  })
+
   const onRoles =
     location.pathname === "/" ||
     location.pathname === "/recruiters/jobs" ||
@@ -71,19 +80,28 @@ export function RecruiterShell({
   const initial = (recruiter?.name || recruiter?.email || "R").trim().charAt(0).toUpperCase()
 
   return (
-    <div className="rw-root">
+    <div className={`rw-root${collapsed ? " is-collapsed" : ""}`}>
       <aside className="rw-aside">
         <div className="rw-brand">
           <span className="rw-brand-mark">W</span>
           <span className="rw-brand-name"><strong>WeKruit</strong><em>Recruiter</em></span>
+          <button
+            type="button"
+            className="rw-collapse-btn"
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand" : "Collapse"}
+          >
+            {collapsed ? "»" : "«"}
+          </button>
         </div>
 
         <nav className="rw-nav">
-          <Link to="/recruiters/jobs" className={`rw-nav-item ${onRoles ? "is-active" : ""}`}>
+          <Link to="/recruiters/jobs" className={`rw-nav-item ${onRoles ? "is-active" : ""}`} title="Open roles">
             <span className="rw-nav-label"><span className="rw-nav-icon">{ICON_ROLES}</span><span>Open roles</span></span>
             {typeof openRolesCount === "number" && <span className="rw-nav-count">{openRolesCount}</span>}
           </Link>
-          <Link to="/recruiters" className={`rw-nav-item ${onSubs ? "is-active" : ""}`}>
+          <Link to="/recruiters" className={`rw-nav-item ${onSubs ? "is-active" : ""}`} title="Submissions">
             <span className="rw-nav-label"><span className="rw-nav-icon">{ICON_SUBS}</span><span>Submissions</span></span>
             {typeof submissionsCount === "number" && (
               <span className={`rw-nav-count ${submissionsWarn ? "is-warn" : ""}`}>{submissionsCount}</span>

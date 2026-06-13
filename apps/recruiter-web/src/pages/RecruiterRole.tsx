@@ -2992,7 +2992,7 @@ export default function RecruiterRole() {
                     <strong>{row.candidate?.name || "Candidate"}</strong>
                     <span>Submitted {roleSubmissionSubmittedDate(row)}</span>
                   </header>
-                  <SubmissionStatusStepper status={row.status} requestedInfo={row.requestedInfo} />
+                  <SubmissionStatusStepper status={row.status} requestedInfo={row.requestedInfo} statusHistory={row.statusHistory} />
                 </article>
               ))}
             </div>
