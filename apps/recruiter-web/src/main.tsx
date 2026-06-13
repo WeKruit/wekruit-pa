@@ -6,7 +6,7 @@ import { initAnalytics } from "./lib/analytics.js"
 import { RecruiterSessionProvider } from "./lib/recruiter-session-context.js"
 import OpenJobsPage from "./pages/OpenJobsPage.js"
 import RecruiterWorkspace from "./pages/RecruiterWorkspace.js"
-import RecruiterRole from "./pages/RecruiterRole.js"
+import RoleSheetPage from "./pages/RoleSheetPage.js"
 import SubmissionDetailPage from "./pages/SubmissionDetailPage.js"
 
 void initAnalytics()
@@ -20,7 +20,7 @@ const routes = (
     <Route path="/recruiters" element={<RecruiterWorkspace />} />
     <Route path="/recruiters/jobs" element={<OpenJobsPage />} />
     <Route path="/recruiters/classic" element={<Navigate to="/recruiters" replace />} />
-    <Route path="/recruiters/job/:jobId" element={<RecruiterRole />} />
+    <Route path="/recruiters/job/:jobId" element={<RoleSheetPage />} />
     <Route path="/recruiters/submission/:submissionId" element={<SubmissionDetailPage />} />
     <Route path="*" element={<Navigate to="/recruiters/jobs" replace />} />
   </Routes>
