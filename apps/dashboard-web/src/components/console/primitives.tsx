@@ -293,6 +293,7 @@ export function DataTable<R extends { id?: string }>({
   columns,
   rows,
   onRowClick,
+  selectedRowId,
   search,
   onSearch,
   searchPlaceholder = "Search…",
@@ -312,6 +313,8 @@ export function DataTable<R extends { id?: string }>({
   columns: Column<R>[]
   rows: R[]
   onRowClick?: (row: R) => void
+  /** When set, the row whose id matches gets a `dt-row--selected` highlight. */
+  selectedRowId?: string | null
   search?: string
   onSearch?: (v: string) => void
   searchPlaceholder?: string
@@ -430,7 +433,12 @@ export function DataTable<R extends { id?: string }>({
             </thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={r.id || i} onClick={() => onRowClick && onRowClick(r)}>
+                <tr
+                  key={r.id || i}
+                  onClick={() => onRowClick && onRowClick(r)}
+                  className={selectedRowId != null && r.id === selectedRowId ? "dt-row--selected" : undefined}
+                  aria-selected={selectedRowId != null && r.id === selectedRowId ? true : undefined}
+                >
                   {columns.map((c) => (
                     <td key={c.key} className={c.className}>
                       {c.render

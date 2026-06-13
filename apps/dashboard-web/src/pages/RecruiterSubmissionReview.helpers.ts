@@ -20,7 +20,10 @@ export interface SubmissionReviewRole {
 }
 
 export interface SubmissionReviewSubmission {
-  checklist?: Record<string, boolean>
+  // Stored answers are legacy boolean OR graded strings ("strong"/"yes"/"partial"/"no").
+  // checkedMap[id] === true still only matches the legacy boolean; graded answers are
+  // scored by the tier-aware review on the page.
+  checklist?: Record<string, boolean | string>
   candidateConsentStatus?: string
   status?: string
   recruiterFeedbackNote?: string | null

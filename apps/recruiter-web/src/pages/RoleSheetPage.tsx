@@ -104,15 +104,152 @@ const CHECKLIST_VALUE_OPTIONS: Array<{ value: "" | SubmissionChecklistValue; lab
   { value: "no", label: "No" },
 ]
 
+// Tier order + per-tier presentation (label, required flag, one-line rule).
+// Shown identically on the submit form and the read-only detail view so the
+// recruiter and admin surfaces describe a match the same way.
+const CHECKLIST_TIER_META: Record<
+  ChecklistKind,
+  { label: string; required: boolean; rule: string }
+> = {
+  hard: { label: "Hard filters", required: true, rule: "Must mostly be met to be considered a match." },
+  fit: { label: "Strong fit signals", required: true, rule: "Ideal candidates hit 2 or more." },
+  anti: { label: "Anti-signals", required: true, rule: "If any is present, likely NOT a match." },
+  bonus: { label: "Bonuses", required: false, rule: "Nice to have — leave blank if unknown." },
+}
+
+// The tiers whose items must be answered before the row can be submitted.
+const CHECKLIST_REQUIRED_KINDS: ChecklistKind[] = ["hard", "fit", "anti"]
+
+// Display order on screen: hard → fit → anti → bonus (matches the shared
+// contract; distinct from CHECKLIST_KIND_ORDER which keeps bonus before anti
+// for the legacy column ordering).
+const CHECKLIST_TIER_DISPLAY_ORDER: ChecklistKind[] = ["hard", "fit", "anti", "bonus"]
+
+// "checked vs failed" semantics. Anti-signals INVERT: a present anti is bad.
+type ChecklistVisual = { glyph: string; word: string; tone: "met" | "partial" | "notmet" | "unanswered" }
+
+function checklistVisual(kind: ChecklistKind, value: "" | SubmissionChecklistValue): ChecklistVisual {
+  if (!value) return { glyph: "—", word: "not answered", tone: "unanswered" }
+  if (kind === "anti") {
+    // inverted: present (yes/strong) is a red flag, absent (no) is clear
+    if (value === "yes" || value === "strong") return { glyph: "✗", word: "flag present", tone: "notmet" }
+    if (value === "partial") return { glyph: "~", word: "partial", tone: "partial" }
+    return { glyph: "✓", word: "clear", tone: "met" } // value === "no"
+  }
+  if (value === "yes" || value === "strong") return { glyph: "✓", word: "met", tone: "met" }
+  if (value === "partial") return { glyph: "~", word: "partial", tone: "partial" }
+  return { glyph: "✗", word: "not met", tone: "notmet" } // value === "no"
+}
+
+// Tally of how each tier scored — drives the SCORE LEGEND line.
+type ChecklistScore = {
+  hardMet: number
+  hardTotal: number
+  fitMet: number
+  fitTotal: number
+  bonusMet: number
+  bonusTotal: number
+  antiFlags: number
+}
+
+function checklistScore(
+  columns: ChecklistColumn[],
+  answers: Record<string, "" | SubmissionChecklistValue>,
+): ChecklistScore {
+  const s: ChecklistScore = {
+    hardMet: 0,
+    hardTotal: 0,
+    fitMet: 0,
+    fitTotal: 0,
+    bonusMet: 0,
+    bonusTotal: 0,
+    antiFlags: 0,
+  }
+  for (const col of columns) {
+    const v = answers[col.id] ?? ""
+    const vis = checklistVisual(col.kind, v)
+    if (col.kind === "hard") {
+      s.hardTotal += 1
+      if (vis.tone === "met") s.hardMet += 1
+    } else if (col.kind === "fit") {
+      s.fitTotal += 1
+      if (vis.tone === "met") s.fitMet += 1
+    } else if (col.kind === "bonus") {
+      s.bonusTotal += 1
+      if (vis.tone === "met") s.bonusMet += 1
+    } else if (col.kind === "anti") {
+      if (vis.tone === "notmet") s.antiFlags += 1
+    }
+  }
+  return s
+}
+
+const CHECKLIST_SCORE_LEGEND_TAIL =
+  "A match needs most hard filters met and no anti-flags."
+
+function checklistScoreLegend(s: ChecklistScore): string {
+  return (
+    `Hard ${s.hardMet}/${s.hardTotal} met · ` +
+    `Fit ${s.fitMet}/${s.fitTotal} · ` +
+    `Bonus ${s.bonusMet}/${s.bonusTotal} · ` +
+    `Anti ${s.antiFlags} flag(s). ` +
+    CHECKLIST_SCORE_LEGEND_TAIL
+  )
+}
+
 type ChecklistColumn = { id: string; text: string; kind: ChecklistKind }
 
+type ChecklistTierGroup = { kind: ChecklistKind; columns: ChecklistColumn[] }
+
+// Group the flat checklist columns into tiers in display order (hard → fit →
+// anti → bonus). Empty tiers are dropped.
+function groupChecklistByTier(columns: ChecklistColumn[]): ChecklistTierGroup[] {
+  return CHECKLIST_TIER_DISPLAY_ORDER.map((kind) => ({
+    kind,
+    columns: columns.filter((c) => c.kind === kind),
+  })).filter((g) => g.columns.length > 0)
+}
+
 type SheetCells = Record<SheetCellId, string>
+
+// ---- candidate background self-check (school · GPA · degree · company) ----
+// The cross-role quality pillars WeKruit screens on. The recruiter self-flags
+// them before submitting; a weak pillar shows an advisory heads-up but NEVER
+// blocks the submit. Same vocabulary as the reviewer's quick-reject chips.
+type BackgroundPillar = "school" | "gpa" | "degree" | "company"
+type BackgroundValue = "" | "strong" | "weak"
+const BACKGROUND_PILLARS: { id: BackgroundPillar; label: string; weak: string }[] = [
+  { id: "school", label: "Target / strong school", weak: "weak school" },
+  { id: "gpa", label: "Strong GPA", weak: "low GPA" },
+  { id: "degree", label: "Relevant degree / field", weak: "degree mismatch" },
+  { id: "company", label: "Fast-growing startup or strong tech company", weak: "weak company pedigree" },
+]
+const BACKGROUND_VALUE_OPTIONS: { value: BackgroundValue; label: string }[] = [
+  { value: "", label: "—" },
+  { value: "strong", label: "Strong" },
+  { value: "weak", label: "Weak" },
+]
+function emptyBackground(): Record<BackgroundPillar, BackgroundValue> {
+  return { school: "", gpa: "", degree: "", company: "" }
+}
+function backgroundWeakFlags(bg: Record<BackgroundPillar, BackgroundValue>): string[] {
+  return BACKGROUND_PILLARS.filter((p) => bg[p.id] === "weak").map((p) => p.weak)
+}
+function backgroundPayload(draft: RowDraft): Partial<Record<BackgroundPillar, BackgroundValue>> | undefined {
+  const out: Partial<Record<BackgroundPillar, BackgroundValue>> = {}
+  for (const p of BACKGROUND_PILLARS) {
+    const v = draft.background[p.id]
+    if (v) out[p.id] = v
+  }
+  return Object.keys(out).length ? out : undefined
+}
 
 type RowDraft = {
   cells: SheetCells
   notes: string
   checklist: Record<string, "" | SubmissionChecklistValue>
   extraFields: Record<string, string>
+  background: Record<BackgroundPillar, BackgroundValue>
   resumeFileName?: string
 }
 
@@ -137,7 +274,7 @@ function emptyCells(): SheetCells {
 }
 
 function emptyAddRowDraft(): AddRowDraft {
-  return { cells: emptyCells(), notes: "", checklist: {}, extraFields: {} }
+  return { cells: emptyCells(), notes: "", checklist: {}, extraFields: {}, background: emptyBackground() }
 }
 
 function loadAddRowDraft(jobId: string): AddRowDraft {
@@ -151,6 +288,7 @@ function loadAddRowDraft(jobId: string): AddRowDraft {
         cells: { ...emptyCells(), ...(parsed.cells ?? {}) },
         checklist: parsed.checklist ?? {},
         extraFields: parsed.extraFields ?? {},
+        background: { ...emptyBackground(), ...(parsed.background ?? {}) },
       }
     }
   } catch {
@@ -255,6 +393,7 @@ function draftFromSubmission(row: RecruiterSubmissionItem): RowDraft {
     notes: row.candidate?.notes ?? "",
     checklist: checklistFromSubmission(row),
     extraFields: { ...(row.extraFields ?? {}) },
+    background: emptyBackground(),
   }
 }
 
@@ -331,7 +470,11 @@ function sheetFeedbackText(row: RecruiterSubmissionItem, comments?: RecruiterSub
   return "—"
 }
 
-function addRowBlockers(draft: AddRowDraft, fields: RecruiterSubmitField[]): string[] {
+function addRowBlockers(
+  draft: AddRowDraft,
+  fields: RecruiterSubmitField[],
+  checklistColumns: ChecklistColumn[] = [],
+): string[] {
   const blockers: string[] = []
   if (!draft.cells.name.trim()) blockers.push("Candidate name is required.")
   const email = draft.cells.email.trim()
@@ -347,6 +490,14 @@ function addRowBlockers(draft: AddRowDraft, fields: RecruiterSubmitField[]): str
     const value = (draft.extraFields[field.id] ?? "").trim()
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
     else if (value && field.kind === "url" && !normalizeSheetUrl(value)) blockers.push(`${field.label} must be a link.`)
+  }
+  // Required tiers (hard / fit / anti) must all be answered before submit;
+  // bonuses never block. Frontend gate only — the backend payload is unchanged.
+  const hasUnansweredRequired = checklistColumns.some(
+    (col) => CHECKLIST_REQUIRED_KINDS.includes(col.kind) && !(draft.checklist[col.id] ?? ""),
+  )
+  if (hasUnansweredRequired) {
+    blockers.push("Answer every hard, fit, and anti checklist item (bonuses optional).")
   }
   return blockers
 }
@@ -623,7 +774,10 @@ export default function RoleSheetPage() {
     }
   }
 
-  const addBlockers = useMemo(() => addRowBlockers(addDraft, extraFieldDefs), [addDraft, extraFieldDefs])
+  const addBlockers = useMemo(
+    () => addRowBlockers(addDraft, extraFieldDefs, checklistColumns),
+    [addDraft, extraFieldDefs, checklistColumns],
+  )
   const addRowReady = addBlockers.length === 0
 
   const submitAddRow = async () => {
@@ -641,6 +795,7 @@ export default function RoleSheetPage() {
         candidateLinkedinUrl: linkedin ?? undefined,
         candidateResumeUrl: resume ?? undefined,
         extraFields: extraFieldsPayload(addDraft, extraFieldDefs),
+        candidateBackground: backgroundPayload(addDraft),
       })
       if (!result.ok) {
         // failure keeps every typed value in the blank row
@@ -891,6 +1046,73 @@ function shortSubmittedDate(value: RecruiterSubmissionItem["createdAt"]): string
   }
 }
 
+// Shared checklist renderer — groups the flat columns into tiers (hard → fit →
+// anti → bonus), each with a header (tier label + required/optional badge +
+// one-line rule). Editable mode renders graded <select>s; read-only mode renders
+// the checked-vs-failed glyph+color+word (anti tier inverted). Used by both the
+// submit form and the read-only detail view so the two surfaces agree.
+function ChecklistTiers({
+  checklistColumns,
+  answers,
+  editable,
+  onChange,
+}: {
+  checklistColumns: ChecklistColumn[]
+  answers: Record<string, "" | SubmissionChecklistValue>
+  editable: boolean
+  onChange?: (id: string, value: "" | SubmissionChecklistValue) => void
+}) {
+  const groups = groupChecklistByTier(checklistColumns)
+  return (
+    <div className="rs-cltiers">
+      {groups.map((group) => {
+        const meta = CHECKLIST_TIER_META[group.kind]
+        return (
+          <div key={group.kind} className={`rs-cltier is-${group.kind}`}>
+            <div className="rs-cltier__head">
+              <span className={`rs-chip rs-cltier__chip is-${group.kind}`}>{CHECKLIST_KIND_CHIP[group.kind]}</span>
+              <span className="rs-cltier__label">{meta.label}</span>
+              <span className={`rs-cltier__req ${meta.required ? "is-required" : "is-optional"}`}>
+                {meta.required ? "required" : "optional"}
+              </span>
+            </div>
+            <p className="rs-cltier__rule">{meta.rule}</p>
+            {group.columns.map((col) => {
+              const value = answers[col.id] ?? ""
+              return (
+                <div key={col.id} className={`rs-clrow is-${col.kind}`}>
+                  <span className="rs-clrow__text">{col.text}</span>
+                  {editable ? (
+                    <select
+                      aria-label={col.text}
+                      value={value}
+                      onChange={(e) => onChange?.(col.id, e.target.value as "" | SubmissionChecklistValue)}
+                    >
+                      {CHECKLIST_VALUE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    (() => {
+                      const vis = checklistVisual(col.kind, value)
+                      return (
+                        <span className={`rs-clmark is-${vis.tone}`}>
+                          <span className="rs-clmark__glyph" aria-hidden="true">{vis.glyph}</span>
+                          <span className="rs-clmark__word">{vis.word}</span>
+                        </span>
+                      )
+                    })()
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // Inline candidate detail — opens beside the table, no separate route.
 function CandidateDetailPanel({
   row,
@@ -991,22 +1213,19 @@ function CandidateDetailPanel({
       {checklistColumns.length > 0 && (
         <div className="rs-detail__checklist">
           <h4>Screening checklist</h4>
-          {checklistColumns.map((col) => (
-            <div key={col.id} className={`rs-clrow is-${col.kind}`}>
-              <span className="rs-clrow__text">{col.text}</span>
-              {editable ? (
-                <select
-                  aria-label={col.text}
-                  value={view.checklist[col.id] ?? ""}
-                  onChange={(e) => onEdit((d) => ({ ...d, checklist: { ...d.checklist, [col.id]: e.target.value as "" | SubmissionChecklistValue } }))}
-                >
-                  {CHECKLIST_VALUE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              ) : (
-                <span className="rs-clrow__val">{CHECKLIST_VALUE_OPTIONS.find((o) => o.value === (view.checklist[col.id] ?? ""))?.label ?? "—"}</span>
-              )}
-            </div>
-          ))}
+          <p className="rs-cl-score" title={CHECKLIST_SCORE_LEGEND_TAIL}>
+            {checklistScoreLegend(checklistScore(checklistColumns, view.checklist))}
+          </p>
+          <ChecklistTiers
+            checklistColumns={checklistColumns}
+            answers={view.checklist}
+            editable={editable}
+            onChange={
+              editable
+                ? (id, value) => onEdit((d) => ({ ...d, checklist: { ...d.checklist, [id]: value } }))
+                : undefined
+            }
+          />
         </div>
       )}
 
@@ -1090,20 +1309,38 @@ function AddCandidatePanel({
       {checklistColumns.length > 0 && (
         <div className="rs-addpanel__checklist">
           <h4>Screening checklist</h4>
-          {checklistColumns.map((col) => (
-            <div key={col.id} className={`rs-clrow is-${col.kind}`}>
-              <span className="rs-clrow__text">{col.text}</span>
-              <select
-                aria-label={col.text}
-                value={draft.checklist[col.id] ?? ""}
-                onChange={(e) => onChange({ ...draft, checklist: { ...draft.checklist, [col.id]: e.target.value as "" | SubmissionChecklistValue } })}
-              >
-                {CHECKLIST_VALUE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-          ))}
+          <p className="rs-cl-hint">Answer every hard, fit, and anti item — bonuses are optional.</p>
+          <ChecklistTiers
+            checklistColumns={checklistColumns}
+            answers={draft.checklist}
+            editable
+            onChange={(id, value) => onChange({ ...draft, checklist: { ...draft.checklist, [id]: value } })}
+          />
         </div>
       )}
+
+      <div className="rs-addpanel__bg">
+        <h4>Candidate background</h4>
+        <p className="rs-cl-hint">WeKruit screens on these four pillars. Flag any weak ones — it won't block your submit, just helps us calibrate.</p>
+        {BACKGROUND_PILLARS.map((p) => (
+          <div key={p.id} className="rs-bg-row">
+            <span className="rs-bg-row__label">{p.label}</span>
+            <select
+              aria-label={p.label}
+              value={draft.background[p.id]}
+              onChange={(e) => onChange({ ...draft, background: { ...draft.background, [p.id]: e.target.value as BackgroundValue } })}
+            >
+              {BACKGROUND_VALUE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+        ))}
+        {backgroundWeakFlags(draft.background).length > 0 && (
+          <div className="rs-bg-flag" role="status">
+            <strong>Heads up — {backgroundWeakFlags(draft.background).join(", ")}.</strong>{" "}
+            WeKruit screens on school, GPA, degree, and company quality; this candidate may not clear the bar. You can still submit.
+          </div>
+        )}
+      </div>
 
       {error && <div className="rs-sheet-error">Submission failed: {error}</div>}
 

@@ -44,6 +44,8 @@ interface SubmissionDoc {
     notes?: string
   }
   candidateConsentStatus?: string
+  // Recruiter self-flag of the background pillars at submit time (advisory).
+  candidateBackground?: { school?: string; gpa?: string; degree?: string; company?: string }
   candidateConfirmation?: {
     status?: string
     candidateEmail?: string
@@ -51,7 +53,9 @@ interface SubmissionDoc {
     confirmedAt?: { seconds?: number } | string | null
     lastError?: string | null
   }
-  checklist?: Record<string, boolean>
+  // Per-item recruiter answer. Newer submissions store a graded value
+  // ("strong" | "yes" | "partial" | "no"); legacy rows stored a bare boolean.
+  checklist?: Record<string, boolean | SubmissionChecklistValue>
   score?: {
     hardChecked: number
     hardTotal: number
@@ -93,6 +97,159 @@ interface SubmissionDoc {
   createdAtMs?: number
   triageSortMs?: number
   hardScorePct?: number
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Role evidence matrix — tier semantics (must match recruiter-web RoleSheetPage).
+// A recruiter's answer per checklist item is a graded value; legacy rows used a
+// bare boolean. Four tiers shown in order hard → fit → anti → bonus, each with a
+// required/optional badge + one-line rule. The "checked vs failed" glyph+color+
+// word INVERTS for the anti tier (a present anti is bad).
+// ─────────────────────────────────────────────────────────────────────────────
+type SubmissionChecklistValue = "strong" | "yes" | "partial" | "no"
+type ChecklistTierKind = "hard" | "fit" | "anti" | "bonus"
+
+const CHECKLIST_TIER_DISPLAY_ORDER: ChecklistTierKind[] = ["hard", "fit", "anti", "bonus"]
+
+const CHECKLIST_TIER_CHIP: Record<ChecklistTierKind, string> = {
+  hard: "Hard",
+  fit: "Fit",
+  anti: "Anti",
+  bonus: "Bonus",
+}
+
+const CHECKLIST_TIER_META: Record<
+  ChecklistTierKind,
+  { label: string; required: boolean; rule: string }
+> = {
+  hard: { label: "Hard filters", required: true, rule: "Must mostly be met to be considered a match." },
+  fit: { label: "Strong fit signals", required: true, rule: "Ideal candidates hit 2 or more." },
+  anti: { label: "Anti-signals", required: true, rule: "If any is present, likely NOT a match." },
+  bonus: { label: "Bonuses", required: false, rule: "Nice to have — leave blank if unknown." },
+}
+
+type ChecklistMarkTone = "met" | "partial" | "notmet" | "unanswered"
+interface ChecklistMark {
+  glyph: string
+  word: string
+  tone: ChecklistMarkTone
+}
+
+// Map the stored answer (boolean legacy OR graded string) to a normalized value.
+function normalizeChecklistAnswer(
+  raw: boolean | SubmissionChecklistValue | "" | undefined | null,
+): "" | SubmissionChecklistValue {
+  if (raw === true) return "yes" // legacy boolean true → treated as a plain "yes"
+  if (raw === false || raw == null || raw === "") return ""
+  if (raw === "strong" || raw === "yes" || raw === "partial" || raw === "no") return raw
+  return ""
+}
+
+// "checked vs failed" semantics. Anti-signals INVERT: a present anti is bad.
+function checklistMark(kind: ChecklistTierKind, value: "" | SubmissionChecklistValue): ChecklistMark {
+  if (!value) return { glyph: "—", word: "not answered", tone: "unanswered" }
+  if (kind === "anti") {
+    if (value === "yes" || value === "strong") return { glyph: "✗", word: "flag present", tone: "notmet" }
+    if (value === "partial") return { glyph: "~", word: "partial", tone: "partial" }
+    return { glyph: "✓", word: "clear", tone: "met" } // value === "no"
+  }
+  if (value === "yes" || value === "strong") return { glyph: "✓", word: "met", tone: "met" }
+  if (value === "partial") return { glyph: "~", word: "partial", tone: "partial" }
+  return { glyph: "✗", word: "not met", tone: "notmet" } // value === "no"
+}
+
+const CHECKLIST_MARK_COLOR: Record<ChecklistMarkTone, string> = {
+  met: "var(--success)",
+  partial: "var(--warning)",
+  notmet: "var(--danger)",
+  unanswered: "var(--ink-3)",
+}
+
+const CHECKLIST_TIER_RAIL: Record<ChecklistTierKind, string> = {
+  hard: "#e0b6ab",
+  fit: "#c2d0ab",
+  anti: "#e3c79a",
+  bonus: "#b6c4cc",
+}
+
+interface ChecklistTierItem {
+  id: string
+  text: string
+  value: "" | SubmissionChecklistValue
+  mark: ChecklistMark
+}
+interface ChecklistTierGroup {
+  kind: ChecklistTierKind
+  items: ChecklistTierItem[]
+}
+interface ChecklistTierReview {
+  groups: ChecklistTierGroup[]
+  orphanCheckedIds: string[]
+  hasReadableChecklist: boolean
+  score: {
+    hardMet: number
+    hardTotal: number
+    fitMet: number
+    fitTotal: number
+    bonusMet: number
+    bonusTotal: number
+    antiFlags: number
+  }
+}
+
+function isTierKind(kind: string | undefined): kind is ChecklistTierKind {
+  return kind === "hard" || kind === "fit" || kind === "anti" || kind === "bonus"
+}
+
+// Group the job's checklist groups into tiers (hard → fit → anti → bonus),
+// resolving each item's recruiter answer + visual + a per-tier score tally.
+function buildChecklistTierReview(
+  submission: Pick<SubmissionDoc, "checklist">,
+  role: RecruiterBoardAdminJobDoc | null | undefined,
+): ChecklistTierReview {
+  const answers = submission.checklist ?? {}
+  const known = new Set<string>()
+  const score = { hardMet: 0, hardTotal: 0, fitMet: 0, fitTotal: 0, bonusMet: 0, bonusTotal: 0, antiFlags: 0 }
+  const byKind = new Map<ChecklistTierKind, ChecklistTierItem[]>()
+  for (const group of role?.recruiterBoard?.checklist?.groups ?? []) {
+    const kind = isTierKind(group.kind) ? group.kind : null
+    if (!kind) continue
+    for (const item of group.items ?? []) {
+      const id = item.id?.trim() || item.text?.trim() || ""
+      const text = item.text?.trim() || item.id?.trim() || ""
+      if (!id || !text) continue
+      known.add(id)
+      const value = normalizeChecklistAnswer(answers[id])
+      const mark = checklistMark(kind, value)
+      if (kind === "hard") { score.hardTotal += 1; if (mark.tone === "met") score.hardMet += 1 }
+      else if (kind === "fit") { score.fitTotal += 1; if (mark.tone === "met") score.fitMet += 1 }
+      else if (kind === "bonus") { score.bonusTotal += 1; if (mark.tone === "met") score.bonusMet += 1 }
+      else if (kind === "anti" && mark.tone === "notmet") { score.antiFlags += 1 }
+      const list = byKind.get(kind) ?? []
+      list.push({ id, text, value, mark })
+      byKind.set(kind, list)
+    }
+  }
+  const groups = CHECKLIST_TIER_DISPLAY_ORDER
+    .map((kind) => ({ kind, items: byKind.get(kind) ?? [] }))
+    .filter((g) => g.items.length > 0)
+  const orphanCheckedIds = Object.entries(answers)
+    .filter(([id, v]) => v !== false && v != null && !known.has(id))
+    .map(([id]) => id)
+    .sort()
+  return { groups, orphanCheckedIds, hasReadableChecklist: groups.length > 0, score }
+}
+
+const CHECKLIST_SCORE_LEGEND_TAIL = "A match needs most hard filters met and no anti-flags."
+
+function checklistScoreLegend(s: ChecklistTierReview["score"]): string {
+  return (
+    `Hard ${s.hardMet}/${s.hardTotal} met · ` +
+    `Fit ${s.fitMet}/${s.fitTotal} · ` +
+    `Bonus ${s.bonusMet}/${s.bonusTotal} · ` +
+    `Anti ${s.antiFlags} flag(s). ` +
+    CHECKLIST_SCORE_LEGEND_TAIL
+  )
 }
 
 function formatTimestamp(ts: SubmissionDoc["createdAt"]): string {
@@ -165,17 +322,44 @@ const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
 const RECRUITER_INTERVIEW_RATE_TARGET = 50
 
+// Quick reject/accept reasons, grouped so a reviewer one-taps instead of typing.
+// "over_leveled" carries the "too senior" signal — age is never a reason (legal).
 const SUBMISSION_FEEDBACK_REASONS = [
-  { id: "strong_match", label: "Strong match" },
-  { id: "clear_evidence", label: "Clear evidence" },
-  { id: "good_candidate_motivation", label: "Candidate motivated" },
-  { id: "missing_hard_filter", label: "Missing hard filter" },
-  { id: "weak_evidence", label: "Weak evidence" },
-  { id: "candidate_not_interested", label: "Candidate not interested" },
-  { id: "duplicate", label: "Duplicate" },
-  { id: "comp_mismatch", label: "Comp mismatch" },
-  { id: "location_mismatch", label: "Location mismatch" },
-  { id: "seniority_mismatch", label: "Seniority mismatch" },
+  // Positive
+  { id: "strong_match", label: "Strong match", group: "Positive" },
+  { id: "clear_evidence", label: "Clear evidence", group: "Positive" },
+  { id: "good_candidate_motivation", label: "Candidate motivated", group: "Positive" },
+  // Background pillars (school · GPA · degree · company)
+  { id: "weak_school", label: "Weak / non-target school", group: "Background" },
+  { id: "low_gpa", label: "Low GPA", group: "Background" },
+  { id: "degree_mismatch", label: "Degree / field mismatch", group: "Background" },
+  { id: "weak_company_pedigree", label: "Weak company pedigree", group: "Background" },
+  { id: "no_relevant_domain", label: "No relevant domain", group: "Background" },
+  // Engineering depth
+  { id: "no_end_to_end", label: "No end-to-end ownership", group: "Depth" },
+  { id: "weak_technical_depth", label: "Lacks technical depth", group: "Depth" },
+  { id: "not_hands_on", label: "Not a hands-on builder", group: "Depth" },
+  { id: "no_impact_evidence", label: "No quantifiable impact", group: "Depth" },
+  // Role-specific
+  { id: "no_strong_portfolio", label: "No strong portfolio (design)", group: "Role-specific" },
+  { id: "weak_product_design", label: "Weak product/UX depth (design)", group: "Role-specific" },
+  { id: "weak_social_presence", label: "Weak social/channel record (GTM)", group: "Role-specific" },
+  { id: "no_growth_track_record", label: "No growth results (GTM)", group: "Role-specific" },
+  // Level & fit
+  { id: "below_experience_bar", label: "Below experience bar", group: "Level & fit" },
+  { id: "over_leveled", label: "Over-leveled / overqualified", group: "Level & fit" },
+  { id: "seniority_mismatch", label: "Seniority mismatch", group: "Level & fit" },
+  { id: "comp_mismatch", label: "Comp mismatch", group: "Level & fit" },
+  { id: "location_mismatch", label: "Location mismatch", group: "Level & fit" },
+  // Process / signal
+  { id: "missing_hard_filter", label: "Missing hard filter", group: "Process" },
+  { id: "weak_evidence", label: "Weak evidence in submission", group: "Process" },
+  { id: "candidate_not_interested", label: "Candidate not interested", group: "Process" },
+  { id: "duplicate", label: "Duplicate", group: "Process" },
+] as const
+
+const SUBMISSION_FEEDBACK_REASON_GROUPS = [
+  "Positive", "Background", "Depth", "Role-specific", "Level & fit", "Process",
 ] as const
 
 function feedbackReasonLabel(reason: string): string {
@@ -1076,48 +1260,62 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     },
   ]
 
+  const selectedRow = expandedId ? rows.find((r) => r.id === expandedId) ?? null : null
+
   return (
     <div>
       {header}
-      <Panel>
-        <DataTable<SubmissionDoc>
-          columns={columns}
-          rows={table.visibleRows}
-          chips={table.chipsForRender}
-          search={table.search}
-          onSearch={table.setSearch}
-          searchPlaceholder="Search submitter / candidate / job…"
-          sort={table.sort}
-          onSort={table.toggleSort}
-          page={table.page}
-          pageCount={table.pageCount}
-          onPageChange={table.setPage}
-          onResetFilters={table.reset}
-          count={table.filteredCount}
-          totalCount={table.totalRows}
-          onRowClick={(r) => setExpandedId(expandedId === r.id ? null : r.id ?? null)}
-          empty={
-            <div style={{ padding: 40, textAlign: "center", color: "#777" }}>
-              No submissions match the current filters.
-            </div>
-          }
-        />
-      </Panel>
-
-      {expandedId && (() => {
-        const row = rows.find((r) => r.id === expandedId)
-        if (!row) return null
-        return (
-          <RowDetailPanel
-            row={row}
-            role={jobsByKey.get(row.jobId ?? "") ?? jobsByKey.get(row.inboundJobId ?? "") ?? null}
-            onClose={() => setExpandedId(null)}
-            onUpdated={(next) => {
-              setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next } : r))
-            }}
-          />
-        )
-      })()}
+      <div className="sub-masterdetail">
+        <div className="sub-masterdetail__list">
+          <Panel>
+            <DataTable<SubmissionDoc>
+              columns={columns}
+              rows={table.visibleRows}
+              chips={table.chipsForRender}
+              search={table.search}
+              onSearch={table.setSearch}
+              searchPlaceholder="Search submitter / candidate / job…"
+              sort={table.sort}
+              onSort={table.toggleSort}
+              page={table.page}
+              pageCount={table.pageCount}
+              onPageChange={table.setPage}
+              onResetFilters={table.reset}
+              count={table.filteredCount}
+              totalCount={table.totalRows}
+              selectedRowId={expandedId}
+              onRowClick={(r) => setExpandedId(expandedId === r.id ? null : r.id ?? null)}
+              empty={
+                <div style={{ padding: 40, textAlign: "center", color: "#777" }}>
+                  No submissions match the current filters.
+                </div>
+              }
+            />
+          </Panel>
+        </div>
+        <div className="sub-masterdetail__detail">
+          {selectedRow ? (
+            <RowDetailPanel
+              row={selectedRow}
+              role={jobsByKey.get(selectedRow.jobId ?? "") ?? jobsByKey.get(selectedRow.inboundJobId ?? "") ?? null}
+              onClose={() => setExpandedId(null)}
+              onUpdated={(next) => {
+                setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next } : r))
+              }}
+            />
+          ) : (
+            <Panel>
+              <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--ink-3)" }}>
+                <div style={{ fontSize: 30, lineHeight: 1, marginBottom: 10 }} aria-hidden="true">📋</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#444" }}>Select a submission</div>
+                <div style={{ fontSize: 12.5, marginTop: 6, maxWidth: 280, marginInline: "auto", lineHeight: 1.45 }}>
+                  Pick a row on the left to review the recruiter packet, role evidence matrix, and set status, rating, feedback, and payout.
+                </div>
+              </div>
+            </Panel>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -3716,6 +3914,92 @@ function OpsMiniStat({ label, value }: { label: string; value: string }) {
   )
 }
 
+// Renders the four checklist tiers (hard → fit → anti → bonus) with the
+// recruiter's actual graded answers, using the contract glyph+color+word
+// (anti tier inverted). Mirrors recruiter-web's read-only ChecklistTiers.
+function ChecklistTierMatrix({ review }: { review: ChecklistTierReview }) {
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {review.groups.map((group) => {
+        const meta = CHECKLIST_TIER_META[group.kind]
+        return (
+          <section
+            key={group.kind}
+            style={{
+              border: "1px solid #eee",
+              borderLeft: `3px solid ${CHECKLIST_TIER_RAIL[group.kind]}`,
+              borderRadius: 8,
+              background: "#fff",
+              padding: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <Badge tone="muted">{CHECKLIST_TIER_CHIP[group.kind]}</Badge>
+              <strong style={{ color: "#222", fontSize: 13 }}>{meta.label}</strong>
+              <span
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: ".05em",
+                  padding: "2px 7px",
+                  borderRadius: 999,
+                  background: meta.required ? "var(--danger-bg)" : "#e7e7e2",
+                  color: meta.required ? "var(--danger)" : "#7a7a72",
+                }}
+              >
+                {meta.required ? "required" : "optional"}
+              </span>
+            </div>
+            <p style={{ margin: "5px 0 8px", fontSize: 11, color: "#8a8a82", lineHeight: 1.35 }}>{meta.rule}</p>
+            <div style={{ display: "grid", gap: 6 }}>
+              {group.items.map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    padding: "6px 0",
+                    borderBottom: "1px solid #f4efe7",
+                    fontSize: 12,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  <span style={{ color: item.value ? "#3a3a36" : "#777" }}>{item.text}</span>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      flexShrink: 0,
+                      whiteSpace: "nowrap",
+                      fontWeight: 600,
+                      color: CHECKLIST_MARK_COLOR[item.mark.tone],
+                    }}
+                  >
+                    <span aria-hidden="true" style={{ fontSize: 13, fontWeight: 800 }}>{item.mark.glyph}</span>
+                    <span style={{ fontSize: 11.5 }}>{item.mark.word}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )
+      })}
+      {review.orphanCheckedIds.length > 0 && (
+        <section style={{ border: "1px solid #f1c48a", borderRadius: 8, background: "#fff8ed", padding: 10, fontSize: 12, color: "#7a3e10" }}>
+          <strong>Answered ids no longer in role checklist</strong>
+          <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {review.orphanCheckedIds.map((id) => <code key={id}>{id}</code>)}
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}
+
 function RowDetailPanel({
   row,
   role,
@@ -3727,9 +4011,23 @@ function RowDetailPanel({
   onClose: () => void
   onUpdated: (row: Partial<SubmissionDoc> & { id: string }) => void
 }) {
-  const checklistReview = buildSubmissionChecklistReview(row, role)
+  const tierReview = buildChecklistTierReview(row, role)
+  // Feed the admin verdict banner from the tier-aware review so graded answers
+  // (strong/yes/partial/no) are scored correctly. A "hard" item only counts as
+  // missing if it isn't met; an "anti" item is a flag only when present.
+  const checklistReview = tierReview.hasReadableChecklist
+    ? {
+        ...buildSubmissionChecklistReview(row, role),
+        missingHard: tierReview.groups
+          .filter((g) => g.kind === "hard")
+          .flatMap((g) => g.items.filter((it) => it.mark.tone !== "met").map((it) => ({ id: it.id, text: it.text, checked: false }))),
+        antiFlags: tierReview.groups
+          .filter((g) => g.kind === "anti")
+          .flatMap((g) => g.items.filter((it) => it.mark.tone === "notmet").map((it) => ({ id: it.id, text: it.text, checked: true }))),
+      }
+    : buildSubmissionChecklistReview(row, role)
   const reviewSummary = buildSubmissionAdminReviewSummary(row, checklistReview)
-  const fallbackTickedIds = Object.entries(row.checklist ?? {}).filter(([, v]) => v).map(([k]) => k).sort()
+  const fallbackTickedIds = Object.entries(row.checklist ?? {}).filter(([, v]) => v !== false && v != null).map(([k]) => k).sort()
   const [draftStatus, setDraftStatus] = useState(row.status ?? "submitted")
   const [draftNote, setDraftNote] = useState(row.recruiterFeedbackNote ?? "")
   const [draftRating, setDraftRating] = useState<string>(
@@ -3830,11 +4128,19 @@ function RowDetailPanel({
         </button>
       }
     >
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+      <div className="sub-detail__metrics">
         <OpsMetric label="Review verdict" value={reviewSummary.title} />
-        <OpsMetric label="Hard gaps" value={checklistReview.missingHard.length} />
-        <OpsMetric label="Anti-signals" value={checklistReview.antiFlags.length} />
-        <OpsMetric label="Evidence checked" value={checklistReview.total ? `${checklistReview.checkedTotal}/${checklistReview.total}` : fallbackTickedIds.length} />
+        <OpsMetric
+          label="Hard met"
+          value={tierReview.hasReadableChecklist ? `${tierReview.score.hardMet}/${tierReview.score.hardTotal}` : "—"}
+        />
+        <OpsMetric label="Anti-flags" value={tierReview.hasReadableChecklist ? tierReview.score.antiFlags : "—"} />
+        <OpsMetric
+          label="Fit · Bonus"
+          value={tierReview.hasReadableChecklist
+            ? `${tierReview.score.fitMet}/${tierReview.score.fitTotal} · ${tierReview.score.bonusMet}/${tierReview.score.bonusTotal}`
+            : "—"}
+        />
       </div>
       <div style={{ marginBottom: 18, border: "1px solid #eadfce", borderRadius: 10, background: "#fffaf3", padding: 12 }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -3842,7 +4148,26 @@ function RowDetailPanel({
           <span style={{ color: "#555", fontSize: 13 }}>{reviewSummary.body}</span>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      {row.candidateBackground && Object.values(row.candidateBackground).some(Boolean) && (
+        <div style={{ marginBottom: 18 }}>
+          <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+            Candidate background <span style={{ textTransform: "none", color: "#999" }}>· recruiter self-flag</span>
+          </h4>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {([["school", "School"], ["gpa", "GPA"], ["degree", "Degree"], ["company", "Company"]] as const).map(([k, label]) => {
+              const v = row.candidateBackground?.[k]
+              if (v !== "strong" && v !== "weak") return null
+              const weak = v === "weak"
+              return (
+                <span key={k} style={{ fontSize: 12, padding: "3px 9px", borderRadius: 999, background: weak ? "#fcebeb" : "#e1f5ee", color: weak ? "#791f1f" : "#0f6e56" }}>
+                  {label}: {weak ? "weak" : "strong"}
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      )}
+      <div className="sub-detail__cols">
         <div>
           <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
             Submitter
@@ -3895,12 +4220,16 @@ function RowDetailPanel({
           <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
             Score
           </h4>
-          {row.score ? (
-            <p style={{ margin: 0, fontSize: 13 }}>
-              Hard {row.score.hardChecked}/{row.score.hardTotal} ·{" "}
+          {tierReview.hasReadableChecklist ? (
+            <p style={{ margin: 0, fontSize: 12.5, color: "#444", lineHeight: 1.45 }}>
+              {checklistScoreLegend(tierReview.score)}
+            </p>
+          ) : row.score ? (
+            <p style={{ margin: 0, fontSize: 12.5, color: "#444", lineHeight: 1.45 }}>
+              Hard {row.score.hardChecked}/{row.score.hardTotal} met ·{" "}
               Fit {row.score.fitChecked}/{row.score.fitTotal} ·{" "}
               Bonus {row.score.bonusChecked}/{row.score.bonusTotal} ·{" "}
-              Anti {row.score.antiChecked}/{row.score.antiTotal}
+              Anti {row.score.antiChecked} flag(s). A match needs most hard filters met and no anti-flags.
             </p>
           ) : (
             <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No score.</p>
@@ -3931,10 +4260,10 @@ function RowDetailPanel({
           <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
             Role evidence matrix
           </h4>
-          {!checklistReview.hasReadableChecklist ? (
+          {!tierReview.hasReadableChecklist ? (
             <>
               <p style={{ margin: 0, fontSize: 13, color: "#999" }}>
-                No readable role checklist found. Showing raw checked ids from the recruiter packet.
+                No readable role checklist found. Showing raw answered ids from the recruiter packet.
               </p>
               {fallbackTickedIds.length > 0 && (
                 <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "#444" }}>
@@ -3945,55 +4274,12 @@ function RowDetailPanel({
               )}
             </>
           ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {checklistReview.groups.map((group) => (
-                <section
-                  key={`${group.kind}-${group.heading}`}
-                  style={{
-                    border: "1px solid #eee",
-                    borderRadius: 8,
-                    background: group.kind === "anti" && group.checked > 0 ? "#fff6f2" : "#fff",
-                    padding: 10,
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                    <strong style={{ color: "#222", fontSize: 13 }}>{group.heading}</strong>
-                    <Badge tone={group.kind === "anti" && group.checked > 0 ? "warn" : group.checked === group.total ? "ok" : "info"}>
-                      {group.checked}/{group.total}
-                    </Badge>
-                  </div>
-                  <div style={{ display: "grid", gap: 6 }}>
-                    {group.items.map((item) => (
-                      <div
-                        key={item.id}
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "18px 1fr",
-                          gap: 8,
-                          alignItems: "start",
-                          color: item.checked ? "#222" : "#777",
-                          fontSize: 12,
-                          lineHeight: 1.35,
-                        }}
-                      >
-                        <span aria-hidden="true" style={{ color: item.checked ? "#1f7a3a" : "#b65b3a", fontWeight: 800 }}>
-                          {item.checked ? "✓" : "○"}
-                        </span>
-                        <span>{item.text}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ))}
-              {checklistReview.orphanCheckedIds.length > 0 && (
-                <section style={{ border: "1px solid #f1c48a", borderRadius: 8, background: "#fff8ed", padding: 10, fontSize: 12, color: "#7a3e10" }}>
-                  <strong>Checked ids no longer in role checklist</strong>
-                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {checklistReview.orphanCheckedIds.map((id) => <code key={id}>{id}</code>)}
-                  </div>
-                </section>
-              )}
-            </div>
+            <>
+              <p style={{ margin: "0 0 8px", fontSize: 11.5, color: "#8a8a82", lineHeight: 1.4 }}>
+                {checklistScoreLegend(tierReview.score)}
+              </p>
+              <ChecklistTierMatrix review={tierReview} />
+            </>
           )}
 
           {row.sheetSyncError && (
@@ -4012,7 +4298,7 @@ function RowDetailPanel({
         <h4 style={{ margin: "0 0 8px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
           Recruiter-visible status and feedback
         </h4>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 180px 1fr auto", gap: 10, alignItems: "start" }}>
+        <div className="sub-detail__feedbackgrid">
           <select
             value={draftStatus}
             onChange={(e) => setDraftStatus(e.target.value)}
@@ -4047,26 +4333,39 @@ function RowDetailPanel({
             {saving ? "Saving..." : "Save"}
           </button>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
-          {SUBMISSION_FEEDBACK_REASONS.map((reason) => {
-            const active = draftReasons.includes(reason.id)
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+          {SUBMISSION_FEEDBACK_REASON_GROUPS.map((groupName) => {
+            const groupReasons = SUBMISSION_FEEDBACK_REASONS.filter((r) => r.group === groupName)
+            if (!groupReasons.length) return null
             return (
-              <button
-                type="button"
-                key={reason.id}
-                onClick={() => toggleReason(reason.id)}
-                style={{
-                  padding: "5px 8px",
-                  border: active ? "1px solid #222" : "1px solid #ddd",
-                  background: active ? "#222" : "#fff",
-                  color: active ? "#fff" : "#555",
-                  borderRadius: 999,
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                {reason.label}
-              </button>
+              <div key={groupName}>
+                <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.04em", color: "#999", marginBottom: 4 }}>{groupName}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {groupReasons.map((reason) => {
+                    const active = draftReasons.includes(reason.id)
+                    const positive = reason.group === "Positive"
+                    const activeBg = positive ? "#0f6e56" : "#993c1d"
+                    return (
+                      <button
+                        type="button"
+                        key={reason.id}
+                        onClick={() => toggleReason(reason.id)}
+                        style={{
+                          padding: "5px 8px",
+                          border: active ? `1px solid ${activeBg}` : "1px solid #ddd",
+                          background: active ? activeBg : "#fff",
+                          color: active ? "#fff" : "#555",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {reason.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             )
           })}
         </div>
@@ -4074,7 +4373,7 @@ function RowDetailPanel({
           <h4 style={{ margin: "0 0 8px", fontSize: 12, textTransform: "uppercase", color: "#7a4a16" }}>
             Recruiter payout tracker
           </h4>
-          <div style={{ display: "grid", gridTemplateColumns: "180px 160px 1fr", gap: 10, alignItems: "start" }}>
+          <div className="sub-detail__payoutgrid">
             <select
               value={draftPayoutStatus}
               onChange={(e) => setDraftPayoutStatus(e.target.value)}
