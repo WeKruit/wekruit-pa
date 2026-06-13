@@ -810,6 +810,11 @@ export default function RecruiterWorkspace() {
                               }}>{rating}/4</span>
                             )}
                           </span>
+                          {s.status === "rejected" && s.recruiterFeedbackNote?.trim() && (
+                            <span className="rw-row-reason" title={s.recruiterFeedbackNote.trim()}>
+                              {s.recruiterFeedbackNote.trim()}
+                            </span>
+                          )}
                         </button>
                       )
                     })}
