@@ -40,6 +40,30 @@
   min-height: 0;
 }
 .rw-brand { display: flex; align-items: center; gap: 11px; padding: 4px 6px 22px; }
+.rw-collapse-btn {
+  margin-left: auto; flex-shrink: 0;
+  width: 24px; height: 24px; border-radius: 7px;
+  border: 1px solid #e3d6c3; background: #fff; color: #897462;
+  cursor: pointer; font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.rw-collapse-btn:hover { background: #f1e8d8; color: #2d1a0a; }
+
+/* ---------- collapsed sidebar ---------- */
+.rw-root.is-collapsed { grid-template-columns: 64px 1fr; }
+.rw-root.is-collapsed .rw-aside { padding: 20px 10px; }
+.rw-root.is-collapsed .rw-brand { gap: 0; padding: 4px 0 18px; justify-content: center; }
+.rw-root.is-collapsed .rw-brand-name,
+.rw-root.is-collapsed .rw-nav-item > .rw-nav-label > span:last-child,
+.rw-root.is-collapsed .rw-nav-count,
+.rw-root.is-collapsed .rw-email-card,
+.rw-root.is-collapsed .rw-user-meta { display: none; }
+.rw-root.is-collapsed .rw-nav-item { justify-content: center; padding: 9px 0; }
+.rw-root.is-collapsed .rw-nav-item > .rw-nav-label { gap: 0; }
+.rw-root.is-collapsed .rw-collapse-btn { margin: 8px auto 0; }
+.rw-root.is-collapsed .rw-user { justify-content: center; padding: 4px 0; }
+.rw-root.is-collapsed .rw-signout { font-size: 0; padding: 8px 0; }
+.rw-root.is-collapsed .rw-signout::before { content: "↩"; font-size: 15px; }
 .rw-brand-mark {
   width: 34px; height: 34px; border-radius: 9px;
   background: #2d1a0a; color: #f5ede3;

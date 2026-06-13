@@ -1164,7 +1164,7 @@ function ThreadDrawer({
         <button type="button" className="rs-drawer__close" aria-label="Close" onClick={onClose}>✕</button>
       </header>
       <div className="rs-drawer__stepper">
-        <SubmissionStatusStepper status={row.status} />
+        <SubmissionStatusStepper status={row.status} statusHistory={row.statusHistory} />
       </div>
       {model.needsInfo && (
         <div className="rs-drawer__banner">

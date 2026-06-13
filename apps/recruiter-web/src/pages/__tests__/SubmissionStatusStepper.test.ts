@@ -53,6 +53,44 @@ test("rejected is a danger terminal outcome", () => {
   assert.deepEqual(model.outcome, { label: "Not moving forward", tone: "danger" })
 })
 
+test("rejected right after Submitted does NOT mark later stages done", () => {
+  // Bug: a candidate rejected before any interview must not show checkmarks on
+  // WeKruit interview / With client — stages they never reached.
+  const model = buildSubmissionStatusStepper("rejected", [], [
+    { status: "submitted" },
+    { status: "rejected" },
+  ])
+  assert.equal(model.steps[0]?.state, "done") // Submitted — reached
+  assert.equal(model.steps[1]?.state, "todo") // WeKruit interview — never reached
+  assert.equal(model.steps[2]?.state, "todo") // With client — never reached
+  assert.equal(model.steps[3]?.state, "current") // outcome carries the ✕
+})
+
+test("rejected after the WeKruit interview marks Submitted + WeKruit interview done", () => {
+  const model = buildSubmissionStatusStepper("rejected", [], [
+    { status: "submitted" },
+    { status: "wekruit_interview" },
+    { status: "rejected" },
+  ])
+  assert.equal(model.steps[0]?.state, "done")
+  assert.equal(model.steps[1]?.state, "done") // reached WeKruit interview
+  assert.equal(model.steps[2]?.state, "todo") // never reached With client
+  assert.equal(model.steps[3]?.state, "current")
+})
+
+test("hired through all stages marks every stage done", () => {
+  const model = buildSubmissionStatusStepper("hired", [], [
+    { status: "submitted" },
+    { status: "wekruit_interview" },
+    { status: "client_review" },
+    { status: "hired" },
+  ])
+  assert.equal(model.steps[0]?.state, "done")
+  assert.equal(model.steps[1]?.state, "done")
+  assert.equal(model.steps[2]?.state, "done")
+  assert.equal(model.steps[3]?.state, "current")
+})
+
 test("duplicate is a muted terminal outcome", () => {
   const model = buildSubmissionStatusStepper("duplicate")
   assert.equal(model.terminal, true)
