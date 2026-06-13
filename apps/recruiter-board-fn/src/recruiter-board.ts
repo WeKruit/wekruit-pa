@@ -7132,17 +7132,13 @@ export const paRecruiterSubmission = onRequest(
     const score = computeSubmissionScore(rb.checklist.groups, payload.checklist)
 
     const submissionId = idempotencyHeader || randomUUID()
-    const candidateConsentStatus = payload.candidate.email
-      ? "pending_candidate_confirmation"
-      : "recruiter_asserted"
-    let finalCandidateConsentStatus = candidateConsentStatus
-    const candidateConfirmation = payload.candidate.email
-      ? {
-          status: "email_queued",
-          candidateEmail: payload.candidate.email,
-          requestedAt: FieldValue.serverTimestamp(),
-        }
-      : null
+    // No candidate consent step: a candidate submitted on the recruiter platform
+    // is, by default, consented (the recruiter attests it). WeKruit never emails
+    // the candidate directly — we only email recruiters. So consent is always
+    // recruiter-asserted and there is no candidate confirmation to queue/send.
+    const candidateConsentStatus = "recruiter_asserted"
+    const finalCandidateConsentStatus = candidateConsentStatus
+    const candidateConfirmation = null
     const ip = req.get("x-forwarded-for")?.split(",")[0]?.trim() || ""
     const callerSource = payload.source ?? "unknown"
     const submitter = recruiter
@@ -7276,18 +7272,8 @@ export const paRecruiterSubmission = onRequest(
       submissionMode,
     })
 
-    if (payload.candidate.email) {
-      try {
-        const submissionRef = db.collection("pa-recruiter-submissions").doc(submissionId)
-        const confirmationResult = await sendCandidateSubmissionConfirmationForDoc(submissionRef, submissionId, submissionDoc, "submission")
-        finalCandidateConsentStatus = confirmationResult.candidateConsentStatus
-      } catch (err) {
-        logger.error("paRecruiterSubmission_candidate_confirmation_failed", {
-          error: String(err),
-          submissionId,
-        })
-      }
-    }
+    // (Candidate consent confirmation removed — no email is ever sent to the
+    // candidate. Consent is recruiter-asserted at submit time.)
 
     // Best-effort Sheet sync. Failure does not block the 200 — the Firestore
     // write is the source of truth and the doc keeps an error breadcrumb so
