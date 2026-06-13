@@ -171,6 +171,7 @@ interface BoardJobGroup {
   company: string
   submissions: BoardSubmissionDoc[]
   pendingCount: number
+  totalCount: number
 }
 
 interface BoardRecruiterGroup {
@@ -186,6 +187,17 @@ interface BoardRecruiterGroup {
 
 const PENDING_STATUSES = ["submitted", "new", "reviewing"]
 const DEFAULT_REQUEST_MESSAGE = "Please add the candidate's resume link and LinkedIn profile."
+const DEFAULT_REJECTION_CATEGORY: RecruiterCandidateRejectionCategory = "quality"
+const DEFAULT_REJECTION_TIER: RecruiterCandidateTier = "tier_3"
+export type BoardSubmissionFilter = "pending" | "all"
+
+export function defaultRecruiterSubmissionRejection(): RecruiterSubmissionRejectionInput {
+  return {
+    category: DEFAULT_REJECTION_CATEGORY,
+    candidateTier: DEFAULT_REJECTION_TIER,
+    reason: "",
+  }
+}
 
 function timestampToMs(raw: BoardSubmissionDoc["createdAt"]): number {
   if (!raw) return 0
@@ -199,8 +211,19 @@ function formatSubmittedDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
 }
 
-function isPending(submission: BoardSubmissionDoc): boolean {
+function isPending(submission: { status?: string }): boolean {
   return PENDING_STATUSES.includes(submission.status ?? "submitted")
+}
+
+export function visibleBoardSubmissionsForFilter<T extends { status?: string }>(
+  submissions: T[],
+  filter: BoardSubmissionFilter,
+): T[] {
+  return filter === "pending" ? submissions.filter(isPending) : submissions
+}
+
+export function isBulkRejectSelectable(submission: { status?: string }): boolean {
+  return submissionStage(submission.status) !== "terminal"
 }
 
 function statusTone(status: string | undefined): Parameters<typeof Badge>[0]["tone"] {
@@ -404,6 +427,7 @@ function buildJobGroups(submissions: BoardSubmissionDoc[]): BoardJobGroup[] {
       company: labelled?.companyLabelSnapshot ?? "",
       submissions: sorted,
       pendingCount: sorted.filter(isPending).length,
+      totalCount: sorted.length,
     }
   })
   return groups.sort((a, b) => {
@@ -529,6 +553,55 @@ const boardHeaderCellStyle: CSSProperties = {
   background: "#fff",
   boxShadow: "0 1px 0 #eee",
   color: "#777",
+}
+
+const boardSelectCellStyle: CSSProperties = {
+  ...cellStyle,
+  width: 34,
+  textAlign: "center",
+}
+
+const boardBulkBarStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "auto 140px 170px minmax(220px, 1fr) auto",
+  gap: 8,
+  alignItems: "center",
+  margin: "0 0 12px",
+  padding: 10,
+  border: "1px solid #ead8d3",
+  borderRadius: 10,
+  background: "#fff8f6",
+}
+
+const boardStatsBarStyle: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  margin: "0 0 12px",
+  flexWrap: "wrap",
+}
+
+const boardFilterShellStyle: CSSProperties = {
+  display: "inline-flex",
+  gap: 4,
+  padding: 3,
+  border: "1px solid #e4d9cc",
+  borderRadius: 8,
+  background: "#fff",
+}
+
+function boardFilterButtonStyle(active: boolean): CSSProperties {
+  return {
+    border: 0,
+    borderRadius: 6,
+    padding: "5px 9px",
+    background: active ? "#35291f" : "transparent",
+    color: active ? "#fff" : "#6f6255",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  }
 }
 
 const selectedReviewShellStyle: CSSProperties = {
@@ -869,7 +942,7 @@ function CandidateReviewPanel({
   const resumeHref = submission.candidate?.resumeUrl?.trim() ? submission.candidate.resumeUrl.trim() : null
   const email = submission.candidate?.email?.trim()
   const dim = blocked ? blockedButtonStyle : null
-  const rejectDisabled = blocked || !rejectReason.trim()
+  const rejectDisabled = blocked
   return (
     <aside style={reviewSidePanelStyle} aria-label="Candidate review panel">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
@@ -994,8 +1067,8 @@ function CandidateReviewPanel({
                   onChange={(e) => onRejectCategory(e.target.value as RecruiterCandidateRejectionCategory)}
                   style={{ padding: "6px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
                 >
-                  <option value="role_fit">Role fit</option>
                   <option value="quality">Quality</option>
+                  <option value="role_fit">Role fit</option>
                 </select>
               </label>
               <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#6f6256", fontWeight: 700 }}>
@@ -1005,9 +1078,9 @@ function CandidateReviewPanel({
                   onChange={(e) => onRejectTier(e.target.value as RecruiterCandidateTier)}
                   style={{ padding: "6px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
                 >
-                  <option value="tier_1">Tier 1 reusable</option>
-                  <option value="tier_2">Tier 2 possible</option>
                   <option value="tier_3">Tier 3 hard reject</option>
+                  <option value="tier_2">Tier 2 possible</option>
+                  <option value="tier_1">Tier 1 reusable</option>
                 </select>
               </label>
             </div>
@@ -1231,9 +1304,16 @@ export default function RecruiterBoardOps() {
   const [requestInfoOpen, setRequestInfoOpen] = useState(false)
   const [requestMessage, setRequestMessage] = useState(DEFAULT_REQUEST_MESSAGE)
   const [rejectOpen, setRejectOpen] = useState(false)
-  const [rejectCategory, setRejectCategory] = useState<RecruiterCandidateRejectionCategory>("role_fit")
-  const [rejectTier, setRejectTier] = useState<RecruiterCandidateTier>("tier_1")
+  const [rejectCategory, setRejectCategory] = useState<RecruiterCandidateRejectionCategory>(DEFAULT_REJECTION_CATEGORY)
+  const [rejectTier, setRejectTier] = useState<RecruiterCandidateTier>(DEFAULT_REJECTION_TIER)
   const [rejectReason, setRejectReason] = useState("")
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(() => new Set())
+  const [bulkRejectCategory, setBulkRejectCategory] = useState<RecruiterCandidateRejectionCategory>(DEFAULT_REJECTION_CATEGORY)
+  const [bulkRejectTier, setBulkRejectTier] = useState<RecruiterCandidateTier>(DEFAULT_REJECTION_TIER)
+  const [bulkRejectReason, setBulkRejectReason] = useState("")
+  const [bulkRejecting, setBulkRejecting] = useState(false)
+  const [bulkError, setBulkError] = useState<string | null>(null)
+  const [submissionFilter, setSubmissionFilter] = useState<BoardSubmissionFilter>("pending")
   const [inFlightId, setInFlightId] = useState<string | null>(null)
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [reloadKey, setReloadKey] = useState(0)
@@ -1284,7 +1364,32 @@ export default function RecruiterBoardOps() {
     () => buildBoardGroups(recruiters, submissions),
     [recruiters, submissions],
   )
+  const visibleRecruiterGroups = useMemo(
+    () =>
+      recruiterGroups
+        .map((group) => ({
+          ...group,
+          jobs: group.jobs
+            .map((job) => ({ ...job, submissions: visibleBoardSubmissionsForFilter(job.submissions, submissionFilter) }))
+            .filter((job) => job.submissions.length > 0),
+        }))
+        .filter((group) => group.jobs.length > 0),
+    [recruiterGroups, submissionFilter],
+  )
+  const visibleUnclaimedGroups = useMemo(
+    () =>
+      unclaimedGroups
+        .map((group) => ({
+          ...group,
+          jobs: group.jobs
+            .map((job) => ({ ...job, submissions: visibleBoardSubmissionsForFilter(job.submissions, submissionFilter) }))
+            .filter((job) => job.submissions.length > 0),
+        }))
+        .filter((group) => group.jobs.length > 0),
+    [unclaimedGroups, submissionFilter],
+  )
   const pendingTotal = submissions.filter(isPending).length
+  const selectedBulkCount = bulkSelectedIds.size
   const selectedSubmission = useMemo(
     () => submissions.find((submission) => submission.id === selectedId) ?? null,
     [selectedId, submissions],
@@ -1299,19 +1404,113 @@ export default function RecruiterBoardOps() {
 
   useEffect(() => {
     setRejectOpen(false)
-    setRejectCategory("role_fit")
-    setRejectTier("tier_1")
+    setRejectCategory(DEFAULT_REJECTION_CATEGORY)
+    setRejectTier(DEFAULT_REJECTION_TIER)
     setRejectReason("")
     setRequestInfoOpen(false)
     setRequestMessage(DEFAULT_REQUEST_MESSAGE)
   }, [selectedId])
+
+  useEffect(() => {
+    const validIds = new Set(
+      visibleBoardSubmissionsForFilter(submissions, submissionFilter)
+        .filter(isBulkRejectSelectable)
+        .map((submission) => submission.id),
+    )
+    setBulkSelectedIds((prev) => {
+      const next = new Set([...prev].filter((id) => validIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [submissions, submissionFilter])
+
+  function toggleBulkSelection(submission: BoardSubmissionDoc, selected: boolean) {
+    if (!isBulkRejectSelectable(submission)) return
+    setBulkSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (selected) next.add(submission.id)
+      else next.delete(submission.id)
+      return next
+    })
+    setBulkError(null)
+  }
+
+  function setBulkSelectionForSubmissions(rows: BoardSubmissionDoc[], selected: boolean) {
+    const selectable = rows.filter(isBulkRejectSelectable)
+    setBulkSelectedIds((prev) => {
+      const next = new Set(prev)
+      for (const submission of selectable) {
+        if (selected) next.add(submission.id)
+        else next.delete(submission.id)
+      }
+      return next
+    })
+    setBulkError(null)
+  }
+
+  async function applyBulkReject() {
+    if (inFlightId || bulkRejecting || bulkSelectedIds.size === 0) return
+    const selected = submissions.filter((submission) => bulkSelectedIds.has(submission.id) && isBulkRejectSelectable(submission))
+    if (selected.length === 0) return
+    const rejection = {
+      category: bulkRejectCategory,
+      candidateTier: bulkRejectTier,
+      reason: bulkRejectReason.trim(),
+    }
+    const succeeded = new Set<string>()
+    let failureCount = 0
+    setBulkRejecting(true)
+    setBulkError(null)
+    setActionErrors((prev) => {
+      const next = { ...prev }
+      for (const submission of selected) delete next[submission.id]
+      return next
+    })
+    try {
+      for (const submission of selected) {
+        const priorStatus = submission.status
+        setInFlightId(submission.id)
+        setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, status: "rejected" } : s)))
+        try {
+          const result = await runRecruiterSubmissionAction({
+            submissionId: submission.id,
+            action: "reject",
+            rejection,
+          })
+          succeeded.add(submission.id)
+          setSubmissions((prev) =>
+            prev.map((s) => (s.id === submission.id ? { ...s, status: result.status } : s)),
+          )
+        } catch (error) {
+          failureCount += 1
+          setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, status: priorStatus } : s)))
+          setActionErrors((prev) => ({
+            ...prev,
+            [submission.id]: error instanceof Error ? error.message : String(error),
+          }))
+        }
+      }
+    } finally {
+      setInFlightId(null)
+      setBulkRejecting(false)
+      setBulkSelectedIds((prev) => {
+        const next = new Set(prev)
+        for (const id of succeeded) next.delete(id)
+        return next
+      })
+      if (failureCount > 0) {
+        setBulkError(`${failureCount} rejection${failureCount === 1 ? "" : "s"} failed. Failed rows remain selected.`)
+      } else {
+        setBulkRejectReason("")
+      }
+    }
+  }
 
   async function applyAction(
     submission: BoardSubmissionDoc,
     action: RecruiterSubmissionAction,
     options?: { requestMessage?: string; rejection?: RecruiterSubmissionRejectionInput },
   ) {
-    if (inFlightId) return
+    if (inFlightId || bulkRejecting) return
     const priorStatus = submission.status
     const optimisticStatus = RECRUITER_SUBMISSION_ACTION_TO_STATUS[action]
     setInFlightId(submission.id)
@@ -1391,9 +1590,11 @@ export default function RecruiterBoardOps() {
     const chip = verdictChip(submission.aiEvaluation)
     const busy = inFlightId === submission.id
     const selected = selectedId === submission.id
+    const bulkSelected = bulkSelectedIds.has(submission.id)
+    const bulkSelectable = isBulkRejectSelectable(submission)
     const actionError = actionErrors[submission.id]
     const status = statusDisplay(submission.status)
-    const othersBlocked = inFlightId !== null && !busy
+    const othersBlocked = (inFlightId !== null || bulkRejecting) && !busy
     const blocked = busy || othersBlocked
     const dim = othersBlocked ? blockedButtonStyle : null
     return (
@@ -1402,6 +1603,15 @@ export default function RecruiterBoardOps() {
         onClick={() => setSelectedId(selected ? null : submission.id)}
         style={{ borderBottom: "1px solid #f1f1f1", cursor: "pointer", background: selected ? "#faf4ea" : undefined }}
       >
+        <td style={boardSelectCellStyle} onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            aria-label={`Select ${submission.candidate?.name ?? "candidate"} for bulk rejection`}
+            checked={bulkSelected}
+            disabled={!bulkSelectable || bulkRejecting}
+            onChange={(e) => toggleBulkSelection(submission, e.target.checked)}
+          />
+        </td>
         <td style={cellStyle}>
           <div style={{ fontWeight: 700, overflowWrap: "anywhere" }}>
             {href ? (
@@ -1492,13 +1702,22 @@ export default function RecruiterBoardOps() {
                 <span style={{ fontWeight: 600, fontSize: 13 }}>{job.title}</span>
                 {job.company && <span style={{ color: "#777", fontSize: 12 }}>{job.company}</span>}
                 <span style={{ color: "#999", fontSize: 11 }}>
-                  {job.pendingCount} pending · {job.submissions.length} total
+                  {job.pendingCount} pending · {job.totalCount} total
                 </span>
               </div>
               <div style={boardTableShellStyle}>
                 <table style={selectedSubmission ? selectedBoardTableStyle : boardTableStyle}>
                   <thead>
                     <tr>
+                      <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select all rejectable submissions for ${job.title}`}
+                          checked={job.submissions.some(isBulkRejectSelectable) && job.submissions.filter(isBulkRejectSelectable).every((s) => bulkSelectedIds.has(s.id))}
+                          disabled={!job.submissions.some(isBulkRejectSelectable) || bulkRejecting}
+                          onChange={(e) => setBulkSelectionForSubmissions(job.submissions, e.target.checked)}
+                        />
+                      </th>
                       <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
                       <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
                       <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
@@ -1519,32 +1738,114 @@ export default function RecruiterBoardOps() {
   return (
     <div>
       {header}
-      <div style={{ color: "#777", fontSize: 12, margin: "0 0 12px" }}>
-        {recruiterGroups.length} recruiters · {submissions.length} submissions loaded · {pendingTotal} pending
+      <div style={boardStatsBarStyle}>
+        <div style={{ color: "#777", fontSize: 12 }}>
+          {recruiterGroups.length} recruiters · {submissions.length} submissions loaded · {pendingTotal} pending
+        </div>
+        <div style={boardFilterShellStyle} aria-label="Submission table filter">
+          <button
+            type="button"
+            aria-pressed={submissionFilter === "pending"}
+            onClick={() => setSubmissionFilter("pending")}
+            style={boardFilterButtonStyle(submissionFilter === "pending")}
+          >
+            Pending {pendingTotal}
+          </button>
+          <button
+            type="button"
+            aria-pressed={submissionFilter === "all"}
+            onClick={() => setSubmissionFilter("all")}
+            style={boardFilterButtonStyle(submissionFilter === "all")}
+          >
+            All {submissions.length}
+          </button>
+        </div>
       </div>
-      {recruiterGroups.length === 0 && unclaimedGroups.length === 0 ? (
+      {selectedBulkCount > 0 && (
+        <div style={boardBulkBarStyle} aria-label="Bulk reject selected recruiter submissions">
+          <strong style={{ color: "#4b3a2e", fontSize: 12 }}>
+            {selectedBulkCount} selected
+          </strong>
+          <select
+            value={bulkRejectCategory}
+            onChange={(e) => setBulkRejectCategory(e.target.value as RecruiterCandidateRejectionCategory)}
+            disabled={bulkRejecting}
+            aria-label="Bulk rejection type"
+            style={{ padding: "6px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
+          >
+            <option value="quality">Quality</option>
+            <option value="role_fit">Role fit</option>
+          </select>
+          <select
+            value={bulkRejectTier}
+            onChange={(e) => setBulkRejectTier(e.target.value as RecruiterCandidateTier)}
+            disabled={bulkRejecting}
+            aria-label="Bulk rejection tier"
+            style={{ padding: "6px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
+          >
+            <option value="tier_3">Tier 3 hard reject</option>
+            <option value="tier_2">Tier 2 possible</option>
+            <option value="tier_1">Tier 1 reusable</option>
+          </select>
+          <textarea
+            value={bulkRejectReason}
+            onChange={(e) => setBulkRejectReason(e.target.value)}
+            rows={1}
+            maxLength={4000}
+            disabled={bulkRejecting}
+            placeholder="Optional rejection response"
+            aria-label="Bulk rejection reason"
+            style={{ minHeight: 32, padding: "6px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12, resize: "vertical" }}
+          />
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={bulkRejecting || inFlightId !== null}
+              aria-disabled={bulkRejecting || inFlightId !== null}
+              onClick={() => void applyBulkReject()}
+              style={{ ...actionButtonStyle, border: "1px solid #d9a8a0", background: "#fdf3f1", color: "#9c3a1d" }}
+            >
+              {bulkRejecting ? "Rejecting..." : "Reject selected"}
+            </button>
+            <button
+              type="button"
+              disabled={bulkRejecting}
+              onClick={() => setBulkSelectedIds(new Set())}
+              style={actionButtonStyle}
+            >
+              Clear
+            </button>
+          </div>
+          {bulkError && <div style={{ gridColumn: "1 / -1", color: "#9c3a1d", fontSize: 11 }}>{bulkError}</div>}
+        </div>
+      )}
+      {visibleRecruiterGroups.length === 0 && visibleUnclaimedGroups.length === 0 ? (
         <EmptyState
-          title="No recruiter activity yet"
-          body="Recruiter profiles and submissions will appear here as soon as the first one lands."
+          title={submissions.length === 0 ? "No recruiter activity yet" : "No pending submissions"}
+          body={
+            submissions.length === 0
+              ? "Recruiter profiles and submissions will appear here as soon as the first one lands."
+              : "Switch to All to review completed or non-pending submissions."
+          }
         />
       ) : (
         <div style={selectedSubmission ? selectedReviewShellStyle : { display: "grid", gap: 16 }}>
           <div style={selectedSubmission ? reviewLeftColumnStyle : { display: "grid", gap: 16 }}>
             {selectedSubmission && <JobContextPanel job={selectedJob} submission={selectedSubmission} />}
             <div style={{ display: "grid", gap: 16 }}>
-              {recruiterGroups.map(renderGroup)}
-              {unclaimedGroups.length > 0 && (
+              {visibleRecruiterGroups.map(renderGroup)}
+              {visibleUnclaimedGroups.length > 0 && (
                 <Panel
                   title="Unclaimed submitters"
                   eyebrow="No matching recruiter profile"
                   actions={
                     <Badge tone="info">
-                      {unclaimedGroups.reduce((n, g) => n + g.totalCount, 0)} submissions
+                      {visibleUnclaimedGroups.reduce((n, g) => n + g.jobs.reduce((m, job) => m + job.submissions.length, 0), 0)} shown
                     </Badge>
                   }
                 >
                   <div style={boardGroupBodyStyle}>
-                    {unclaimedGroups.map((group) => (
+                    {visibleUnclaimedGroups.map((group) => (
                       <div key={group.key}>
                         <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", marginBottom: 6 }}>
                           <span style={{ fontWeight: 700, fontSize: 13 }}>{group.name}</span>
@@ -1561,11 +1862,23 @@ export default function RecruiterBoardOps() {
                               <div style={boardJobHeaderStyle}>
                                 <span style={{ fontWeight: 600, fontSize: 13 }}>{job.title}</span>
                                 {job.company && <span style={{ color: "#777", fontSize: 12 }}>{job.company}</span>}
+                                <span style={{ color: "#999", fontSize: 11 }}>
+                                  {job.pendingCount} pending · {job.totalCount} total
+                                </span>
                               </div>
                               <div style={boardTableShellStyle}>
                                 <table style={selectedSubmission ? selectedBoardTableStyle : boardTableStyle}>
                                   <thead>
                                     <tr>
+                                      <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
+                                        <input
+                                          type="checkbox"
+                                          aria-label={`Select all rejectable submissions for ${job.title}`}
+                                          checked={job.submissions.some(isBulkRejectSelectable) && job.submissions.filter(isBulkRejectSelectable).every((s) => bulkSelectedIds.has(s.id))}
+                                          disabled={!job.submissions.some(isBulkRejectSelectable) || bulkRejecting}
+                                          onChange={(e) => setBulkSelectionForSubmissions(job.submissions, e.target.checked)}
+                                        />
+                                      </th>
                                       <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
                                       <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
                                       <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>

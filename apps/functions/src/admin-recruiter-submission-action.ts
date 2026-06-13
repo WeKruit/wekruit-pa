@@ -44,7 +44,7 @@ const COMMENT_MESSAGE_MAX = 4_000
 const RecruiterCandidateRejectionSchema = z.object({
   category: z.enum(RECRUITER_CANDIDATE_REJECTION_CATEGORIES),
   candidateTier: z.enum(RECRUITER_CANDIDATE_TIERS),
-  reason: z.string().transform((value) => value.trim()).pipe(z.string().min(1).max(4_000)),
+  reason: z.string().optional().transform((value) => (value ?? "").trim()).pipe(z.string().max(4_000)),
 })
 
 export const AdminRecruiterSubmissionActionInputSchema = z.object({

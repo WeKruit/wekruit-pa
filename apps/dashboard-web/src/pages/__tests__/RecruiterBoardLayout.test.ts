@@ -27,4 +27,28 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.match(source, /const jobIds = \[\.\.\.new Set\(loadedSubmissions\.flatMap\(jobLookupKeys\)\)\]/)
     assert.match(source, /const selectedJob = selectedSubmission \? findSubmissionJob\(jobDocs, selectedSubmission\) : undefined/)
   })
+
+  it("defaults rejection decisions to quality tier 3 and allows an empty reason", () => {
+    assert.match(source, /const DEFAULT_REJECTION_CATEGORY: RecruiterCandidateRejectionCategory = "quality"/)
+    assert.match(source, /const DEFAULT_REJECTION_TIER: RecruiterCandidateTier = "tier_3"/)
+    assert.match(source, /const rejectDisabled = blocked\b/)
+    assert.doesNotMatch(source, /const rejectDisabled = blocked \|\| !rejectReason\.trim\(\)/)
+  })
+
+  it("exposes bulk selection and bulk rejection controls on the board", () => {
+    assert.match(source, /function isBulkRejectSelectable\(submission: \{ status\?: string \}\): boolean/)
+    assert.match(source, /const \[bulkSelectedIds, setBulkSelectedIds\] = useState<Set<string>>/)
+    assert.match(source, /aria-label=\{`Select \$\{submission\.candidate\?\.name \?\? "candidate"\} for bulk rejection`\}/)
+    assert.match(source, /Reject selected/)
+    assert.match(source, /action: "reject",[\s\S]*rejection,/)
+  })
+
+  it("defaults the board table to pending submissions with an all-submissions toggle", () => {
+    assert.match(source, /export type BoardSubmissionFilter = "pending" \| "all"/)
+    assert.match(source, /function visibleBoardSubmissionsForFilter<T extends \{ status\?: string \}>/)
+    assert.match(source, /const \[submissionFilter, setSubmissionFilter\] = useState<BoardSubmissionFilter>\("pending"\)/)
+    assert.match(source, /Pending \{pendingTotal\}/)
+    assert.match(source, /All \{submissions\.length\}/)
+    assert.match(source, /visibleRecruiterGroups\.map\(renderGroup\)/)
+  })
 })

@@ -69,13 +69,12 @@ describe("runAdminRecruiterSubmissionAction", () => {
     }
   })
 
-  it("reject requires structured category, reusable tier, and reason", async () => {
+  it("reject requires structured category and candidate tier", async () => {
     const mfs = new MockFirestore()
     await seedSubmission(mfs)
 
     for (const input of [
       { submissionId: "sub-1", action: "reject" },
-      { submissionId: "sub-1", action: "reject", rejection: { category: "quality", candidateTier: "tier_1" } },
       { submissionId: "sub-1", action: "reject", rejection: { category: "unknown", candidateTier: "tier_1", reason: "weak" } },
       { submissionId: "sub-1", action: "reject", rejection: { category: "quality", candidateTier: "tier_4", reason: "weak" } },
     ]) {
@@ -84,6 +83,35 @@ describe("runAdminRecruiterSubmissionAction", () => {
         (err) => err instanceof HttpsError && err.code === "invalid-argument",
       )
     }
+  })
+
+  it("reject accepts a blank reason and stores an empty candidate response", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs, {
+      candidate: { name: "Yue H", link: "https://www.linkedin.com/in/yue-h" },
+    })
+
+    const result = await run(mfs, {
+      submissionId: "sub-1",
+      action: "reject",
+      rejection: { category: "quality", candidateTier: "tier_3" },
+    })
+
+    assert.deepEqual(result, { ok: true, submissionId: "sub-1", status: "rejected" })
+    const doc = await readDoc(mfs)
+    assert.equal(doc.status, "rejected")
+    assert.deepEqual(doc.adminDecision, { by: "admin1@wekruit.com", at: now })
+    assert.deepEqual(doc.rejection, {
+      category: "quality",
+      candidateTier: "tier_3",
+      reusableForOtherCompanies: false,
+      reason: "",
+      by: "admin1@wekruit.com",
+      at: now,
+    })
+    assert.equal(doc.recruiterFeedbackNote, "")
+    assert.equal(doc.recruiterFeedbackRating, 1)
+    assert.deepEqual(doc.recruiterFeedbackReasons, ["quality", "tier_3_hard_reject"])
   })
 
   it("reject stores why, reusable tier, and a global tracked candidate record", async () => {
