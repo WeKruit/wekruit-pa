@@ -11,6 +11,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { signOut } from "firebase/auth"
 import "../styles/recruiter-workspace.css"
 import { auth } from "../lib/firebase.js"
+import { RecruiterShell } from "../components/RecruiterShell.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import {
   RecruiterAccessGate,
@@ -311,8 +312,6 @@ export default function RecruiterWorkspace() {
   const [patternDismissed, setPatternDismissed] = useState(() => {
     try { return window.localStorage.getItem(PATTERN_DISMISS_KEY) === "1" } catch { return false }
   })
-  const [emailOn, setEmailOn] = useState(true)
-  const [emailSaving, setEmailSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -373,7 +372,6 @@ export default function RecruiterWorkspace() {
       setLoaded(false)
       return
     }
-    setEmailOn(session.recruiter.notificationPreferences?.submissionUpdatesEmail !== false)
     void reloadAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.recruiterId])
@@ -479,24 +477,7 @@ export default function RecruiterWorkspace() {
 
   const selected = submissions.find((s) => s.id === selectedId) ?? visibleSubs[0] ?? submissions[0] ?? null
 
-  // ---------- actions ----------
-  const handleToggleEmail = async () => {
-    if (emailSaving) return
-    const next = !emailOn
-    setEmailOn(next)
-    setEmailSaving(true)
-    try {
-      await updateRecruiterPreferences({ notificationPreferences: { submissionUpdatesEmail: next } })
-      flash(next ? "Email updates on" : "Email updates off")
-    } catch {
-      setEmailOn(!next)
-      flash("Couldn't save the email preference")
-    } finally {
-      setEmailSaving(false)
-    }
-  }
-
-  const handleSignOut = () => { void signOut(auth()).catch(() => undefined) }
+  // Email toggle + sign-out now live in the shared RecruiterShell sidebar.
 
   const handleResend = async (submissionId: string) => {
     if (resending) return
@@ -566,9 +547,6 @@ export default function RecruiterWorkspace() {
     return <RecruiterAccessGate inviteLink={inviteLink} onSessionClaimed={setSession} />
   }
 
-  const recruiter = session.recruiter
-  const initial = (recruiter.name || recruiter.email || "R").trim().charAt(0).toUpperCase()
-
   const titles: Record<View, { title: string; sub: string }> = {
     submissions: { title: "Submissions", sub: "Your candidates, status, and WeKruit feedback" },
     roles: { title: "Roles", sub: "Live WeKruit collab searches" },
@@ -580,62 +558,11 @@ export default function RecruiterWorkspace() {
   const sourcedPct = Math.min(100, Math.round((sourcedCount / QUARTER_SOURCED_GOAL) * 100))
 
   return (
-    <div className="rw-root">
-      {/* ============ SIDEBAR ============ */}
-      <aside className="rw-aside">
-        <div className="rw-brand">
-          <span className="rw-brand-mark">W</span>
-          <span className="rw-brand-name">
-            <strong>WeKruit</strong>
-            <em>Recruiter</em>
-          </span>
-        </div>
-
-        <nav className="rw-nav">
-          <Link to="/recruiters/jobs" className="rw-nav-item">
-            <span className="rw-nav-label"><span className="rw-nav-icon">{ICONS.roles}</span><span>Open roles</span></span>
-            <span className="rw-nav-count">{jobs?.length ?? 0}</span>
-          </Link>
-          <button
-            type="button"
-            className={`rw-nav-item ${view === "submissions" ? "is-active" : ""}`}
-            onClick={() => setView("submissions")}
-          >
-            <span className="rw-nav-label"><span className="rw-nav-icon">{ICONS.subs}</span><span>Submissions</span></span>
-            <span className={`rw-nav-count ${needsCount > 0 ? "is-warn" : ""}`}>{submissions.length}</span>
-          </button>
-        </nav>
-
-        <div className="rw-aside-foot">
-          <div className="rw-email-card">
-            <span className="rw-email-card-copy">
-              <strong>Email updates</strong>
-              <em>Status &amp; feedback</em>
-            </span>
-            <button
-              type="button"
-              className={`rw-toggle ${emailOn ? "is-on" : ""}`}
-              onClick={() => void handleToggleEmail()}
-              aria-label="Toggle email updates"
-              disabled={emailSaving}
-            >
-              <span className="rw-toggle-knob" />
-            </button>
-          </div>
-          <div className="rw-user">
-            <span className="rw-user-avatar">{initial}</span>
-            <span className="rw-user-meta">
-              <strong>{recruiter.name || "Recruiter"}</strong>
-              <em>{recruiter.email}</em>
-            </span>
-          </div>
-          <Link to="/recruiters/jobs" className="rw-signout" style={{ textDecoration: "none", textAlign: "center" }}>Browse open roles</Link>
-          <button type="button" className="rw-signout" onClick={handleSignOut}>Sign out</button>
-        </div>
-      </aside>
-
-      {/* ============ MAIN ============ */}
-      <main className="rw-main">
+    <RecruiterShell
+      openRolesCount={jobs?.length}
+      submissionsCount={submissions.length}
+      submissionsWarn={needsCount > 0}
+    >
         <header className="rw-header">
           <div className="rw-header-titles">
             <h1>{t.title}</h1>
@@ -848,8 +775,7 @@ export default function RecruiterWorkspace() {
             {toast}
           </div>
         )}
-      </main>
-    </div>
+    </RecruiterShell>
   )
 }
 
