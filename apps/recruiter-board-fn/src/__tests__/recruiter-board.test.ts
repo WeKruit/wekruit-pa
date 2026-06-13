@@ -3245,6 +3245,22 @@ describe("checklist cell coercion", () => {
     assert.deepEqual(result.value.checklist, { hard_1: "yes", fit_1: "strong" })
   })
 
+  it("accepts a submission with no candidateConsent — submit is the consent (recruiter-asserted)", () => {
+    // Regression: WeKruit never contacts candidates, so a submission must never be
+    // rejected for a missing candidateConsent flag. The recruiter UI no longer sends
+    // one; the old candidate_consent_required gate broke every submission.
+    const result = validateSubmission({
+      jobId: "public-job-1",
+      submitter: { name: "Sloane", email: "sloane@agency.com" },
+      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada" },
+      checklist: { hard_1: "yes" },
+      // intentionally no candidateConsent
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.candidateConsent, true)
+  })
+
   it("rejects malformed checklist values on submission create", () => {
     assert.deepEqual(validateSubmission({
       jobId: "public-job-1",
