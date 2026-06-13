@@ -55,6 +55,15 @@ import { getFirestore, FieldValue, type DocumentReference, type Firestore, type 
 import { getAuth } from "firebase-admin/auth"
 import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
+import {
+  computeRecruiterDigest,
+  selectRoles,
+  renderDigestEmail,
+  toMs as digestToMs,
+  type RawJob,
+  type RawSubmission,
+  type RecruiterDigest,
+} from "./recruiter-digest.js"
 
 // Memory floor for these endpoints. They serve small JSON payloads (11 docs
 // today, ~80 docs ceiling). Pinned to a fixed value rather than the platform
@@ -7127,5 +7136,170 @@ export const paRecruiterSubmission = onRequest(
       candidateConsentStatus: finalCandidateConsentStatus,
       ...(payload.sourcedCandidateId ? { sourcedCandidateId: payload.sourcedCandidateId } : {}),
     })
+  },
+)
+
+// ============================================================================
+// Recruiter digests — admin-triggered, MANUAL send. WeKruit emails RECRUITERS
+// only. Nothing here runs on a schedule: the admin dashboard previews each
+// recruiter's draft and presses send (one or all). A pa-recruiter-digest-sends
+// log powers a "last sent N days ago" nudge so the admin decides cadence
+// (target ~3 days) — there is no auto-send.
+// ============================================================================
+const RECRUITER_DIGEST_SENDS_COLLECTION = "pa-recruiter-digest-sends"
+const RECRUITER_DIGEST_WINDOW_DAYS = 3
+
+type RecruiterDigestPreviewItem = {
+  digest: RecruiterDigest
+  lastSentAt: string | null
+  lastSentBy: string | null
+  daysSinceSent: number | null
+}
+
+async function buildAllRecruiterDigests(
+  db: Firestore,
+  nowMs: number,
+  windowDays = RECRUITER_DIGEST_WINDOW_DAYS,
+): Promise<RecruiterDigestPreviewItem[]> {
+  const [recSnap, subSnap, jobSnap, sendSnap] = await Promise.all([
+    db.collection(RECRUITER_USERS_COLLECTION).get(),
+    db.collection(RECRUITER_SUBMISSIONS_COLLECTION).get(),
+    // Collab subset only — never scan the full pa-jobs catalog.
+    db.collection("pa-jobs").where("wekruitCollaborationStatus", "==", "collaborated").get(),
+    db.collection(RECRUITER_DIGEST_SENDS_COLLECTION).get(),
+  ])
+
+  const subsByRecruiter = new Map<string, RawSubmission[]>()
+  for (const doc of subSnap.docs) {
+    const s = doc.data() as RawSubmission
+    if (!s.recruiterId) continue
+    const list = subsByRecruiter.get(s.recruiterId)
+    if (list) list.push(s)
+    else subsByRecruiter.set(s.recruiterId, [s])
+  }
+
+  const jobs: RawJob[] = jobSnap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) }) as RawJob)
+    .filter((j) => j.recruiterBoard)
+  const { newRoles, priorityRoles } = selectRoles(jobs, nowMs)
+
+  const lastSent = new Map<string, { at: number; by: string | null }>()
+  for (const doc of sendSnap.docs) {
+    const x = doc.data() as { recruiterId?: string; sentAt?: unknown; sentByEmail?: string }
+    if (!x.recruiterId) continue
+    const at = digestToMs(x.sentAt)
+    const prev = lastSent.get(x.recruiterId)
+    if (!prev || at > prev.at) lastSent.set(x.recruiterId, { at, by: x.sentByEmail ?? null })
+  }
+
+  const items: RecruiterDigestPreviewItem[] = []
+  for (const doc of recSnap.docs) {
+    const prof = doc.data() as { name?: string; email?: string; status?: string }
+    if (prof.status === "blocked" || prof.status === "removed") continue
+    const digest = computeRecruiterDigest({
+      recruiter: { recruiterId: doc.id, name: prof.name, email: prof.email },
+      submissions: subsByRecruiter.get(doc.id) ?? [],
+      newRoles,
+      priorityRoles,
+      nowMs,
+      windowDays,
+    })
+    const ls = lastSent.get(doc.id)
+    items.push({
+      digest,
+      lastSentAt: ls?.at ? new Date(ls.at).toISOString() : null,
+      lastSentBy: ls?.by ?? null,
+      daysSinceSent: ls?.at ? Math.floor((nowMs - ls.at) / 86_400_000) : null,
+    })
+  }
+
+  // Most worth sending first: never-sent / most-overdue, then most-active.
+  return items.sort((a, b) => {
+    const aOver = a.daysSinceSent === null ? Number.MAX_SAFE_INTEGER : a.daysSinceSent
+    const bOver = b.daysSinceSent === null ? Number.MAX_SAFE_INTEGER : b.daysSinceSent
+    if (aOver !== bOver) return bOver - aOver
+    return b.digest.stats.newSubmitted - a.digest.stats.newSubmitted
+  })
+}
+
+export const paRecruiterDigestPreview = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: [PA_ADMIN_TOKEN_SECRET] },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") { res.status(204).send(""); return }
+    if (req.method !== "GET") { res.status(405).json({ ok: false, reason: "method_not_allowed" }); return }
+    const admin = await hiringBoardAdminEmail(req)
+    if (!admin) { res.status(403).json({ ok: false, reason: "forbidden" }); return }
+    try {
+      const items = await buildAllRecruiterDigests(getFirestore(), Date.now())
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, windowDays: RECRUITER_DIGEST_WINDOW_DAYS, recruiters: items })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      logger.error("recruiter_digest_preview_failed", { error: message })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterDigestSend = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: [...MAILGUN_SECRETS, PA_ADMIN_TOKEN_SECRET] },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") { res.status(204).send(""); return }
+    if (req.method !== "POST") { res.status(405).json({ ok: false, reason: "method_not_allowed" }); return }
+    const admin = await hiringBoardAdminEmail(req)
+    if (!admin) { res.status(403).json({ ok: false, reason: "forbidden" }); return }
+
+    const body = (req.body ?? {}) as { recruiterIds?: unknown; all?: unknown }
+    const all = body.all === true
+    const explicitIds = Array.isArray(body.recruiterIds)
+      ? body.recruiterIds.filter((x): x is string => typeof x === "string")
+      : []
+    if (!all && explicitIds.length === 0) {
+      res.status(400).json({ ok: false, reason: "no_recruiters_selected" })
+      return
+    }
+
+    const cfg = recruiterMailgunConfigFromEnv()
+    if (!cfg) { res.status(503).json({ ok: false, reason: "mailgun_not_configured" }); return }
+
+    const db = getFirestore()
+    try {
+      const items = await buildAllRecruiterDigests(db, Date.now())
+      const byId = new Map(items.map((i) => [i.digest.recruiterId, i]))
+      const targetIds = all ? items.map((i) => i.digest.recruiterId) : explicitIds
+
+      const results: { recruiterId: string; ok: boolean; reason?: string; messageId?: string }[] = []
+      for (const id of targetIds) {
+        const item = byId.get(id)
+        if (!item) { results.push({ recruiterId: id, ok: false, reason: "unknown_recruiter" }); continue }
+        const to = item.digest.recruiterEmail
+        if (!to) { results.push({ recruiterId: id, ok: false, reason: "no_email" }); continue }
+        const email = renderDigestEmail(item.digest)
+        const sent = await sendRecruiterMailgunEmail(cfg, { to, ...email })
+        if (sent.ok) {
+          await db.collection(RECRUITER_DIGEST_SENDS_COLLECTION).add({
+            recruiterId: id,
+            recruiterEmail: to,
+            sentByEmail: admin,
+            sentAt: FieldValue.serverTimestamp(),
+            subject: email.subject,
+            windowDays: item.digest.windowDays,
+            stats: item.digest.stats,
+            messageId: sent.messageId ?? null,
+          })
+          results.push({ recruiterId: id, ok: true, messageId: sent.messageId })
+        } else {
+          logger.warn("recruiter_digest_send_failed", { recruiterId: id, status: sent.status })
+          results.push({ recruiterId: id, ok: false, reason: `mailgun_${sent.status}` })
+        }
+      }
+      res.status(200).json({ ok: true, sent: results.filter((r) => r.ok).length, total: targetIds.length, results })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      logger.error("recruiter_digest_send_failed", { error: message })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
   },
 )

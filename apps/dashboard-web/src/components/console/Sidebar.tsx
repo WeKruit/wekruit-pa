@@ -87,6 +87,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     // routes stay alive in App.tsx; only the nav slims.
     items: [
       { to: "/admin/recruiter-hub", label: "Recruiter hub", hitl: true },
+      { to: "/admin/recruiter-digests", label: "Digests" },
       { to: "/admin/recruiter-access", label: "Invites & roster" },
     ],
   },

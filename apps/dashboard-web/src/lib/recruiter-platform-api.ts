@@ -162,3 +162,94 @@ export async function restoreRecruiterInviteCode(
     expiresAt: body.expiresAt ?? null,
   }
 }
+
+// ---------- recruiter digests (manual, admin-triggered) ----------
+
+export interface DigestStats {
+  newSubmitted: number
+  intoInterview: number
+  advanced: number
+  closed: number
+  activeNow: number
+  inInterviewNow: number
+  withClientNow: number
+  hiredLifetime: number
+  lifetimeTotal: number
+}
+
+export interface DigestRole {
+  jobId: string
+  title: string
+  company: string
+  location: string
+  tier?: string
+}
+
+export interface DigestCoaching {
+  topReasons: { label: string; count: number }[]
+  note: string | null
+  tip: string | null
+}
+
+export interface RecruiterDigest {
+  recruiterId: string
+  recruiterName: string
+  recruiterEmail: string
+  windowDays: number
+  stats: DigestStats
+  newRoles: DigestRole[]
+  priorityRoles: DigestRole[]
+  coaching: DigestCoaching
+  hasActivity: boolean
+}
+
+export interface RecruiterDigestPreviewItem {
+  digest: RecruiterDigest
+  lastSentAt: string | null
+  lastSentBy: string | null
+  daysSinceSent: number | null
+}
+
+export interface DigestSendResult {
+  recruiterId: string
+  ok: boolean
+  reason?: string
+  messageId?: string
+}
+
+export async function fetchRecruiterDigests(): Promise<{ windowDays: number; recruiters: RecruiterDigestPreviewItem[] }> {
+  const token = await auth().currentUser?.getIdToken()
+  if (!token) throw new Error("admin_auth_required")
+  const res = await fetch(`${FUNCTIONS_BASE}/paRecruiterDigestPreview`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    windowDays?: number
+    recruiters?: RecruiterDigestPreviewItem[]
+  }
+  if (!res.ok || !body.ok) throw new Error(body.reason ?? `paRecruiterDigestPreview HTTP ${res.status}`)
+  return { windowDays: body.windowDays ?? 3, recruiters: body.recruiters ?? [] }
+}
+
+export async function sendRecruiterDigests(
+  input: { recruiterIds?: string[]; all?: boolean },
+): Promise<{ sent: number; total: number; results: DigestSendResult[] }> {
+  const token = await auth().currentUser?.getIdToken()
+  if (!token) throw new Error("admin_auth_required")
+  const res = await fetch(`${FUNCTIONS_BASE}/paRecruiterDigestSend`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    sent?: number
+    total?: number
+    results?: DigestSendResult[]
+  }
+  if (!res.ok || !body.ok) throw new Error(body.reason ?? `paRecruiterDigestSend HTTP ${res.status}`)
+  return { sent: body.sent ?? 0, total: body.total ?? 0, results: body.results ?? [] }
+}
