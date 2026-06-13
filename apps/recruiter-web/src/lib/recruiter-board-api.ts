@@ -113,7 +113,10 @@ export interface SubmissionInput {
     link: string
   }
   checklist: { [itemId: string]: boolean | SubmissionChecklistValue }
-  candidateConsent: true
+  // Candidate consent is recruiter-asserted by default — WeKruit never contacts
+  // the candidate, so submitting IS the consent. Optional for back-compat; the
+  // server ignores it.
+  candidateConsent?: true
   // Split link fields. `candidate.link` stays the back-compat single value
   // (linkedin || resume); validateSubmission ignores unknown top-level keys
   // today, and the backend schema is being extended to store these.

@@ -116,7 +116,7 @@ type RowDraft = {
   resumeFileName?: string
 }
 
-type AddRowDraft = RowDraft & { consent: boolean }
+type AddRowDraft = RowDraft
 
 function emptyCells(): SheetCells {
   return {
@@ -137,7 +137,7 @@ function emptyCells(): SheetCells {
 }
 
 function emptyAddRowDraft(): AddRowDraft {
-  return { cells: emptyCells(), notes: "", checklist: {}, extraFields: {}, consent: false }
+  return { cells: emptyCells(), notes: "", checklist: {}, extraFields: {} }
 }
 
 function loadAddRowDraft(jobId: string): AddRowDraft {
@@ -151,7 +151,6 @@ function loadAddRowDraft(jobId: string): AddRowDraft {
         cells: { ...emptyCells(), ...(parsed.cells ?? {}) },
         checklist: parsed.checklist ?? {},
         extraFields: parsed.extraFields ?? {},
-        consent: Boolean(parsed.consent),
       }
     }
   } catch {
@@ -349,7 +348,6 @@ function addRowBlockers(draft: AddRowDraft, fields: RecruiterSubmitField[]): str
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
     else if (value && field.kind === "url" && !normalizeSheetUrl(value)) blockers.push(`${field.label} must be a link.`)
   }
-  if (!draft.consent) blockers.push("Candidate consent is required.")
   return blockers
 }
 
@@ -360,9 +358,8 @@ function formatSubmitFailure(reason?: string): string {
   if (reason === "candidate_already_sourced_for_role") {
     return "Another recruiter already has this candidate in motion for this role."
   }
-  if (reason === "missing_candidate_email") return "Add the candidate email so WeKruit can confirm consent."
+  if (reason === "missing_candidate_email") return "Add the candidate email."
   if (reason === "invalid_candidate_email") return "Enter a valid candidate email."
-  if (reason === "candidate_consent_required") return "Confirm candidate consent before submitting."
   if (reason === "recruiter_auth_required") return "Your session expired — sign in again from the recruiter home."
   return reason ?? "submission_failed"
 }
@@ -641,7 +638,6 @@ export default function RoleSheetPage() {
         submitter: { name: session.recruiter.name, email: session.recruiter.email },
         candidate: candidatePayload(addDraft),
         checklist: checklistPayload(addDraft),
-        candidateConsent: true,
         candidateLinkedinUrl: linkedin ?? undefined,
         candidateResumeUrl: resume ?? undefined,
         extraFields: extraFieldsPayload(addDraft, extraFieldDefs),
@@ -1112,10 +1108,6 @@ function AddCandidatePanel({
       {error && <div className="rs-sheet-error">Submission failed: {error}</div>}
 
       <div className="rs-addpanel__foot">
-        <label className="rs-consent">
-          <input type="checkbox" checked={draft.consent} onChange={(e) => onChange({ ...draft, consent: e.target.checked })} />
-          <span>Candidate consented to be submitted</span>
-        </label>
         <div className="rs-addpanel__foot-btns">
           <button type="button" className="rs-btn rs-btn--ghost" onClick={onClose}>Cancel</button>
           <button type="button" className="rs-btn rs-btn--save" disabled={!ready || submitting} onClick={onSubmit}>

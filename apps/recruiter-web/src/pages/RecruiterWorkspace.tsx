@@ -25,7 +25,6 @@ import {
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissionComments,
   fetchRecruiterSubmissions,
-  resendRecruiterCandidateConfirmation,
   updateRecruiterPreferences,
   type CollabJob,
   type RecruiterSubmissionComment,
@@ -122,20 +121,6 @@ function money(n: number): string {
 }
 
 // ---------- per-submission derived model ----------
-type ConsentState = "confirmed" | "pending" | "failed" | "unknown"
-function consentState(s: RecruiterSubmissionItem): ConsentState {
-  const raw = (s.candidateConfirmation?.status ?? s.candidateConsentStatus ?? "").toLowerCase()
-  if (raw.includes("confirm")) return "confirmed"
-  if (raw.includes("fail") || raw.includes("error") || raw.includes("bounce")) return "failed"
-  if (raw.includes("pend") || raw.includes("sent") || raw.includes("await")) return "pending"
-  return raw ? "unknown" : "unknown"
-}
-function consentMeta(c: ConsentState): { label: string; tone: Tone } {
-  if (c === "confirmed") return { label: "Candidate confirmed", tone: "success" }
-  if (c === "pending") return { label: "Awaiting candidate OK", tone: "warn" }
-  if (c === "failed") return { label: "Confirmation failed", tone: "danger" }
-  return { label: "Consent", tone: "mute" }
-}
 function hasFeedback(s: RecruiterSubmissionItem): boolean {
   return Boolean(
     (s.recruiterFeedbackNote && s.recruiterFeedbackNote.trim()) ||
@@ -151,18 +136,8 @@ function lastRequestedInfo(s: RecruiterSubmissionItem): { message: string; at?: 
   }
   return null
 }
-type NeedsModel = { tone: Tone; body: string; cta: string; action: "resend" | "scroll_feedback" | "scroll_thread" | "ack" }
+type NeedsModel = { tone: Tone; body: string; cta: string; action: "scroll_feedback" | "scroll_thread" | "ack" }
 function needsModel(s: RecruiterSubmissionItem): NeedsModel | null {
-  const consent = consentState(s)
-  const firstName = (s.candidate?.name ?? "The candidate").split(" ")[0]
-  if (consent === "pending" || consent === "failed") {
-    return {
-      tone: "warn",
-      body: `${firstName} hasn't confirmed yet. Candidates confirm before WeKruit reviews — resend the confirmation so this can start moving.`,
-      cta: "Resend confirmation",
-      action: "resend",
-    }
-  }
   const requested = lastRequestedInfo(s)
   if (requested && ACTIVE_STATUSES.concat("wekruit_interview").includes(s.status ?? "submitted")) {
     return {
@@ -181,7 +156,7 @@ function needsModel(s: RecruiterSubmissionItem): NeedsModel | null {
     }
   }
   const days = ageDays(s.createdAt)
-  if (ACTIVE_STATUSES.includes(s.status ?? "submitted") && consent === "confirmed" && days >= 4) {
+  if (ACTIVE_STATUSES.includes(s.status ?? "submitted") && days >= 4) {
     return {
       tone: "info",
       body: `This review has been open ${days} days. Hold more lookalikes until WeKruit gives a clearer signal.`,
@@ -354,7 +329,6 @@ export default function RecruiterWorkspace() {
   const [reply, setReply] = useState("")
   const [sending, setSending] = useState(false)
   const [composerError, setComposerError] = useState<string | null>(null)
-  const [resending, setResending] = useState(false)
   const feedbackRef = useRef<HTMLDivElement | null>(null)
   const threadRef = useRef<HTMLDivElement | null>(null)
 
@@ -512,22 +486,7 @@ export default function RecruiterWorkspace() {
 
   // Email toggle + sign-out now live in the shared RecruiterShell sidebar.
 
-  const handleResend = async (submissionId: string) => {
-    if (resending) return
-    setResending(true)
-    try {
-      await resendRecruiterCandidateConfirmation(submissionId)
-      flash("Confirmation resent")
-      await reloadAll()
-    } catch (e) {
-      flash(e instanceof Error ? e.message : "Resend failed")
-    } finally {
-      setResending(false)
-    }
-  }
-
-  const handleNeedsAction = (s: RecruiterSubmissionItem, nm: NeedsModel) => {
-    if (nm.action === "resend") { void handleResend(s.id); return }
+  const handleNeedsAction = (_s: RecruiterSubmissionItem, nm: NeedsModel) => {
     if (nm.action === "scroll_feedback") { feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); return }
     if (nm.action === "scroll_thread") { threadRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); return }
     flash("Noted")
@@ -784,7 +743,6 @@ export default function RecruiterWorkspace() {
                     onSend={() => void handleSendReply()}
                     sending={sending}
                     composerError={composerError}
-                    resending={resending}
                     onNeedsAction={handleNeedsAction}
                     onOpenRole={openRole}
                     feedbackRef={feedbackRef}
@@ -823,7 +781,6 @@ function DetailPane({
   onSend,
   sending,
   composerError,
-  resending,
   onNeedsAction,
   onOpenRole,
   feedbackRef,
@@ -838,14 +795,12 @@ function DetailPane({
   onSend: () => void
   sending: boolean
   composerError: string | null
-  resending: boolean
   onNeedsAction: (s: RecruiterSubmissionItem, nm: NeedsModel) => void
   onOpenRole: (jobId: string) => void
   feedbackRef: React.RefObject<HTMLDivElement | null>
   threadRef: React.RefObject<HTMLDivElement | null>
 }) {
   const sm = statusMeta(s.status)
-  const consent = consentMeta(consentState(s))
   const nm = needsModel(s)
   const steps = buildSteps(s)
   const fb = hasFeedback(s)
@@ -857,7 +812,6 @@ function DetailPane({
   const code = job?.recruiterBoard?.label?.companyCode || (s.companyLabelSnapshot ?? "—").slice(0, 2).toUpperCase()
   const timeline = [...(s.statusHistory ?? [])].reverse()
   const waiting = !fb && s.status !== "rejected"
-  const consentPending = consentState(s) === "pending"
 
   return (
     <section className="rw-detail">
@@ -869,7 +823,6 @@ function DetailPane({
           </div>
           <div className="rw-detail-pills">
             <span style={pillStyle(sm.tone)}>{sm.label}</span>
-            <span style={pillStyle(consent.tone)}>{consent.label}</span>
           </div>
         </div>
         <div className="rw-role-bar">
@@ -909,10 +862,9 @@ function DetailPane({
               type="button"
               className="rw-needs-cta"
               style={{ background: TONE[nm.tone].fg }}
-              disabled={nm.action === "resend" && resending}
               onClick={() => onNeedsAction(s, nm)}
             >
-              {nm.action === "resend" && resending ? "Resending…" : nm.cta}
+              {nm.cta}
             </button>
           </div>
         )}
@@ -983,11 +935,9 @@ function DetailPane({
           <div className="rw-waiting">
             <span className="rw-waiting-icon">{ICONS.clock}</span>
             <div>
-              <strong>{consentPending ? "Waiting on candidate confirmation" : "In WeKruit review"}</strong>
+              <strong>In WeKruit review</strong>
               <p>
-                {consentPending
-                  ? "WeKruit reviews once the candidate confirms. Feedback with a rating and reasons lands here after review."
-                  : "WeKruit is reviewing this packet. A rating, reasons, and a clear next step will appear here when it's done."}
+                WeKruit is reviewing this packet. A rating, reasons, and a clear next step will appear here when it's done.
               </p>
             </div>
           </div>
