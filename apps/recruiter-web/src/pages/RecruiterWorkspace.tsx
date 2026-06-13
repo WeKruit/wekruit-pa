@@ -7,7 +7,7 @@
  * (/recruiters/job/:jobId); this surface is the status + feedback home.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { signOut } from "firebase/auth"
 import "../styles/recruiter-workspace.css"
 import { auth } from "../lib/firebase.js"
@@ -286,9 +286,9 @@ const ICONS = {
 
 type View = "submissions" | "roles" | "role"
 type ListFilter = "all" | "needs" | "feedback" | "passed" | "submitted" | "review" | "interview" | "client" | "offer" | "hired"
-type RoleFilter = "all" | "new"
 
 export default function RecruiterWorkspace() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [inviteLink] = useState<RecruiterInviteLink | null>(readRecruiterInviteLinkFromLocation)
   const { session, authReady, profileLoadFailed, retryProfile, setSession } = useRecruiterSession()
@@ -302,11 +302,11 @@ export default function RecruiterWorkspace() {
 
   // ui state
   const tabParam = searchParams.get("tab")
-  const [view, setView] = useState<View>(tabParam === "submissions" ? "submissions" : tabParam === "roles" ? "roles" : "roles")
+  // Workspace is the cross-role submissions tracker. Roles live on the Open
+  // roles grid (/recruiters/jobs) → role page (/recruiters/job/:jobId).
+  const [view, setView] = useState<View>("submissions")
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
   const [filter, setFilter] = useState<ListFilter>("all")
-  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all")
   const [search, setSearch] = useState("")
   const [patternDismissed, setPatternDismissed] = useState(() => {
     try { return window.localStorage.getItem(PATTERN_DISMISS_KEY) === "1" } catch { return false }
@@ -542,7 +542,8 @@ export default function RecruiterWorkspace() {
     try { window.localStorage.setItem(PATTERN_DISMISS_KEY, "1") } catch { /* */ }
   }
 
-  const openRole = (jobId: string) => { setSelectedRoleId(jobId); setView("role") }
+  // One role surface: the dedicated role page (brief + your candidates + add).
+  const openRole = (jobId: string) => navigate(`/recruiters/job/${jobId}`)
   const refresh = async () => { await reloadAll(); flash("Status refreshed") }
 
   // ---------- gate ----------
@@ -575,20 +576,6 @@ export default function RecruiterWorkspace() {
   }
   const t = titles[view]
 
-  // roles view-model
-  const roleFilterDefs: Array<{ id: RoleFilter; label: string; match: (j: CollabJob) => boolean }> = [
-    { id: "all", label: "All roles", match: () => true },
-    { id: "new", label: "New this week", match: (j) => Date.now() - toMs(j.updatedAt) < 7 * 86_400_000 },
-  ]
-  const q = search.trim().toLowerCase()
-  const visibleRoles = (jobs ?? [])
-    .filter((j) => j.recruiterBoard?.active !== false)
-    .filter(roleFilterDefs.find((d) => d.id === roleFilter)?.match ?? (() => true))
-    .filter((j) => !q || `${j.title} ${j.recruiterBoard?.label?.company ?? ""} ${j.recruiterBoard?.label?.location ?? ""}`.toLowerCase().includes(q))
-
-  const selectedRole = selectedRoleId ? jobById.get(selectedRoleId) ?? null : null
-  const roleSubs = selectedRole ? submissions.filter((s) => s.jobId === selectedRole.jobId) : []
-
   const interviewPct = Math.min(100, Math.round((interviewsReached / QUARTER_INTERVIEW_GOAL) * 100))
   const sourcedPct = Math.min(100, Math.round((sourcedCount / QUARTER_SOURCED_GOAL) * 100))
 
@@ -605,14 +592,10 @@ export default function RecruiterWorkspace() {
         </div>
 
         <nav className="rw-nav">
-          <button
-            type="button"
-            className={`rw-nav-item ${view === "roles" || view === "role" ? "is-active" : ""}`}
-            onClick={() => setView("roles")}
-          >
-            <span className="rw-nav-label"><span className="rw-nav-icon">{ICONS.roles}</span><span>Roles</span></span>
-            <span className="rw-nav-count">{visibleRoles.length || (jobs?.length ?? 0)}</span>
-          </button>
+          <Link to="/recruiters/jobs" className="rw-nav-item">
+            <span className="rw-nav-label"><span className="rw-nav-icon">{ICONS.roles}</span><span>Open roles</span></span>
+            <span className="rw-nav-count">{jobs?.length ?? 0}</span>
+          </Link>
           <button
             type="button"
             className={`rw-nav-item ${view === "submissions" ? "is-active" : ""}`}
@@ -664,7 +647,7 @@ export default function RecruiterWorkspace() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={view === "roles" || view === "role" ? "Search roles…" : "Search candidates…"}
+                placeholder="Search candidates…"
                 autoComplete="off"
               />
             </div>
@@ -855,174 +838,6 @@ export default function RecruiterWorkspace() {
                   </section>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* ====================== ROLES ====================== */}
-          {view === "roles" && (
-            <div className="rw-view">
-              <section className="rw-role-filters">
-                {roleFilterDefs.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    className={`rw-role-filter ${roleFilter === d.id ? "is-active" : ""}`}
-                    onClick={() => setRoleFilter(d.id)}
-                  >
-                    {d.label}<em>{(jobs ?? []).filter((j) => j.recruiterBoard?.active !== false).filter(d.match).length}</em>
-                  </button>
-                ))}
-              </section>
-              <section className="rw-roles">
-                {visibleRoles.map((j) => {
-                  const label = j.recruiterBoard?.label
-                  const isNew = Date.now() - toMs(j.updatedAt) < 7 * 86_400_000
-                  const subCount = submissions.filter((s) => s.jobId === j.jobId).length
-                  return (
-                    <button key={j.jobId} type="button" className="rw-role-card" onClick={() => openRole(j.jobId)}>
-                      <span className="rw-role-card-code">{label?.companyCode || j.title.slice(0, 2).toUpperCase()}</span>
-                      <span className="rw-role-card-main">
-                        <span className="rw-role-card-title">
-                          <strong>{j.title}</strong>
-                          <span style={pillStyle("success")}>Open</span>
-                          {isNew && <span style={pillStyle("live")}>New</span>}
-                        </span>
-                        <span className="rw-role-card-meta">
-                          {[label?.company, label?.location, j.compSummary].filter(Boolean).join(" · ")}
-                        </span>
-                      </span>
-                      <span className="rw-role-card-fee">
-                        <strong>Placement fee</strong>
-                        <em>paid in 3 · +$50 / interview</em>
-                      </span>
-                      <span className="rw-role-card-end">
-                        <span className="rw-role-card-count">
-                          <strong>{subCount}</strong>
-                          <em>yours</em>
-                        </span>
-                        {ICONS.chevR}
-                      </span>
-                    </button>
-                  )
-                })}
-                {jobs && visibleRoles.length === 0 && <p className="rw-empty">No roles match this filter.</p>}
-                {!jobs && <p className="rw-empty">Loading roles…</p>}
-              </section>
-            </div>
-          )}
-
-          {/* ====================== ROLE DETAIL ====================== */}
-          {view === "role" && selectedRole && (
-            <div className="rw-view" style={{ maxWidth: 1000 }}>
-              <button type="button" className="rw-back" onClick={() => setView("roles")}>
-                {ICONS.back}
-                All roles
-              </button>
-
-              <section className="rw-role-hero">
-                <span className="rw-role-hero-code">{selectedRole.recruiterBoard?.label?.companyCode || selectedRole.title.slice(0, 2).toUpperCase()}</span>
-                <div className="rw-role-hero-main">
-                  <div className="rw-role-hero-top">
-                    <div>
-                      <h2>{selectedRole.title}</h2>
-                      <p className="rw-role-hero-meta">
-                        {[selectedRole.recruiterBoard?.label?.company, selectedRole.recruiterBoard?.label?.location].filter(Boolean).join(" · ")}
-                      </p>
-                    </div>
-                    <Link to={`/recruiters/job/${selectedRole.jobId}`} className="rw-submit-btn">
-                      {ICONS.plus}
-                      Submit a candidate
-                    </Link>
-                  </div>
-                  <div className="rw-role-stats">
-                    {selectedRole.compSummary && (
-                      <span className="rw-role-stat"><em>Compensation</em><strong>{selectedRole.compSummary}</strong></span>
-                    )}
-                    <span className="rw-role-stat"><em>Placement fee</em><strong className="is-green">Per role terms · paid in 3</strong></span>
-                    <span className="rw-role-stat"><em>Your submissions</em><strong>{roleSubs.length}</strong></span>
-                  </div>
-                </div>
-              </section>
-
-              <div className="rw-role-cols">
-                <section className="rw-panel">
-                  <h3>What WeKruit screens for</h3>
-                  <div className="rw-screen-rows">
-                    {(selectedRole.recruiterBoard?.checklist?.groups ?? []).flatMap((g) =>
-                      g.items.map((item) => {
-                        const toneMap: Record<string, Tone> = { hard: "danger", fit: "info", bonus: "success", anti: "mute" }
-                        const labelMap: Record<string, string> = { hard: "Hard", fit: "Fit", bonus: "Bonus", anti: "Anti" }
-                        const tone = toneMap[g.kind] ?? "mute"
-                        return (
-                          <div key={item.id} className="rw-screen-row">
-                            <span className="rw-screen-chip" style={{ background: TONE[tone].bg, color: TONE[tone].fg }}>
-                              {labelMap[g.kind] ?? g.kind}
-                            </span>
-                            <span>{item.text}</span>
-                          </div>
-                        )
-                      }),
-                    )}
-                    {(selectedRole.recruiterBoard?.checklist?.groups ?? []).length === 0 && (
-                      <p className="rw-empty" style={{ padding: "12px 0" }}>Screening checklist coming soon.</p>
-                    )}
-                  </div>
-                  {selectedRole.jdBlocks.length > 0 && (
-                    <details className="rw-jd">
-                      <summary>Full job description{ICONS.chevD}</summary>
-                      <div className="rw-jd-body">
-                        {selectedRole.jdBlocks.map((b, i) => (
-                          <div key={i} style={{ margin: i === 0 ? "12px 0 0" : "10px 0 0" }}>
-                            {b.heading ? <strong style={{ display: "block", marginBottom: 2 }}>{b.heading}</strong> : null}
-                            {typeof b.body === "string" && b.body.trim() ? <p style={{ margin: 0 }}>{b.body}</p> : null}
-                            {b.items && b.items.length > 0 && (
-                              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                                {b.items.map((item, j) => <li key={j}>{item}</li>)}
-                              </ul>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  )}
-                </section>
-
-                <section className="rw-panel">
-                  <h3>Your submissions for this role</h3>
-                  <div className="rw-role-subs">
-                    {roleSubs.map((s) => {
-                      const sm = statusMeta(s.status)
-                      return (
-                        <button
-                          key={s.id}
-                          type="button"
-                          className="rw-role-sub"
-                          onClick={() => { setSelectedId(s.id); setView("submissions") }}
-                        >
-                          <span className="rw-role-sub-meta">
-                            <strong>{s.candidate?.name ?? "Candidate"}</strong>
-                            <em>{s.candidate?.currentRole ?? ""}</em>
-                          </span>
-                          <span style={pillStyle(sm.tone)}>{sm.label}</span>
-                        </button>
-                      )
-                    })}
-                    {roleSubs.length === 0 && (
-                      <p className="rw-role-subs-empty">No submissions yet. You'll see candidate ownership and status here once you submit.</p>
-                    )}
-                  </div>
-                </section>
-              </div>
-            </div>
-          )}
-
-          {view === "role" && !selectedRole && (
-            <div className="rw-view">
-              <button type="button" className="rw-back" onClick={() => setView("roles")}>
-                {ICONS.back}
-                All roles
-              </button>
-              <p className="rw-empty">Role not found.</p>
             </div>
           )}
         </div>
