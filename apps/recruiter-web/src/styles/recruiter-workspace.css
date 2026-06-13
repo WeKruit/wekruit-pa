@@ -111,11 +111,15 @@
 
 /* ---------- main ---------- */
 .rw-main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; }
+/* Shared shell content cell — pages (Open roles, Role page) scroll their own
+   content here; the sidebar stays fixed. */
+.rw-shell-main { min-width: 0; overflow-y: auto; position: relative; background: #f7f7f5; }
 .rw-header {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 18px 28px; border-bottom: 1px solid #e3d6c3;
   background: rgba(245, 237, 227, 0.85); backdrop-filter: blur(10px);
   flex-shrink: 0; z-index: 5;
+  position: sticky; top: 0;
 }
 .rw-header-titles { display: flex; align-items: baseline; gap: 14px; }
 .rw-header h1 {

@@ -30,7 +30,7 @@ import {
 } from "../lib/recruiter-board-api.js"
 import { trackEvent } from "../lib/analytics.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
-import { SiteHeader } from "../components/SiteHeader.js"
+import { RecruiterShell } from "../components/RecruiterShell.js"
 import { buildSubmissionStatusStepper, SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 
 const SHEET_DRAFT_KEY_PREFIX = "rs-draft-v1:"
@@ -707,17 +707,14 @@ export default function RoleSheetPage() {
     }
   }
 
-  if (error) return <div className="rs-page"><SiteHeader /><div className="rs-state error">Could not load: {error}</div></div>
-  if (!authReady) return <div className="rs-page"><SiteHeader /><div className="rs-state">Loading recruiter account…</div></div>
-  if (!jobs) return <div className="rs-page"><SiteHeader /><div className="rs-state">Loading…</div></div>
+  if (error) return <RecruiterShell><div className="rs-state error">Could not load: {error}</div></RecruiterShell>
+  if (!authReady) return <RecruiterShell><div className="rs-state">Loading recruiter account…</div></RecruiterShell>
+  if (!jobs) return <RecruiterShell><div className="rs-state">Loading…</div></RecruiterShell>
   if (!job) {
     return (
-      <div className="rs-page">
-        <SiteHeader />
-        <main className="rs-shell">
-          <div className="rs-state error">This role is not on the board anymore.</div>
-        </main>
-      </div>
+      <RecruiterShell>
+        <div className="rs-state error">This role is not on the board anymore.</div>
+      </RecruiterShell>
     )
   }
 
@@ -726,8 +723,7 @@ export default function RoleSheetPage() {
   const selectedRow = roleSubmissions.find((row) => row.id === selectedRowId) ?? null
 
   return (
-    <div className="rs-page">
-      <SiteHeader />
+    <RecruiterShell openRolesCount={jobs.length} submissionsCount={submissions.length}>
       <main className={`rs-shell2${selectedRow ? " has-detail" : ""}`}>
         {/* LEFT — role brief: title, comp, the rubric WeKruit screens for, full JD */}
         <aside className="rs-brief">
@@ -885,7 +881,7 @@ export default function RoleSheetPage() {
       )}
 
       {toast && <div className="rs-toast" role="status">{toast}</div>}
-    </div>
+    </RecruiterShell>
   )
 }
 

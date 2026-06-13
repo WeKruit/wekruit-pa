@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
-import { SiteHeader } from "../components/SiteHeader.js"
+import { RecruiterShell } from "../components/RecruiterShell.js"
 import "../styles/open-jobs.css"
 import { fetchCollabJobs, type CollabJob } from "../lib/recruiter-board-api.js"
 
@@ -61,9 +61,7 @@ export default function OpenJobsPage() {
   }, [jobs, company])
 
   return (
-    <div className="oj-page">
-      <SiteHeader />
-
+    <RecruiterShell openRolesCount={jobs?.length}>
       <main className="oj-main">
         <div className="oj-hero">
           <h1>Open roles</h1>
@@ -158,6 +156,6 @@ export default function OpenJobsPage() {
           </div>
         )}
       </main>
-    </div>
+    </RecruiterShell>
   )
 }
