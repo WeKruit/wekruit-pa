@@ -105,6 +105,57 @@ test("add form gates Submit on required identity URLs and required submit fields
   assert.match(source, /disabled=\{!ready \|\| submitting\}/)
 })
 
+test("add form also gates Submit on unanswered hard/fit/anti checklist items (bonuses optional)", () => {
+  const blockersSlice = sliceBetween(source, "function addRowBlockers", "\nfunction formatSubmitFailure")
+  // required tiers come from a single list; bonus is excluded
+  assert.match(source, /const CHECKLIST_REQUIRED_KINDS: ChecklistKind\[\] = \["hard", "fit", "anti"\]/)
+  assert.match(blockersSlice, /CHECKLIST_REQUIRED_KINDS\.includes\(col\.kind\) && !\(draft\.checklist\[col\.id\] \?\? ""\)/)
+  assert.match(blockersSlice, /blockers\.push\("Answer every hard, fit, and anti checklist item \(bonuses optional\)\."\)/)
+  // the gate reads from the job's checklist columns, threaded into the blocker fn
+  assert.match(source, /addRowBlockers\(addDraft, extraFieldDefs, checklistColumns\)/)
+})
+
+test("checklist is grouped into required/optional tiers with the contract rule text", () => {
+  // tier metadata: label + required flag + one-line rule, in the shared order
+  const metaSlice = sliceBetween(source, "const CHECKLIST_TIER_META", "\n}")
+  assert.match(metaSlice, /hard: \{ label: "Hard filters", required: true, rule: "Must mostly be met to be considered a match\." \}/)
+  assert.match(metaSlice, /fit: \{ label: "Strong fit signals", required: true, rule: "Ideal candidates hit 2 or more\." \}/)
+  assert.match(metaSlice, /anti: \{ label: "Anti-signals", required: true, rule: "If any is present, likely NOT a match\." \}/)
+  assert.match(metaSlice, /bonus: \{ label: "Bonuses", required: false, rule: "Nice to have — leave blank if unknown\." \}/)
+  // display order hard → fit → anti → bonus, and a grouping helper that filters by kind
+  assert.match(source, /const CHECKLIST_TIER_DISPLAY_ORDER: ChecklistKind\[\] = \["hard", "fit", "anti", "bonus"\]/)
+  assert.match(source, /function groupChecklistByTier\(columns: ChecklistColumn\[\]\): ChecklistTierGroup\[\]/)
+  // one shared renderer drives both the submit form and the read-only detail
+  assert.match(source, /function ChecklistTiers\(/)
+  assert.match(source, /<span className=\{`rs-cltier__req \$\{meta\.required \? "is-required" : "is-optional"\}`\}>/)
+  assert.match(source, /<p className="rs-cltier__rule">\{meta\.rule\}<\/p>/)
+  // tier-group header + required-badge styles exist
+  assert.match(css, /\.rs-cltier__head/)
+  assert.match(css, /\.rs-cltier__req\.is-required/)
+  assert.match(css, /\.rs-cltier__req\.is-optional/)
+})
+
+test("read-only detail shows checked-vs-failed (anti inverted) + the score legend", () => {
+  // anti tier inverts: a present anti is a red flag, absent is clear
+  const visSlice = sliceBetween(source, "function checklistVisual", "\nfunction ")
+  assert.match(visSlice, /if \(kind === "anti"\)/)
+  assert.match(visSlice, /word: "flag present", tone: "notmet"/)
+  assert.match(visSlice, /word: "clear", tone: "met"/) // anti "no" reads as clear/green
+  assert.match(visSlice, /word: "not met", tone: "notmet"/) // positive "no"
+  assert.match(visSlice, /word: "not answered", tone: "unanswered"/)
+  // glyph + word render with a tone class; colors per met/partial/notmet/unanswered
+  assert.match(source, /<span className=\{`rs-clmark is-\$\{vis\.tone\}`\}>/)
+  for (const tone of ["met", "partial", "notmet", "unanswered"]) {
+    assert.match(css, new RegExp(`\\.rs-clmark\\.is-${tone}`), `clmark tone style for ${tone}`)
+  }
+  // score legend line: Hard X/Y met · Fit X/Y · Bonus X/Y · Anti N flag(s)
+  assert.match(source, /function checklistScoreLegend\(s: ChecklistScore\): string/)
+  assert.match(source, /`Hard \$\{s\.hardMet\}\/\$\{s\.hardTotal\} met · `/)
+  assert.match(source, /`Anti \$\{s\.antiFlags\} flag\(s\)\. `/)
+  assert.match(source, /A match needs most hard filters met and no anti-flags\./)
+  assert.match(source, /checklistScoreLegend\(checklistScore\(checklistColumns, view\.checklist\)\)/)
+})
+
 test("disabled add-form submit explains the blocking fields inline", () => {
   const addFormSlice = sliceBetween(source, "function AddCandidateForm(", "\nfunction DetailDrawer(")
   assert.match(addFormSlice, /const submitBlockerId = "rs-add-form-submit-blockers"/)

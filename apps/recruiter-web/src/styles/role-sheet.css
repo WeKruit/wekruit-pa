@@ -763,6 +763,38 @@
 .rs-clrow.is-bonus { border-left: 2px solid #b6c4cc; padding-left: 8px; }
 .rs-clrow.is-anti { border-left: 2px solid #e3c79a; padding-left: 8px; }
 
+/* ---- tiered checklist (hard → fit → anti → bonus) ------------------------- */
+/* Grouped headers + per-tier required/optional badge + one-line rule, on both
+   the submit form and the read-only detail view so the two surfaces agree. */
+.rs-cltiers { display: flex; flex-direction: column; gap: 14px; }
+.rs-cltier { border-radius: 8px; }
+.rs-cltier__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+.rs-cltier__chip { flex-shrink: 0; }
+.rs-cltier__label { font-size: 12.5px; font-weight: 700; color: #3a3a36; letter-spacing: 0.01em; }
+.rs-cltier__req {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 99px; line-height: 14px;
+}
+.rs-cltier__req.is-required { background: #f1ddd4; color: #9a3b2a; }
+.rs-cltier__req.is-optional { background: #e7e7e2; color: #7a7a72; }
+.rs-cltier__rule { margin: 0 0 6px; font-size: 11px; color: #8a8a82; line-height: 1.35; }
+
+/* score legend / hint lines */
+.rs-cl-score {
+  margin: 0 0 12px; font-size: 11px; color: #6a6a64; line-height: 1.4;
+  background: #f7f4ef; border-radius: 6px; padding: 6px 9px;
+}
+.rs-cl-hint { margin: 0 0 12px; font-size: 11px; color: #8a8a82; line-height: 1.35; }
+
+/* read-only answer mark: glyph + word, colored per met/partial/notmet/unanswered */
+.rs-clmark { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+.rs-clmark__glyph { font-size: 13px; line-height: 1; font-weight: 700; }
+.rs-clmark__word { font-size: 11.5px; }
+.rs-clmark.is-met { color: #2f7d3f; }
+.rs-clmark.is-partial { color: #b57826; }
+.rs-clmark.is-notmet { color: #c0392b; }
+.rs-clmark.is-unanswered { color: #a3a39a; }
+
 /* ---- inline add panel ---------------------------------------------------- */
 .rs-addpanel { background: #fff; border: 1px solid #e6e6e2; border-radius: 12px; padding: 18px; margin-bottom: 16px; }
 .rs-addpanel__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }

@@ -765,6 +765,13 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .dt tbody tr:nth-child(even) { background: var(--cream); }
 .dt tbody tr:hover { background: var(--cream-2); }
 .dt tbody tr:last-child { border-bottom: 0; }
+/* Master-detail: highlight the row whose detail is open in the side panel. */
+.dt tbody tr.dt-row--selected,
+.dt tbody tr.dt-row--selected:nth-child(even),
+.dt tbody tr.dt-row--selected:hover {
+  background: #eaf3ec;
+  box-shadow: inset 3px 0 0 0 #1e6b34;
+}
 .dt td {
   padding: 10px 14px;
   vertical-align: middle;
@@ -773,6 +780,59 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .dt td.muted { color: var(--ink-3); }
 .dt td.mono { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); }
 .dt td.num  { font-variant-numeric: tabular-nums; text-align: right; }
+
+/* Submissions master-detail: table left, submission detail right. Stacks on
+   narrow viewports. The detail column sticks below the topbar while scrolling. */
+.sub-masterdetail {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.sub-masterdetail__list { min-width: 0; }
+.sub-masterdetail__detail {
+  min-width: 0;
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+@media (max-width: 1100px) {
+  .sub-masterdetail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sub-masterdetail__detail {
+    position: static;
+    max-height: none;
+  }
+}
+
+/* Submission detail panel — internal grids that must reflow in the narrow
+   detail column (and when the layout stacks). Container-query based so they
+   respond to the panel width, not the viewport. */
+.sub-detail__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.sub-detail__cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.sub-detail__feedbackgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.sub-detail__payoutgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
 
 /* Metric strip */
 .strip {
