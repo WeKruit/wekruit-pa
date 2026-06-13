@@ -2601,6 +2601,78 @@ describe("fetchCollabJobs admin payload", () => {
   })
 })
 
+describe("fetchCollabJobs priority", () => {
+  it("exposes only tier+rank and strips internal note/emailAudience", async () => {
+    const db = fakeDb([
+      {
+        id: "urgent-role",
+        data: () => ({
+          title: "Staff Engineer",
+          publicId: "p-urgent",
+          recruiterBoard: {
+            ...sampleRecruiterBoard,
+            priority: {
+              tier: "urgent",
+              rank: 3,
+              note: "ping the top recruiters",
+              emailAudience: "recruiters",
+              updatedByEmail: "ops@wekruit.com",
+            },
+          },
+        }),
+      },
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
+    assert.deepEqual(jobs[0]!.recruiterBoard.priority, { tier: "urgent", rank: 3 })
+  })
+
+  it("omits priority for a normal/unranked role so no badge renders", async () => {
+    const db = fakeDb([
+      {
+        id: "plain-role",
+        data: () => ({
+          title: "Engineer",
+          publicId: "p-plain",
+          recruiterBoard: { ...sampleRecruiterBoard, priority: { tier: "normal", rank: null } },
+        }),
+      },
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
+    assert.equal(jobs[0]!.recruiterBoard.priority, undefined)
+  })
+
+  it("sorts urgent above a lower-sortOrder normal role, and paused last", async () => {
+    const db = fakeDb([
+      {
+        id: "normal-first-by-sortorder",
+        data: () => ({
+          title: "Normal role",
+          publicId: "p-normal",
+          recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 0 },
+        }),
+      },
+      {
+        id: "urgent-high-sortorder",
+        data: () => ({
+          title: "Urgent role",
+          publicId: "p-urgent2",
+          recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 99, priority: { tier: "urgent", rank: null } },
+        }),
+      },
+      {
+        id: "paused-low-sortorder",
+        data: () => ({
+          title: "Paused role",
+          publicId: "p-paused",
+          recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 1, priority: { tier: "paused", rank: null } },
+        }),
+      },
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
+    assert.deepEqual(jobs.map((j) => j.title), ["Urgent role", "Normal role", "Paused role"])
+  })
+})
+
 describe("fetchCollabJobs anonymous payload", () => {
   it("returns publicId as jobId and real company name when isAdmin === false", async () => {
     const db = fakeDb([

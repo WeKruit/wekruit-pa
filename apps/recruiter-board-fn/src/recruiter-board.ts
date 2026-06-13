@@ -213,6 +213,15 @@ export interface RecruiterBoardSubmitField {
   placeholder?: string
 }
 
+// Recruiter-safe slice of the admin priority object (recruiterBoard.priority).
+// Only `tier` + `rank` are exposed to recruiters; the internal `note` and
+// `emailAudience` (ops email-angle metadata) stay admin-only.
+export type RecruiterBoardPriorityTier = "urgent" | "high" | "normal" | "paused"
+export interface RecruiterBoardPriority {
+  tier: RecruiterBoardPriorityTier
+  rank: number | null
+}
+
 export interface RecruiterBoardPayload {
   active: boolean
   sortOrder: number
@@ -221,6 +230,38 @@ export interface RecruiterBoardPayload {
   checklist: RecruiterBoardChecklist
   interviewProcess?: string
   submitFields?: RecruiterBoardSubmitField[]
+  priority?: RecruiterBoardPriority
+}
+
+const PRIORITY_TIERS: readonly RecruiterBoardPriorityTier[] = ["urgent", "high", "normal", "paused"]
+
+// Read the recruiter-safe priority slice off a stored recruiterBoard. Returns
+// undefined when no priority has been set (so unranked roles stay clean).
+function publicRecruiterBoardPriority(raw: unknown): RecruiterBoardPriority | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
+  const p = raw as Record<string, unknown>
+  const tier = typeof p.tier === "string" && (PRIORITY_TIERS as readonly string[]).includes(p.tier)
+    ? (p.tier as RecruiterBoardPriorityTier)
+    : "normal"
+  const rankNum = typeof p.rank === "number" ? p.rank : Number(p.rank)
+  const rank = Number.isInteger(rankNum) && rankNum >= 1 && rankNum <= 999 ? rankNum : null
+  // Nothing meaningful set → omit so the badge/sort treat it as plain.
+  if (tier === "normal" && rank === null) return undefined
+  return { tier, rank }
+}
+
+// Sort weight: lower shown first. urgent → high → normal → paused, and within a
+// tier ranked roles (rank asc) float above unranked.
+function priorityScore(priority?: RecruiterBoardPriority): number {
+  const tierWeight: Record<RecruiterBoardPriorityTier, number> = {
+    urgent: 0,
+    high: 1_000,
+    normal: 2_000,
+    paused: 3_000,
+  }
+  const base = priority ? tierWeight[priority.tier] : tierWeight.normal
+  const rankPart = priority?.rank != null ? priority.rank : 999
+  return base + rankPart
 }
 
 export interface JdBlock {
@@ -1049,9 +1090,16 @@ export async function fetchCollabJobs(
       const description = sepIdx >= 0 ? oldLabel.slice(sepIdx) : ""
       revealedCompany = companyRaw + description
     }
-    const revealedBoard: RecruiterBoardPayload = companyRaw
-      ? { ...recruiterBoardForCaller, label: { ...recruiterBoardForCaller.label, company: revealedCompany } }
-      : recruiterBoardForCaller
+    // Strip the raw stored priority before spreading — it carries admin-only
+    // `note`/`emailAudience`. Re-add only the recruiter-safe sanitized slice
+    // (omitted entirely for normal/unranked roles).
+    const { priority: rawPriority, ...boardWithoutPriority } = recruiterBoardForCaller
+    const priority = publicRecruiterBoardPriority(rawPriority)
+    const revealedBoard: RecruiterBoardPayload = {
+      ...boardWithoutPriority,
+      ...(companyRaw ? { label: { ...recruiterBoardForCaller.label, company: revealedCompany } } : {}),
+      ...(priority ? { priority } : {}),
+    }
     allMatching.push({
       jobId: jobIdForCaller,
       title: String(d.title ?? ""),
@@ -1097,7 +1145,14 @@ export async function fetchCollabJobs(
     }
   }
 
-  allMatching.sort((a, b) => a.recruiterBoard.sortOrder - b.recruiterBoard.sortOrder)
+  // Priority first (urgent → paused, ranked floats up), then the curated
+  // sortOrder as the stable tiebreak.
+  allMatching.sort((a, b) => {
+    const pa = priorityScore(a.recruiterBoard.priority)
+    const pb = priorityScore(b.recruiterBoard.priority)
+    if (pa !== pb) return pa - pb
+    return a.recruiterBoard.sortOrder - b.recruiterBoard.sortOrder
+  })
 
   const total = allMatching.length
   const offset = Math.max(0, Math.floor(options.offset ?? 0))
@@ -1245,6 +1300,14 @@ const COLLAB_JOBS_LIST_SCHEMA = Object.freeze({
               active: { type: "boolean" },
               sortOrder: { type: "number" },
               interviewProcess: { type: "string" },
+              priority: {
+                type: "object",
+                required: ["tier"],
+                properties: {
+                  tier: { type: "string", enum: ["urgent", "high", "normal", "paused"] },
+                  rank: { type: ["number", "null"] },
+                },
+              },
               submitFields: {
                 type: "array",
                 items: {

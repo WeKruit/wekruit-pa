@@ -70,6 +70,12 @@ export interface CollabJob {
     }
     submitFields?: RecruiterSubmitField[]
     interviewProcess?: string
+    // Recruiter-safe priority slice (set by admin Role priorities). `tier`
+    // drives the urgency badge; backend already sorts urgent→paused.
+    priority?: {
+      tier: "urgent" | "high" | "normal" | "paused"
+      rank?: number | null
+    }
   }
 }
 
