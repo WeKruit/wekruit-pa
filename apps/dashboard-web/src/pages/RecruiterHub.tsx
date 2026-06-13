@@ -11,7 +11,7 @@ const HUB_TABS = [
   { key: "sourced", label: "Sourced" },
   { key: "feedback", label: "Feedback" },
   { key: "questions", label: "Questions" },
-  { key: "roles", label: "Roles" },
+  { key: "roles", label: "Role priorities" },
 ] as const
 
 type HubTab = (typeof HUB_TABS)[number]["key"]

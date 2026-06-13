@@ -80,11 +80,10 @@ const OLD_NAV_ROUTES = [
 
 // 2026-06-09 recruiter-hub consolidation: these routes stay ALIVE in App.tsx
 // (deep links and the hub's tabs still hit them) but are intentionally NOT in
-// the nav anymore — the recruiters section slimmed to Recruiter hub + Invites
-// & roster. The old-route-preservation test must therefore assert they are
-// ABSENT, not present, or the slim regresses back to an 8-item section.
+// the recruiter nav anymore — the recruiters section slimmed to Recruiter hub
+// + Invites & roster. /admin/recruiter-roles is promoted into the Jobs section
+// as the operator-facing role-priority editor.
 const CONSOLIDATED_RECRUITER_ROUTES = [
-  "/admin/recruiter-roles",
   "/admin/recruiter-quality",
   "/admin/recruiter-applications",
   "/admin/recruiter-sourced",

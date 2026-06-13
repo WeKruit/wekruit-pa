@@ -1132,9 +1132,9 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
     },
     {
       key: "roles",
-      label: "Roles",
+      label: "Role priorities",
       to: "/admin/recruiter-roles",
-      detail: "pa-jobs readiness",
+      detail: "Collab job rank, urgency, and email audience",
     },
     {
       key: "quality",
@@ -1572,7 +1572,7 @@ function RecruiterRolesPanel() {
         <OpsMetric label="Activation gaps" value={activationGaps.length} meta={`${noMotion.length} with no motion`} />
       </div>
       <Panel
-        title="Recruiter role control"
+        title="Role priorities"
         eyebrow="pa-jobs, recruiterBoard, applications, calibration"
         actions={<button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>}
       >
