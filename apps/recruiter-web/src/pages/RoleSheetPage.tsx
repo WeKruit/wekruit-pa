@@ -904,6 +904,11 @@ function SheetRow({
   const setCell = (id: SheetCellId, value: string) =>
     onEdit((d) => ({ ...d, cells: { ...d.cells, [id]: value } }))
 
+  // Reject reason shown as a full-width row under a rejected submission so it's
+  // readable without opening the conversation. Matches the My Submissions list.
+  const rejectReason = row.status === "rejected" ? (row.recruiterFeedbackNote?.trim() ?? "") : ""
+  const totalColumns = CANDIDATE_COLUMNS.length + checklistColumns.length + extraFieldDefs.length + 5
+
   const renderCandidateCell = (column: SheetColumn) => {
     const value = view.cells[column.id]
     if (column.id === "resume") {
@@ -943,6 +948,7 @@ function SheetRow({
   }
 
   return (
+    <>
     <tr className="rs-row-real">
       {CANDIDATE_COLUMNS.map((column) => (
         <td
@@ -1024,6 +1030,15 @@ function SheetRow({
         )}
       </td>
     </tr>
+    {rejectReason && (
+      <tr className="rs-row-reason">
+        <td colSpan={totalColumns}>
+          <span className="rs-reason-tag">Not moving forward</span>
+          <span className="rs-reason-text" title={rejectReason}>{rejectReason}</span>
+        </td>
+      </tr>
+    )}
+    </>
   )
 }
 
