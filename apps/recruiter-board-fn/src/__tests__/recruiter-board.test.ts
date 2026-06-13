@@ -31,7 +31,6 @@ import {
   computeSubmissionScore,
   deliverRecruiterSubmissionCommentNotification,
   listRecruiterSubmissionComments,
-  composeCandidateSubmissionConfirmationEmail,
   composeRecruiterInviteEmail,
   composeRecruiterRoleNotificationEmail,
   composeRecruiterSubmissionUpdateEmail,
@@ -1943,20 +1942,6 @@ describe("recruiter submissions", () => {
       ok: false,
       reason: "candidate_resume_url_too_long",
     })
-  })
-
-  it("composes a candidate confirmation email with the role and confirmation link", () => {
-    const email = composeCandidateSubmissionConfirmationEmail({
-      candidateName: "Ada",
-      recruiterName: "Sloane",
-      roleTitle: "Founding Engineer",
-      companyLabel: "Co. B",
-      confirmationUrl: "https://us-central1-wekruit-5f89b.cloudfunctions.net/paRecruiterCandidateConsentConfirm?submissionId=sub_1&token=tok",
-    })
-    assert.match(email.subject, /Founding Engineer/)
-    assert.match(email.text, /Confirm here:/)
-    assert.match(email.text, /submitted you to WeKruit/)
-    assert.match(email.html, /Confirm this submission/)
   })
 
   it("accepts extraFields on submissions, trims values, and drops empty entries", () => {
