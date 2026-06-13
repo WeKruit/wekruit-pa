@@ -212,11 +212,44 @@ function groupChecklistByTier(columns: ChecklistColumn[]): ChecklistTierGroup[] 
 
 type SheetCells = Record<SheetCellId, string>
 
+// ---- candidate background self-check (school · GPA · degree · company) ----
+// The cross-role quality pillars WeKruit screens on. The recruiter self-flags
+// them before submitting; a weak pillar shows an advisory heads-up but NEVER
+// blocks the submit. Same vocabulary as the reviewer's quick-reject chips.
+type BackgroundPillar = "school" | "gpa" | "degree" | "company"
+type BackgroundValue = "" | "strong" | "weak"
+const BACKGROUND_PILLARS: { id: BackgroundPillar; label: string; weak: string }[] = [
+  { id: "school", label: "Target / strong school", weak: "weak school" },
+  { id: "gpa", label: "Strong GPA", weak: "low GPA" },
+  { id: "degree", label: "Relevant degree / field", weak: "degree mismatch" },
+  { id: "company", label: "Fast-growing startup or strong tech company", weak: "weak company pedigree" },
+]
+const BACKGROUND_VALUE_OPTIONS: { value: BackgroundValue; label: string }[] = [
+  { value: "", label: "—" },
+  { value: "strong", label: "Strong" },
+  { value: "weak", label: "Weak" },
+]
+function emptyBackground(): Record<BackgroundPillar, BackgroundValue> {
+  return { school: "", gpa: "", degree: "", company: "" }
+}
+function backgroundWeakFlags(bg: Record<BackgroundPillar, BackgroundValue>): string[] {
+  return BACKGROUND_PILLARS.filter((p) => bg[p.id] === "weak").map((p) => p.weak)
+}
+function backgroundPayload(draft: RowDraft): Partial<Record<BackgroundPillar, BackgroundValue>> | undefined {
+  const out: Partial<Record<BackgroundPillar, BackgroundValue>> = {}
+  for (const p of BACKGROUND_PILLARS) {
+    const v = draft.background[p.id]
+    if (v) out[p.id] = v
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 type RowDraft = {
   cells: SheetCells
   notes: string
   checklist: Record<string, "" | SubmissionChecklistValue>
   extraFields: Record<string, string>
+  background: Record<BackgroundPillar, BackgroundValue>
   resumeFileName?: string
 }
 
@@ -241,7 +274,7 @@ function emptyCells(): SheetCells {
 }
 
 function emptyAddRowDraft(): AddRowDraft {
-  return { cells: emptyCells(), notes: "", checklist: {}, extraFields: {} }
+  return { cells: emptyCells(), notes: "", checklist: {}, extraFields: {}, background: emptyBackground() }
 }
 
 function loadAddRowDraft(jobId: string): AddRowDraft {
@@ -255,6 +288,7 @@ function loadAddRowDraft(jobId: string): AddRowDraft {
         cells: { ...emptyCells(), ...(parsed.cells ?? {}) },
         checklist: parsed.checklist ?? {},
         extraFields: parsed.extraFields ?? {},
+        background: { ...emptyBackground(), ...(parsed.background ?? {}) },
       }
     }
   } catch {
@@ -359,6 +393,7 @@ function draftFromSubmission(row: RecruiterSubmissionItem): RowDraft {
     notes: row.candidate?.notes ?? "",
     checklist: checklistFromSubmission(row),
     extraFields: { ...(row.extraFields ?? {}) },
+    background: emptyBackground(),
   }
 }
 
@@ -760,6 +795,7 @@ export default function RoleSheetPage() {
         candidateLinkedinUrl: linkedin ?? undefined,
         candidateResumeUrl: resume ?? undefined,
         extraFields: extraFieldsPayload(addDraft, extraFieldDefs),
+        candidateBackground: backgroundPayload(addDraft),
       })
       if (!result.ok) {
         // failure keeps every typed value in the blank row
@@ -1282,6 +1318,29 @@ function AddCandidatePanel({
           />
         </div>
       )}
+
+      <div className="rs-addpanel__bg">
+        <h4>Candidate background</h4>
+        <p className="rs-cl-hint">WeKruit screens on these four pillars. Flag any weak ones — it won't block your submit, just helps us calibrate.</p>
+        {BACKGROUND_PILLARS.map((p) => (
+          <div key={p.id} className="rs-bg-row">
+            <span className="rs-bg-row__label">{p.label}</span>
+            <select
+              aria-label={p.label}
+              value={draft.background[p.id]}
+              onChange={(e) => onChange({ ...draft, background: { ...draft.background, [p.id]: e.target.value as BackgroundValue } })}
+            >
+              {BACKGROUND_VALUE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+        ))}
+        {backgroundWeakFlags(draft.background).length > 0 && (
+          <div className="rs-bg-flag" role="status">
+            <strong>Heads up — {backgroundWeakFlags(draft.background).join(", ")}.</strong>{" "}
+            WeKruit screens on school, GPA, degree, and company quality; this candidate may not clear the bar. You can still submit.
+          </div>
+        )}
+      </div>
 
       {error && <div className="rs-sheet-error">Submission failed: {error}</div>}
 

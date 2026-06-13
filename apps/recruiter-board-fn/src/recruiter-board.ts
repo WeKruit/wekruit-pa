@@ -4000,6 +4000,8 @@ interface SubmissionPayload {
   checklist: Record<string, ChecklistCellLevel>
   /** Per-job custom submit fields, keyed by `recruiterBoard.submitFields[].id`. */
   extraFields?: Record<string, string>
+  /** Recruiter self-flag of background pillars (school/gpa/degree/company). Advisory. */
+  candidateBackground?: Record<string, "strong" | "weak">
   candidateConsent: true
   /** Caller hint: which surface produced this submission. Tracked verbatim. */
   source?: string
@@ -4268,6 +4270,19 @@ export function validateSubmission(input: unknown):
     if (Object.keys(cleanedExtraFields).length > 0) extraFields = cleanedExtraFields
   }
 
+  // Optional recruiter self-flag of the background pillars (school/gpa/degree/
+  // company). Advisory only — fully lenient, never rejects a submission. Unknown
+  // keys/values are dropped silently.
+  let candidateBackground: Record<string, "strong" | "weak"> | undefined
+  if (b.candidateBackground && typeof b.candidateBackground === "object" && !Array.isArray(b.candidateBackground)) {
+    const allowedPillars = new Set(["school", "gpa", "degree", "company"])
+    const cleanedBg: Record<string, "strong" | "weak"> = {}
+    for (const [k, v] of Object.entries(b.candidateBackground as Record<string, unknown>)) {
+      if (allowedPillars.has(k) && (v === "strong" || v === "weak")) cleanedBg[k] = v
+    }
+    if (Object.keys(cleanedBg).length > 0) candidateBackground = cleanedBg
+  }
+
   // Optional `source` hint. Unknown strings are rejected so audit data stays
   // closed-vocab; missing values default to "unknown" downstream.
   let source: string | undefined = undefined
@@ -4326,6 +4341,7 @@ export function validateSubmission(input: unknown):
       },
       checklist: cleanedChecklist,
       ...(extraFields ? { extraFields } : {}),
+      ...(candidateBackground ? { candidateBackground } : {}),
       candidateConsent: true,
       source,
     },
@@ -6984,6 +7000,7 @@ export const paRecruiterSubmission = onRequest(
       candidateConsent: payload.candidateConsent,
       candidateConsentStatus,
       ...(candidateConfirmation ? { candidateConfirmation } : {}),
+      ...(payload.candidateBackground ? { candidateBackground: payload.candidateBackground } : {}),
       checklist: payload.checklist,
       ...(extraFieldsResult.value ? { extraFields: extraFieldsResult.value } : {}),
       score,

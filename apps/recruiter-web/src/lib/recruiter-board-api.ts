@@ -125,6 +125,9 @@ export interface SubmissionInput {
   // Per-job extra submit fields (pa-jobs.recruiterBoard.submitFields), keyed
   // by field id. Trimmed values only; server re-validates required + url kinds.
   extraFields?: Record<string, string>
+  // Recruiter self-flag of the cross-role background pillars WeKruit screens on.
+  // Advisory only — never gates the submit. Each value is "strong" | "weak".
+  candidateBackground?: { school?: string; gpa?: string; degree?: string; company?: string }
 }
 
 export interface SubmissionResponse {

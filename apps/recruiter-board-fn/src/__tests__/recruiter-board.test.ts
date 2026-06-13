@@ -3261,6 +3261,20 @@ describe("checklist cell coercion", () => {
     assert.equal(result.value.candidateConsent, true)
   })
 
+  it("captures candidateBackground self-flags, sanitized, and never blocks the submit", () => {
+    const result = validateSubmission({
+      jobId: "public-job-1",
+      submitter: { name: "Sloane", email: "sloane@agency.com" },
+      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada" },
+      checklist: {},
+      candidateBackground: { school: "weak", company: "strong", gpa: "bogus", junkKey: "weak" },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    // unknown keys (junkKey) and invalid values (gpa: "bogus") are dropped
+    assert.deepEqual(result.value.candidateBackground, { school: "weak", company: "strong" })
+  })
+
   it("rejects malformed checklist values on submission create", () => {
     assert.deepEqual(validateSubmission({
       jobId: "public-job-1",

@@ -44,6 +44,8 @@ interface SubmissionDoc {
     notes?: string
   }
   candidateConsentStatus?: string
+  // Recruiter self-flag of the background pillars at submit time (advisory).
+  candidateBackground?: { school?: string; gpa?: string; degree?: string; company?: string }
   candidateConfirmation?: {
     status?: string
     candidateEmail?: string
@@ -4146,6 +4148,25 @@ function RowDetailPanel({
           <span style={{ color: "#555", fontSize: 13 }}>{reviewSummary.body}</span>
         </div>
       </div>
+      {row.candidateBackground && Object.values(row.candidateBackground).some(Boolean) && (
+        <div style={{ marginBottom: 18 }}>
+          <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+            Candidate background <span style={{ textTransform: "none", color: "#999" }}>· recruiter self-flag</span>
+          </h4>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {([["school", "School"], ["gpa", "GPA"], ["degree", "Degree"], ["company", "Company"]] as const).map(([k, label]) => {
+              const v = row.candidateBackground?.[k]
+              if (v !== "strong" && v !== "weak") return null
+              const weak = v === "weak"
+              return (
+                <span key={k} style={{ fontSize: 12, padding: "3px 9px", borderRadius: 999, background: weak ? "#fcebeb" : "#e1f5ee", color: weak ? "#791f1f" : "#0f6e56" }}>
+                  {label}: {weak ? "weak" : "strong"}
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      )}
       <div className="sub-detail__cols">
         <div>
           <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
