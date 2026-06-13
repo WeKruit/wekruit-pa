@@ -78,6 +78,8 @@ export interface SendblueTransport extends ClaireTransport {
   readonly recordedEvents: TransportEvent[]
 }
 
+export const PA_INBOUND_ACK_COLLECTION = "pa-inbound-acks"
+
 const noopLog = (_event: string, _payload?: Record<string, unknown>): void => {}
 
 /**
@@ -117,6 +119,30 @@ export function createSendblueTransport(
 
   const record = (kind: TransportEventKind, value?: string): void => {
     recordedEvents.push(value === undefined ? { kind } : { kind, value })
+  }
+
+  const writeInboundAckMarker = async (
+    via: "tapback" | "no_reply",
+    extra?: Record<string, unknown>,
+  ): Promise<void> => {
+    const inboundEventId = deps.inboundEventId?.trim()
+    if (dryRun || !inboundEventId) return
+    try {
+      await deps.db.collection(PA_INBOUND_ACK_COLLECTION).doc(inboundEventId).set({
+        inboundEventId,
+        userId: deps.userId,
+        sessionId: deps.sessionId,
+        via,
+        at: new Date().toISOString(),
+        ...(extra ?? {}),
+      })
+    } catch (err) {
+      log("claire.transport.ack_marker.error", {
+        inboundEventId,
+        via,
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
   // Resolve the conversation's BOUND Sendblue line ONCE per turn (memoized). Both the read
@@ -244,6 +270,7 @@ export function createSendblueTransport(
           db: deps.db,
           allowEnvFromNumberFallback: false,
         })
+        void writeInboundAckMarker("tapback")
       } catch (err) {
         log("claire.transport.tapback.error", {
           message: err instanceof Error ? err.message : String(err),
@@ -255,6 +282,7 @@ export function createSendblueTransport(
       record("no_reply", reason)
       // No outbound by design — audit only.
       log("claire.transport.noReply", { reason })
+      void writeInboundAckMarker("no_reply", { reason })
     },
   }
 }
