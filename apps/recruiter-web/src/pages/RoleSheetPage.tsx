@@ -511,6 +511,10 @@ export default function RoleSheetPage() {
   )
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // Inline detail panel (click a candidate) + inline add panel (+ Add candidate)
+  // — both keep everything on one page, no separate route.
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
 
   const [threadRowId, setThreadRowId] = useState<string | null>(null)
   const [commentsByRow, setCommentsByRow] = useState<Record<string, RecruiterSubmissionComment[]>>({})
@@ -651,6 +655,7 @@ export default function RoleSheetPage() {
       await refreshSubmissions()
       setAddDraft(emptyAddRowDraft())
       clearAddRowDraft(jobId)
+      setAddOpen(false)
       showToast("Candidate submitted.")
     } catch (e) {
       setSubmitError(formatSubmitFailure(e instanceof Error ? e.message : String(e)))
@@ -717,137 +722,148 @@ export default function RoleSheetPage() {
   }
 
   const label = job.recruiterBoard.label
-  const legendCounts = CHECKLIST_KIND_ORDER.map((kind) => ({
-    kind,
-    count: checklistColumns.filter((column) => column.kind === kind).length,
-  })).filter((entry) => entry.count > 0)
+
+  const selectedRow = roleSubmissions.find((row) => row.id === selectedRowId) ?? null
 
   return (
     <div className="rs-page">
       <SiteHeader />
-      <main className="rs-shell">
-        <div className="rs-topbar">
-          <h1>{job.title}</h1>
-          <span className="rs-topbar__meta">
+      <main className={`rs-shell2${selectedRow ? " has-detail" : ""}`}>
+        {/* LEFT — role brief: title, comp, the rubric WeKruit screens for, full JD */}
+        <aside className="rs-brief">
+          <Link to="/recruiters/jobs" className="rs-brief__back">← All roles</Link>
+          <h1 className="rs-brief__title">{job.title}</h1>
+          <p className="rs-brief__co">
             {job.companyWebsite ? (
-              <a href={job.companyWebsite} target="_blank" rel="noopener noreferrer" className="rs-topbar__company-link">
-                {label.company} ↗
-              </a>
+              <a href={job.companyWebsite} target="_blank" rel="noopener noreferrer">{label.company} ↗</a>
             ) : label.company}
             {" · "}{label.location}
-          </span>
-          {job.compSummary && (
+          </p>
+          {job.compSummary && <p className="rs-brief__comp">{job.compSummary}</p>}
+
+          <div className="rs-brief__rubric">
+            <h3 className="rs-brief__rubric-h">What WeKruit screens for</h3>
+            {job.recruiterBoard.checklist.groups.map((group) => (
+              <div key={group.kind} className={`rs-rgroup is-${group.kind}`}>
+                <span className="rs-rgroup__tag">{CHECKLIST_LEGEND_LABEL[group.kind]}</span>
+                <ul>
+                  {group.items.map((item) => <li key={item.id}>{item.text}</li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+
+          <details className="rs-brief__jd">
+            <summary>Full job description</summary>
+            <div className="rs-brief__jd-body">
+              {job.jdBlocks.map((block, i) => (
+                <section key={i}>
+                  <h4>{block.heading}</h4>
+                  {renderJdBody(block.body ?? "")}
+                </section>
+              ))}
+              {job.recruiterBoard.interviewProcess && (
+                <section><h4>Interview process</h4><p>{job.recruiterBoard.interviewProcess}</p></section>
+              )}
+              <section>
+                <h4>Culture &amp; what they're building</h4>
+                <p><strong>The bet:</strong> {job.recruiterBoard.culture.bet}</p>
+                <ul>{job.recruiterBoard.culture.bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>
+              </section>
+            </div>
+          </details>
+        </aside>
+
+        {/* RIGHT — your candidates: clean table + inline add, no separate page */}
+        <section className="rs-cands">
+          {!session ? (
+            <div className="rs-auth-prompt">
+              <p>Sign in to see and submit candidates for this role.</p>
+              <Link to="/recruiters" className="rs-auth-prompt__link">Go to recruiter home →</Link>
+            </div>
+          ) : (
             <>
-              <span className="rs-topbar__sep">·</span>
-              <span className="rs-topbar__meta">{job.compSummary}</span>
+              <div className="rs-cands__head">
+                <h2>Your candidates <span className="rs-cands__count">{roleSubmissions.length}</span></h2>
+                {!addOpen && (
+                  <button type="button" className="rs-add-btn" onClick={() => { setAddOpen(true); setSelectedRowId(null) }}>
+                    + Add candidate
+                  </button>
+                )}
+              </div>
+
+              {addOpen && (
+                <AddCandidatePanel
+                  draft={addDraft}
+                  checklistColumns={checklistColumns}
+                  extraFieldDefs={extraFieldDefs}
+                  blockers={addBlockers}
+                  ready={addRowReady}
+                  submitting={submitting}
+                  error={submitError}
+                  jobId={job.jobId}
+                  onChange={changeAddDraft}
+                  onSubmit={() => void submitAddRow()}
+                  onClose={() => setAddOpen(false)}
+                />
+              )}
+
+              {roleSubmissions.length === 0 ? (
+                !addOpen && (
+                  <div className="rs-cands__empty">
+                    <p>No candidates submitted for this role yet.</p>
+                    <button type="button" className="rs-add-btn" onClick={() => setAddOpen(true)}>+ Add your first candidate</button>
+                  </div>
+                )
+              ) : (
+                <table className="rs-ctable">
+                  <thead>
+                    <tr><th>Candidate</th><th>Submitted</th><th>Status</th><th>Feedback</th></tr>
+                  </thead>
+                  <tbody>
+                    {roleSubmissions.map((row) => {
+                      const c = row.candidate ?? {}
+                      const model = buildSubmissionStatusStepper(row.status, row.requestedInfo)
+                      const tone = model.terminal ? model.outcome.tone : "pending"
+                      const fb = sheetFeedbackText(row, commentsByRow[row.id])
+                      return (
+                        <tr
+                          key={row.id}
+                          className={`rs-crow${selectedRowId === row.id ? " is-sel" : ""}`}
+                          onClick={() => { setSelectedRowId(row.id); setAddOpen(false) }}
+                        >
+                          <td className="rs-crow__cand">
+                            <strong>{c.name || "—"}</strong>
+                            <span>{c.currentRole || c.currentCompany || ""}</span>
+                          </td>
+                          <td className="rs-crow__date">{shortSubmittedDate(row.createdAt)}</td>
+                          <td><span className={`rs-status is-${tone}`}>{sheetStageLabel(row)}</span></td>
+                          <td className="rs-crow__fb" title={fb}>{fb}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
             </>
           )}
-        </div>
+        </section>
 
-        <details className="rs-jd" open>
-          <summary>Job description</summary>
-          <div className="rs-jd__body">
-            {job.jdBlocks.map((block, i) => (
-              <section key={i}>
-                <h3>{block.heading}</h3>
-                {renderJdBody(block.body ?? "")}
-              </section>
-            ))}
-            {job.recruiterBoard.interviewProcess && (
-              <section>
-                <h3>Interview process</h3>
-                <p>{job.recruiterBoard.interviewProcess}</p>
-              </section>
-            )}
-            <section className="rs-jd__culture">
-              <h3>Culture &amp; what they're building</h3>
-              <p><strong>The bet:</strong> {job.recruiterBoard.culture.bet}</p>
-              <ul>
-                {job.recruiterBoard.culture.bullets.map((bullet, i) => (
-                  <li key={i}>{bullet}</li>
-                ))}
-              </ul>
-            </section>
-          </div>
-        </details>
-
-        {session ? (
-          <>
-            <div className="rs-legend">
-              {legendCounts.map((entry, i) => (
-                <span key={entry.kind}>
-                  {i > 0 && <span aria-hidden="true"> · </span>}
-                  <strong>{CHECKLIST_LEGEND_LABEL[entry.kind]} ({entry.count})</strong>
-                </span>
-              ))}
-              <span>— hover any column header for the full requirement.</span>
-            </div>
-
-            <div className="rs-table-wrap">
-              <table className="rs-sheet">
-                <thead>
-                  <tr>
-                    {CANDIDATE_COLUMNS.map((column) => (
-                      <th key={column.id} className={`rs-th rs-c-${column.id}`}>
-                        {column.label}{column.required ? " *" : ""}
-                      </th>
-                    ))}
-                    {checklistColumns.map((column) => (
-                      <th key={column.id} title={column.text} className={`rs-th rs-c-check is-${column.kind}`}>
-                        <span className={`rs-chip is-${column.kind}`}>{CHECKLIST_KIND_CHIP[column.kind]}</span>
-                        {checklistShortLabel(column.text)}
-                      </th>
-                    ))}
-                    {extraFieldDefs.map((field) => (
-                      <th key={field.id} className="rs-th rs-c-extra">
-                        {field.label}{field.required ? " *" : ""}
-                      </th>
-                    ))}
-                    <th className="rs-th rs-c-notes">Notes</th>
-                    <th className="rs-th rs-c-status">Status</th>
-                    <th className="rs-th rs-c-feedback">Feedback</th>
-                    <th className="rs-th rs-c-thread" aria-label="Conversation">💬</th>
-                    <th className="rs-th rs-c-action" aria-label="Row actions" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {roleSubmissions.map((row) => (
-                    <SheetRow
-                      key={row.id}
-                      row={row}
-                      draft={rowDrafts[row.id] ?? null}
-                      checklistColumns={checklistColumns}
-                      extraFieldDefs={extraFieldDefs}
-                      comments={commentsByRow[row.id]}
-                      saving={savingRowId === row.id}
-                      jobId={job.jobId}
-                      onEdit={(mutate) => editRow(row, mutate)}
-                      onSave={() => void saveRow(row)}
-                      onOpenThread={() => openThread(row)}
-                    />
-                  ))}
-                  <AddRow
-                    draft={addDraft}
-                    checklistColumns={checklistColumns}
-                    extraFieldDefs={extraFieldDefs}
-                    blockers={addBlockers}
-                    ready={addRowReady}
-                    submitting={submitting}
-                    jobId={job.jobId}
-                    onChange={changeAddDraft}
-                    onSubmit={() => void submitAddRow()}
-                  />
-                </tbody>
-              </table>
-            </div>
-
-            {submitError && <div className="rs-sheet-error">Submission failed: {submitError}</div>}
-          </>
-        ) : (
-          <div className="rs-auth-prompt">
-            <p>Sign in to submit candidates for this role.</p>
-            <Link to="/recruiters" className="rs-auth-prompt__link">Go to recruiter home →</Link>
-          </div>
+        {/* inline candidate detail — no separate page */}
+        {session && selectedRow && (
+          <CandidateDetailPanel
+            row={selectedRow}
+            draft={rowDrafts[selectedRow.id] ?? null}
+            checklistColumns={checklistColumns}
+            extraFieldDefs={extraFieldDefs}
+            comments={commentsByRow[selectedRow.id]}
+            saving={savingRowId === selectedRow.id}
+            jobId={job.jobId}
+            onEdit={(mutate) => editRow(selectedRow, mutate)}
+            onSave={() => void saveRow(selectedRow)}
+            onOpenThread={() => openThread(selectedRow)}
+            onClose={() => setSelectedRowId(null)}
+          />
         )}
       </main>
 
@@ -873,7 +889,18 @@ export default function RoleSheetPage() {
   )
 }
 
-function SheetRow({
+function shortSubmittedDate(value: RecruiterSubmissionItem["createdAt"]): string {
+  const ms = timestampMs(value)
+  if (!ms) return "—"
+  try {
+    return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+  } catch {
+    return "—"
+  }
+}
+
+// Inline candidate detail — opens beside the table, no separate route.
+function CandidateDetailPanel({
   row,
   draft,
   checklistColumns,
@@ -884,6 +911,7 @@ function SheetRow({
   onEdit,
   onSave,
   onOpenThread,
+  onClose,
 }: {
   row: RecruiterSubmissionItem
   draft: RowDraft | null
@@ -895,163 +923,125 @@ function SheetRow({
   onEdit: (mutate: (draft: RowDraft) => RowDraft) => void
   onSave: () => void
   onOpenThread: () => void
+  onClose: () => void
 }) {
   const editable = rowIsEditable(row)
   const dirty = draft !== null
   const view = draft ?? draftFromSubmission(row)
-  const threadCount = comments?.length ?? (row.requestedInfo?.length || 0)
-
-  const setCell = (id: SheetCellId, value: string) =>
-    onEdit((d) => ({ ...d, cells: { ...d.cells, [id]: value } }))
-
-  // Reject reason shown as a full-width row under a rejected submission so it's
-  // readable without opening the conversation. Matches the My Submissions list.
+  const model = buildSubmissionStatusStepper(row.status, row.requestedInfo)
+  const tone = model.terminal ? model.outcome.tone : "pending"
   const rejectReason = row.status === "rejected" ? (row.recruiterFeedbackNote?.trim() ?? "") : ""
-  const totalColumns = CANDIDATE_COLUMNS.length + checklistColumns.length + extraFieldDefs.length + 5
-
-  const renderCandidateCell = (column: SheetColumn) => {
-    const value = view.cells[column.id]
-    if (column.id === "resume") {
-      return (
-        <ResumeCell
-          value={value}
-          fileName={view.resumeFileName}
-          editable={editable}
-          jobId={jobId}
-          onChange={(url, name) =>
-            onEdit((d) => ({ ...d, cells: { ...d.cells, resume: url }, resumeFileName: name }))
-          }
-        />
-      )
-    }
-    if (!editable) {
-      if (column.id === "linkedin" && value) {
-        const href = normalizeSheetUrl(value)
-        if (href) {
-          return (
-            <a className="rs-link-cell" href={href} target="_blank" rel="noopener noreferrer">
-              {excerpt(value, 40)}
-            </a>
-          )
-        }
-      }
-      return value || "—"
-    }
-    return (
-      <input
-        type="text"
-        aria-label={column.label}
-        value={value}
-        onChange={(e) => setCell(column.id, e.target.value)}
-      />
-    )
-  }
+  const threadCount = comments?.length ?? (row.requestedInfo?.length || 0)
+  const setCell = (id: SheetCellId, value: string) => onEdit((d) => ({ ...d, cells: { ...d.cells, [id]: value } }))
 
   return (
-    <>
-    <tr className="rs-row-real">
-      {CANDIDATE_COLUMNS.map((column) => (
-        <td
-          key={column.id}
-          data-label={column.label}
-          className={`rs-c-${column.id} ${column.key ? "rs-c-key" : "rs-c-more"}${editable ? "" : " rs-c-locked"}`}
-        >
-          {renderCandidateCell(column)}
-        </td>
-      ))}
-      {checklistColumns.map((column) => (
-        <td key={column.id} data-label={checklistShortLabel(column.text)} className="rs-c-check rs-c-more" title={column.text}>
-          {editable ? (
-            <select
-              aria-label={column.text}
-              value={view.checklist[column.id] ?? ""}
-              onChange={(e) =>
-                onEdit((d) => ({
-                  ...d,
-                  checklist: { ...d.checklist, [column.id]: e.target.value as "" | SubmissionChecklistValue },
-                }))
-              }
-            >
-              {CHECKLIST_VALUE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          ) : (
-            CHECKLIST_VALUE_OPTIONS.find((option) => option.value === (view.checklist[column.id] ?? ""))?.label ?? "—"
-          )}
-        </td>
-      ))}
-      {extraFieldDefs.map((field) => (
-        <td key={field.id} data-label={field.label} className="rs-c-extra rs-c-more">
-          {editable ? (
-            <input
-              type="text"
-              aria-label={field.label}
-              value={view.extraFields[field.id] ?? ""}
-              onChange={(e) =>
-                onEdit((d) => ({ ...d, extraFields: { ...d.extraFields, [field.id]: e.target.value } }))
-              }
-            />
-          ) : (
-            view.extraFields[field.id] || "—"
-          )}
-        </td>
-      ))}
-      <td data-label="Notes" className="rs-c-notes rs-c-more">
-        {editable ? (
-          <input
-            type="text"
-            aria-label="Notes"
-            value={view.notes}
-            onChange={(e) => onEdit((d) => ({ ...d, notes: e.target.value }))}
-          />
-        ) : (
-          view.notes || "—"
-        )}
-      </td>
-      <td data-label="Status" className="rs-c-status rs-c-key">{sheetStageLabel(row)}</td>
-      <td data-label="Feedback" className="rs-c-feedback rs-c-key" title={sheetFeedbackText(row, comments)}>
-        {sheetFeedbackText(row, comments)}
-      </td>
-      <td data-label="Conversation" className="rs-c-thread rs-c-key">
-        <button type="button" className="rs-thread-btn" onClick={onOpenThread}>
-          💬{threadCount ? ` ${threadCount}` : ""}
-        </button>
-      </td>
-      <td data-label="" className="rs-c-action rs-c-key">
-        {editable ? (
-          dirty && (
-            <button type="button" className="rs-btn rs-btn--save" disabled={saving} onClick={onSave}>
-              {saving ? "Saving…" : "Save"}
-            </button>
-          )
-        ) : (
-          <span title="Row locked — candidate is with the client">—</span>
-        )}
-      </td>
-    </tr>
-    {rejectReason && (
-      <tr className="rs-row-reason">
-        <td colSpan={totalColumns}>
+    <aside className="rs-detail" aria-label="Candidate detail">
+      <div className="rs-detail__head">
+        <div>
+          <h3>{view.cells.name || "Candidate"}</h3>
+          <span className={`rs-status is-${tone}`}>{sheetStageLabel(row)}</span>
+        </div>
+        <button type="button" className="rs-detail__close" onClick={onClose} aria-label="Close">×</button>
+      </div>
+
+      {rejectReason && (
+        <div className="rs-detail__reason">
           <span className="rs-reason-tag">Not moving forward</span>
-          <span className="rs-reason-text" title={rejectReason}>{rejectReason}</span>
-        </td>
-      </tr>
-    )}
-    </>
+          <p>{rejectReason}</p>
+        </div>
+      )}
+
+      <div className="rs-detail__fields">
+        {CANDIDATE_COLUMNS.map((col) => {
+          const value = view.cells[col.id]
+          const href = col.id === "linkedin" || col.id === "resume" ? normalizeSheetUrl(value) : null
+          return (
+            <label key={col.id} className="rs-field">
+              <span className="rs-field__label">{col.label}{col.required ? " *" : ""}</span>
+              {col.id === "resume" ? (
+                <ResumeCell
+                  value={view.cells.resume}
+                  fileName={view.resumeFileName}
+                  editable={editable}
+                  jobId={jobId}
+                  onChange={(url, name) => onEdit((d) => ({ ...d, cells: { ...d.cells, resume: url }, resumeFileName: name }))}
+                />
+              ) : editable ? (
+                <input type="text" value={value} onChange={(e) => setCell(col.id, e.target.value)} />
+              ) : href ? (
+                <a href={href} target="_blank" rel="noopener noreferrer" className="rs-field__link">{value}</a>
+              ) : (
+                <span className="rs-field__val">{value || "—"}</span>
+              )}
+            </label>
+          )
+        })}
+        {extraFieldDefs.map((f) => (
+          <label key={f.id} className="rs-field">
+            <span className="rs-field__label">{f.label}{f.required ? " *" : ""}</span>
+            {editable ? (
+              <input type="text" value={view.extraFields[f.id] ?? ""} onChange={(e) => onEdit((d) => ({ ...d, extraFields: { ...d.extraFields, [f.id]: e.target.value } }))} />
+            ) : (
+              <span className="rs-field__val">{view.extraFields[f.id] || "—"}</span>
+            )}
+          </label>
+        ))}
+        <label className="rs-field rs-field--wide">
+          <span className="rs-field__label">Notes</span>
+          {editable ? (
+            <textarea value={view.notes} onChange={(e) => onEdit((d) => ({ ...d, notes: e.target.value }))} />
+          ) : (
+            <span className="rs-field__val">{view.notes || "—"}</span>
+          )}
+        </label>
+      </div>
+
+      {checklistColumns.length > 0 && (
+        <div className="rs-detail__checklist">
+          <h4>Screening checklist</h4>
+          {checklistColumns.map((col) => (
+            <div key={col.id} className={`rs-clrow is-${col.kind}`}>
+              <span className="rs-clrow__text">{col.text}</span>
+              {editable ? (
+                <select
+                  aria-label={col.text}
+                  value={view.checklist[col.id] ?? ""}
+                  onChange={(e) => onEdit((d) => ({ ...d, checklist: { ...d.checklist, [col.id]: e.target.value as "" | SubmissionChecklistValue } }))}
+                >
+                  {CHECKLIST_VALUE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              ) : (
+                <span className="rs-clrow__val">{CHECKLIST_VALUE_OPTIONS.find((o) => o.value === (view.checklist[col.id] ?? ""))?.label ?? "—"}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rs-detail__actions">
+        <button type="button" className="rs-detail__thread" onClick={onOpenThread}>💬 Conversation{threadCount ? ` (${threadCount})` : ""}</button>
+        {editable && dirty && (
+          <button type="button" className="rs-btn rs-btn--save" disabled={saving} onClick={onSave}>{saving ? "Saving…" : "Save changes"}</button>
+        )}
+        {!editable && <span className="rs-detail__locked">Locked — candidate is with the client</span>}
+      </div>
+    </aside>
   )
 }
 
-function AddRow({
+// Clean inline "Add candidate" form — replaces the wide spreadsheet add row.
+function AddCandidatePanel({
   draft,
   checklistColumns,
   extraFieldDefs,
   blockers,
   ready,
   submitting,
+  error,
   jobId,
   onChange,
   onSubmit,
+  onClose,
 }: {
   draft: AddRowDraft
   checklistColumns: ChecklistColumn[]
@@ -1059,115 +1049,93 @@ function AddRow({
   blockers: string[]
   ready: boolean
   submitting: boolean
+  error: string | null
   jobId: string
   onChange: (draft: AddRowDraft) => void
   onSubmit: () => void
+  onClose: () => void
 }) {
-  const submitBlockerId = "rs-add-row-submit-blockers"
-  const setCell = (id: SheetCellId, value: string) =>
-    onChange({ ...draft, cells: { ...draft.cells, [id]: value } })
-
+  const setCell = (id: SheetCellId, value: string) => onChange({ ...draft, cells: { ...draft.cells, [id]: value } })
   return (
-    <tr className="rs-row-add">
-      {CANDIDATE_COLUMNS.map((column) => (
-        <td key={column.id} data-label={`${column.label}${column.required ? " *" : ""}`} className={`rs-c-${column.id}`}>
-          {column.id === "resume" ? (
-            <ResumeCell
-              value={draft.cells.resume}
-              fileName={draft.resumeFileName}
-              editable
-              jobId={jobId}
-              onChange={(url, name) =>
-                onChange({ ...draft, cells: { ...draft.cells, resume: url }, resumeFileName: name })
-              }
-            />
-          ) : (
-            <input
-              type="text"
-              aria-label={`New candidate ${column.label}`}
-              placeholder={column.id === "name" ? "Add a candidate…" : column.label}
-              value={draft.cells[column.id]}
-              onChange={(e) => setCell(column.id, e.target.value)}
-            />
-          )}
-        </td>
-      ))}
-      {checklistColumns.map((column) => (
-        <td key={column.id} data-label={checklistShortLabel(column.text)} className="rs-c-check" title={column.text}>
-          <select
-            aria-label={column.text}
-            value={draft.checklist[column.id] ?? ""}
-            onChange={(e) =>
-              onChange({
-                ...draft,
-                checklist: { ...draft.checklist, [column.id]: e.target.value as "" | SubmissionChecklistValue },
-              })
-            }
+    <div className="rs-addpanel">
+      <div className="rs-addpanel__head">
+        <h3>Add a candidate</h3>
+        <button type="button" className="rs-detail__close" onClick={onClose} aria-label="Close">×</button>
+      </div>
+
+      <div className="rs-addpanel__grid">
+        {CANDIDATE_COLUMNS.map((col) => (
+          <label
+            key={col.id}
+            className={`rs-field${["name", "email", "linkedin", "resume"].includes(col.id) ? " rs-field--key" : ""}`}
           >
-            {CHECKLIST_VALUE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </td>
-      ))}
-      {extraFieldDefs.map((field) => (
-        <td key={field.id} data-label={`${field.label}${field.required ? " *" : ""}`} className="rs-c-extra">
-          <input
-            type="text"
-            aria-label={field.label}
-            placeholder={field.placeholder || field.label}
-            value={draft.extraFields[field.id] ?? ""}
-            onChange={(e) => onChange({ ...draft, extraFields: { ...draft.extraFields, [field.id]: e.target.value } })}
-          />
-        </td>
-      ))}
-      <td data-label="Notes" className="rs-c-notes">
-        <input
-          type="text"
-          aria-label="New candidate notes"
-          placeholder="Notes"
-          value={draft.notes}
-          onChange={(e) => onChange({ ...draft, notes: e.target.value })}
-        />
-      </td>
-      <td data-label="Status" className="rs-c-status">—</td>
-      <td data-label="Feedback" className="rs-c-feedback">—</td>
-      <td data-label="Conversation" className="rs-c-thread">—</td>
-      <td data-label="" className="rs-c-action">
-        <div className="rs-action-cell">
-          <label className="rs-consent" title="Required: the candidate agreed to be submitted for this role.">
-            <input
-              type="checkbox"
-              checked={draft.consent}
-              onChange={(e) => onChange({ ...draft, consent: e.target.checked })}
-            />
-            <span>Candidate consented</span>
+            <span className="rs-field__label">{col.label}{col.required ? " *" : ""}</span>
+            {col.id === "resume" ? (
+              <ResumeCell
+                value={draft.cells.resume}
+                fileName={draft.resumeFileName}
+                editable
+                jobId={jobId}
+                onChange={(url, name) => onChange({ ...draft, cells: { ...draft.cells, resume: url }, resumeFileName: name })}
+              />
+            ) : (
+              <input type="text" placeholder={col.label} value={draft.cells[col.id]} onChange={(e) => setCell(col.id, e.target.value)} />
+            )}
           </label>
-          <button
-            type="button"
-            className="rs-btn"
-            disabled={!ready || submitting}
-            aria-describedby={ready ? undefined : submitBlockerId}
-            onClick={onSubmit}
-          >
-            {submitting ? "Submitting…" : "Submit"}
-          </button>
-          {!ready && (
-            <div id={submitBlockerId} className="rs-submit-blockers" role="status" aria-live="polite">
-              <strong>Cannot submit yet</strong>
-              <ul>
-                {blockers.slice(0, 4).map((blocker) => (
-                  <li key={blocker}>{blocker}</li>
-                ))}
-                {blockers.length > 4 && (
-                  <li>Fix {blockers.length - 4} more {blockers.length - 4 === 1 ? "field" : "fields"}.</li>
-                )}
-              </ul>
+        ))}
+        {extraFieldDefs.map((f) => (
+          <label key={f.id} className="rs-field">
+            <span className="rs-field__label">{f.label}{f.required ? " *" : ""}</span>
+            <input type="text" placeholder={f.placeholder || f.label} value={draft.extraFields[f.id] ?? ""} onChange={(e) => onChange({ ...draft, extraFields: { ...draft.extraFields, [f.id]: e.target.value } })} />
+          </label>
+        ))}
+        <label className="rs-field rs-field--wide">
+          <span className="rs-field__label">Notes</span>
+          <input type="text" placeholder="Anything WeKruit should know" value={draft.notes} onChange={(e) => onChange({ ...draft, notes: e.target.value })} />
+        </label>
+      </div>
+
+      {checklistColumns.length > 0 && (
+        <div className="rs-addpanel__checklist">
+          <h4>Screening checklist</h4>
+          {checklistColumns.map((col) => (
+            <div key={col.id} className={`rs-clrow is-${col.kind}`}>
+              <span className="rs-clrow__text">{col.text}</span>
+              <select
+                aria-label={col.text}
+                value={draft.checklist[col.id] ?? ""}
+                onChange={(e) => onChange({ ...draft, checklist: { ...draft.checklist, [col.id]: e.target.value as "" | SubmissionChecklistValue } })}
+              >
+                {CHECKLIST_VALUE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </div>
-          )}
+          ))}
         </div>
-      </td>
-    </tr>
+      )}
+
+      {error && <div className="rs-sheet-error">Submission failed: {error}</div>}
+
+      <div className="rs-addpanel__foot">
+        <label className="rs-consent">
+          <input type="checkbox" checked={draft.consent} onChange={(e) => onChange({ ...draft, consent: e.target.checked })} />
+          <span>Candidate consented to be submitted</span>
+        </label>
+        <div className="rs-addpanel__foot-btns">
+          <button type="button" className="rs-btn rs-btn--ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="rs-btn rs-btn--save" disabled={!ready || submitting} onClick={onSubmit}>
+            {submitting ? "Submitting…" : "Submit candidate"}
+          </button>
+        </div>
+        {!ready && blockers.length > 0 && (
+          <div className="rs-submit-blockers" role="status" aria-live="polite">
+            <strong>To submit:</strong>
+            <ul>
+              {blockers.slice(0, 5).map((b) => <li key={b}>{b}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
