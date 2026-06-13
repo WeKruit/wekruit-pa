@@ -320,17 +320,44 @@ const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
 const RECRUITER_INTERVIEW_RATE_TARGET = 50
 
+// Quick reject/accept reasons, grouped so a reviewer one-taps instead of typing.
+// "over_leveled" carries the "too senior" signal — age is never a reason (legal).
 const SUBMISSION_FEEDBACK_REASONS = [
-  { id: "strong_match", label: "Strong match" },
-  { id: "clear_evidence", label: "Clear evidence" },
-  { id: "good_candidate_motivation", label: "Candidate motivated" },
-  { id: "missing_hard_filter", label: "Missing hard filter" },
-  { id: "weak_evidence", label: "Weak evidence" },
-  { id: "candidate_not_interested", label: "Candidate not interested" },
-  { id: "duplicate", label: "Duplicate" },
-  { id: "comp_mismatch", label: "Comp mismatch" },
-  { id: "location_mismatch", label: "Location mismatch" },
-  { id: "seniority_mismatch", label: "Seniority mismatch" },
+  // Positive
+  { id: "strong_match", label: "Strong match", group: "Positive" },
+  { id: "clear_evidence", label: "Clear evidence", group: "Positive" },
+  { id: "good_candidate_motivation", label: "Candidate motivated", group: "Positive" },
+  // Background pillars (school · GPA · degree · company)
+  { id: "weak_school", label: "Weak / non-target school", group: "Background" },
+  { id: "low_gpa", label: "Low GPA", group: "Background" },
+  { id: "degree_mismatch", label: "Degree / field mismatch", group: "Background" },
+  { id: "weak_company_pedigree", label: "Weak company pedigree", group: "Background" },
+  { id: "no_relevant_domain", label: "No relevant domain", group: "Background" },
+  // Engineering depth
+  { id: "no_end_to_end", label: "No end-to-end ownership", group: "Depth" },
+  { id: "weak_technical_depth", label: "Lacks technical depth", group: "Depth" },
+  { id: "not_hands_on", label: "Not a hands-on builder", group: "Depth" },
+  { id: "no_impact_evidence", label: "No quantifiable impact", group: "Depth" },
+  // Role-specific
+  { id: "no_strong_portfolio", label: "No strong portfolio (design)", group: "Role-specific" },
+  { id: "weak_product_design", label: "Weak product/UX depth (design)", group: "Role-specific" },
+  { id: "weak_social_presence", label: "Weak social/channel record (GTM)", group: "Role-specific" },
+  { id: "no_growth_track_record", label: "No growth results (GTM)", group: "Role-specific" },
+  // Level & fit
+  { id: "below_experience_bar", label: "Below experience bar", group: "Level & fit" },
+  { id: "over_leveled", label: "Over-leveled / overqualified", group: "Level & fit" },
+  { id: "seniority_mismatch", label: "Seniority mismatch", group: "Level & fit" },
+  { id: "comp_mismatch", label: "Comp mismatch", group: "Level & fit" },
+  { id: "location_mismatch", label: "Location mismatch", group: "Level & fit" },
+  // Process / signal
+  { id: "missing_hard_filter", label: "Missing hard filter", group: "Process" },
+  { id: "weak_evidence", label: "Weak evidence in submission", group: "Process" },
+  { id: "candidate_not_interested", label: "Candidate not interested", group: "Process" },
+  { id: "duplicate", label: "Duplicate", group: "Process" },
+] as const
+
+const SUBMISSION_FEEDBACK_REASON_GROUPS = [
+  "Positive", "Background", "Depth", "Role-specific", "Level & fit", "Process",
 ] as const
 
 function feedbackReasonLabel(reason: string): string {
@@ -4285,26 +4312,39 @@ function RowDetailPanel({
             {saving ? "Saving..." : "Save"}
           </button>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
-          {SUBMISSION_FEEDBACK_REASONS.map((reason) => {
-            const active = draftReasons.includes(reason.id)
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+          {SUBMISSION_FEEDBACK_REASON_GROUPS.map((groupName) => {
+            const groupReasons = SUBMISSION_FEEDBACK_REASONS.filter((r) => r.group === groupName)
+            if (!groupReasons.length) return null
             return (
-              <button
-                type="button"
-                key={reason.id}
-                onClick={() => toggleReason(reason.id)}
-                style={{
-                  padding: "5px 8px",
-                  border: active ? "1px solid #222" : "1px solid #ddd",
-                  background: active ? "#222" : "#fff",
-                  color: active ? "#fff" : "#555",
-                  borderRadius: 999,
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                {reason.label}
-              </button>
+              <div key={groupName}>
+                <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.04em", color: "#999", marginBottom: 4 }}>{groupName}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {groupReasons.map((reason) => {
+                    const active = draftReasons.includes(reason.id)
+                    const positive = reason.group === "Positive"
+                    const activeBg = positive ? "#0f6e56" : "#993c1d"
+                    return (
+                      <button
+                        type="button"
+                        key={reason.id}
+                        onClick={() => toggleReason(reason.id)}
+                        style={{
+                          padding: "5px 8px",
+                          border: active ? `1px solid ${activeBg}` : "1px solid #ddd",
+                          background: active ? activeBg : "#fff",
+                          color: active ? "#fff" : "#555",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {reason.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
             )
           })}
         </div>
