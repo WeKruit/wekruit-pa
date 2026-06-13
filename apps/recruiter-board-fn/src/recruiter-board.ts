@@ -5287,7 +5287,16 @@ export async function sendRecruiterSubmissionUpdateEmail(
 
 type CandidateConfirmationSendResult =
   | { ok: true; status: "email_sent"; candidateConsentStatus: "pending_candidate_confirmation"; messageId?: string }
-  | { ok: false; reason: string; candidateConsentStatus: "candidate_confirmed" | "confirmation_email_failed" | "confirmation_email_not_configured" }
+  | { ok: false; reason: string; candidateConsentStatus: "candidate_confirmed" | "confirmation_email_failed" | "confirmation_email_not_configured" | "recruiter_attested" }
+
+// Candidate-facing double-opt-in confirmation emails are OFF by default — WeKruit
+// must not contact recruiter-submitted candidates directly right now. The
+// recruiter already attests candidate consent at submit time. Flip
+// PA_RECRUITER_CANDIDATE_CONFIRMATION_ENABLED=1 to re-enable the flow.
+function candidateConfirmationEmailEnabled(): boolean {
+  const v = (process.env.PA_RECRUITER_CANDIDATE_CONFIRMATION_ENABLED ?? "").trim().toLowerCase()
+  return v === "1" || v === "true" || v === "yes" || v === "on"
+}
 
 function candidateSubmissionConfirmationEmailInputFromDoc(
   submissionId: string,
@@ -5326,6 +5335,17 @@ async function sendCandidateSubmissionConfirmationForDoc(
 ): Promise<CandidateConfirmationSendResult> {
   if (data.candidateConsentStatus === "candidate_confirmed") {
     return { ok: false, reason: "candidate_already_confirmed", candidateConsentStatus: "candidate_confirmed" }
+  }
+  // Hard stop: do not email the candidate. Recruiter consent attestation stands.
+  if (!candidateConfirmationEmailEnabled()) {
+    await submissionRef.set({
+      candidateConsentStatus: "recruiter_attested",
+      "candidateConfirmation.status": "disabled",
+      "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+    logger.info("recruiter_candidate_confirmation_skipped_disabled", { submissionId, actor })
+    return { ok: false, reason: "candidate_confirmation_disabled", candidateConsentStatus: "recruiter_attested" }
   }
   const input = candidateSubmissionConfirmationEmailInputFromDoc(submissionId, data)
   if ("reason" in input) {
