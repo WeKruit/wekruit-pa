@@ -157,6 +157,46 @@
 .rs-sheet tbody tr:hover td { background: #fbfaf6; }
 .rs-sheet tbody tr:hover td:first-child { background: #fbfaf6; }
 
+/* Full-width reject reason row under a rejected submission. The reason cell is
+   the first (and only) cell, so it inherits the sticky-left treatment — pin it
+   so the reason stays visible while scrolling the wide sheet, and let it wrap. */
+.rs-sheet tbody tr.rs-row-reason td,
+.rs-sheet tbody tr.rs-row-reason:hover td {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  max-width: none;
+  min-width: 0;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  background: #fdf6f2;
+  border-left: 3px solid #d98b6a;
+  border-right: 1px solid #f1f1ee;
+  border-bottom: 1px solid #e0e0db;
+  padding: 8px 14px;
+}
+.rs-reason-tag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #f6ddd3;
+  color: #a23a1e;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.rs-reason-text {
+  display: inline-block;
+  max-width: min(72vw, 880px);
+  vertical-align: middle;
+  white-space: normal;
+  color: #8a5038;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .rs-sheet input[type="text"],
 .rs-sheet select {
   width: 100%;
