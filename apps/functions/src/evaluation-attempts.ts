@@ -166,7 +166,21 @@ type PrescreenReviewDraftContext = {
   requiredSkills?: string[]
   checklistText?: string
   candidateSignal?: string
+  /** Human-readable date the candidate DID the prescreen (the draft is often SENT days later). */
+  screenDate?: string
   tone?: RejectionTone
+}
+
+/** "June 14, 2026" from an ISO string; undefined if unparseable. */
+function formatScreenDate(iso: string | undefined): string | undefined {
+  if (!iso) return undefined
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return undefined
+  try {
+    return new Date(ms).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -325,6 +339,12 @@ export async function runDraftPrescreenReviewMessages(
           confidence: d.confidence,
           rationale: d.rationale,
         })),
+        // The screen happened when the session reached terminal — NOT now (re-draft time).
+        screenDate: formatScreenDate(
+          cleanNonEmptyString(session.terminalActionFiredAt) ??
+            cleanNonEmptyString(session.updatedAt) ??
+            cleanNonEmptyString(session.createdAt),
+        ),
       },
       loadTurns,
     )
@@ -462,6 +482,7 @@ async function buildPrescreenDraftContext(
     threshold?: number
     attemptExplanation?: string
     dimensions?: PrescreenReviewDraftContext["dimensions"]
+    screenDate?: string
   },
   loadTurns: typeof loadPrescreenTurnsForDraft = loadPrescreenTurnsForDraft,
 ): Promise<PrescreenReviewDraftContext> {
@@ -500,6 +521,8 @@ export async function generateAndStorePrescreenAutoDraft(args: {
   terminalReason?: string
   dimensions?: PrescreenReviewDraftContext["dimensions"]
   now: string
+  /** ISO time the candidate DID the screen (defaults to `now` for the inline path). */
+  screenDateIso?: string
   composeDraft?: typeof composePrescreenReviewCandidateMessage
   loadTurns?: typeof loadPrescreenTurnsForDraft
   log?: (event: string, payload?: Record<string, unknown>) => void
@@ -520,6 +543,7 @@ export async function generateAndStorePrescreenAutoDraft(args: {
         threshold: args.threshold,
         attemptExplanation: args.attemptExplanation,
         dimensions: args.dimensions,
+        screenDate: formatScreenDate(args.screenDateIso ?? args.now),
       },
       args.loadTurns ?? loadPrescreenTurnsForDraft,
     )
@@ -665,6 +689,9 @@ async function composePrescreenReviewCandidateMessage(
     roleLine,
     `AI proposed terminal: ${context.proposedTerminal ?? "unknown"}`,
     `Selected terminal: ${context.finalTerminal}`,
+    context.screenDate
+      ? `Prescreen completed on: ${context.screenDate}. This message is reviewed by a human and SENT LATER (often days/weeks after). Open by thanking them for the time they spent on the prescreen ON THAT DATE (e.g. "thanks for taking the time to do the prescreen with us on ${context.screenDate}"). Do NOT say "today" / "this morning" / imply it just happened.`
+      : `This message is reviewed by a human and SENT LATER (often days after the screen). Open by thanking them for the time they spent on the prescreen — do NOT say "today" / "this morning" / imply it just happened.`,
     typeof context.score === "number" && typeof context.scoreMax === "number"
       ? `Internal score: ${context.score}/${context.scoreMax}, threshold=${context.threshold ?? "unknown"}`
       : null,
@@ -693,6 +720,7 @@ async function composePrescreenReviewCandidateMessage(
       "You draft WeKruit candidate iMessages after a prescreen, PLUS detailed operator-only review notes. " +
       "Return JSON only. The candidateMessageBody is sent to a real candidate over iMessage: warm, genuine, Claire's lowercase voice, " +
       "NEVER mention PASS, FAIL, HARD_STOP, scores, thresholds, internal review systems, or evaluation ids, and NEVER fake praise. " +
+      "This message is human-reviewed then SENT LATER — NEVER say 'today', 'this morning', or imply the screen just happened; reference the prescreen date if given, else keep it time-neutral. " +
       "internalReviewNotes is operator-only and may be specific. Do not invent evidence. Do not include PII beyond what is given. " +
       "Keep the candidate message concise and editable by the operator.",
     userText,
