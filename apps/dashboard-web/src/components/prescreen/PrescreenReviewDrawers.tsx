@@ -847,35 +847,35 @@ function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChe
   const tally = (t?: EvalTally) => `${t?.met ?? 0}/${t?.total ?? 0}`
   const verdictTone = evaluation.verdict === "advance" ? "ok" : evaluation.verdict === "reject" ? "warn" : "info"
   return (
-    <div style={{ border: "1px solid #c7d2fe", borderLeft: "4px solid #6366f1", borderRadius: 8, background: "#eef2ff", padding: "0.85rem 0.95rem", display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: "0.95em", color: "#3730a3" }}>Profile checklist evaluation</strong>
+    <div style={{ border: "1px solid #c7d2fe", borderLeft: "5px solid #6366f1", borderRadius: 10, background: "#eef2ff", padding: "1.25rem 1.4rem", display: "grid", gap: 14, fontSize: "1.05rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: "1.2em", color: "#3730a3" }}>Profile checklist evaluation</strong>
         <Badge tone={verdictTone}>{evaluation.verdict ?? "—"}</Badge>
-        <span style={{ fontSize: "0.8em", color: "#4338ca" }}>
+        <span style={{ fontSize: "0.95em", color: "#4338ca" }}>
           conf {typeof evaluation.confidence === "number" ? evaluation.confidence.toFixed(2) : "—"} ·{" "}
           {evaluation.enriched ? "LinkedIn/Coresignal + résumé" : "transcript-only"} · advisory
         </span>
       </div>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: "0.86em", color: "#1e293b" }}>
+      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: "1.05em", color: "#1e293b" }}>
         <span><strong>Hard</strong> {tally(c.hard)}</span>
         <span><strong>Fit</strong> {tally(c.fit)}</span>
         <span><strong>Bonus</strong> {tally(c.bonus)}</span>
         <span><strong>Anti</strong> {c.anti?.flagged ?? 0} flag(s)</span>
       </div>
       {Array.isArray(evaluation.checklistDetail) && evaluation.checklistDetail.length > 0 ? (
-        <div style={{ display: "grid", gap: 6, borderTop: "1px solid #c7d2fe", paddingTop: 6 }}>
+        <div style={{ display: "grid", gap: 12, borderTop: "1px solid #c7d2fe", paddingTop: 12 }}>
           {evaluation.checklistDetail.map((g, gi) => (
-            <div key={gi} style={{ display: "grid", gap: 2 }}>
-              <div style={{ fontSize: "0.74em", fontWeight: 700, letterSpacing: "0.04em", color: "#4338ca", textTransform: "uppercase" }}>
+            <div key={gi} style={{ display: "grid", gap: 5 }}>
+              <div style={{ fontSize: "0.9em", fontWeight: 700, letterSpacing: "0.04em", color: "#4338ca", textTransform: "uppercase" }}>
                 {(g.kind ?? "").toUpperCase()}{g.heading ? ` · ${g.heading}` : ""}
               </div>
               {(g.items ?? []).map((it, ii) => {
                 const bad = it.status === "gap" || it.status === "flag"
                 const mark = it.status === "gap" ? "✗" : it.status === "flag" ? "⚑" : "✓"
                 return (
-                  <div key={ii} style={{ display: "flex", gap: 6, fontSize: "0.82em", color: "#1e293b", alignItems: "flex-start" }}>
-                    <span style={{ color: bad ? "#b91c1c" : "#15803d", fontWeight: 700, width: 12, flexShrink: 0 }}>{mark}</span>
-                    <span style={bad ? { color: "#334155" } : { color: "#64748b" }}>{it.text}</span>
+                  <div key={ii} style={{ display: "flex", gap: 9, fontSize: "1.02em", lineHeight: 1.45, color: "#1e293b", alignItems: "flex-start" }}>
+                    <span style={{ color: bad ? "#b91c1c" : "#15803d", fontWeight: 700, width: 18, flexShrink: 0 }}>{mark}</span>
+                    <span style={bad ? { color: "#1e293b" } : { color: "#64748b" }}>{it.text}</span>
                   </div>
                 )
               })}
@@ -885,28 +885,28 @@ function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChe
       ) : (
         <>
           {(c.hard?.gaps?.length ?? 0) > 0 ? (
-            <div style={{ fontSize: "0.82em", color: "#334155" }}>
+            <div style={{ fontSize: "1.02em", color: "#334155" }}>
               <strong style={{ color: "#b91c1c" }}>Hard gaps:</strong> {c.hard!.gaps!.slice(0, 6).join(" · ")}
             </div>
           ) : null}
           {(c.anti?.flags?.length ?? 0) > 0 ? (
-            <div style={{ fontSize: "0.82em", color: "#334155" }}>
+            <div style={{ fontSize: "1.02em", color: "#334155" }}>
               <strong style={{ color: "#b91c1c" }}>Anti flags:</strong> {c.anti!.flags!.slice(0, 6).join(" · ")}
             </div>
           ) : null}
         </>
       )}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: "0.8em" }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: "0.95em", paddingTop: 4 }}>
         {(["school", "degree", "company", "gpa"] as const).map((k) => (
           <Badge key={k} tone={pillarTone(evaluation.background?.[k]?.verdict)}>{k}: {evaluation.background?.[k]?.verdict ?? "—"}</Badge>
         ))}
       </div>
       {evaluation.research?.companies?.length ? (
-        <div style={{ fontSize: "0.8em", color: "#475569" }}>
+        <div style={{ fontSize: "0.95em", color: "#475569" }}>
           profile: {evaluation.research.companies.slice(0, 4).map((x) => `${x.role ?? "?"}@${x.name ?? "?"}`).join(" · ")}
         </div>
       ) : null}
-      {evaluation.summary ? <div style={{ fontSize: "0.84em", color: "#334155" }}>{evaluation.summary}</div> : null}
+      {evaluation.summary ? <div style={{ fontSize: "1.02em", lineHeight: 1.5, color: "#334155" }}>{evaluation.summary}</div> : null}
     </div>
   )
 }
@@ -947,7 +947,7 @@ export function SideDrawer({
           top: 0,
           right: 0,
           height: "100vh",
-          width: wide ? "min(880px, 96vw)" : "min(560px, 96vw)",
+          width: wide ? "min(1180px, 94vw)" : "min(560px, 96vw)",
           background: "var(--cream-3, #fff)",
           borderLeft: "1px solid var(--border, #e2e8f0)",
           boxShadow: "-12px 0 32px rgba(15, 23, 42, 0.18)",
