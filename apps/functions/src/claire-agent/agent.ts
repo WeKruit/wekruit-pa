@@ -1276,9 +1276,11 @@ export async function runClaireTurn(
           err: e instanceof Error ? e.message : String(e),
         })
       }
-      // Two-tier rejection/next-step draft (Adam 2026-06-14) — the thin path runs
-      // the prescreen for canary/dev users, so it must also produce the inline
-      // review.autoDraft (the deterministic path does this in finalizePrescreenForHumanReview).
+      // Two-tier rejection/next-step draft (Adam 2026-06-14). NOTE: active prescreens
+      // run on the deterministic FSM (mode-selector defers them), which produces the
+      // inline review.autoDraft in finalizePrescreenForHumanReview — that is the path
+      // that fires today. This call is a belt-and-suspenders so IF the thin agent ever
+      // owns a prescreen terminal, it still produces the same review.autoDraft artifact.
       // Additive + fail-open: NEVER sends, never breaks the terminal fire above.
       try {
         const psScore = ps as unknown as { score?: number; scoreMax?: number; threshold?: number }
