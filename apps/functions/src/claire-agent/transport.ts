@@ -78,6 +78,7 @@ export interface SendblueTransport extends ClaireTransport {
   readonly recordedEvents: TransportEvent[]
 }
 
+/** Collection of durable "this inbound was acknowledged without an outbound text" markers. */
 export const PA_INBOUND_ACK_COLLECTION = "pa-inbound-acks"
 
 const noopLog = (_event: string, _payload?: Record<string, unknown>): void => {}
@@ -298,9 +299,6 @@ export function createSendblueTransport(
     },
   }
 }
-
-/** Collection of durable "this inbound was acknowledged without an outbound text" markers. */
-export const PA_INBOUND_ACK_COLLECTION = "pa-inbound-acks"
 
 /**
  * Write a durable marker recording that THIS inbound event was deliberately
