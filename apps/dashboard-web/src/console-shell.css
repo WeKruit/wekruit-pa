@@ -785,7 +785,9 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
    narrow viewports. The detail column sticks below the topbar while scrolling. */
 .sub-masterdetail {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  width: calc(100vw - 240px - 64px);
+  max-width: calc(100vw - 240px - 64px);
+  grid-template-columns: minmax(640px, 0.9fr) minmax(640px, 1.1fr);
   gap: 16px;
   align-items: start;
 }
@@ -799,6 +801,8 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 }
 @media (max-width: 1100px) {
   .sub-masterdetail {
+    width: 100%;
+    max-width: 100%;
     grid-template-columns: minmax(0, 1fr);
   }
   .sub-masterdetail__detail {
@@ -1234,4 +1238,3 @@ body[data-density="comfy"] .page-head__title { font-size: 38px; }
 
 body.no-anim .pulse--animated::after { animation: none; }
 body.no-anim .feed__enter { animation: none; }
-
