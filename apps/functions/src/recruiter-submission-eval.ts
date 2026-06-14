@@ -23,6 +23,7 @@
  *      shape so the review board always shows SOMETHING.
  */
 
+import { createHash } from "node:crypto"
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
 import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
@@ -43,8 +44,13 @@ const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
 
 const SUBMISSIONS_COLLECTION = "pa-recruiter-submissions"
 const JOBS_COLLECTION = "pa-jobs"
+// Coresignal responses cached by canonical-LinkedIn hash so the eval (and any
+// candidate↔response matching) reuses one fetch instead of re-pulling per
+// submission. Refreshed after the TTL.
+const CORESIGNAL_CACHE_COLLECTION = "pa-coresignal-cache"
+const CORESIGNAL_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
-export const SUBMISSION_EVAL_VERSION = "submission-eval-v1"
+export const SUBMISSION_EVAL_VERSION = "submission-eval-v2"
 
 // ---------------------------------------------------------------------------
 // Pinned aiEvaluation shape (submission-eval-v1)
@@ -57,8 +63,19 @@ export type SubmissionEvalResearch = {
   source: "coresignal"
   headline: string
   companies: Array<{ name: string; role?: string; years?: string }>
+  education: Array<{ school: string; degree?: string }>
   signals: string[]
   risks: string[]
+}
+
+// AI's independent read of a background pillar. Stored ALONGSIDE the recruiter's
+// candidateBackground self-flag so operators see recruiter-said vs AI-found.
+export type SubmissionEvalPillar = { verdict: "strong" | "weak" | "unknown"; evidence: string }
+export type SubmissionEvalBackground = {
+  school: SubmissionEvalPillar
+  gpa: SubmissionEvalPillar
+  degree: SubmissionEvalPillar
+  company: SubmissionEvalPillar
 }
 
 export type SubmissionAiEvaluation = {
@@ -72,10 +89,11 @@ export type SubmissionAiEvaluation = {
     bonus: SubmissionEvalTally
     anti: SubmissionEvalAntiTally
   }
+  background: SubmissionEvalBackground
   research?: SubmissionEvalResearch
   evaluatedAt: string
   model: string
-  version: "submission-eval-v1"
+  version: "submission-eval-v2"
   error?: string
 }
 
@@ -89,6 +107,16 @@ const AntiTallySchema = z.object({
   total: z.number(),
   flags: z.array(z.string()),
 })
+const PillarSchema = z.object({
+  verdict: z.enum(["strong", "weak", "unknown"]),
+  evidence: z.string(),
+})
+const BackgroundSchema = z.object({
+  school: PillarSchema,
+  gpa: PillarSchema,
+  degree: PillarSchema,
+  company: PillarSchema,
+})
 const EvalJudgmentSchema = z.object({
   verdict: z.enum(["advance", "borderline", "reject"]),
   confidence: z.number(),
@@ -100,6 +128,7 @@ const EvalJudgmentSchema = z.object({
     bonus: TallySchema,
     anti: AntiTallySchema,
   }),
+  background: BackgroundSchema,
 })
 type EvalJudgment = z.infer<typeof EvalJudgmentSchema>
 
@@ -125,10 +154,30 @@ const ANTI_TALLY_JSON_SCHEMA = {
     flags: { type: "array", items: { type: "string" } },
   },
 } as const
+const PILLAR_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["verdict", "evidence"],
+  properties: {
+    verdict: { type: "string", enum: ["strong", "weak", "unknown"] },
+    evidence: { type: "string", description: "The specific school/degree/company that drove this verdict, or why it is unknown." },
+  },
+} as const
+const BACKGROUND_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["school", "gpa", "degree", "company"],
+  properties: {
+    school: PILLAR_JSON_SCHEMA,
+    gpa: PILLAR_JSON_SCHEMA,
+    degree: PILLAR_JSON_SCHEMA,
+    company: PILLAR_JSON_SCHEMA,
+  },
+} as const
 const EVAL_JUDGMENT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["verdict", "confidence", "summary", "reasons", "checklist"],
+  required: ["verdict", "confidence", "summary", "reasons", "checklist", "background"],
   properties: {
     verdict: { type: "string", enum: ["advance", "borderline", "reject"] },
     confidence: { type: "number", description: "0..1 confidence in the verdict given the evidence." },
@@ -145,6 +194,7 @@ const EVAL_JUDGMENT_JSON_SCHEMA = {
         anti: ANTI_TALLY_JSON_SCHEMA,
       },
     },
+    background: BACKGROUND_JSON_SCHEMA,
   },
 } as const
 
@@ -158,6 +208,12 @@ Rules:
 - Be stingy. verdict "advance" ONLY when checklist.hard.gaps is empty AND the supporting evidence is concrete. Thin, generic, or unverifiable submissions are "borderline". Clear hard gaps or applicable anti-signals push toward "reject".
 - confidence is 0..1 — how confident you are in the verdict given the evidence quality.
 - reasons: short concrete bullets citing the specific evidence (or its absence) that drove the verdict.
+- Also independently assess the candidate's BACKGROUND pillars from the research + resume, and output \`background\` with one of strong / weak / unknown per pillar plus short \`evidence\`:
+  - school: "strong" for a target / strong / well-known university; "weak" for clearly non-target; "unknown" if no education info is available.
+  - degree: "strong" for a relevant degree/field for this role; "weak" if mismatched; "unknown" if absent.
+  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers; "unknown" if no work history is available.
+  - gpa: ALMOST ALWAYS "unknown". Set "strong"/"weak" ONLY if the resume/notes explicitly state a GPA. NEVER infer GPA from the school or LinkedIn.
+  The recruiter's background self-flag (shown in the prompt) is a HINT, not a fact — assess each pillar independently from the evidence.
 - Output STRICT JSON matching the schema. Nothing else.`
 
 // ---------------------------------------------------------------------------
@@ -280,6 +336,15 @@ export function buildResearchFromEmployee(employee: CoresignalEmployeeCollectV2)
     : []
   if (skills.length > 0) signals.push(`profile skills: ${skills.join(", ")}`)
 
+  const education: SubmissionEvalResearch["education"] = []
+  for (const entry of Array.isArray(employee.education) ? employee.education : []) {
+    const school = cleanString(entry?.school)
+    if (!school) continue
+    if (education.length >= 6) break
+    const degree = cleanString(entry?.degree)
+    education.push({ school, ...(degree ? { degree } : {}) })
+  }
+
   const risks: string[] = []
   if (companies.length === 0) risks.push("no work experience listed on Coresignal profile")
   else if (!working) risks.push("no active role on Coresignal profile")
@@ -288,6 +353,7 @@ export function buildResearchFromEmployee(employee: CoresignalEmployeeCollectV2)
     source: "coresignal",
     headline: cleanString(employee.headline) ?? activeTitle ?? "",
     companies,
+    education,
     signals,
     risks,
   }
@@ -327,6 +393,28 @@ export type RecruiterSubmissionEvalResult = {
   aiEvaluation?: SubmissionAiEvaluation
 }
 
+export function coresignalCacheKey(link: string): string {
+  const norm = link.trim().toLowerCase().replace(/[?#].*$/, "").replace(/\/+$/, "")
+  return createHash("sha256").update(norm).digest("hex").slice(0, 40)
+}
+
+async function readCoresignalCache(
+  deps: RecruiterSubmissionEvalDeps,
+  cacheKey: string,
+  nowMs: number,
+): Promise<CoresignalEmployeeCollectV2 | undefined> {
+  try {
+    const snap = await deps.db.collection(CORESIGNAL_CACHE_COLLECTION).doc(cacheKey).get()
+    if (!snap.exists) return undefined
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    const fetchedMs = typeof data.fetchedAt === "string" ? Date.parse(data.fetchedAt) : 0
+    if (!data.employee || !(nowMs - fetchedMs < CORESIGNAL_CACHE_TTL_MS)) return undefined
+    return data.employee as CoresignalEmployeeCollectV2
+  } catch {
+    return undefined
+  }
+}
+
 async function researchCandidate(
   link: string,
   deps: RecruiterSubmissionEvalDeps,
@@ -336,6 +424,17 @@ async function researchCandidate(
     deps.log?.("research_skipped_not_linkedin", { submissionId })
     return undefined
   }
+  const nowIso = deps.now?.() ?? new Date().toISOString()
+  const nowMs = Date.parse(nowIso)
+  const cacheKey = coresignalCacheKey(link)
+
+  // Reuse a recent Coresignal pull for this LinkedIn profile (no API key needed).
+  const cached = await readCoresignalCache(deps, cacheKey, nowMs)
+  if (cached) {
+    deps.log?.("research_cache_hit", { submissionId, cacheKey })
+    return buildResearchFromEmployee(cached)
+  }
+
   if (!deps.research.apiKey) {
     deps.log?.("research_skipped_no_key", { submissionId })
     return undefined
@@ -351,6 +450,13 @@ async function researchCandidate(
     const employee = await deps.research.fetchEmployeeCollect(employeeId, {
       apiKey: deps.research.apiKey,
     })
+    // Store keyed by canonical-LinkedIn hash so future evals / candidate matching
+    // reuse this one pull. Best-effort: a cache-write failure never fails the eval.
+    await deps.db
+      .collection(CORESIGNAL_CACHE_COLLECTION)
+      .doc(cacheKey)
+      .set({ linkedinUrl: link, employeeId, employee, fetchedAt: nowIso, source: "coresignal" }, { merge: true })
+      .catch((e) => deps.log?.("research_cache_write_failed", { submissionId, error: e instanceof Error ? e.message : String(e) }))
     return buildResearchFromEmployee(employee)
   } catch (err) {
     deps.log?.("research_failed_fail_open", {
@@ -405,12 +511,25 @@ function renderResearch(research: SubmissionEvalResearch | undefined): string {
   const companies = research.companies
     .map((company) => `- ${company.name}${company.role ? ` — ${company.role}` : ""}${company.years ? ` (${company.years})` : ""}`)
     .join("\n")
+  const education = research.education
+    .map((e) => `- ${e.school}${e.degree ? ` — ${e.degree}` : ""}`)
+    .join("\n")
   return [
     `Headline: ${research.headline || "(none)"}`,
     `Companies:\n${companies || "(none)"}`,
+    `Education:\n${education || "(none — no school/degree on the profile)"}`,
     `Signals: ${research.signals.join("; ") || "(none)"}`,
     `Risks: ${research.risks.join("; ") || "(none)"}`,
   ].join("\n")
+}
+
+function renderRecruiterBackgroundFlag(submission: Record<string, unknown>): string {
+  const bg = asRecord(submission.candidateBackground)
+  if (!bg) return "(recruiter did not flag any background pillars)"
+  const parts = (["school", "gpa", "degree", "company"] as const)
+    .map((k) => (cleanString(bg[k]) ? `${k}: ${cleanString(bg[k])}` : null))
+    .filter((x): x is string => Boolean(x))
+  return parts.length ? parts.join(" · ") : "(recruiter did not flag any background pillars)"
 }
 
 function buildJudgeUserText(args: {
@@ -447,7 +566,10 @@ ${args.candidate.email ? `Email: ${args.candidate.email}\n` : ""}${args.candidat
 ## Independent research (Coresignal)
 ${renderResearch(args.research)}
 
-Return STRICT JSON per the schema: verdict, confidence, summary, reasons, checklist {hard, fit, bonus, anti}.`
+## Recruiter background self-flag (HINT only — verify independently)
+${renderRecruiterBackgroundFlag(args.submission)}
+
+Return STRICT JSON per the schema: verdict, confidence, summary, reasons, checklist {hard, fit, bonus, anti}, and background {school, gpa, degree, company} each {verdict, evidence}.`
 }
 
 function clamp01(value: number): number {
@@ -543,6 +665,12 @@ export function errorEvaluation(message: string, evaluatedAt: string): Submissio
       fit: { met: 0, total: 0, gaps: [] },
       bonus: { met: 0, total: 0, gaps: [] },
       anti: { flagged: 0, total: 0, flags: [] },
+    },
+    background: {
+      school: { verdict: "unknown", evidence: "evaluation failed" },
+      gpa: { verdict: "unknown", evidence: "evaluation failed" },
+      degree: { verdict: "unknown", evidence: "evaluation failed" },
+      company: { verdict: "unknown", evidence: "evaluation failed" },
     },
     evaluatedAt,
     model: "none",
