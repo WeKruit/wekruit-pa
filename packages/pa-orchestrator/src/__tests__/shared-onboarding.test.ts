@@ -75,6 +75,32 @@ test("NEW job-only opener (no uid → phone-is-auth) parses to null candidateId 
   assert.equal(isSharedOnboardingGreetingOrKickoff("WeKruit_photon-macos-devops_abc_user_99_Job"), true)
 })
 
+test("NEW job token carrying a BIND CODE (2026-06-14 web→phone bridge) parses to { bindCode }, not a candidateId", () => {
+  // The website-first candidate's job token embeds an 8-char Crockford-minus-
+  // ambiguous bind code. It must parse as a bindCode (resolved+consumed async →
+  // candidateId), NEVER as a raw candidateId uid.
+  assert.deepEqual(
+    parseHelloWekruitOpener("WeKruit_hs-10996795-invoko-product-manager_ABCDEF23_Job"),
+    { bindCode: "ABCDEF23" },
+  )
+  // Normalizes case + whitespace like the verification-code opener.
+  assert.deepEqual(
+    parseHelloWekruitOpener("WeKruit_photon-macos-devops_abcdef23_Job"),
+    { bindCode: "ABCDEF23" },
+  )
+  // A bind-code-bearing job token is still a kickoff (never a stray slot answer).
+  assert.equal(
+    isSharedOnboardingGreetingOrKickoff("WeKruit_hs-10996795-invoko-product-manager_ABCDEF23_Job"),
+    true,
+  )
+  // A LEGACY raw uid (20-char, has `_`, ambiguous glyphs) is NOT bind-code shape →
+  // stays a candidateId (back-compat), proving the disambiguation never collides.
+  assert.deepEqual(
+    parseHelloWekruitOpener("WeKruit_photon-macos-devops_aBcD1eFgH2iJkLmNoPqR_Job"),
+    { candidateId: "aBcD1eFgH2iJkLmNoPqR" },
+  )
+})
+
 // ───────────────────────── transit-safe bind code (2026-06-13) ──────────────
 
 test("bind-code alphabet excludes ALL ambiguous glyphs (I, L, O, U, 0, 1)", () => {

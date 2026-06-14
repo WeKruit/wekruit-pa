@@ -1,7 +1,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle, mergeCandidatesByPhone } from "@pa/pa-persistence"
-import { parseHelloWekruitOpener } from "@pa/pa-orchestrator"
+import { parseHelloWekruitOpener, isBindCode } from "@pa/pa-orchestrator"
 import { resolveAndConsumeBindCode } from "./bind-code.js"
 import { isE164 } from "./sendblue/handle-format.js"
 
@@ -30,14 +30,21 @@ type CandidatePhoneMatch = { id: string; data: Record<string, unknown> }
 /**
  * Extract the userId from a prescreen token. Returns the uid for the LEGACY
  * `WeKruit_<jobId>_<userId>_Job` form, or `null` for the new JOB-ONLY
- * `WeKruit_<jobId>_Job` form (phone-is-auth — no uid in the token). Exported
- * (2026-06-11) so email-sender resolution reuses the EXACT parser this resolver
- * already trusts for uid extraction — never a re-written regex.
+ * `WeKruit_<jobId>_Job` form (phone-is-auth — no uid in the token) AND for the
+ * BIND-CODE form `WeKruit_<jobId>_<bindCode>_Job` (2026-06-14): the bindCode is
+ * NOT a candidateId — it must be resolved+consumed against pa-bind-codes async
+ * (see resolveInboundUserId's bindCode arm), so this synchronous uid extractor
+ * deliberately returns null for it (a bindCode is never a directly-usable uid).
+ * Exported (2026-06-11) so email-sender resolution reuses the EXACT parser this
+ * resolver already trusts for uid extraction — never a re-written regex.
  */
 export function parsePrescreenCandidateId(text: string): string | null {
   const match = text.match(PRESCREEN_TOKEN_RE)
-  const candidateId = match?.[2]?.trim()
-  return candidateId || null
+  const seg = match?.[2]?.trim()
+  if (!seg) return null
+  // Bind-code-shaped segment is an opaque code, not a uid → null (resolved async).
+  if (isBindCode(seg)) return null
+  return seg
 }
 
 async function lookupUserByPhoneE164(db: Firestore, phoneE164: string): Promise<string | null> {

@@ -34,17 +34,27 @@ export function buildBindCodeOpenerBody(code: string): string {
 /**
  * Build the prescreen job-opener body the candidate sends to start a screen.
  *
- * 2026-06-13 — the uid is GONE from the token (Adam directive: kill the
- * page→Messages glyph-corruption class at the source). Firebase push-id uids
- * carry ambiguous glyphs (`l`↔`1`, `I`, stray `-`) that mangle in iMessage
- * transit; a corrupted uid resolved to no account → DEAD SILENCE (Maximiliano,
- * Aditya, Sydney). Identity is now PHONE-IS-AUTH (prescreen trigger resolves the
- * candidate from the inbound phone, not the token uid). The jobId is the only
- * payload — and it's validated against pa-jobs, so a corrupted jobId just fails
- * the match (graceful notice), never silently mis-resolves identity.
+ * 2026-06-14 (Adam-locked) — the token MUST ALWAYS carry the candidate's
+ * IDENTITY as a server-minted, transit-safe BIND CODE: `WeKruit_<jobId>_<bindCode>
+ * _Job`. The bind code is the web→phone identity bridge — the inbound webhook
+ * resolves it → candidateId → binds the texted phone to THAT web profile
+ * (resume/tags intact), so a website-first candidate whose phone is not yet
+ * bound is never orphaned (+19196855995 dead-silence) and never split into a
+ * duplicate. The code is Crockford-base32-minus-ambiguous (no I/L/O/U/0/1) so it
+ * survives page→Messages transit without corrupting (the original raw-uid bug:
+ * Maximiliano/Aditya/Sydney). The jobId is always validated against pa-jobs, so
+ * a corrupted jobId fails the match (graceful notice), never mis-resolves.
  *
- * `candidateId` is accepted-but-unused for call-site back-compat.
+ * EVERY MINT SITE MUST PASS A bindCode. The job-only `WeKruit_<jobId>_Job` form
+ * is NEVER minted — it exists only as a DEGRADED/LEGACY inbound that the parser
+ * still accepts and resolves via phone-is-auth (for an already-bound phone). The
+ * sole no-code branch below is a last-resort fallback for that already-bound /
+ * mint-failed case; callers should treat a missing code as a bug, not a path.
  */
-export function buildWekruitJobOpenerBody(jobId: string, _candidateId?: string): string {
-  return `WeKruit_${jobId.trim()}_Job`
+export function buildWekruitJobOpenerBody(jobId: string, bindCode?: string): string {
+  const job = jobId.trim()
+  const code = bindCode ? bindCode.replace(/\s+/g, "").toUpperCase() : ""
+  // Degraded fallback ONLY (already-bound phone / mint failed): phone-is-auth
+  // resolves identity inbound. Never the preferred mint.
+  return code ? `WeKruit_${job}_${code}_Job` : `WeKruit_${job}_Job`
 }

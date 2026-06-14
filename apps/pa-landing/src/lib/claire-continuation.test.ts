@@ -24,13 +24,25 @@ test("no bound phone → verification-code binding opener (same pa-users uid, ne
   assert.equal(body, "Hi, WeKruit, my verification code is cand-1")
 })
 
-test("job context + bound phone → JOB-ONLY token (no uid; phone-is-auth, kills uid-corruption class)", () => {
+test("job context + bound phone + bindCode → token CARRIES the bind code (Adam-locked 2026-06-14: never mint job-only)", () => {
+  const bound = buildClaireContinuationBody({
+    senderNumber: "+17174919939",
+    candidateId: "cand-1",
+    bindCode: "ABCDEF23",
+    phoneVerified: true,
+    jobId: "hs-123-job",
+  })
+  assert.equal(bound, "WeKruit_hs-123-job_ABCDEF23_Job")
+})
+
+test("job context + bound phone, NO bindCode → degraded job-only fallback (phone-is-auth resolves inbound)", () => {
   const bound = buildClaireContinuationBody({
     senderNumber: "+17174919939",
     candidateId: "cand-1",
     phoneVerified: true,
     jobId: "hs-123-job",
   })
+  // Only the degraded fallback (no code available) emits the bare job-only token.
   assert.equal(bound, "WeKruit_hs-123-job_Job")
 })
 

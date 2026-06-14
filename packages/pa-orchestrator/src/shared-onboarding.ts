@@ -357,7 +357,24 @@ export function parseHelloWekruitOpener(
 ): { candidateId: string; bindCode?: undefined } | { bindCode: string; candidateId?: undefined } | null {
   const trimmed = value.trim()
   const jobMatch = trimmed.match(WEKRUIT_JOB_OPENER_RE)
-  if (jobMatch?.[2]) return { candidateId: jobMatch[2].trim() }
+  if (jobMatch?.[2]) {
+    // The prescreen JOB token's optional segment is EITHER:
+    //   - a transit-safe opaque BIND CODE (NEW 2026-06-14) — the WEBSITE-FIRST
+    //     candidate (registered on /j/:jobId, got a candidateId + senderNumber,
+    //     but whose phone is not yet bound to that web account) — the job page
+    //     mints `WeKruit_<jobId>_<bindCode>_Job` so the inbound carries the
+    //     web→phone IDENTITY BRIDGE in a corruption-proof form (pa-bind-codes/
+    //     <CODE> → candidateId). Resolve+consume async like the verification-code
+    //     opener; the caller (resolveInboundUserId) binds the texted phone to
+    //     that web candidate and starts the screen for them — NOT a new prospect.
+    //   - a LEGACY raw Firebase push-id uid (back-compat for in-flight tokens).
+    // Disambiguate by EXACT bind-code shape: minted codes are precisely N chars
+    // over the Crockford-minus-ambiguous alphabet, which 20-char push-id uids
+    // (with `_`/`-`/ambiguous glyphs) can never collide with.
+    const seg = jobMatch[2].trim()
+    if (isBindCode(seg)) return { bindCode: normalizeBindCode(seg) }
+    return { candidateId: seg }
+  }
   const match =
     trimmed.match(HI_WEKRUIT_OPENER_RE) ??
     trimmed.match(VERIFICATION_CODE_OPENER_RE) ??

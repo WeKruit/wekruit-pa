@@ -543,3 +543,83 @@ test("LEGACY raw-uid opener still binds (back-compat) — uids are never bind co
   const resolved = await resolveInboundUserId(db, "+14155550666", opener)
   assert.equal(resolved, candidateId)
 })
+
+// ──────── bind code embedded in the PRESCREEN JOB token (2026-06-14) ─────────
+// The WEBSITE-FIRST candidate (registered on /j/:jobId, has a candidateId, phone
+// NOT yet bound to that web account) pastes `WeKruit_<jobId>_<bindCode>_Job`. The
+// bind code is the web→phone IDENTITY BRIDGE: first text binds the texted phone
+// to the EXISTING web profile (resume/tags intact), never spawns a duplicate.
+
+test("TEST 1 — web-registered unbound phone + WeKruit_<job>_<bindCode>_Job → resolves bindCode→candidateId, BINDS the phone (no duplicate account)", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "web_first_unbound_01"
+  // The web profile exists (resume/tags), but has NO phone yet.
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, {
+    id: candidateId,
+    source: "candidate",
+    tags: { skills: ["typescript", "react"] },
+  })
+  const db = fakeDb as unknown as Firestore
+
+  const code = await issueBindCode(db, candidateId)
+  const token = `WeKruit_hs-10996795-invoko-product-manager_${code}_Job`
+  const resolved = await resolveInboundUserId(db, "+19196855995", token)
+  assert.equal(resolved, candidateId, "resolves to the EXISTING web candidate, not a new prospect")
+
+  const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(userSnap.data()?.phoneE164, "+19196855995", "texted phone now bound to the web profile")
+  // Resume/tags preserved (no clobber, no split entity).
+  assert.deepEqual((userSnap.data()?.tags as Record<string, unknown>).skills, ["typescript", "react"])
+  const codeSnap = await db.collection(PA_COLLECTIONS.bindCodes).doc(code).get()
+  assert.equal(codeSnap.data()?.used, true, "bind code consumed (single-use)")
+})
+
+test("TEST 2 — repeat paste (3×) of the same bindCode job token → ONE bind, idempotent (consumed code, then phone-is-auth)", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "web_first_unbound_idem_01"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+
+  const code = await issueBindCode(db, candidateId)
+  const token = `WeKruit_hs-10996795-invoko-product-manager_${code}_Job`
+
+  // The 3 repeated weekend pastes (+19196855995 pasted the token 3×).
+  for (const _attempt of [1, 2, 3]) {
+    const resolved = await resolveInboundUserId(db, "+19196855995", token)
+    assert.equal(resolved, candidateId, "every paste resolves to the SAME web candidate")
+  }
+  // Still exactly one account holds the phone (no duplicate from re-paste).
+  const all = await db
+    .collection(PA_COLLECTIONS.users)
+    .where("phoneE164", "==", "+19196855995")
+    .get()
+  assert.equal(all.docs.length, 1, "exactly ONE account bound to the phone after 3 pastes")
+  assert.equal(all.docs[0]!.id, candidateId)
+})
+
+test("TEST 4 — legacy uid embedded in the job token still binds (back-compat)", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "aBcD1eFgH2iJkLmNoPqZ" // 20-char push-id-like uid (not bind-code shape)
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+
+  const resolved = await resolveInboundUserId(db, "+14155551212", `WeKruit_photon-macos-devops_${candidateId}_Job`)
+  assert.equal(resolved, candidateId)
+  const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(userSnap.data()?.phoneE164, "+14155551212")
+})
+
+test("TEST 5 — UNKNOWN bindCode in the job token + unbound phone → no bind, no duplicate account (null → caller surfaces graceful notice)", async () => {
+  const fakeDb = new FakeFirestore()
+  const db = fakeDb as unknown as Firestore
+  // Valid SHAPE but never minted (e.g. expired then GC'd, or a stale link).
+  const token = "WeKruit_hs-10996795-invoko-product-manager_ABCD2345_Job"
+  const resolved = await resolveInboundUserId(db, "+14155559999", token)
+  assert.equal(resolved, null, "unknown code → no bind; phone unresolved → null (graceful-notice path)")
+  // No account was created or bound to the phone.
+  const all = await db
+    .collection(PA_COLLECTIONS.users)
+    .where("phoneE164", "==", "+14155559999")
+    .get()
+  assert.equal(all.docs.length, 0, "no duplicate/new account created from an unknown code")
+})

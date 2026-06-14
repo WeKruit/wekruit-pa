@@ -37,6 +37,7 @@ function baseDeps(overrides: Partial<Parameters<typeof runCandidateResumeGateSta
     loadLatestResumeArtifact: async () => null,
     loadLatestParsedResume: async () => null,
     assignSenderNumber: async () => ({}),
+    issueBindCode: async (_db: Firestore, candidateId: string) => `BCODE${candidateId.slice(-3).toUpperCase()}`,
     ...overrides,
   }
 }
@@ -184,6 +185,39 @@ test("runCandidateResumeGateStatus allows adam.ylol@wekruit.com", async () => {
   assert.equal(result.ok, true)
   assert.equal(result.candidateId, "cand-1")
   assert.equal(result.status, "needs_resume_upload")
+})
+
+test("runCandidateResumeGateStatus mints + returns a bindCode for THIS candidate (web→phone identity bridge)", async () => {
+  const calls: string[] = []
+  const result = await runCandidateResumeGateStatus(
+    { browserUid: "browser-1" },
+    { uid: "firebase-1", token: { email: "person@example.com", email_verified: true } },
+    baseDeps({
+      issueBindCode: async (_db, candidateId) => {
+        calls.push(candidateId)
+        return "ABCDEF23"
+      },
+    })
+  )
+
+  assert.equal(calls.length, 1, "bind code minted once")
+  assert.equal(calls[0], "cand-1", "minted for the resolved candidateId")
+  assert.equal(result.bindCode, "ABCDEF23", "bindCode returned to the page for the job token")
+})
+
+test("runCandidateResumeGateStatus omits bindCode (never throws) when the mint fails — page falls back to job-only token", async () => {
+  const result = await runCandidateResumeGateStatus(
+    { browserUid: "browser-1" },
+    { uid: "firebase-1", token: { email: "person@example.com", email_verified: true } },
+    baseDeps({
+      issueBindCode: async () => {
+        throw new Error("firestore unavailable")
+      },
+    })
+  )
+
+  assert.equal(result.ok, true, "gate still succeeds")
+  assert.equal(result.bindCode, undefined, "no bindCode → page emits the job-only token (phone-is-auth fallback)")
 })
 
 test("runCandidateResumeGateStatus assigns sender number after auth using canonical candidate id", async () => {

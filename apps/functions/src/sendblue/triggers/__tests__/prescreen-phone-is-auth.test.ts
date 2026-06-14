@@ -271,6 +271,49 @@ test("JOB-ONLY token, phone resolves to a real user → starts (no uid means it 
   assert.equal(deps.runCalls[0].userId, "selfUid")
 })
 
+// ── Case 10: BIND-CODE token (2026-06-14 website-first identity bridge) ──
+// The bind code is resolved+consumed by lookupUserByPhone UPSTREAM (it binds the
+// texted phone to the web candidate and returns it). From the trigger's view a
+// bind-code segment is NOT a uid: it behaves like the JOB-ONLY token (phone-is-
+// auth, no token-uid self-compare, no source attribution from the code).
+test("BIND-CODE token `WeKruit_<jobId>_<bindCode>_Job` → phone-is-auth start (code is not a uid); session = phone-resolved web candidate, no notice", async () => {
+  // lookupUserByPhone here stands in for resolveInboundUserId having already
+  // resolved+consumed the bind code → bound the phone → returned the web account.
+  const deps = makeDeps({ phoneUserId: "webCandidateUid", startableJob: true })
+  const trig = new PrescreenTrigger(deps)
+
+  // 8-char Crockford-minus-ambiguous bind code (no I/L/O/U/0/1).
+  const outcome = await trig.handle(makeCtx("WeKruit_invoko-pm_ABCDEF23_Job"))
+
+  assert.deepEqual(outcome, { kind: "handled", action: "prescreen_triggered" })
+  assert.equal(deps.notices.length, 0)
+  assert.equal(deps.runCalls.length, 1)
+  assert.equal(deps.runCalls[0].userId, "webCandidateUid", "session bound to the phone-resolved web candidate")
+  assert.equal(
+    deps.runCalls[0].sourceRequestedUserId,
+    undefined,
+    "bind code is not a uid → no token-uid source attribution",
+  )
+  assert.equal(deps.runCalls[0].allowMatchedBypass, true)
+  assert.ok(
+    deps.audits.find((a) => a.type === "trigger_phone_is_auth_start"),
+    "phone_is_auth_start audited (not a 'not_self_or_admin' reject)",
+  )
+})
+
+test("BIND-CODE token but jobId NOT startable → graceful notice to the phone, never silent", async () => {
+  const deps = makeDeps({ phoneUserId: "webCandidateUid", startableJob: false })
+  const trig = new PrescreenTrigger(deps)
+
+  const outcome = await trig.handle(makeCtx("WeKruit_bogus-job_ABCDEF23_Job"))
+
+  assert.deepEqual(outcome, { kind: "handled", action: "prescreen_access_issue_notified" })
+  assert.equal(deps.runCalls.length, 0)
+  assert.equal(deps.notices.length, 1)
+  const notice = deps.notices[0] as { targetUserId: string }
+  assert.equal(notice.targetUserId, "webCandidateUid", "notice keyed to the phone-resolved account")
+})
+
 // ── Bonus: lookup throws identity_conflict → notice keyed to phone, not token uid ──
 test("lookup identity_conflict → notice keyed to the raw inbound phone (never the token uid)", async () => {
   const deps = makeDeps({

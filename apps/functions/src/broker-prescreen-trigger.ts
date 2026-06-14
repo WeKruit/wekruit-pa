@@ -7,6 +7,8 @@
 // can never swallow a `_`. (Anchored jobId charset = hyphen-only — the legacy
 // pattern's `[A-Za-z0-9_-]+` jobId class was over-broad and is tightened here so
 // the two-vs-one segment disambiguation is provably correct.)
+import { isBindCode } from "@pa/pa-orchestrator"
+
 const BROKER_PRESCREEN_TRIGGER_RE = /WeKruit_([A-Za-z0-9-]+)(?:_([A-Za-z0-9_-]+))?_Job/
 
 export type BrokerPrescreenTriggerDecision =
@@ -20,7 +22,13 @@ export function decideBrokerPrescreenTrigger(
 ): BrokerPrescreenTriggerDecision {
   const match = text.match(BROKER_PRESCREEN_TRIGGER_RE)
   if (!match) return { kind: "not_trigger" }
-  const [, jobId, targetUserId] = match
+  const [, jobId, rawSegment] = match
+  // A BIND-CODE segment (2026-06-14 website-first identity bridge) is resolved+
+  // consumed by lookupUserByPhone UPSTREAM (it binds the texted phone to the web
+  // candidate), so by the time we get `resolvedUserId` the phone is already the
+  // right account. Treat a bind-code segment like the JOB-ONLY form → phone-is-
+  // auth start, no token-uid self-compare. Legacy raw uid keeps the gate.
+  const targetUserId = rawSegment && isBindCode(rawSegment) ? undefined : rawSegment
   // JOB-ONLY form (no uid) → phone-is-auth: start for the resolved inbound user.
   // There is no token uid to compare, so there is no impersonation surface.
   if (!targetUserId) {

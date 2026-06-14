@@ -120,6 +120,8 @@ type ResumeGateState =
         parsedResumeId?: string
         senderNumber?: string
         senderGroupId?: string
+        /** Server-minted web→phone identity bridge code (see candidate-resume-gate). */
+        bindCode?: string
       }
     }
   | { status: "error"; message: string }
@@ -592,8 +594,15 @@ export default function PublicJob() {
   const resumeGateValue = resumeGate.status === "ready" ? resumeGate.gate : null
   const uploadUserId = resumeGateValue?.candidateId
   const sendNumber = resumeGateValue?.senderNumber ?? null
-  // 2026-06-13 — token is job-only now (phone-is-auth identity); no uid emitted.
-  const smsBody = buildWekruitJobOpenerBody(publicJobId)
+  // 2026-06-14 (Adam-locked) — the prescreen token ALWAYS carries the server-
+  // minted, transit-safe BIND CODE (web→phone identity bridge). The resume-gate
+  // CF always mints a bindCode for the resolved candidateId and returns it here,
+  // so a website-first candidate whose phone is not yet bound resolves to THEIR
+  // web profile (resume/tags) on first text instead of going dead-silent or
+  // spawning a duplicate. The job-only token is NEVER intentionally minted; it
+  // only appears as a degraded fallback if the server mint transiently failed
+  // (the gate refetches → self-heals with a fresh code on the next poll).
+  const smsBody = buildWekruitJobOpenerBody(publicJobId, resumeGateValue?.bindCode)
   const smsHref = sendNumber ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}` : null
 
   const h = hashStringToUint(publicJobId || company)

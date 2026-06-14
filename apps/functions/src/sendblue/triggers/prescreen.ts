@@ -23,6 +23,7 @@
  * first outbound handoff have been committed.
  */
 
+import { isBindCode } from "@pa/pa-orchestrator"
 import type { Trigger, TriggerContext, TriggerOutcome } from "./router.js"
 
 // Prescreen token, BOTH forms (2026-06-13):
@@ -125,6 +126,25 @@ export interface PrescreenTriggerDeps {
    * a foreign-job start).
    */
   isStartableJob?(jobId: string): Promise<boolean>
+  /**
+   * INBOUND-FIRST PROSPECT CREATION (2026-06-14) — get-or-create a pa-users
+   * account keyed by the inbound phone. Used ONLY when the texter's phone does
+   * NOT resolve to any existing account BUT the token jobId IS a real startable
+   * job: a brand-new phone that texts a valid `WeKruit_<jobId>_Job` string is an
+   * inbound-first NEW candidate giving consent + intent (CANONICAL rule
+   * prescreen_string_start_everyone + v2.0 "candidate is durable asset, job is
+   * event") — we MUST create a prospect and START the screen, never go silent.
+   *
+   * Production wires this to the SAME phone-keyed get-or-create the normal
+   * unknown-phone "hi" inbound uses (createProvisionalUser via
+   * findUserByParticipant), so identity/binding stays consistent and we never
+   * hand-roll a divergent pa-users shape. MUST be get-or-create (idempotent):
+   * the 3 repeated weekend pastes must yield ONE account, never a duplicate.
+   * Returns the resolved/created userId, or null on failure (→ falls through to
+   * the graceful notice, never silence). Optional for back-compat with tests
+   * that don't exercise the unknown-phone start.
+   */
+  ensureProspectByPhone?(phoneE164: string): Promise<string | null>
   /** Audit emitter (logged for both deny + accept). */
   audit(event: Record<string, unknown>): Promise<void>
   /** Optional clock seam for tests. */
@@ -199,6 +219,27 @@ export class PrescreenTrigger implements Trigger {
     return PRESCREEN_RE.test(text)
   }
 
+  /**
+   * Does this jobId resolve to a REAL, startable WeKruit job? Fail-closed: a
+   * missing dep or a lookup error returns false so an unknown caller can only
+   * ever fall through to the graceful notice, never to a foreign-job start /
+   * spurious prospect creation. Shared by the unknown-phone inbound-first branch
+   * and the phone-is-auth start branch so they apply the SAME gate.
+   */
+  private async isJobStartable(jobId: string, parsedUserId: string | undefined, ctx: TriggerContext): Promise<boolean> {
+    if (!this.deps.isStartableJob) return false
+    try {
+      return await this.deps.isStartableJob(jobId)
+    } catch (err) {
+      ctx.log("trigger.prescreen.startable_job_lookup_failed", {
+        jobId,
+        parsedUserId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return false
+    }
+  }
+
   async handle(ctx: TriggerContext): Promise<TriggerOutcome> {
     // Pre-screen REQUIRES text (not media-only).
     if (ctx.hasMedia) {
@@ -207,7 +248,18 @@ export class PrescreenTrigger implements Trigger {
 
     const m = ctx.text.match(PRESCREEN_RE)
     if (!m) return { kind: "unauthorized", reason: "regex_no_match" }
-    const [, jobId, userId] = m
+    const [, jobId, rawSegment] = m
+    // The optional token segment is EITHER a legacy raw uid OR an opaque BIND
+    // CODE (2026-06-14, WEBSITE-FIRST candidate identity bridge). A bind code is
+    // NOT a uid — it is resolved+consumed against pa-bind-codes by
+    // lookupUserByPhone (resolveInboundUserId) UPSTREAM, which binds the texted
+    // phone to the web candidate and returns that candidate as the phone-
+    // resolved account. So from this trigger's perspective a bind-code segment
+    // behaves exactly like the JOB-ONLY token: there is no uid to self-compare,
+    // identity is the (now-bound) phone. Treat it as no uid here so isSelf /
+    // audit / attribution stay clean (the bind already attributed the right
+    // account). Legacy uid segments keep the self-identity gate unchanged.
+    const userId = rawSegment && isBindCode(rawSegment.trim()) ? undefined : rawSegment
     const initialReplyText = extractInitialPrescreenReply(ctx.text, m[0], m.index ?? 0)
 
     const now = (this.deps.now ?? Date.now)()
@@ -252,35 +304,79 @@ export class PrescreenTrigger implements Trigger {
       return { kind: "handled", action: "prescreen_identity_conflict_notified" }
     }
     if (!resolvedUserId) {
-      await this.deps.audit({
-        type: "trigger_unauthorized",
-        trigger: "prescreen",
-        reason: "phone_not_resolved",
-        fromNumber: ctx.fromNumber,
-        correlationId: ctx.messageHandle,
-      })
-      try {
-        // FIX 2 — the phone resolved to NO pa-users account; key the notice to
-        // the raw inbound phone (never the token uid) so it goes to the texter
-        // and isn't dropped on a corrupt/nonexistent token uid.
-        await sendPrescreenAccessNotice(this.deps, {
-          targetUserId: ctx.fromNumber,
-          jobId,
-          toE164: ctx.fromNumber,
-          ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
-          messageHandle: ctx.messageHandle,
-          content: PRESCREEN_ACCESS_ISSUE_NOTICE,
-          conflictCode: "phone_not_resolved",
-        })
-      } catch (noticeErr) {
-        ctx.log("trigger.prescreen.access_notice_failed", {
-          jobId,
-          targetUserId: ctx.fromNumber,
-          reason: "phone_not_resolved",
-          error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
-        })
+      // INBOUND-FIRST NEW CANDIDATE (2026-06-14) — the texter's phone resolves to
+      // NO pa-users account. Live regression (2026-06-14, +19196855995 pasted the
+      // job-only token 3× → DEAD SILENCE): the job-only token carries no uid, and
+      // phone-is-auth needs the phone to resolve to a real user — but there was no
+      // account because the inbound-first prospect was never created at this seam.
+      //
+      // CANONICAL rule (prescreen_string_start_everyone + CANONICAL-CANDIDATE-FLOW
+      // + v2.0 "candidate is durable asset, job is event"): a `WeKruit_<jobId>_Job`
+      // STRING paste starts for EVERYONE — the PHONE is the auth. An unknown phone
+      // that texts a VALID startable job token is a NEW candidate giving consent +
+      // intent. CREATE a prospect for that phone and START the screen. Only fall
+      // through to a graceful notice when the jobId is NOT startable (bogus token).
+      const startableForNewPhone =
+        this.deps.ensureProspectByPhone && (await this.isJobStartable(jobId, userId, ctx))
+      if (startableForNewPhone) {
+        let createdUserId: string | null = null
+        try {
+          createdUserId = await this.deps.ensureProspectByPhone!(ctx.fromNumber)
+        } catch (err) {
+          ctx.log("trigger.prescreen.ensure_prospect_failed", {
+            jobId,
+            fromNumber: ctx.fromNumber,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          createdUserId = null
+        }
+        if (createdUserId) {
+          resolvedUserId = createdUserId
+          ctx.log("trigger.prescreen.inbound_first_prospect_created", {
+            jobId,
+            phoneUserId: createdUserId,
+          })
+          await this.deps.audit({
+            type: "trigger_inbound_first_prospect_created",
+            trigger: "prescreen",
+            jobId,
+            senderUserId: createdUserId,
+            correlationId: ctx.messageHandle,
+          })
+        }
       }
-      return { kind: "handled", action: "prescreen_access_issue_notified" }
+      if (!resolvedUserId) {
+        await this.deps.audit({
+          type: "trigger_unauthorized",
+          trigger: "prescreen",
+          reason: "phone_not_resolved",
+          fromNumber: ctx.fromNumber,
+          correlationId: ctx.messageHandle,
+        })
+        try {
+          // FIX 2 — the phone resolved to NO pa-users account AND the job was not
+          // startable (or prospect creation failed); key the notice to the raw
+          // inbound phone (never the token uid) so it goes to the texter and isn't
+          // dropped on a corrupt/nonexistent token uid.
+          await sendPrescreenAccessNotice(this.deps, {
+            targetUserId: ctx.fromNumber,
+            jobId,
+            toE164: ctx.fromNumber,
+            ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
+            messageHandle: ctx.messageHandle,
+            content: PRESCREEN_ACCESS_ISSUE_NOTICE,
+            conflictCode: "phone_not_resolved",
+          })
+        } catch (noticeErr) {
+          ctx.log("trigger.prescreen.access_notice_failed", {
+            jobId,
+            targetUserId: ctx.fromNumber,
+            reason: "phone_not_resolved",
+            error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+          })
+        }
+        return { kind: "handled", action: "prescreen_access_issue_notified" }
+      }
     }
     const isSelf = resolvedUserId === userId
     const isAdmin = this.deps.isAdmin ? await this.deps.isAdmin(resolvedUserId) : false
@@ -295,7 +391,10 @@ export class PrescreenTrigger implements Trigger {
     // userId) misses → falls through to Claire.
     const ttlMs = this.deps.pendingInviteTtlMs ?? 24 * 60 * 60 * 1000
     let pendingMatch = false
-    if (!isSelf && this.deps.getPendingInvite) {
+    // Pending-invite lookup is keyed by the token's wkr_uid. There is no wkr_uid
+    // for the JOB-ONLY or BIND-CODE token forms (userId === undefined), so skip
+    // it — identity is the phone (bind-code already bound it) / phone-is-auth.
+    if (!isSelf && userId && this.deps.getPendingInvite) {
       try {
         const pending = await this.deps.getPendingInvite(userId)
         if (
@@ -336,19 +435,7 @@ export class PrescreenTrigger implements Trigger {
     // jobId is NOT a real startable job (or job lookup errored / wasn't wired).
     let phoneIsAuthStart = false
     if (!isSelf && !isAdmin && !pendingMatch) {
-      let startableJob = false
-      if (this.deps.isStartableJob) {
-        try {
-          startableJob = await this.deps.isStartableJob(jobId)
-        } catch (err) {
-          ctx.log("trigger.prescreen.startable_job_lookup_failed", {
-            jobId,
-            parsedUserId: userId,
-            error: err instanceof Error ? err.message : String(err),
-          })
-          startableJob = false
-        }
-      }
+      const startableJob = await this.isJobStartable(jobId, userId, ctx)
       if (startableJob) {
         phoneIsAuthStart = true
         ctx.log("trigger.prescreen.phone_is_auth_start", {
@@ -405,7 +492,13 @@ export class PrescreenTrigger implements Trigger {
     //     corrupt token uid; bind the session to the phone-resolved real account
     //   - admin (without pendingMatch): admin testing on behalf of another
     //     user — keep body userId so admin can drive that user's session
-    const sessionUserId = pendingMatch || phoneIsAuthStart ? resolvedUserId : userId
+    // userId is undefined for the JOB-ONLY / BIND-CODE token forms; in those
+    // cases isSelf is false (resolvedUserId !== undefined) so control always
+    // flowed through phoneIsAuthStart above → sessionUserId = resolvedUserId.
+    // The `?? resolvedUserId` makes that provably a string (it can only fire when
+    // pendingMatch/phoneIsAuthStart are false AND userId is set, i.e. the self/
+    // admin path).
+    const sessionUserId: string = pendingMatch || phoneIsAuthStart ? resolvedUserId : (userId ?? resolvedUserId)
     const attributeSourceUserId = pendingMatch || phoneIsAuthStart
     const role: "self" | "admin" | "public_page" = pendingMatch || phoneIsAuthStart
       ? "public_page"
@@ -451,7 +544,7 @@ export class PrescreenTrigger implements Trigger {
         userId: sessionUserId,
         toE164: ctx.fromNumber,
         ...(initialReplyText ? { initialReplyText } : {}),
-        ...(attributeSourceUserId ? { sourceRequestedUserId: userId } : {}),
+        ...(attributeSourceUserId && userId ? { sourceRequestedUserId: userId } : {}),
         // STRING-TOKEN START bypasses the matched-gate for EVERY authorized sender (Adam 2026-06-03:
         // "the invited[gate] is for guarding the CONVERSATIONAL start; but for string → start it's
         // everyone"). Reaching here means the sender transmitted the EXACT WeKruit_<jobId>_<userId>_Job
@@ -589,7 +682,7 @@ export class PrescreenTrigger implements Trigger {
 
     // Consume pending-invite AFTER successful dispatch so a retry can re-
     // bind. Fail-open — delete failure does not roll back the trigger.
-    if (pendingMatch && this.deps.consumePendingInvite) {
+    if (pendingMatch && userId && this.deps.consumePendingInvite) {
       try {
         await this.deps.consumePendingInvite(userId)
       } catch (err) {
