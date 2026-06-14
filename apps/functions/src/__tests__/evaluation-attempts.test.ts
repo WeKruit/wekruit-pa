@@ -10,6 +10,7 @@ import {
   runReviewEvaluationAttempt,
   generateAndStorePrescreenAutoDraft,
   selectRejectionTone,
+  PRESCREEN_REVIEW_DRAFT_SCHEMA,
 } from "../evaluation-attempts.js"
 
 const NOW = "2026-05-20T00:00:00.000Z"
@@ -262,6 +263,18 @@ test("operator can draft prescreen review messages without committing state or s
   const session = store.get("pa-prescreen-sessions")!.get("ps-1") as Record<string, unknown>
   assert.equal(session.terminalActionPendingReview, true)
   assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 0)
+})
+
+test("PRESCREEN_REVIEW_DRAFT_SCHEMA: every property is in `required` (OpenAI strict json_schema mode)", () => {
+  // OpenAI strict mode rejects a schema whose `required` omits any property key
+  // ("'required' is required to be ... an array including every key in properties").
+  const schema = PRESCREEN_REVIEW_DRAFT_SCHEMA as unknown as {
+    properties: Record<string, unknown>
+    required: string[]
+  }
+  const propKeys = Object.keys(schema.properties).sort()
+  const requiredKeys = [...schema.required].sort()
+  assert.deepEqual(requiredKeys, propKeys, "required must list EVERY property key")
 })
 
 test("selectRejectionTone: PASS→neutral, HARD_STOP→honest, low-score FAIL→honest, near-miss FAIL→strong", () => {
