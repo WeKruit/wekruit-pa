@@ -579,10 +579,11 @@ function buildPrescreenDraftEvidenceSummary(context: PrescreenReviewDraftContext
   return lines.join("\n").slice(0, 4_000)
 }
 
-const PRESCREEN_REVIEW_DRAFT_SCHEMA = {
+export const PRESCREEN_REVIEW_DRAFT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["candidateMessageBody", "decisionReason", "recommendedActions", "evidenceSummary"],
+  // OpenAI strict json_schema mode requires EVERY property in `required`.
+  required: ["candidateMessageBody", "decisionReason", "recommendedActions", "evidenceSummary", "internalReviewNotes"],
   properties: {
     candidateMessageBody: {
       type: "string",
