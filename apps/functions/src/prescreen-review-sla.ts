@@ -204,6 +204,8 @@ export async function paPrescreenReviewSlaHandler(
           threshold: typeof data.threshold === "number" ? data.threshold : undefined,
           terminalReason: str(data.terminalReason) || undefined,
           now: now().toISOString(),
+          // The screen happened at terminal time, not now (the sweep runs days later).
+          screenDateIso: str(data.terminalActionFiredAt) || str(data.updatedAt) || undefined,
           log,
         })
         if (out.stored) result.backstopDrafted++
