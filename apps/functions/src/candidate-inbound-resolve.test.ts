@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { buildHelloWekruitOpenerBody } from "@pa/pa-orchestrator"
+import { buildHelloWekruitOpenerBody, buildBindCodeOpenerBody } from "@pa/pa-orchestrator"
 import { resolveInboundUserId } from "./candidate-inbound-resolve.js"
+import { issueBindCode } from "./bind-code.js"
 
 type DocData = Record<string, unknown>
 type Store = Map<string, Map<string, DocData>>
@@ -83,6 +84,20 @@ class FakeFirestore {
 
   collection(path: string) {
     return new FakeCollection(this.store, path)
+  }
+
+  async runTransaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
+    const tx = {
+      get: (ref: { get: () => Promise<unknown> }) => ref.get(),
+      set: (
+        ref: { set: (d: DocData, o?: { merge?: boolean }) => Promise<void> },
+        d: DocData,
+        o?: { merge?: boolean },
+      ) => {
+        void ref.set(d, o)
+      },
+    }
+    return fn(tx)
   }
 
   seed(path: string, id: string, data: DocData) {
@@ -457,4 +472,74 @@ test("non-dev phone: opener collapses same-phone signup duplicates and recognize
   assert.deepEqual((canonicalSnap.data()?.tags as Record<string, unknown>).skills, ["python", "react"])
   assert.deepEqual(canonicalSnap.data()?.altEmails, ["yogi.savirigana1996@gmail.com"])
   assert.deepEqual(canonicalSnap.data()?.aliasUserIds, [dupId])
+})
+
+// ──────────── transit-safe bind code opener (2026-06-13) ────────────────────
+
+test("resolveInboundUserId binds the texted phone via a valid bind-code opener", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "cand_bindcode_ok_01"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+
+  const code = await issueBindCode(db, candidateId)
+  const opener = buildBindCodeOpenerBody(code)
+  const resolved = await resolveInboundUserId(db, "+14155550111", opener)
+  assert.equal(resolved, candidateId)
+
+  // Phone bound to the candidate the code maps to.
+  const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(userSnap.data()?.phoneE164, "+14155550111")
+  // Code marked used (single-use).
+  const codeSnap = await db.collection(PA_COLLECTIONS.bindCodes).doc(code).get()
+  assert.equal(codeSnap.data()?.used, true)
+})
+
+test("a REUSED bind code (different phone) does NOT bind a wrong account → falls to phone lookup (null)", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "cand_bindcode_reuse_01"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+
+  const code = await issueBindCode(db, candidateId)
+  // First use from phone A binds.
+  assert.equal(await resolveInboundUserId(db, "+14155550222", buildBindCodeOpenerBody(code)), candidateId)
+  // A DIFFERENT phone presents the same (now-used) code → code_used → no token
+  // bind → resolve by THAT phone (unknown) → null. Never the wrong account.
+  const resolved = await resolveInboundUserId(db, "+14155550333", buildBindCodeOpenerBody(code))
+  assert.equal(resolved, null)
+})
+
+test("an UNKNOWN bind code → no bind, falls through to phone lookup (null), never throws", async () => {
+  const fakeDb = new FakeFirestore()
+  const db = fakeDb as unknown as Firestore
+  // "ABCD2345" is a valid SHAPE but was never minted.
+  const resolved = await resolveInboundUserId(db, "+14155550444", buildBindCodeOpenerBody("ABCD2345"))
+  assert.equal(resolved, null)
+})
+
+test("a CORRUPTED bind code (excluded glyph) → no match, no wrong bind (null)", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "cand_bindcode_corrupt_01"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+  const code = await issueBindCode(db, candidateId)
+  // Corrupt one char into an EXCLUDED glyph (O). The opener prefix is preserved.
+  const corruptedOpener = buildBindCodeOpenerBody(code).slice(0, -1) + "O"
+  const resolved = await resolveInboundUserId(db, "+14155550555", corruptedOpener)
+  assert.equal(resolved, null)
+  // The real code is still unused (the corrupted form never matched it).
+  const codeSnap = await db.collection(PA_COLLECTIONS.bindCodes).doc(code).get()
+  assert.equal(codeSnap.data()?.used, false)
+})
+
+test("LEGACY raw-uid opener still binds (back-compat) — uids are never bind codes", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "aBcD1eFgH2iJkLmNoPqR" // 20-char push-id-like uid
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+  // Legacy verification-code opener carrying the raw uid.
+  const opener = `Hi, WeKruit, my verification code is ${candidateId}`
+  const resolved = await resolveInboundUserId(db, "+14155550666", opener)
+  assert.equal(resolved, candidateId)
 })

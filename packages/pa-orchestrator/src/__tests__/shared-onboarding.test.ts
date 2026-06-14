@@ -5,7 +5,12 @@ import {
   buildSharedOnboardingOpeningPrompt,
   buildSharedOnboardingPostPrescreenOpeningPrompt,
   buildHelloWekruitOpenerBody,
+  buildBindCodeOpenerBody,
   parseHelloWekruitOpener,
+  isBindCode,
+  normalizeBindCode,
+  BIND_CODE_ALPHABET,
+  BIND_CODE_LENGTH,
   buildLinkedinDoneOpenerBody,
   parseLinkedinDoneOpener,
   buildConnectLinkedinUrl,
@@ -68,6 +73,58 @@ test("NEW job-only opener (no uid → phone-is-auth) parses to null candidateId 
   assert.equal(isSharedOnboardingGreetingOrKickoff("WeKruit_photon-macos-devops_Job"), true)
   // And the legacy job+uid form is a kickoff too.
   assert.equal(isSharedOnboardingGreetingOrKickoff("WeKruit_photon-macos-devops_abc_user_99_Job"), true)
+})
+
+// ───────────────────────── transit-safe bind code (2026-06-13) ──────────────
+
+test("bind-code alphabet excludes ALL ambiguous glyphs (I, L, O, U, 0, 1)", () => {
+  for (const bad of ["I", "L", "O", "U", "0", "1"]) {
+    assert.equal(BIND_CODE_ALPHABET.includes(bad), false, `alphabet must not contain ${bad}`)
+  }
+  assert.equal(BIND_CODE_LENGTH, 8)
+})
+
+test("buildBindCodeOpenerBody carries the CODE (not a uid) and keeps back-compat wording", () => {
+  const body = buildBindCodeOpenerBody("ABCD2345")
+  assert.equal(body, "Hi, WeKruit, my verification code is ABCD2345")
+  // round-trips: the parser sees a bind CODE, never a candidateId.
+  assert.deepEqual(parseHelloWekruitOpener(body), { bindCode: "ABCD2345" })
+  // empty → bare prefix, no dangling token.
+  assert.equal(buildBindCodeOpenerBody(""), "Hi, WeKruit, my verification code is")
+})
+
+test("parser classifies the 8-char Crockford shape as a bindCode, NOT a candidateId", () => {
+  const parsed = parseHelloWekruitOpener("Hi, WeKruit, my verification code is GHJK2345")
+  assert.deepEqual(parsed, { bindCode: "GHJK2345" })
+  assert.equal(parsed?.candidateId, undefined)
+})
+
+test("raw Firebase push-id uids still parse as candidateId (back-compat), never as a bindCode", () => {
+  // 20-char push id with `-`/`_` — never collides with the strict 8-char shape.
+  const uid = "aBcD-1eFgH_2iJkLmNoP"
+  assert.deepEqual(parseHelloWekruitOpener(`Hi, WeKruit, my verification code is ${uid}`), {
+    candidateId: uid,
+  })
+  // legacy build path output also stays a candidateId.
+  assert.deepEqual(parseHelloWekruitOpener(buildHelloWekruitOpenerBody(uid)), { candidateId: uid })
+})
+
+test("normalize: strips whitespace + uppercases; never remaps excluded glyphs", () => {
+  assert.equal(normalizeBindCode(" abcd 2345 "), "ABCD2345")
+  assert.equal(isBindCode("abcd2345"), true) // lowercased input normalizes to a valid code
+  // A corrupted code that introduces an EXCLUDED glyph (e.g. O for 0, l for 1)
+  // is NOT remapped → it simply fails the shape check → no match downstream.
+  assert.equal(isBindCode("ABCD234O"), false) // contains O (excluded)
+  assert.equal(isBindCode("ABCD234l"), false) // contains L (excluded, case-insensitive)
+  assert.equal(isBindCode("ABCD2345X9"), false) // wrong length
+  assert.equal(isBindCode("ABCD-345"), false) // hyphen not in alphabet
+})
+
+test("a bind-code opener is a kickoff/greeting (never a slot answer)", () => {
+  assert.equal(
+    isSharedOnboardingGreetingOrKickoff("Hi, WeKruit, my verification code is ABCD2345"),
+    true,
+  )
 })
 
 test("LinkedIn-done re-entry marker round-trips the connect TOKEN (not a candidateId)", () => {

@@ -26,7 +26,7 @@ import { trackEvent } from "../lib/analytics.js"
 import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
 import { CandidateVerifyError, readStoredCandidateId, shouldSignOutOnVerifyError, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 import { startCandidatePhoneLink, verifyCandidatePhoneLink } from "../lib/candidate-phone-link.js"
-import { buildHelloWekruitOpenerBody, buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
+import { buildHelloWekruitOpenerBody, buildBindCodeOpenerBody, buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
 import { canOpenImessageDeepLink } from "../lib/imessage-platform.js"
 import { CompanyCombobox } from "../components/CompanyCombobox.js"
 import { CANDIDATE_STYLES, Icon, IMessageThread } from "./CandidateLogin.js"
@@ -199,6 +199,8 @@ type Profile = {
   isReregistration?: boolean
   /** Sticky Sendblue from-number assigned by openRegisterLayoffCandidate; powers the sms: deep link on the Done view. */
   senderNumber?: string
+  /** Transit-safe phone-binding opener code (2026-06-13). Preferred over the raw uid in the bind opener. */
+  bindCode?: string
 }
 
 export default function Onboarding() {
@@ -1383,11 +1385,17 @@ function Done({
   onGo: (r: "dashboard" | "landing") => void
 }) {
   const number = profile.listPosition
+  // 2026-06-13 — prefer the server-minted transit-safe bind CODE over the raw
+  // uid in the binding opener (the uid mangled in page→Messages transit → failed/
+  // wrong binds). Falls back to the legacy uid opener when no code was minted
+  // (e.g. phone already bound, or a mint hiccup — back-compat parser handles it).
   const openerBody = returnJobId
     ? buildWekruitJobOpenerBody(returnJobId)
-    : profile.candidateId
-      ? buildHelloWekruitOpenerBody(profile.candidateId)
-      : buildHelloWekruitOpenerBody("")
+    : profile.bindCode
+      ? buildBindCodeOpenerBody(profile.bindCode)
+      : profile.candidateId
+        ? buildHelloWekruitOpenerBody(profile.candidateId)
+        : buildHelloWekruitOpenerBody("")
   const isJobInterview = Boolean(returnJobId)
   const continuingClaireConversation = claireConversationStarted || isJobInterview
   const imessageAvailable = canOpenImessageDeepLink()

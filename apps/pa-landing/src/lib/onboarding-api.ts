@@ -37,6 +37,13 @@ export type RegisterOutput = {
   /** Sticky Sendblue from-number assigned at registration; used to build the sms: deep link on the Done view. */
   senderNumber?: string
   senderGroupId?: string
+  /**
+   * Transit-safe phone-binding opener code (2026-06-13). Present when the
+   * candidate has no bound phone yet (website-first). The Done view embeds THIS
+   * in the iMessage opener ("Hi, WeKruit, my code is <CODE>") instead of the
+   * corruption-prone raw uid; the inbound webhook resolves it → this candidate.
+   */
+  bindCode?: string
 }
 
 export type RegisterDuplicate = {
