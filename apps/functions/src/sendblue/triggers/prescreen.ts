@@ -102,6 +102,18 @@ export interface PrescreenTriggerDeps {
     content: string
     conflictCode: string
   }): Promise<void>
+  /**
+   * PHONE-IS-AUTH START (2026-06-13) — does this jobId resolve to a REAL,
+   * startable WeKruit job? Mirrors the public-page start path's job-existence /
+   * publicVisible check (readPublicJob / get_public_role_start). Used to decide
+   * whether a non-self / non-admin / non-pending paste — sent from a phone that
+   * DOES resolve to a real pa-users account — should START the screen for the
+   * phone's own account (token jobId real → start; not real → graceful notice).
+   * Optional for back-compat; production always injects it. Returns false on any
+   * lookup error (fail-closed → falls through to the graceful notice, never to
+   * a foreign-job start).
+   */
+  isStartableJob?(jobId: string): Promise<boolean>
   /** Audit emitter (logged for both deny + accept). */
   audit(event: Record<string, unknown>): Promise<void>
   /** Optional clock seam for tests. */
@@ -205,8 +217,12 @@ export class PrescreenTrigger implements Trigger {
         payload: { jobId, targetUserId: userId, conflictCode },
       })
       try {
+        // FIX 2 — key the notice to the PHONE identity, never the token uid. The
+        // lookup threw an identity_conflict so no clean resolvedUserId exists;
+        // the raw inbound phone is the safest identity that can't user-not-found-
+        // drop the notice keyed to a (possibly corrupt) token uid.
         await sendPrescreenAccessNotice(this.deps, {
-          targetUserId: userId,
+          targetUserId: ctx.fromNumber,
           jobId,
           toE164: ctx.fromNumber,
           ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
@@ -217,7 +233,7 @@ export class PrescreenTrigger implements Trigger {
       } catch (noticeErr) {
         ctx.log("trigger.prescreen.identity_conflict_notice_failed", {
           jobId,
-          targetUserId: userId,
+          targetUserId: ctx.fromNumber,
           conflictCode,
           error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
         })
@@ -233,8 +249,11 @@ export class PrescreenTrigger implements Trigger {
         correlationId: ctx.messageHandle,
       })
       try {
+        // FIX 2 — the phone resolved to NO pa-users account; key the notice to
+        // the raw inbound phone (never the token uid) so it goes to the texter
+        // and isn't dropped on a corrupt/nonexistent token uid.
         await sendPrescreenAccessNotice(this.deps, {
-          targetUserId: userId,
+          targetUserId: ctx.fromNumber,
           jobId,
           toE164: ctx.fromNumber,
           ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
@@ -245,7 +264,7 @@ export class PrescreenTrigger implements Trigger {
       } catch (noticeErr) {
         ctx.log("trigger.prescreen.access_notice_failed", {
           jobId,
-          targetUserId: userId,
+          targetUserId: ctx.fromNumber,
           reason: "phone_not_resolved",
           error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
         })
@@ -287,43 +306,97 @@ export class PrescreenTrigger implements Trigger {
       }
     }
 
+    // PHONE-IS-AUTH START (2026-06-13) — the canonical rule (memory
+    // prescreen_string_start_everyone + CANONICAL-CANDIDATE-FLOW.md + ENTRY-UX
+    // PRD §2.5): the PHONE is the auth; a STRING paste starts for EVERYONE,
+    // attributed to the phone-resolved real account; the token only carries the
+    // JOB id. When the token's embedded userId does NOT match the phone's real
+    // account (a second account, OR a CORRUPT uid the job page mis-emitted that
+    // exists nowhere) we must NOT reject — that was the live weekend bug family
+    // (Noah: two accounts; Maximiliano: corrupt uid digit-for-letter → token
+    // uid exists nowhere → the reject-notice itself user-not-found-dropped =
+    // DEAD SILENCE). Here `resolvedUserId` is a REAL existing account (we're
+    // past the phone_not_resolved guard). If the token jobId is ALSO a real
+    // startable job, START the screen for the phone's OWN account, attributing
+    // the parsed token uid for provenance. SAFETY: attribution is to the
+    // phone's own account → a texter can only ever start THEIR OWN screen for a
+    // real job; the token uid is metadata only, never the session owner, so no
+    // impersonation is possible. Only fall through to the reject+notice when the
+    // jobId is NOT a real startable job (or job lookup errored / wasn't wired).
+    let phoneIsAuthStart = false
     if (!isSelf && !isAdmin && !pendingMatch) {
-      await this.deps.audit({
-        type: "trigger_unauthorized",
-        trigger: "prescreen",
-        reason: "not_self_or_admin",
-        senderUserId: resolvedUserId,
-        targetUserId: userId,
-        correlationId: ctx.messageHandle,
-      })
-      try {
-        await sendPrescreenAccessNotice(this.deps, {
-          targetUserId: userId,
-          jobId,
-          toE164: ctx.fromNumber,
-          ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
-          messageHandle: ctx.messageHandle,
-          content: PRESCREEN_ACCESS_ISSUE_NOTICE,
-          conflictCode: "not_self_or_admin",
-        })
-      } catch (noticeErr) {
-        ctx.log("trigger.prescreen.access_notice_failed", {
-          jobId,
-          targetUserId: userId,
-          reason: "not_self_or_admin",
-          error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
-        })
+      let startableJob = false
+      if (this.deps.isStartableJob) {
+        try {
+          startableJob = await this.deps.isStartableJob(jobId)
+        } catch (err) {
+          ctx.log("trigger.prescreen.startable_job_lookup_failed", {
+            jobId,
+            parsedUserId: userId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          startableJob = false
+        }
       }
-      return { kind: "handled", action: "prescreen_access_issue_notified" }
+      if (startableJob) {
+        phoneIsAuthStart = true
+        ctx.log("trigger.prescreen.phone_is_auth_start", {
+          jobId,
+          phoneUserId: resolvedUserId,
+          sourceRequestedUserId: userId,
+        })
+        await this.deps.audit({
+          type: "trigger_phone_is_auth_start",
+          trigger: "prescreen",
+          jobId,
+          senderUserId: resolvedUserId,
+          sourceRequestedUserId: userId,
+          correlationId: ctx.messageHandle,
+        })
+      } else {
+        await this.deps.audit({
+          type: "trigger_unauthorized",
+          trigger: "prescreen",
+          reason: "not_self_or_admin",
+          senderUserId: resolvedUserId,
+          targetUserId: userId,
+          jobId,
+          correlationId: ctx.messageHandle,
+        })
+        try {
+          // FIX 2 — key the notice to the PHONE-RESOLVED real account so the
+          // outbox can resolve a user (token uid may not exist → user-not-found
+          // silent drop, the Maximiliano dead-silence bug).
+          await sendPrescreenAccessNotice(this.deps, {
+            targetUserId: resolvedUserId,
+            jobId,
+            toE164: ctx.fromNumber,
+            ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
+            messageHandle: ctx.messageHandle,
+            content: PRESCREEN_ACCESS_ISSUE_NOTICE,
+            conflictCode: "job_not_startable",
+          })
+        } catch (noticeErr) {
+          ctx.log("trigger.prescreen.access_notice_failed", {
+            jobId,
+            targetUserId: resolvedUserId,
+            reason: "job_not_startable",
+            error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+          })
+        }
+        return { kind: "handled", action: "prescreen_access_issue_notified" }
+      }
     }
 
     // Session userId selection:
     //   - self: body userId === resolved userId → use it (no-op)
-    //   - pendingMatch: body userId = wkr_uid; rebind session to resolvedUserId
+    //   - pendingMatch / phoneIsAuthStart: body userId = wkr_uid OR a foreign/
+    //     corrupt token uid; bind the session to the phone-resolved real account
     //   - admin (without pendingMatch): admin testing on behalf of another
     //     user — keep body userId so admin can drive that user's session
-    const sessionUserId = pendingMatch ? resolvedUserId : userId
-    const role: "self" | "admin" | "public_page" = pendingMatch
+    const sessionUserId = pendingMatch || phoneIsAuthStart ? resolvedUserId : userId
+    const attributeSourceUserId = pendingMatch || phoneIsAuthStart
+    const role: "self" | "admin" | "public_page" = pendingMatch || phoneIsAuthStart
       ? "public_page"
       : isSelf
         ? "self"
@@ -367,7 +440,7 @@ export class PrescreenTrigger implements Trigger {
         userId: sessionUserId,
         toE164: ctx.fromNumber,
         ...(initialReplyText ? { initialReplyText } : {}),
-        ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
+        ...(attributeSourceUserId ? { sourceRequestedUserId: userId } : {}),
         // STRING-TOKEN START bypasses the matched-gate for EVERY authorized sender (Adam 2026-06-03:
         // "the invited[gate] is for guarding the CONVERSATIONAL start; but for string → start it's
         // everyone"). Reaching here means the sender transmitted the EXACT WeKruit_<jobId>_<userId>_Job
@@ -524,7 +597,7 @@ export class PrescreenTrigger implements Trigger {
       senderUserId: resolvedUserId,
       role,
       initialReplyCaptured: Boolean(initialReplyText),
-      ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
+      ...(attributeSourceUserId ? { sourceRequestedUserId: userId } : {}),
       correlationId: ctx.messageHandle,
     })
     return { kind: "handled", action: "prescreen_triggered" }

@@ -266,8 +266,10 @@ test("Phase 77: PrescreenTrigger notifies instead of silently rejecting when pho
   assert.equal(deps.setLastCalls.length, 0)
   assert.equal(deps.audits[0].type, "trigger_unauthorized")
   assert.equal(deps.audits[0].reason, "phone_not_resolved")
+  // FIX 2 (2026-06-13) — phone resolved to NO account; notice keyed to the raw
+  // inbound phone, never the token uid (which may be corrupt → user-not-found drop).
   assert.deepEqual(deps.identityNotices[0], {
-    targetUserId: "user123",
+    targetUserId: "+15551234",
     jobId: "j1",
     toE164: "+15551234",
     fromNumber: "+15557654321",
@@ -277,7 +279,10 @@ test("Phase 77: PrescreenTrigger notifies instead of silently rejecting when pho
   })
 })
 
-test("Phase 77: PrescreenTrigger notifies instead of silently rejecting when sender is neither self nor admin", async () => {
+test("Phase 77: PrescreenTrigger notifies instead of silently rejecting when sender is neither self nor admin and the job is not startable", async () => {
+  // isStartableJob is unwired in makePrescreenDeps → FIX 1 phone-is-auth-start is
+  // NOT taken → falls through to the graceful reject. FIX 2: the notice is keyed
+  // to the PHONE-resolved real account ("different_user"), never the token uid.
   const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "different_user" }, adminIds: [] })
   const trig = new PrescreenTrigger(deps)
   const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", {
@@ -290,13 +295,13 @@ test("Phase 77: PrescreenTrigger notifies instead of silently rejecting when sen
   assert.equal(deps.audits[0].type, "trigger_unauthorized")
   assert.equal(deps.audits[0].reason, "not_self_or_admin")
   assert.deepEqual(deps.identityNotices[0], {
-    targetUserId: "user123",
+    targetUserId: "different_user",
     jobId: "j1",
     toE164: "+15551234",
     fromNumber: "+15557654321",
     messageHandle: "msg-wrong-user-1",
     content: "I can't start this WeKruit interview from this phone yet. Reopen the job page from the phone you want Claire to text, or continue in the original Claire thread.",
-    conflictCode: "not_self_or_admin",
+    conflictCode: "job_not_startable",
   })
 })
 
@@ -317,8 +322,10 @@ test("Phase 77: PrescreenTrigger queues a clear notice when token phone binding 
   assert.equal(deps.runs.length, 0)
   assert.equal(deps.audits[0].type, "trigger_unauthorized")
   assert.equal(deps.audits[0].reason, "identity_conflict")
+  // FIX 2 (2026-06-13) — lookup threw identity_conflict (no clean resolvedUserId);
+  // notice keyed to the raw inbound phone, never the token uid.
   assert.deepEqual(deps.identityNotices[0], {
-    targetUserId: "user123",
+    targetUserId: "+15551234",
     jobId: "j1",
     toE164: "+15551234",
     fromNumber: "+15557654321",
@@ -620,14 +627,18 @@ test("v1.9 hotfix: pending-invite TTL expiry notifies without binding a session"
   assert.equal(deps.setLastCalls.length, 0)
   assert.equal(deps.consumed.length, 0, "do not consume expired pending invite")
   assert.equal(deps.audits[0].reason, "not_self_or_admin")
+  // FIX 2 (2026-06-13) — the reject NOTICE is now keyed to the PHONE-resolved
+  // real account (never the token/wkr_uid) so the outbox can resolve a user and
+  // can't user-not-found-drop the notice. isStartableJob is unwired here →
+  // job_not_startable → the graceful notice. (TTL expiry: no startable bypass.)
   assert.deepEqual(deps.identityNotices[0], {
-    targetUserId: "wkrAAA",
+    targetUserId: "realUser456",
     jobId: "j1",
     toE164: "+15551234",
     fromNumber: "+15557654321",
     messageHandle: "msg-expired-pending",
     content: PRESCREEN_ACCESS_ISSUE_NOTICE,
-    conflictCode: "not_self_or_admin",
+    conflictCode: "job_not_startable",
   })
 })
 
@@ -651,14 +662,16 @@ test("v1.9 hotfix: pending-invite jobId mismatch notifies without binding a sess
   assert.equal(deps.setLastCalls.length, 0)
   assert.equal(deps.consumed.length, 0)
   assert.equal(deps.audits[0].reason, "not_self_or_admin")
+  // FIX 2 (2026-06-13) — notice keyed to the PHONE-resolved real account, never
+  // the token/wkr_uid (the Maximiliano user-not-found dead-silence class).
   assert.deepEqual(deps.identityNotices[0], {
-    targetUserId: "wkrAAA",
+    targetUserId: "realUser456",
     jobId: "j1",
     toE164: "+15551234",
     fromNumber: "+15557654321",
     messageHandle: "msg-mismatch-pending",
     content: PRESCREEN_ACCESS_ISSUE_NOTICE,
-    conflictCode: "not_self_or_admin",
+    conflictCode: "job_not_startable",
   })
 })
 

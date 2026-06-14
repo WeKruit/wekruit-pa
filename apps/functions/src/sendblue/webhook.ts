@@ -1095,6 +1095,21 @@ export async function handleSendblueWebhook(
             .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
             .delete()
         },
+        // PHONE-IS-AUTH START (2026-06-13) — startable = pa-jobs/{jobId} exists
+        // AND carries a prescreenConfig (the SAME gate runPreScreenForUser uses;
+        // a job with no prescreenConfig returns config_missing). Used to decide
+        // whether a non-self / non-admin / non-pending paste from a REAL phone
+        // account should start the screen for the phone's own account. Fail-
+        // closed: any read error → false → graceful notice (never a foreign start).
+        isStartableJob: async (jobId) => {
+          try {
+            const snap = await deps.db.collection("pa-jobs").doc(jobId).get()
+            if (!snap.exists) return false
+            return Boolean(snap.data()?.prescreenConfig)
+          } catch {
+            return false
+          }
+        },
         runPreScreen: async ({ jobId, userId, toE164, initialReplyText, sourceRequestedUserId, allowMatchedBypass }) => {
           // Phase 77.3 — real handler: load config, build state, send 1st Q.
           // v1.9 hotfix 2026-05-13 — sourceRequestedUserId passed through
