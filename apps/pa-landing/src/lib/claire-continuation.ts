@@ -57,21 +57,20 @@ function cleanSenderNumber(senderNumber?: string | null): string | null {
 export function buildClaireContinuationBody(input: ClaireContinuationInput): string {
   const candidateId = typeof input.candidateId === "string" ? input.candidateId.trim() : ""
   const jobId = typeof input.jobId === "string" ? input.jobId.trim() : ""
+  const bindCode = typeof input.bindCode === "string" ? input.bindCode.trim() : ""
   if (input.phoneVerified && !jobId) return "Hi Claire"
-  // 2026-06-13 — prescreen job token is JOB-ONLY (no uid; phone-is-auth). The
-  // job-only token only carries identity via the inbound PHONE, so it can only
-  // be emitted once a phone is bound. When the phone is ALREADY verified, emit
-  // the job-only token (phone resolves the candidate, trigger phone-is-auth
-  // starts the screen) — and the uid-corruption class is gone. When the phone
-  // is NOT yet bound (website-first), the token's job emerges from PublicJob's
-  // own flow after binding; here we must still bind the new phone to this
-  // profile, so fall through to the candidateId-binding opener.
-  if (jobId && input.phoneVerified) return buildWekruitJobOpenerBody(jobId)
+  // 2026-06-14 (Adam-locked) — the prescreen job token MUST carry the candidate
+  // identity as a server-minted BIND CODE: `WeKruit_<jobId>_<bindCode>_Job`. The
+  // inbound webhook resolves the code → candidateId → binds the texted phone
+  // (idempotent for an already-bound phone). NEVER mint the job-only form. When
+  // the phone is ALREADY verified we still pass the code if we have one; the
+  // bare job-only token remains only a DEGRADED fallback resolved by phone-is-
+  // auth when no code is available (the parser still accepts it inbound).
+  if (jobId && input.phoneVerified) return buildWekruitJobOpenerBody(jobId, bindCode || undefined)
   if (input.phoneVerified) return "Hi Claire"
   // Unbound (website-first) → BINDING opener. Prefer the server-minted
   // transit-safe code; fall back to the uid opener (back-compat parser handles
   // it) when no code was minted for this profile.
-  const bindCode = typeof input.bindCode === "string" ? input.bindCode.trim() : ""
   if (bindCode) return buildBindCodeOpenerBody(bindCode)
   if (!candidateId) return "Hi Claire"
   return buildHelloWekruitOpenerBody(candidateId)

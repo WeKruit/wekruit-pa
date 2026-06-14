@@ -245,6 +245,24 @@ test("Phase 77: PrescreenTrigger.match rejects non-matching tokens", () => {
   assert.equal(trig.match("nothing here"), false)
 })
 
+test("TEST 6 — router.matchesAny + PrescreenTrigger.match recognize ALL THREE job-token forms (job-only, bindCode, legacy uid)", () => {
+  const trig = new PrescreenTrigger(makePrescreenDeps())
+  const router = new TriggerRouter({ triggers: [trig], log: () => {} })
+
+  const jobOnly = "WeKruit_hs-10996795-invoko-product-manager_Job"
+  const bindCode = "WeKruit_hs-10996795-invoko-product-manager_ABCDEF23_Job"
+  const legacyUid = "WeKruit_photon-macos-devops_aBcD1eFgH2iJkLmNoPqR_Job"
+
+  for (const token of [jobOnly, bindCode, legacyUid]) {
+    assert.equal(trig.match(token), true, `match() must recognize: ${token}`)
+    assert.equal(router.matchesAny(token), true, `matchesAny() must recognize: ${token}`)
+  }
+  // matchesAny gates the RULE-1 inbound-evidence write; if it missed the
+  // job-only/bindCode forms the trigger's Q1 would be blocked_no_inbound (the
+  // dead-silence class). Confirm a non-token stays false.
+  assert.equal(router.matchesAny("just saying hi"), false)
+})
+
 test("Phase 77: PrescreenTrigger refuses media-attached messages", async () => {
   const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "user123" } })
   const trig = new PrescreenTrigger(deps)

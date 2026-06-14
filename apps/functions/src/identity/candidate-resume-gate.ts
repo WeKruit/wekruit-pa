@@ -4,6 +4,7 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import { claimCandidateProfile as defaultClaimCandidateProfile } from "@pa/pa-persistence"
 import type { SendbluePoolConfig } from "../sendblue/pool.js"
 import { assignCandidateSenderNumber as defaultAssignSenderNumber } from "./candidate-sender-number.js"
+import { issueBindCode as defaultIssueBindCode } from "../bind-code.js"
 
 type CallableAuth = {
   uid?: string
@@ -40,6 +41,18 @@ export interface CandidateResumeGateResult {
   parsedResumeId?: string
   senderNumber?: string
   senderGroupId?: string
+  /**
+   * Transit-safe, single-use phone-binding code minted server-side for THIS
+   * candidate (2026-06-14). The candidate page embeds it in the prescreen job
+   * token: `WeKruit_<jobId>_<bindCode>_Job`. It is the WEB→PHONE IDENTITY BRIDGE
+   * for the website-first candidate whose phone is not yet bound to their web
+   * account: the first inbound text resolves the code → this candidateId → binds
+   * the texted phone to THIS web profile (resume/tags intact), never a new
+   * prospect. Maps to pa-bind-codes/<CODE>; resolved+consumed by the inbound
+   * webhook (24h TTL, single-use). Absent only if the mint failed (the page then
+   * falls back to the job-only token + phone-is-auth / graceful notice).
+   */
+  bindCode?: string
 }
 
 export interface CandidateResumeGateDeps {
@@ -61,6 +74,8 @@ export interface CandidateResumeGateDeps {
     user: Record<string, unknown> | null
   ) => Promise<{ senderNumber?: string; senderGroupId?: string }>
   loadSendbluePool?: (db: Firestore) => Promise<SendbluePoolConfig | null>
+  /** Mint a single-use phone-binding code → candidateId (pa-bind-codes). */
+  issueBindCode?: (db: Firestore, candidateId: string) => Promise<string>
 }
 
 function cleanString(value: unknown, max: number): string | undefined {
@@ -256,6 +271,19 @@ export async function runCandidateResumeGateStatus(
       ? "ready"
       : "resume_processing"
 
+  // Mint the WEB→PHONE IDENTITY BRIDGE code (2026-06-14). The candidate page
+  // embeds it in the prescreen job token so the FIRST text from an as-yet-unbound
+  // phone resolves to THIS web candidate (resume/tags intact) instead of going
+  // dead-silent or spawning a duplicate prospect. Best-effort: a mint failure
+  // must never block the gate — the page falls back to the job-only token (phone-
+  // is-auth + graceful notice).
+  let bindCode: string | undefined
+  try {
+    bindCode = await (deps.issueBindCode ?? defaultIssueBindCode)(deps.db, candidateId)
+  } catch {
+    bindCode = undefined
+  }
+
   return {
     ok: true,
     candidateId,
@@ -266,6 +294,7 @@ export async function runCandidateResumeGateStatus(
     ...(parsed?.id ? { parsedResumeId: parsed.id } : {}),
     ...(sender.senderNumber ? { senderNumber: sender.senderNumber } : {}),
     ...(sender.senderGroupId ? { senderGroupId: sender.senderGroupId } : {}),
+    ...(bindCode ? { bindCode } : {}),
   }
 }
 

@@ -1385,12 +1385,15 @@ function Done({
   onGo: (r: "dashboard" | "landing") => void
 }) {
   const number = profile.listPosition
-  // 2026-06-13 — prefer the server-minted transit-safe bind CODE over the raw
-  // uid in the binding opener (the uid mangled in page→Messages transit → failed/
-  // wrong binds). Falls back to the legacy uid opener when no code was minted
-  // (e.g. phone already bound, or a mint hiccup — back-compat parser handles it).
+  // 2026-06-14 (Adam-locked) — prescreen job token ALWAYS carries the server-
+  // minted transit-safe BIND CODE: `WeKruit_<jobId>_<bindCode>_Job` (web→phone
+  // identity bridge; the inbound webhook resolves it → candidateId → binds the
+  // texted phone). The raw uid mangled in page→Messages transit → failed/wrong
+  // binds. The non-job binding openers likewise prefer the code. Job-only token
+  // is only a degraded fallback if no code was minted (phone already bound / mint
+  // hiccup — back-compat parser + phone-is-auth resolve it inbound).
   const openerBody = returnJobId
-    ? buildWekruitJobOpenerBody(returnJobId)
+    ? buildWekruitJobOpenerBody(returnJobId, profile.bindCode ?? undefined)
     : profile.bindCode
       ? buildBindCodeOpenerBody(profile.bindCode)
       : profile.candidateId

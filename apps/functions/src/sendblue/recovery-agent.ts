@@ -1,5 +1,6 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent, enqueueOutbound, inboundEventDocId } from "@pa/pa-broker"
+import { isBindCode } from "@pa/pa-orchestrator"
 import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
 import { classifyInboundReplyNeed } from "./ack-classifier.js"
 
@@ -695,11 +696,15 @@ async function recoverPrescreenTrigger(
   now: Date
 ): Promise<"recovered" | "needs_operator_review" | "error"> {
   const inbound = conversation.latestInbound!
-  const [, jobId, tokenUserId] = token as [string, string, string | undefined]
-  // PHONE-IS-AUTH (2026-06-13): the new JOB-ONLY token carries no uid; identity
-  // comes from the inbound PHONE. Resolve the texter's pa-users doc by phone so
-  // recovery can still re-drive the start. Legacy job+uid tokens keep using the
-  // token uid (back-compat). Either way the resolved doc is verified below.
+  const [, jobId, rawSegment] = token as [string, string, string | undefined]
+  // PHONE-IS-AUTH (2026-06-13): the JOB-ONLY token carries no uid; identity comes
+  // from the inbound PHONE. A BIND-CODE segment (2026-06-14 website-first bridge)
+  // is ALSO phone-resolved here — by the time recovery runs the code was already
+  // consumed by the live webhook (which bound the phone to the web candidate), so
+  // resolving by phone returns that same web candidate. A bind code is never a
+  // usable uid, so we must NOT treat it as one. Legacy raw uid tokens keep using
+  // the token uid (back-compat). Either way the resolved doc is verified below.
+  const tokenUserId = rawSegment && isBindCode(rawSegment) ? undefined : rawSegment
   const userId = tokenUserId ?? (await resolveUserIdByPhone(deps, inbound.from))
   if (!userId) {
     await writeRecoveryCase(deps, caseId, now, inbound, {
