@@ -166,6 +166,8 @@ type PrescreenReviewDraftContext = {
   requiredSkills?: string[]
   checklistText?: string
   candidateSignal?: string
+  /** Candidate's FIRST name for the greeting — NEVER the user id. */
+  candidateFirstName?: string
   /** Human-readable date the candidate DID the prescreen (the draft is often SENT days later). */
   screenDate?: string
   /** One-line profile checklist eval (Coresignal-enriched, from paPrescreenCandidateEval). */
@@ -440,11 +442,24 @@ async function loadPrescreenJobContext(
   }
 }
 
-/** Lightweight candidate profile signal (current role / stage / yoe / top skills). Fail-open. */
-async function loadPrescreenCandidateSignal(db: Firestore, candidateId: string): Promise<string | undefined> {
+/** Candidate profile signal + first name (for the greeting). Fail-open. */
+async function loadPrescreenCandidateSignal(
+  db: Firestore,
+  candidateId: string,
+): Promise<{ signal?: string; firstName?: string }> {
   try {
     const snap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
     const u = (snap.data() ?? {}) as Record<string, unknown>
+    // First name for "hey <name>" — displayName / name / firstName; NEVER the user id.
+    const identity = (u.identity ?? {}) as Record<string, unknown>
+    const fullName =
+      cleanNonEmptyString(u.firstName) ??
+      cleanNonEmptyString(u.displayName) ??
+      cleanNonEmptyString(u.name) ??
+      cleanNonEmptyString(u.fullName) ??
+      cleanNonEmptyString(identity.firstName) ??
+      cleanNonEmptyString(identity.name)
+    const firstName = fullName ? fullName.split(/\s+/)[0] : undefined
     const bits: string[] = []
     const current = cleanNonEmptyString(u.recentRoleTitle)
     if (current) bits.push(`current role: ${current}`)
@@ -460,9 +475,9 @@ async function loadPrescreenCandidateSignal(db: Firestore, candidateId: string):
         .slice(0, 12)
       if (skills.length > 0) bits.push(`skills: ${skills.join(", ")}`)
     }
-    return bits.length > 0 ? bits.join("; ") : undefined
+    return { signal: bits.length > 0 ? bits.join("; ") : undefined, firstName }
   } catch {
-    return undefined
+    return {}
   }
 }
 
@@ -489,7 +504,7 @@ async function buildPrescreenDraftContext(
   },
   loadTurns: typeof loadPrescreenTurnsForDraft = loadPrescreenTurnsForDraft,
 ): Promise<PrescreenReviewDraftContext> {
-  const [turns, jobCtx, candidateSignal] = await Promise.all([
+  const [turns, jobCtx, candidate] = await Promise.all([
     loadTurns(db, args.sessionId),
     loadPrescreenJobContext(db, args.jobId),
     loadPrescreenCandidateSignal(db, args.candidateId),
@@ -497,7 +512,8 @@ async function buildPrescreenDraftContext(
   return {
     ...args,
     ...jobCtx,
-    candidateSignal,
+    candidateSignal: candidate.signal,
+    candidateFirstName: candidate.firstName,
     tone: selectRejectionTone(args),
     turns,
   }
@@ -692,7 +708,10 @@ async function composePrescreenReviewCandidateMessage(
       : null
   const userText = [
     `Session: ${context.sessionId}`,
-    `Candidate: ${context.candidateId}`,
+    `Candidate internal id (an internal handle — NEVER write this in the candidate message): ${context.candidateId}`,
+    context.candidateFirstName
+      ? `Candidate first name (address them as this, e.g. "hey ${context.candidateFirstName}"): ${context.candidateFirstName}`
+      : `Candidate first name: UNKNOWN — open with a warm no-name greeting ("hey there", "hi"). Do NOT invent a name or use any id.`,
     `Job: ${context.jobId}`,
     roleLine,
     `AI proposed terminal: ${context.proposedTerminal ?? "unknown"}`,
@@ -733,6 +752,7 @@ async function composePrescreenReviewCandidateMessage(
       "Return JSON only. The candidateMessageBody is sent to a real candidate over iMessage: warm, genuine, Claire's lowercase voice, " +
       "NEVER mention PASS, FAIL, HARD_STOP, scores, thresholds, internal review systems, or evaluation ids, and NEVER fake praise. " +
       "This message is human-reviewed then SENT LATER — NEVER say 'today', 'this morning', or imply the screen just happened; reference the prescreen date if given, else keep it time-neutral. " +
+      "Address the candidate by their FIRST NAME when given, else a warm no-name greeting — NEVER use an id, handle, email, or the literal word 'user'. " +
       "internalReviewNotes is operator-only and may be specific. Do not invent evidence. Do not include PII beyond what is given. " +
       "Keep the candidate message concise and editable by the operator.",
     userText,

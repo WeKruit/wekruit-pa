@@ -50,12 +50,47 @@ const SESSIONS = "pa-prescreen-sessions"
 const USERS = "pa-users"
 const JOBS = "pa-jobs"
 
+/** Per-item AI assessment of one checklist requirement (mirrors the recruiter page). */
+export type ChecklistItemDetail = {
+  /** met = hard/fit/bonus satisfied · gap = required item the candidate didn't show · flag = anti-signal present · clear = anti-signal absent. */
+  status: "met" | "gap" | "flag" | "clear"
+  text: string
+}
+export type ChecklistGroupDetail = {
+  kind: "hard" | "fit" | "bonus" | "anti"
+  heading: string
+  items: ChecklistItemDetail[]
+}
+
 /** The per-(candidate×job) profile checklist evaluation, stored on the session. */
 export type PrescreenCandidateChecklistEval = SubmissionAiEvaluation & {
   jobId: string
   candidateId: string
   /** True when ANY profile evidence (Coresignal/LinkedIn OR résumé/merged profile) was available; false = transcript only. */
   enriched: boolean
+  /** The FULL job checklist, each item marked with the AI's per-item verdict — for the dashboard to show requirements in parallel. */
+  checklistDetail: ChecklistGroupDetail[]
+}
+
+const normItem = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim()
+
+/** Mark every job-checklist item with the AI's verdict (gap/flag from the judge, else met/clear). */
+function buildChecklistDetail(
+  groups: Array<{ kind: "hard" | "fit" | "bonus" | "anti"; heading: string; items: Array<{ id: string; text: string }> }>,
+  judged: { checklist: { hard: { gaps: string[] }; fit: { gaps: string[] }; bonus: { gaps: string[] }; anti: { flags: string[] } } },
+): ChecklistGroupDetail[] {
+  return groups.map((g) => {
+    const misses = (g.kind === "anti" ? judged.checklist.anti.flags : judged.checklist[g.kind].gaps).map(normItem)
+    return {
+      kind: g.kind,
+      heading: g.heading,
+      items: g.items.map((it) => {
+        const t = normItem(it.text)
+        const hit = misses.some((m) => m === t || m.includes(t) || t.includes(m))
+        return { text: it.text, status: g.kind === "anti" ? (hit ? "flag" : "clear") : hit ? "gap" : "met" }
+      }),
+    }
+  })
 }
 
 const PRESCREEN_JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL prescreen candidate evaluator. A candidate COMPLETED a WeKruit prescreen interview for a specific role. Evaluate them against the job rubric using BOTH (a) their enriched profile research (Coresignal / LinkedIn / resume) and (b) the prescreen transcript. There are NO recruiter self-claims here — judge purely from the evidence in the research + transcript.
@@ -294,6 +329,7 @@ export async function runPrescreenCandidateEval(
       ...parsed,
       ...(research ? { research } : {}),
       enriched: hasProfileEvidence,
+      checklistDetail: buildChecklistDetail(groups, parsed),
       jobId,
       candidateId,
       evaluatedAt: now,
