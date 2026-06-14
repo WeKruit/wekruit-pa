@@ -23,7 +23,6 @@
  *      shape so the review board always shows SOMETHING.
  */
 
-import { createHash } from "node:crypto"
 import { onDocumentCreated } from "firebase-functions/v2/firestore"
 import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
@@ -31,13 +30,11 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { callWithFallback } from "@pa/pa-resume-parser"
 import {
-  canonicalizeLinkedInUrl,
   fetchEmployeeCollect,
-  linkedinHash,
   searchEmployeeIdByLinkedinUrl,
   type CoresignalEmployeeCollectV2,
 } from "@pa/external-supply"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { getOrFetchCoresignalByLinkedin } from "./lib/coresignal-cache.js"
 import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
 import { ensureRecruiterSubmissionCandidateTracked } from "./recruiter-candidate-tracking.js"
 
@@ -47,11 +44,6 @@ const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
 
 const SUBMISSIONS_COLLECTION = "pa-recruiter-submissions"
 const JOBS_COLLECTION = "pa-jobs"
-// Coresignal responses cached by canonical-LinkedIn hash so the eval (and any
-// candidate↔response matching) reuses one fetch instead of re-pulling per
-// submission. Refreshed after the TTL.
-const CORESIGNAL_CACHE_COLLECTION = PA_COLLECTIONS.coresignalResponseCache
-const CORESIGNAL_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 export const SUBMISSION_EVAL_VERSION = "submission-eval-v2"
 
@@ -398,32 +390,9 @@ export type RecruiterSubmissionEvalResult = {
   aiEvaluation?: SubmissionAiEvaluation
 }
 
-export function coresignalCacheKey(link: string): string {
-  // Align with the platform's canonical LinkedIn identity hash so equivalent
-  // URLs (www / scheme / trailing-slash) share one cache entry and the key
-  // matches pa-candidate-handles + external-supply. Fall back to a normalized
-  // raw hash only when the URL isn't a parseable LinkedIn profile.
-  const canonical = canonicalizeLinkedInUrl(link)
-  if (canonical) return linkedinHash(canonical)
-  return createHash("sha256").update(link.trim().toLowerCase()).digest("hex")
-}
-
-async function readCoresignalCache(
-  deps: RecruiterSubmissionEvalDeps,
-  cacheKey: string,
-  nowMs: number,
-): Promise<CoresignalEmployeeCollectV2 | undefined> {
-  try {
-    const snap = await deps.db.collection(CORESIGNAL_CACHE_COLLECTION).doc(cacheKey).get()
-    if (!snap.exists) return undefined
-    const data = (snap.data() ?? {}) as Record<string, unknown>
-    const fetchedMs = typeof data.fetchedAt === "string" ? Date.parse(data.fetchedAt) : 0
-    if (!data.employee || !(nowMs - fetchedMs < CORESIGNAL_CACHE_TTL_MS)) return undefined
-    return data.employee as CoresignalEmployeeCollectV2
-  } catch {
-    return undefined
-  }
-}
+// The cache key + the unified Coresignal store live in ./lib/coresignal-cache.
+// Re-exported so existing importers (and tests) keep working.
+export { coresignalCacheKey } from "./lib/coresignal-cache.js"
 
 async function researchCandidate(
   link: string,
@@ -434,47 +403,19 @@ async function researchCandidate(
     deps.log?.("research_skipped_not_linkedin", { submissionId })
     return undefined
   }
-  const nowIso = deps.now?.() ?? new Date().toISOString()
-  const nowMs = Date.parse(nowIso)
-  const cacheKey = coresignalCacheKey(link)
-
-  // Reuse a recent Coresignal pull for this LinkedIn profile (no API key needed).
-  const cached = await readCoresignalCache(deps, cacheKey, nowMs)
-  if (cached) {
-    deps.log?.("research_cache_hit", { submissionId, cacheKey })
-    return buildResearchFromEmployee(cached)
-  }
-
-  if (!deps.research.apiKey) {
-    deps.log?.("research_skipped_no_key", { submissionId })
-    return undefined
-  }
-  try {
-    const employeeId = await deps.research.searchEmployeeIdByLinkedinUrl(link, {
-      apiKey: deps.research.apiKey,
-    })
-    if (employeeId === null) {
-      deps.log?.("research_no_match", { submissionId })
-      return undefined
-    }
-    const employee = await deps.research.fetchEmployeeCollect(employeeId, {
-      apiKey: deps.research.apiKey,
-    })
-    // Store keyed by canonical-LinkedIn hash so future evals / candidate matching
-    // reuse this one pull. Best-effort: a cache-write failure never fails the eval.
-    await deps.db
-      .collection(CORESIGNAL_CACHE_COLLECTION)
-      .doc(cacheKey)
-      .set({ linkedinUrl: link, employeeId, employee, fetchedAt: nowIso, source: "coresignal" }, { merge: true })
-      .catch((e) => deps.log?.("research_cache_write_failed", { submissionId, error: e instanceof Error ? e.message : String(e) }))
-    return buildResearchFromEmployee(employee)
-  } catch (err) {
-    deps.log?.("research_failed_fail_open", {
-      submissionId,
-      error: err instanceof Error ? err.message : String(err),
-    })
-    return undefined
-  }
+  // Single unified path: cache hit (no key) → else fetch + store the complete
+  // response keyed by canonical-LinkedIn hash.
+  const employee = await getOrFetchCoresignalByLinkedin({
+    db: deps.db,
+    link,
+    apiKey: deps.research.apiKey,
+    now: deps.now?.() ?? new Date().toISOString(),
+    source: "recruiter_submission_eval",
+    search: deps.research.searchEmployeeIdByLinkedinUrl,
+    fetch: deps.research.fetchEmployeeCollect,
+    log: (event, fields) => deps.log?.(event, { submissionId, ...(fields ?? {}) }),
+  })
+  return employee ? buildResearchFromEmployee(employee) : undefined
 }
 
 function renderJdBlocks(job: Record<string, unknown>): string {
