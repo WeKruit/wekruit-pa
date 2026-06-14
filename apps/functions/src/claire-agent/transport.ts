@@ -231,6 +231,14 @@ export function createSendblueTransport(
     async tapback(reaction: ClaireReaction): Promise<void> {
       record("tapback", reaction)
       if (dryRun) return
+      // DURABLE ACK MARKER (2026-06-12, tapback seam): a tapback turn writes NO
+      // pa-outbound row, so the unanswered-inbound alert sweep would otherwise
+      // (correctly, on the data it sees) treat a properly-tapbacked "thanks 👍"
+      // as a silently-dropped inbound and page an operator. Record a tiny durable
+      // marker keyed by the inbound event id so the sweep can EXCLUDE this thread
+      // ("we acknowledged via tapback"). Best-effort + fail-open: a marker write
+      // failure must never abort the turn or the tapback below.
+      void recordInboundAck(deps, "tapback", reaction)
       if (!deps.inboundMessageHandle) {
         log("claire.transport.tapback.skip_no_handle", { reaction })
         return
@@ -253,8 +261,52 @@ export function createSendblueTransport(
 
     async noReply(reason: string): Promise<void> {
       record("no_reply", reason)
-      // No outbound by design — audit only.
+      // No outbound by design — audit only. Same durable ack marker as tapback so
+      // a deliberate no_reply (the agent decided nothing was owed) is not later
+      // mistaken for a dropped inbound by the alert sweep. Skip the durable write in
+      // dryRun (eval/test) — ledger only.
+      if (!dryRun) void recordInboundAck(deps, "no_reply", reason)
       log("claire.transport.noReply", { reason })
     },
+  }
+}
+
+/** Collection of durable "this inbound was acknowledged without an outbound text" markers. */
+export const PA_INBOUND_ACK_COLLECTION = "pa-inbound-acks"
+
+/**
+ * Write a durable marker recording that THIS inbound event was deliberately
+ * acknowledged via a tapback or a no_reply (i.e. Claire correctly sent no text).
+ * Keyed by the inbound event id so the unanswered-inbound alert sweep can exclude
+ * it. Fully fail-open: no inboundEventId (proactive/outbound-initiated turn) → skip;
+ * any write error is swallowed. Never throws into the agent run loop.
+ */
+async function recordInboundAck(
+  deps: SendblueTransportDeps,
+  via: "tapback" | "no_reply",
+  detail: string,
+): Promise<void> {
+  const eventId = deps.inboundEventId?.trim()
+  if (!eventId) return
+  try {
+    const nowIso = new Date().toISOString()
+    await deps.db
+      .collection(PA_INBOUND_ACK_COLLECTION)
+      .doc(eventId)
+      .set(
+        {
+          inboundEventId: eventId,
+          userId: deps.userId,
+          via,
+          detail: String(detail ?? "").slice(0, 200),
+          acknowledgedAt: nowIso,
+        },
+        { merge: true },
+      )
+  } catch (err) {
+    ;(deps.log ?? noopLog)("claire.transport.record_inbound_ack.error", {
+      message: err instanceof Error ? err.message : String(err),
+      via,
+    })
   }
 }
