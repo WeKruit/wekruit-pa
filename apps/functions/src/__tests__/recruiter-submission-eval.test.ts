@@ -5,6 +5,7 @@ import { MockFirestore, asFirestore } from "../job-rec/__tests__/mock-firestore.
 import {
   SUBMISSION_EVAL_VERSION,
   buildResearchFromEmployee,
+  coresignalCacheKey,
   looksLikeLinkedinUrl,
   runRecruiterSubmissionEval,
   type RecruiterSubmissionEvalDeps,
@@ -63,6 +64,7 @@ const employeeFixture = {
       date_to: "2021-12",
     },
   ],
+  education: [{ school: "Stanford University", degree: "BS Computer Science" }],
 } as unknown as CoresignalEmployeeCollectV2
 
 function judgmentFixture(overrides?: Partial<Record<string, unknown>>): Record<string, unknown> {
@@ -76,6 +78,12 @@ function judgmentFixture(overrides?: Partial<Record<string, unknown>>): Record<s
       fit: { met: 1, total: 1, gaps: [] },
       bonus: { met: 0, total: 1, gaps: ["Open-source contributions"] },
       anti: { flagged: 0, total: 1, flags: [] },
+    },
+    background: {
+      school: { verdict: "strong", evidence: "Stanford CS" },
+      gpa: { verdict: "unknown", evidence: "no GPA on the profile" },
+      degree: { verdict: "strong", evidence: "BS Computer Science" },
+      company: { verdict: "strong", evidence: "Stripe, Plaid" },
     },
     ...overrides,
   }
@@ -200,7 +208,15 @@ describe("runRecruiterSubmissionEval", () => {
       role: "Staff Backend Engineer",
       years: "2022-01 - present",
     })
+    // v2: education extracted from Coresignal + AI background assessment stored
+    assert.deepEqual(evaluation.research.education[0], { school: "Stanford University", degree: "BS Computer Science" })
+    assert.equal(evaluation.background.school.verdict, "strong")
+    assert.equal(evaluation.background.gpa.verdict, "unknown")
+    assert.equal(evaluation.background.company.verdict, "strong")
     assert.deepEqual(deps.searchCalls, ["https://www.linkedin.com/in/yue-h"])
+    // v2: the live Coresignal pull is cached by canonical-LinkedIn hash
+    const cacheSnap = await mfs.collection("pa-coresignal-cache").doc(coresignalCacheKey("https://www.linkedin.com/in/yue-h")).get()
+    assert.ok(cacheSnap.exists, "coresignal response cached for reuse")
 
     // The status stays operator-owned: never written by the eval.
     const doc = (await mfs.collection(SUBMISSIONS).doc("sub-1").get()).data() ?? {}
@@ -243,6 +259,28 @@ describe("runRecruiterSubmissionEval", () => {
     assert.match(userText, /\[recruiter claims: no\] Open-source contributions/)
     assert.match(userText, /hard 2\/2, fit 1\/1, bonus 0\/1, anti 0\/1/)
     assert.match(userText, /Stripe — Staff Backend Engineer/)
+    // v2: judge prompt carries education + the recruiter's background self-flag
+    assert.match(userText, /Education:[\s\S]*Stanford University — BS Computer Science/)
+    assert.match(userText, /Recruiter background self-flag/)
+  })
+
+  it("v2: reuses a cached Coresignal pull instead of re-fetching live", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs
+      .collection("pa-coresignal-cache")
+      .doc(coresignalCacheKey("https://www.linkedin.com/in/yue-h"))
+      .set({ employee: employeeFixture, fetchedAt: now, linkedinUrl: "https://www.linkedin.com/in/yue-h", source: "coresignal" })
+    const deps = makeDeps(mfs)
+
+    const result = await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    assert.equal(result.status, "written")
+    assert.deepEqual(deps.searchCalls, [], "cache hit → no live Coresignal search")
+    const evaluation = await readEvaluation(mfs)
+    assert.ok(evaluation.research, "research served from cache")
+    assert.equal(evaluation.research.education[0]?.school, "Stanford University")
   })
 
   it("hard-gap reject: persists the judge's gaps verbatim", async () => {

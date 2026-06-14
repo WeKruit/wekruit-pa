@@ -46,6 +46,14 @@ interface SubmissionDoc {
   candidateConsentStatus?: string
   // Recruiter self-flag of the background pillars at submit time (advisory).
   candidateBackground?: { school?: string; gpa?: string; degree?: string; company?: string }
+  aiEvaluation?: {
+    background?: {
+      school?: { verdict?: string; evidence?: string }
+      gpa?: { verdict?: string; evidence?: string }
+      degree?: { verdict?: string; evidence?: string }
+      company?: { verdict?: string; evidence?: string }
+    }
+  }
   candidateConfirmation?: {
     status?: string
     candidateEmail?: string
@@ -4148,25 +4156,45 @@ function RowDetailPanel({
           <span style={{ color: "#555", fontSize: 13 }}>{reviewSummary.body}</span>
         </div>
       </div>
-      {row.candidateBackground && Object.values(row.candidateBackground).some(Boolean) && (
-        <div style={{ marginBottom: 18 }}>
-          <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
-            Candidate background <span style={{ textTransform: "none", color: "#999" }}>· recruiter self-flag</span>
-          </h4>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {([["school", "School"], ["gpa", "GPA"], ["degree", "Degree"], ["company", "Company"]] as const).map(([k, label]) => {
-              const v = row.candidateBackground?.[k]
-              if (v !== "strong" && v !== "weak") return null
-              const weak = v === "weak"
-              return (
-                <span key={k} style={{ fontSize: 12, padding: "3px 9px", borderRadius: 999, background: weak ? "#fcebeb" : "#e1f5ee", color: weak ? "#791f1f" : "#0f6e56" }}>
-                  {label}: {weak ? "weak" : "strong"}
-                </span>
-              )
-            })}
+      {(() => {
+        const rec = row.candidateBackground
+        const ai = row.aiEvaluation?.background
+        const hasRec = rec && Object.values(rec).some(Boolean)
+        const hasAi = ai && Object.values(ai).some((p) => p?.verdict === "strong" || p?.verdict === "weak")
+        if (!hasRec && !hasAi) return null
+        const pillars = [["school", "School"], ["gpa", "GPA"], ["degree", "Degree"], ["company", "Company"]] as const
+        const pill = (tone: "strong" | "weak" | "unknown", text: string) => {
+          const bg = tone === "weak" ? "#fcebeb" : tone === "strong" ? "#e1f5ee" : "#f1efe8"
+          const fg = tone === "weak" ? "#791f1f" : tone === "strong" ? "#0f6e56" : "#777"
+          return <span style={{ fontSize: 12, padding: "3px 9px", borderRadius: 999, background: bg, color: fg }}>{text}</span>
+        }
+        return (
+          <div style={{ marginBottom: 18 }}>
+            <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>Candidate background</h4>
+            {hasRec && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: hasAi ? 6 : 0 }}>
+                <span style={{ fontSize: 11, color: "#999", minWidth: 78 }}>recruiter</span>
+                {pillars.map(([k, label]) => {
+                  const v = rec?.[k]
+                  if (v !== "strong" && v !== "weak") return null
+                  return <span key={k}>{pill(v, `${label}: ${v}`)}</span>
+                })}
+              </div>
+            )}
+            {hasAi && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "#999", minWidth: 78 }}>AI found</span>
+                {pillars.map(([k, label]) => {
+                  const p = ai?.[k]
+                  const v = p?.verdict
+                  if (v !== "strong" && v !== "weak" && v !== "unknown") return null
+                  return <span key={k} title={p?.evidence || undefined}>{pill(v, `${label}: ${v}`)}</span>
+                })}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )
+      })()}
       <div className="sub-detail__cols">
         <div>
           <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
