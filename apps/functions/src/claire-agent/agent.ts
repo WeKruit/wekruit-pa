@@ -1276,6 +1276,33 @@ export async function runClaireTurn(
           err: e instanceof Error ? e.message : String(e),
         })
       }
+      // Two-tier rejection/next-step draft (Adam 2026-06-14) — the thin path runs
+      // the prescreen for canary/dev users, so it must also produce the inline
+      // review.autoDraft (the deterministic path does this in finalizePrescreenForHumanReview).
+      // Additive + fail-open: NEVER sends, never breaks the terminal fire above.
+      try {
+        const psScore = ps as unknown as { score?: number; scoreMax?: number; threshold?: number }
+        const { generateAndStorePrescreenAutoDraft } = await import("../evaluation-attempts.js")
+        const draftRes = await generateAndStorePrescreenAutoDraft({
+          db: deps.db,
+          sessionId: deps.prescreenSessionId,
+          candidateId: input.userId,
+          jobId: deps.jobId,
+          terminal: ps.terminal,
+          proposedTerminal: ps.terminal,
+          score: typeof psScore.score === "number" ? psScore.score : undefined,
+          scoreMax: typeof psScore.scoreMax === "number" ? psScore.scoreMax : undefined,
+          threshold: typeof psScore.threshold === "number" ? psScore.threshold : undefined,
+          now: new Date().toISOString(),
+          log,
+        })
+        log("thin_prescreen.auto_draft", { sessionId: deps.prescreenSessionId, stored: draftRes.stored })
+      } catch (e) {
+        log("thin_prescreen.auto_draft_failed", {
+          sessionId: deps.prescreenSessionId,
+          err: e instanceof Error ? e.message : String(e),
+        })
+      }
     }
   }
 
