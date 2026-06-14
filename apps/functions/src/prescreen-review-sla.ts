@@ -24,12 +24,19 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { enqueueOutbound as defaultEnqueueOutbound } from "@pa/pa-broker"
 import { postSlackAlert as defaultPostSlackAlert } from "./lib/slack-alert.js"
 import { isPrescreenNudgeCanary } from "./claire-agent/canary.js"
+import { generateAndStorePrescreenAutoDraft } from "./evaluation-attempts.js"
+import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
+import { defineSecret } from "firebase-functions/params"
 
 const SESSIONS = "pa-prescreen-sessions"
 const USERS = "pa-users"
 
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+
 export const REVIEW_SLA_MS = 48 * 60 * 60 * 1000
 export const STALLED_SCREEN_NUDGE_AFTER_MS = 24 * 60 * 60 * 1000
+/** Backstop: draft for ANY pending-review session still missing a draft. Capped per run for cost. */
+const AUTODRAFT_BACKSTOP_MAX = 25
 const SCAN_LIMIT = 500
 const NUDGE_SCAN_LIMIT = 200
 
@@ -44,6 +51,8 @@ export type PrescreenReviewSlaDeps = {
   enqueueOutbound?: typeof defaultEnqueueOutbound
   /** Canary gate seam (tests). Default = isPrescreenNudgeCanary (dev cohort). */
   isNudgeCanary?: (userId: string) => boolean
+  /** Backstop draft generator (tests inject a stub). Default = real LLM draft. */
+  generateAutoDraft?: typeof generateAndStorePrescreenAutoDraft
 }
 
 export type PrescreenReviewSlaResult = {
@@ -55,6 +64,9 @@ export type PrescreenReviewSlaResult = {
   nudgesSent: number
   nudgesSkippedCanary: number
   nudgesSkippedIdempotent: number
+  /** Pending-review sessions that had no draft and got one this run (never sent). */
+  backstopDrafted: number
+  backstopDraftFailed: number
   errors: number
 }
 
@@ -104,6 +116,8 @@ export async function paPrescreenReviewSlaHandler(
     nudgesSent: 0,
     nudgesSkippedCanary: 0,
     nudgesSkippedIdempotent: 0,
+    backstopDrafted: 0,
+    backstopDraftFailed: 0,
     errors: 0,
   }
 
@@ -153,6 +167,64 @@ export async function paPrescreenReviewSlaHandler(
   } catch (err) {
     result.errors++
     log("pa.prescreen.review_sla_query_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // ── (11) Auto-draft BACKSTOP — Adam 2026-06-14 ───────────────────────────
+  // The inline finalization hook drafts at terminal; this backstop catches any
+  // miss (inline LLM failure, legacy pre-feature sessions). For pending-review
+  // sessions still missing review.autoDraft, generate + store the two-tier draft.
+  // NEVER sends — a human still commits from the dashboard. Capped per run.
+  try {
+    const genDraft = deps.generateAutoDraft ?? generateAndStorePrescreenAutoDraft
+    const rows = await querySessions(deps.db, "terminalActionPendingReview", true, SCAN_LIMIT)
+    for (const row of rows) {
+      if (result.backstopDrafted >= AUTODRAFT_BACKSTOP_MAX) break
+      const data = row.data
+      const review = (data.review ?? {}) as Record<string, unknown>
+      if (review.autoDraft) continue // already has a draft (inline path or a prior run)
+      const terminal =
+        str(review.proposedTerminal) || str(data.terminal) || str(review.finalTerminal)
+      if (terminal !== "PASS" && terminal !== "FAIL" && terminal !== "HARD_STOP") continue
+      const candidateId = str(data.userId)
+      const jobId = str(data.jobId)
+      if (!candidateId || !jobId) continue
+      try {
+        const out = await genDraft({
+          db: deps.db,
+          sessionId: row.id,
+          candidateId,
+          jobId,
+          attemptId: str(data.evaluationAttemptId) || str(review.evaluationAttemptId) || undefined,
+          terminal,
+          proposedTerminal: terminal,
+          score: typeof data.score === "number" ? data.score : undefined,
+          scoreMax: typeof data.scoreMax === "number" ? data.scoreMax : undefined,
+          threshold: typeof data.threshold === "number" ? data.threshold : undefined,
+          terminalReason: str(data.terminalReason) || undefined,
+          now: now().toISOString(),
+          log,
+        })
+        if (out.stored) result.backstopDrafted++
+        else result.backstopDraftFailed++
+      } catch (err) {
+        result.backstopDraftFailed++
+        log("pa.prescreen.autodraft_backstop_row_failed", {
+          sessionId: row.id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    if (result.backstopDrafted > 0 || result.backstopDraftFailed > 0) {
+      log("pa.prescreen.autodraft_backstop", {
+        drafted: result.backstopDrafted,
+        failed: result.backstopDraftFailed,
+      })
+    }
+  } catch (err) {
+    result.errors++
+    log("pa.prescreen.autodraft_backstop_failed", {
       error: err instanceof Error ? err.message : String(err),
     })
   }
@@ -239,13 +311,27 @@ export const paPrescreenReviewSlaDaily = onSchedule(
   {
     schedule: "0 9 * * *",
     timeZone: "UTC",
-    memory: "256MiB",
-    timeoutSeconds: 300,
+    memory: "512MiB",
+    timeoutSeconds: 540,
     region: "us-central1",
-    secrets: ["PA_SLACK_ALERT_WEBHOOK"],
+    // PA_OPENAI_AGENT_API_KEY (+ Anthropic fallback) power the (11) auto-draft
+    // backstop. Unset → the draft fails-open (no draft this run), sweep unaffected.
+    secrets: ["PA_SLACK_ALERT_WEBHOOK", PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY],
     retryCount: 0,
   },
   async () => {
+    try {
+      const k = PA_OPENAI_AGENT_API_KEY.value().trim()
+      if (k) process.env.PA_OPENAI_AGENT_API_KEY = k
+    } catch {
+      /* unset → backstop draft fails open */
+    }
+    try {
+      const a = ANTHROPIC_API_KEY.value().trim()
+      if (a && a !== "__UNSET__") process.env.ANTHROPIC_API_KEY = a
+    } catch {
+      /* unset → no Anthropic fallback */
+    }
     const result = await paPrescreenReviewSlaHandler({
       db: getFirestore(),
       log: (event, payload) => logger.info(`[prescreen-review-sla] ${event}`, payload ?? {}),

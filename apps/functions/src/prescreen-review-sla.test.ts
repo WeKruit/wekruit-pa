@@ -255,7 +255,7 @@ describe("fix 10 — stalled-screen 24h nudge (canary-gated, idempotent)", () =>
     assert.equal(calls.length, 2, "enqueue called again but deduped by idempotencyKey")
   })
 
-  it("falls back to the pa-users phone when the session has no e164", async () => {
+  it("falls back to the pa-users phone when the session has no e164 [nudge]", async () => {
     const { db } = makeFakeDb({
       "pa-prescreen-sessions": {
         s1: { userId: "canary-user", jobId: "j", terminal: null, updatedAt: iso(30 * HOUR) },
@@ -273,5 +273,91 @@ describe("fix 10 — stalled-screen 24h nudge (canary-gated, idempotent)", () =>
     })
     assert.equal(result.nudgesSent, 1)
     assert.equal(calls[0]!.toE164, "+14243209999")
+  })
+})
+
+describe("fix 11 — auto-draft backstop (drafts missing pending-review sessions, never sends)", () => {
+  it("drafts ONLY pending sessions missing review.autoDraft; skips those already drafted", async () => {
+    const { db } = makeFakeDb({
+      "pa-prescreen-sessions": {
+        needs_draft_fail: {
+          userId: "u1",
+          jobId: "job-a",
+          terminal: "FAIL",
+          terminalActionPendingReview: true,
+          evaluationAttemptId: "att-1",
+          score: 0.4,
+          scoreMax: 1,
+          updatedAt: iso(11 * 24 * HOUR), // >10 days pending
+          review: { proposedTerminal: "FAIL", status: "pending" },
+        },
+        already_drafted: {
+          userId: "u2",
+          jobId: "job-a",
+          terminal: "HARD_STOP",
+          terminalActionPendingReview: true,
+          review: { proposedTerminal: "HARD_STOP", status: "pending", autoDraft: { candidateMessageBody: "already here" } },
+        },
+        needs_draft_pass: {
+          userId: "u3",
+          jobId: "job-b",
+          terminal: "PASS",
+          terminalActionPendingReview: true,
+          review: { proposedTerminal: "PASS", status: "pending" },
+        },
+      },
+    })
+    const drafted: Array<Record<string, unknown>> = []
+    const result = await paPrescreenReviewSlaHandler({
+      db,
+      now: () => NOW,
+      log: () => {},
+      postSlackAlert: (async () => ({ posted: true })) as never,
+      enqueueOutbound: fakeEnqueue().enqueue,
+      generateAutoDraft: (async (a: Record<string, unknown>) => {
+        drafted.push(a)
+        return { stored: true }
+      }) as never,
+    })
+
+    assert.equal(result.backstopDrafted, 2, "the two undrafted pending sessions get a draft")
+    assert.equal(result.backstopDraftFailed, 0)
+    const ids = drafted.map((d) => d.sessionId).sort()
+    assert.deepEqual(ids, ["needs_draft_fail", "needs_draft_pass"])
+    assert.ok(!ids.includes("already_drafted"), "a session with review.autoDraft is skipped")
+    // The drafter receives the resolved terminal + ids from the session.
+    const failCall = drafted.find((d) => d.sessionId === "needs_draft_fail")!
+    assert.equal(failCall.terminal, "FAIL")
+    assert.equal(failCall.candidateId, "u1")
+    assert.equal(failCall.jobId, "job-a")
+    assert.equal(failCall.attemptId, "att-1")
+  })
+
+  it("is fail-open: a drafter error increments backstopDraftFailed, never throws", async () => {
+    const { db } = makeFakeDb({
+      "pa-prescreen-sessions": {
+        s1: {
+          userId: "u1",
+          jobId: "j",
+          terminal: "FAIL",
+          terminalActionPendingReview: true,
+          review: { proposedTerminal: "FAIL" },
+        },
+      },
+    })
+    const result = await paPrescreenReviewSlaHandler({
+      db,
+      now: () => NOW,
+      log: () => {},
+      postSlackAlert: (async () => ({ posted: true })) as never,
+      enqueueOutbound: fakeEnqueue().enqueue,
+      generateAutoDraft: (async () => {
+        throw new Error("LLM down")
+      }) as never,
+    })
+    // generateAndStorePrescreenAutoDraft itself is fail-open, but the sweep also
+    // guards each row, so a throwing drafter increments the failure counter.
+    assert.equal(result.backstopDraftFailed, 1)
+    assert.equal(result.backstopDrafted, 0)
   })
 })

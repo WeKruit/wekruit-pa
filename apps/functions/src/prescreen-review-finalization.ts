@@ -7,6 +7,7 @@ import {
 import { saveEvaluationAttempt } from "@pa/pa-persistence"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { writePrescreenMemoryUpdate } from "./prescreen-terminal-action.js"
+import { generateAndStorePrescreenAutoDraft } from "./evaluation-attempts.js"
 import {
   markPrescreenReviewPending,
   type MarkPrescreenReviewPendingArgs,
@@ -42,6 +43,8 @@ export async function finalizePrescreenForHumanReview(args: {
   lang: "zh" | "en"
   sendSms?: RuntimeSmsSender
   markReviewPending?: (args: MarkPrescreenReviewPendingArgs) => Promise<unknown>
+  /** Inline two-tier rejection-draft generator. Default = real LLM; tests inject a stub. */
+  generateAutoDraft?: typeof generateAndStorePrescreenAutoDraft
   log?: LogFn
 }): Promise<{
   attemptId: string
@@ -119,6 +122,39 @@ export async function finalizePrescreenForHumanReview(args: {
     attemptId: attempt.attemptId,
     terminal: args.terminal,
     pendingAckOutboundId: pendingAckOutboundId ?? null,
+  })
+
+  // INLINE two-tier draft (Adam 2026-06-14) — generate the personalized rejection /
+  // next-step draft right now and store it on the session as review.autoDraft so it's
+  // ready on the dashboard. NEVER sends; a human still commits. Runs AFTER the ack send
+  // (no candidate-facing latency) and is fully fail-open: a draft error never breaks the
+  // terminal flow. The 10-day sweep backstops any miss here.
+  const stateForScore = args.state as unknown as { score?: number; scoreMax?: number }
+  await (args.generateAutoDraft ?? generateAndStorePrescreenAutoDraft)({
+    db: args.db,
+    sessionId: args.state.sessionId,
+    candidateId: args.state.userId,
+    jobId: args.state.jobId,
+    attemptId: attempt.attemptId,
+    terminal: args.terminal,
+    proposedTerminal: args.terminal,
+    score: typeof stateForScore.score === "number" ? stateForScore.score : undefined,
+    scoreMax: typeof stateForScore.scoreMax === "number" ? stateForScore.scoreMax : undefined,
+    threshold: args.cfgSnapshot?.threshold,
+    attemptExplanation: attempt.explanation,
+    dimensions: attempt.dimensions?.slice(0, 8).map((d) => ({
+      dimensionId: d.dimensionId,
+      score: d.score,
+      confidence: d.confidence,
+      rationale: d.rationale,
+    })),
+    now: nowIso,
+    log: (event, payload) => log(event, payload ?? {}),
+  }).catch((err) => {
+    log("prescreen.auto_draft.inline_error", {
+      sessionId: args.state.sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
   })
 
   return { attemptId: attempt.attemptId, pendingAckText, pendingAckOutboundId }

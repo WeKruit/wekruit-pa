@@ -201,6 +201,10 @@ export interface DraftPrescreenReviewMessage {
   decisionReason: string
   recommendedActions: string[]
   evidenceSummary: string
+  /** Operator-only detailed per-tier checklist cross-check. Never shown to the candidate. */
+  internalReviewNotes?: string
+  /** "strong_wrong_role" | "honest_underqualified" | "neutral_pass" */
+  tone?: string
 }
 
 export interface DraftPrescreenReviewMessagesResult {
