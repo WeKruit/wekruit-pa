@@ -338,10 +338,12 @@ export function buildResearchFromEmployee(employee: CoresignalEmployeeCollectV2)
 
   const education: SubmissionEvalResearch["education"] = []
   for (const entry of Array.isArray(employee.education) ? employee.education : []) {
-    const school = cleanString(entry?.school)
+    // Coresignal V2 collect names the school `institution_name` (not `school`).
+    const e = entry as { institution_name?: string | null; school?: string | null; degree?: string | null }
+    const school = cleanString(e.institution_name) ?? cleanString(e.school)
     if (!school) continue
     if (education.length >= 6) break
-    const degree = cleanString(entry?.degree)
+    const degree = cleanString(e.degree)
     education.push({ school, ...(degree ? { degree } : {}) })
   }
 
