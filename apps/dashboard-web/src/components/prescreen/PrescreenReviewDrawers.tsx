@@ -98,6 +98,12 @@ export type PrescreenCandidateChecklistEval = {
   enriched?: boolean
   evaluatedAt?: string
   model?: string
+  /** The full job checklist, each item marked with the AI's per-item verdict. */
+  checklistDetail?: Array<{
+    kind?: "hard" | "fit" | "bonus" | "anti"
+    heading?: string
+    items?: Array<{ text?: string; status?: "met" | "gap" | "flag" | "clear" }>
+  }>
 }
 
 export type Row = PrescreenSessionRow
@@ -856,16 +862,40 @@ function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChe
         <span><strong>Bonus</strong> {tally(c.bonus)}</span>
         <span><strong>Anti</strong> {c.anti?.flagged ?? 0} flag(s)</span>
       </div>
-      {(c.hard?.gaps?.length ?? 0) > 0 ? (
-        <div style={{ fontSize: "0.82em", color: "#334155" }}>
-          <strong style={{ color: "#b91c1c" }}>Hard gaps:</strong> {c.hard!.gaps!.slice(0, 6).join(" · ")}
+      {Array.isArray(evaluation.checklistDetail) && evaluation.checklistDetail.length > 0 ? (
+        <div style={{ display: "grid", gap: 6, borderTop: "1px solid #c7d2fe", paddingTop: 6 }}>
+          {evaluation.checklistDetail.map((g, gi) => (
+            <div key={gi} style={{ display: "grid", gap: 2 }}>
+              <div style={{ fontSize: "0.74em", fontWeight: 700, letterSpacing: "0.04em", color: "#4338ca", textTransform: "uppercase" }}>
+                {(g.kind ?? "").toUpperCase()}{g.heading ? ` · ${g.heading}` : ""}
+              </div>
+              {(g.items ?? []).map((it, ii) => {
+                const bad = it.status === "gap" || it.status === "flag"
+                const mark = it.status === "gap" ? "✗" : it.status === "flag" ? "⚑" : "✓"
+                return (
+                  <div key={ii} style={{ display: "flex", gap: 6, fontSize: "0.82em", color: "#1e293b", alignItems: "flex-start" }}>
+                    <span style={{ color: bad ? "#b91c1c" : "#15803d", fontWeight: 700, width: 12, flexShrink: 0 }}>{mark}</span>
+                    <span style={bad ? { color: "#334155" } : { color: "#64748b" }}>{it.text}</span>
+                  </div>
+                )
+              })}
+            </div>
+          ))}
         </div>
-      ) : null}
-      {(c.anti?.flags?.length ?? 0) > 0 ? (
-        <div style={{ fontSize: "0.82em", color: "#334155" }}>
-          <strong style={{ color: "#b91c1c" }}>Anti flags:</strong> {c.anti!.flags!.slice(0, 6).join(" · ")}
-        </div>
-      ) : null}
+      ) : (
+        <>
+          {(c.hard?.gaps?.length ?? 0) > 0 ? (
+            <div style={{ fontSize: "0.82em", color: "#334155" }}>
+              <strong style={{ color: "#b91c1c" }}>Hard gaps:</strong> {c.hard!.gaps!.slice(0, 6).join(" · ")}
+            </div>
+          ) : null}
+          {(c.anti?.flags?.length ?? 0) > 0 ? (
+            <div style={{ fontSize: "0.82em", color: "#334155" }}>
+              <strong style={{ color: "#b91c1c" }}>Anti flags:</strong> {c.anti!.flags!.slice(0, 6).join(" · ")}
+            </div>
+          ) : null}
+        </>
+      )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: "0.8em" }}>
         {(["school", "degree", "company", "gpa"] as const).map((k) => (
           <Badge key={k} tone={pillarTone(evaluation.background?.[k]?.verdict)}>{k}: {evaluation.background?.[k]?.verdict ?? "—"}</Badge>

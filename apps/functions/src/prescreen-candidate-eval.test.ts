@@ -107,6 +107,13 @@ describe("prescreen-candidate-eval", () => {
     assert.equal(stored.jobId, "job-1")
     assert.equal(stored.candidateId, "cand-1")
     assert.ok((stored.research as Record<string, unknown>) !== undefined, "research attached")
+    // per-item checklist detail (the recruiter-page-style requirements view)
+    const detail = stored.checklistDetail as Array<{ kind: string; items: Array<{ text: string; status: string }> }>
+    assert.ok(Array.isArray(detail) && detail.length === 4, "checklistDetail has all 4 tiers")
+    const hard = detail.find((g) => g.kind === "hard")!
+    assert.equal(hard.items[0].status, "gap", "the unmet hard item (in gaps) is marked gap")
+    const anti = detail.find((g) => g.kind === "anti")!
+    assert.equal(anti.items[0].status, "flag", "the flagged anti item is marked flag")
     // folded into the draft
     assert.equal(redrafts.length, 1)
     assert.match(String(redrafts[0]!.candidateChecklistSummary), /Hard 0\/1/)
@@ -202,7 +209,7 @@ describe("prescreen-candidate-eval", () => {
       verdict: "reject", confidence: 0.8, summary: "weak", reasons: [],
       checklist: { hard: { met: 0, total: 1, gaps: ["X"] }, fit: { met: 0, total: 1, gaps: [] }, bonus: { met: 0, total: 1, gaps: [] }, anti: { flagged: 1, total: 1, flags: ["Y"] } },
       background: { school: { verdict: "weak", evidence: "" }, gpa: { verdict: "unknown", evidence: "" }, degree: { verdict: "strong", evidence: "" }, company: { verdict: "weak", evidence: "" } },
-      evaluatedAt: NOW, model: "m", version: "submission-eval-v2", jobId: "j", candidateId: "c", enriched: true,
+      evaluatedAt: NOW, model: "m", version: "submission-eval-v2", jobId: "j", candidateId: "c", enriched: true, checklistDetail: [],
     })
     assert.match(line, /Hard 0\/1 — gaps: X/)
     assert.match(line, /Anti 1 flag\(s\): Y/)
