@@ -4,6 +4,7 @@ import { MockFirestore, asFirestore } from "../job-rec/__tests__/mock-firestore.
 import {
   coresignalCacheKey,
   getOrFetchCoresignalByLinkedin,
+  getOrFetchCoresignalById,
   storeCoresignalEmployee,
 } from "./coresignal-cache.js"
 import type { CoresignalEmployeeCollectV2 } from "@pa/external-supply"
@@ -75,6 +76,66 @@ describe("coresignal-cache (unified store)", () => {
       source: "test",
       search: async () => 1,
       fetch: async () => employee,
+    })
+    assert.equal(res, undefined)
+  })
+
+  it("getOrFetchById caches a miss (keyed by the employee's own LinkedIn url) and reuses by id — no GET", async () => {
+    const mfs = new MockFirestore()
+    let fetchCalls = 0
+    const first = await getOrFetchCoresignalById({
+      db: asFirestore(mfs),
+      id: 123,
+      apiKey: "k",
+      now,
+      source: "test",
+      fetch: async () => { fetchCalls += 1; return employee },
+    })
+    assert.equal(first, employee)
+    assert.equal(fetchCalls, 1)
+    // stored under the employee's linkedin_url canonical key, with the id
+    const doc = (await mfs.collection("pa-coresignal-cache").doc(coresignalCacheKey("https://www.linkedin.com/in/x")).get()).data() ?? {}
+    assert.equal(doc.coresignalId, 123)
+    assert.ok(doc.employee, "complete response stored")
+
+    // second call by the SAME id is served from cache — fetch NOT called again
+    const second = await getOrFetchCoresignalById({
+      db: asFirestore(mfs),
+      id: 123,
+      apiKey: null, // no key needed on a hit
+      now,
+      source: "test",
+      fetch: async () => { fetchCalls += 1; return employee },
+    })
+    assert.ok(second, "served from cache by id")
+    assert.equal(fetchCalls, 1, "no second GET")
+  })
+
+  it("getOrFetchById with rethrow propagates a fetch error (batch failure-status tracking)", async () => {
+    const mfs = new MockFirestore()
+    await assert.rejects(
+      getOrFetchCoresignalById({
+        db: asFirestore(mfs),
+        id: 999,
+        apiKey: "k",
+        now,
+        source: "test",
+        rethrow: true,
+        fetch: async () => { throw new Error("boom 429") },
+      }),
+      /boom 429/,
+    )
+  })
+
+  it("getOrFetchById fail-open (no rethrow) swallows a fetch error → undefined", async () => {
+    const mfs = new MockFirestore()
+    const res = await getOrFetchCoresignalById({
+      db: asFirestore(mfs),
+      id: 999,
+      apiKey: "k",
+      now,
+      source: "test",
+      fetch: async () => { throw new Error("boom") },
     })
     assert.equal(res, undefined)
   })
