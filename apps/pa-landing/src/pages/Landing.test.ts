@@ -118,24 +118,24 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(landingSource, /<span>You interview\.<\/span>/)
   assert.doesNotMatch(landingSource, /<span>You don&apos;t<\/span>\s*<span><em className="wk-accent">apply\.<\/em><\/span>/)
   assert.doesNotMatch(landingSource, /<span>You<\/span>\s*<span>interview\.<\/span>/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*--wk-hero-title-leading: 1\.14;[\s\S]*--wk-hero-title-row-gap: 5px;/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*gap: var\(--wk-hero-title-row-gap\);/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*max-width: min\(100%, 620px\);[\s\S]*font-size: 52px;[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: flex;[\s\S]*flex-direction: column;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*max-width: min\(100%, 640px\);[\s\S]*font-size: clamp\(48px, 5\.4vw, 66px\);[\s\S]*line-height: 1\.03;/)
   assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*overflow: visible;/)
-  assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
   assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*white-space: nowrap;/)
   assert.doesNotMatch(landingSource, /\.wk-hero__h1 > span \{[^}]*text-wrap: balance;/)
-  assert.match(landingSource, /\.wk-hero__h1 \.wk-accent \{[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
-  assert.match(landingSource, /\.wk-hero__h1 \.wk-accent \{[\s\S]*padding-bottom: 0\.03em;/)
+  assert.match(landingSource, /\.wk-hero__h1 \.wk-accent \{[\s\S]*font-style: italic;/)
+  // Cramped leading vars from the "yield first viewport" pass are gone.
+  assert.doesNotMatch(landingSource, /--wk-hero-title-leading/)
+  assert.doesNotMatch(landingSource, /\.wk-hero__h1 \{[\s\S]*font-size: 52px;/)
   assert.match(landingSource, /\.wk-section__h2 \{[\s\S]*line-height: 1\.14; letter-spacing: 0;/)
   assert.match(source, /\.seq__h2 \{[\s\S]*letter-spacing: 0;[\s\S]*line-height: 1\.14;/)
   assert.match(
     landingSource,
-    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ --wk-hero-title-leading: 1\.16; --wk-hero-title-row-gap: 5px; font-size: 44px; \}/,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(44px, 6\.4vw, 60px\); \}/,
   )
   assert.match(
     landingSource,
-    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ --wk-hero-title-leading: 1\.18; --wk-hero-title-row-gap: 5px; font-size: 35px; \}/,
+    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(35px, 9vw, 44px\); \}/,
   )
   assert.match(landingSource, /@media \(max-width: 360px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 32px; \}/)
   assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__browse \{ flex-basis: 100%; \}/)
@@ -143,22 +143,22 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
 
 test("Landing hero lede keeps readable paragraph rhythm", () => {
   const ledeBlock = landingSource.match(/\.wk-hero__lede \{([\s\S]*?)\n\}/)?.[1] ?? ""
-  assert.match(ledeBlock, /line-height: 1\.46;/)
+  assert.match(ledeBlock, /line-height: 1\.55;/)
   assert.match(ledeBlock, /color: var\(--wk-ink-2\);/)
-  assert.match(ledeBlock, /margin: 0 0 22px;/)
+  assert.match(ledeBlock, /margin: 0 0 26px;/)
   assert.doesNotMatch(ledeBlock, /line-height: 1\.14/)
   assert.doesNotMatch(ledeBlock, /letter-spacing: 0/)
   assert.doesNotMatch(ledeBlock, /color: var\(--wk-ink\); margin: 0/)
 })
 
-test("Landing hero yields the first viewport to the product flow", () => {
-  assert.match(landingSource, /\.wk-hero \{ padding: 36px 0 44px; position: relative; \}/)
-  assert.match(landingSource, /\.wk-hero__grid \{[\s\S]*gap: 48px;[\s\S]*align-items: start;/)
-  assert.match(landingSource, /\.wk-hero__cta \{[\s\S]*gap: 10px;[\s\S]*margin-bottom: 22px;/)
-  assert.match(landingSource, /\.wk-hero__browse \{[\s\S]*font-weight: 500; font-size: 13\.5px;/)
-  assert.match(landingSource, /\.wk-hero__visual \.wk-imsg-phone \{ max-width: 320px; \}/)
+test("Landing hero uses the airy editorial scale (design restore 2026-06-13)", () => {
+  assert.match(landingSource, /\.wk-hero \{ padding: 56px 0 80px; position: relative; \}/)
+  assert.match(landingSource, /\.wk-hero__grid \{[\s\S]*gap: 64px;[\s\S]*align-items: center;/)
+  assert.match(landingSource, /\.wk-hero__cta \{[\s\S]*gap: 16px;[\s\S]*margin-bottom: 30px;/)
+  assert.match(landingSource, /\.wk-hero__browse \{[\s\S]*font-weight: 500; font-size: 14\.5px;/)
+  assert.match(landingSource, /\.wk-hero__visual \.wk-imsg-phone \{ max-width: 340px; \}/)
+  assert.match(landingSource, /\.wk-hero__visual \.wk-imsg-thread__body \{ min-height: 300px; \}/)
   assert.match(landingSource, /@media \(max-width: 760px\) \{[\s\S]*\.wk-hero__visual \{[\s\S]*display: none;[\s\S]*\}/)
-  assert.doesNotMatch(landingSource, /@media \(max-width: 760px\) \{[\s\S]*\.wk-hero__visual \{[\s\S]*padding-top: 0;[\s\S]*align-items: center;/)
 })
 
 test("Landing sequence feed has enough mobile art height for its own rows", () => {
