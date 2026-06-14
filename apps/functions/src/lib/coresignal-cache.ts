@@ -8,9 +8,9 @@
  *
  * Every Coresignal fetch path MUST go through this module instead of caching its
  * own way (the prior state was 5 fragmented stores with 3 key schemes):
- *   - recruiter-submission-eval  → getOrFetchCoresignalByLinkedin
- *   - linkedin-connect-submit     → getOrFetchCoresignalByLinkedin
- *   - coresignal-batch-fetch      → storeCoresignalEmployee (already has id+response)
+ *   - recruiter-submission-eval  → getOrFetchCoresignalByLinkedin (resolve id by url)
+ *   - linkedin-connect-submit     → getOrFetchCoresignalById (id already resolved)
+ *   - coresignal-batch-fetch      → getOrFetchCoresignalById (operator-pasted ids)
  *
  * Doc id = canonical LinkedIn hash (coresignalCacheKey), so equivalent URL forms
  * (www / scheme / trailing slash) share one entry and the key matches
@@ -89,6 +89,74 @@ export async function storeCoresignalEmployee(args: {
     await args.db.collection(CORESIGNAL_CACHE_COLLECTION).doc(key).set(doc, { merge: true })
   } catch (e) {
     args.log?.("coresignal_cache_write_failed", { error: e instanceof Error ? e.message : String(e) })
+  }
+}
+
+/** The LinkedIn URL carried inside a Coresignal employee payload, if any. */
+function employeeLinkedinUrl(employee: CoresignalEmployeeCollectV2): string | undefined {
+  const r = employee as unknown as Record<string, unknown>
+  const canonical = typeof r.canonical_linkedin_url === "string" ? r.canonical_linkedin_url.trim() : ""
+  const plain = typeof r.linkedin_url === "string" ? r.linkedin_url.trim() : ""
+  return canonical || plain || undefined
+}
+
+/** Cache read by Coresignal id (indexed `coresignalId` field). */
+export async function readCoresignalCacheById(
+  db: Firestore,
+  id: number,
+  nowMs: number,
+): Promise<CoresignalEmployeeCollectV2 | undefined> {
+  try {
+    const q = await db.collection(CORESIGNAL_CACHE_COLLECTION).where("coresignalId", "==", id).limit(1).get()
+    const snap = q.docs[0]
+    if (!snap) return undefined
+    const data = (snap.data() ?? {}) as Partial<CoresignalCacheDoc>
+    const fetchedMs = typeof data.fetchedAt === "string" ? Date.parse(data.fetchedAt) : 0
+    if (!data.employee || !(nowMs - fetchedMs < CORESIGNAL_CACHE_TTL_MS)) return undefined
+    return data.employee
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Get-or-fetch BY Coresignal id — for paths that already resolved an employee id
+ * (one-tap connect via photo, operator batch import). Skips the collect GET on a
+ * cache hit. `link` (when known, e.g. the URL the connect flow was given) is used
+ * as the storage key so the doc is findable by BOTH url and id; otherwise the
+ * employee's own LinkedIn URL (or an id fallback) is used.
+ */
+export async function getOrFetchCoresignalById(args: {
+  db: Firestore
+  id: number
+  apiKey: string | null
+  now: string
+  source: string
+  fetch: (id: number, cfg: { apiKey: string }) => Promise<CoresignalEmployeeCollectV2>
+  link?: string
+  /** When true, propagate a fetch error instead of fail-open (batch import wants the status). */
+  rethrow?: boolean
+  log?: Logger
+}): Promise<CoresignalEmployeeCollectV2 | undefined> {
+  const nowMs = Date.parse(args.now)
+  const cached = await readCoresignalCacheById(args.db, args.id, nowMs)
+  if (cached) {
+    args.log?.("coresignal_cache_hit_by_id", { id: args.id })
+    return cached
+  }
+  if (!args.apiKey) {
+    args.log?.("coresignal_skipped_no_key")
+    return undefined
+  }
+  try {
+    const employee = await args.fetch(args.id, { apiKey: args.apiKey })
+    const link = args.link || employeeLinkedinUrl(employee) || `coresignal-id:${args.id}`
+    await storeCoresignalEmployee({ db: args.db, link, coresignalId: args.id, employee, now: args.now, source: args.source, log: args.log })
+    return employee
+  } catch (err) {
+    args.log?.("coresignal_fetch_failed", { error: err instanceof Error ? err.message : String(err) })
+    if (args.rethrow) throw err
+    return undefined
   }
 }
 

@@ -58,6 +58,7 @@ import {
 } from "../external-supply/coresignal-experiences-mirror.js"
 import { dualWriteLegacyUserTagsFromExternal } from "../external-supply/legacy-user-tags-bridge.js"
 import { normalizeCoresignalCollectV2 } from "../external-supply/adapters/coresignal-collect-v2.js"
+import { getOrFetchCoresignalById } from "../lib/coresignal-cache.js"
 import {
   verifyLinkedinConnectToken,
   markLinkedinConnectTokenUsed,
@@ -517,7 +518,22 @@ export async function enrichFromCoresignal(args: {
   }
   const employeeId = resolved.employeeId
   logger.info("linkedin_connect.coresignal_resolved", { userId, employeeId, via: resolved.via })
-  const employee = await fetchEmployeeCollect(employeeId, { apiKey })
+  // Unified store: skip the collect GET when this employee was fetched before
+  // (any path). Cache hit by id; miss → fetch + store keyed by canonical URL.
+  const employee = await getOrFetchCoresignalById({
+    db,
+    id: employeeId,
+    apiKey,
+    now: nowIso,
+    source: "linkedin_connect",
+    fetch: fetchEmployeeCollect,
+    link: args.canonicalUrl,
+    log: (event, fields) => logger.info(`linkedin_connect.${event}`, { userId, ...(fields ?? {}) }),
+  })
+  if (!employee) {
+    logger.info("linkedin_connect.coresignal_collect_unavailable", { userId, employeeId })
+    return { enriched: false }
+  }
   const draft = normalizeCoresignalCollectV2(employee)
   const record: ExternalCandidateRecord = {
     ...draft,

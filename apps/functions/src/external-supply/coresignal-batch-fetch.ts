@@ -35,6 +35,7 @@ import {
 } from "@pa/external-supply"
 import { requireExternalSupplyAdmin } from "./resolve-identity.js"
 import { makeFirestoreDeps, runCreateBatch, type CreateBatchResult } from "./import.js"
+import { getOrFetchCoresignalById } from "../lib/coresignal-cache.js"
 
 // Reuse existing CoreSignal secret (already defined for admin-coresignal-agentic-search).
 const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
@@ -213,7 +214,26 @@ export const paCoresignalFetchBatch = onCall(
     const firestoreDeps = makeFirestoreDeps(db)
 
     return runCoresignalFetchBatch(parsed.data, {
-      fetchEmployee: fetchEmployeeCollect,
+      // Cache-aware: reuse the unified `pa-coresignal-cache` (by id) so a
+      // previously-collected employee skips the live GET; rethrow keeps the
+      // worker's per-id failure status tracking intact on a real fetch error.
+      fetchEmployee: async (id, config) => {
+        const employee = await getOrFetchCoresignalById({
+          db,
+          id,
+          apiKey: config.apiKey,
+          now: new Date().toISOString(),
+          source: "coresignal_batch_fetch",
+          fetch: fetchEmployeeCollect,
+          rethrow: true,
+          log: (event, fields) =>
+            logger.info(`pa.external_supply.coresignal_batch.${event}`, fields),
+        })
+        if (!employee) {
+          throw new CoresignalCollectError("coresignal_collect_unavailable", null, 0)
+        }
+        return employee
+      },
       runCreateBatch,
       now: () => new Date().toISOString(),
       log: (msg, fields) => logger.info(msg, fields),
