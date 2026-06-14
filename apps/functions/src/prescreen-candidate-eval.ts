@@ -359,7 +359,9 @@ export async function runPrescreenCandidateEval(
         scoreMax: typeof session.scoreMax === "number" ? session.scoreMax : undefined,
         threshold: typeof session.threshold === "number" ? session.threshold : undefined,
         now,
-        screenDateIso: str(session.terminalActionFiredAt) || str(session.updatedAt) || now,
+        // STABLE screen date: terminal-fired time, else session createdAt (screen start) —
+        // NOT updatedAt (mutated by any later write, incl. a re-eval).
+        screenDateIso: str(session.terminalActionFiredAt) || str(session.createdAt) || now,
         candidateChecklistSummary: summarizeChecklistEval(evaluation),
         force: true,
         log: (event, fields) => log(`redraft.${event}`, fields),
