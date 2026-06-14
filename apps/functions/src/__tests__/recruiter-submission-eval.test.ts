@@ -64,7 +64,7 @@ const employeeFixture = {
       date_to: "2021-12",
     },
   ],
-  education: [{ school: "Stanford University", degree: "BS Computer Science" }],
+  education: [{ institution_name: "Stanford University", degree: "BS Computer Science" }],
 } as unknown as CoresignalEmployeeCollectV2
 
 function judgmentFixture(overrides?: Partial<Record<string, unknown>>): Record<string, unknown> {
