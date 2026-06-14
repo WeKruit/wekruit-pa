@@ -92,6 +92,13 @@ export const PA_COLLECTIONS = {
   externalSourcingBatches: "pa-external-sourcing-batches",
   /** v2.0 external-supply — normalized per-row candidate records ingested from a batch. */
   externalCandidateRecords: "pa-external-candidate-records",
+  /**
+   * Raw Coresignal employee-collect responses, keyed by the canonical LinkedIn
+   * hash (linkedinHash(canonicalizeLinkedInUrl(url))). Reused across submission
+   * evals to avoid re-pulling; 30d TTL on `fetchedAt`. Written by the recruiter
+   * submission eval (paRecruiterSubmissionEval).
+   */
+  coresignalResponseCache: "pa-coresignal-cache",
   /** v2.0 external-supply — pa-users to external record join with linked/pending/blocked status. */
   candidateSourceLinks: "pa-candidate-source-links",
   /** v2.0 external-supply — evaluation run metadata (company x job scope, status, counts). */

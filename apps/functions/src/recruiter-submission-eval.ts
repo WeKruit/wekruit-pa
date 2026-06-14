@@ -31,10 +31,13 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { callWithFallback } from "@pa/pa-resume-parser"
 import {
+  canonicalizeLinkedInUrl,
   fetchEmployeeCollect,
+  linkedinHash,
   searchEmployeeIdByLinkedinUrl,
   type CoresignalEmployeeCollectV2,
 } from "@pa/external-supply"
+import { PA_COLLECTIONS } from "@pa/core-types"
 import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
 import { ensureRecruiterSubmissionCandidateTracked } from "./recruiter-candidate-tracking.js"
 
@@ -47,7 +50,7 @@ const JOBS_COLLECTION = "pa-jobs"
 // Coresignal responses cached by canonical-LinkedIn hash so the eval (and any
 // candidate↔response matching) reuses one fetch instead of re-pulling per
 // submission. Refreshed after the TTL.
-const CORESIGNAL_CACHE_COLLECTION = "pa-coresignal-cache"
+const CORESIGNAL_CACHE_COLLECTION = PA_COLLECTIONS.coresignalResponseCache
 const CORESIGNAL_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 export const SUBMISSION_EVAL_VERSION = "submission-eval-v2"
@@ -396,8 +399,13 @@ export type RecruiterSubmissionEvalResult = {
 }
 
 export function coresignalCacheKey(link: string): string {
-  const norm = link.trim().toLowerCase().replace(/[?#].*$/, "").replace(/\/+$/, "")
-  return createHash("sha256").update(norm).digest("hex").slice(0, 40)
+  // Align with the platform's canonical LinkedIn identity hash so equivalent
+  // URLs (www / scheme / trailing-slash) share one cache entry and the key
+  // matches pa-candidate-handles + external-supply. Fall back to a normalized
+  // raw hash only when the URL isn't a parseable LinkedIn profile.
+  const canonical = canonicalizeLinkedInUrl(link)
+  if (canonical) return linkedinHash(canonical)
+  return createHash("sha256").update(link.trim().toLowerCase()).digest("hex")
 }
 
 async function readCoresignalCache(
