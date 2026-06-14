@@ -7,6 +7,7 @@ import {
   cookieDomainForHost,
   deriveOnboardingIntentFromPath,
   deriveRegistrationEntryFromPath,
+  isCandidateHost,
   isLayoffHost,
   isProfileRoleSignalPath,
   isPublicJobPath,
@@ -47,6 +48,18 @@ test("isLayoffHost recognizes layoff Firebase hosting targets", () => {
   assert.equal(isLayoffHost("layoff.wekruit.com"), true)
   assert.equal(isLayoffHost("layoff-wekruit.web.app"), true)
   assert.equal(isLayoffHost("candidate.wekruit.com"), false)
+})
+
+test("isCandidateHost treats the apex + aliases as in-place portal hosts (no cross-host hop)", () => {
+  // The forward-facing apex and aliases all serve the same pa-landing app —
+  // users must stay put, not bounce to candidate.wekruit.com.
+  assert.equal(isCandidateHost("wekruit.com"), true)
+  assert.equal(isCandidateHost("www.wekruit.com"), true)
+  assert.equal(isCandidateHost("pa.wekruit.com"), true)
+  assert.equal(isCandidateHost("candidate.wekruit.com"), true)
+  assert.equal(isCandidateHost("wekruit-pa-landing.web.app"), true)
+  // Layoff runs its own pre-portal flow and intentionally hops to the portal.
+  assert.equal(isCandidateHost("layoff.wekruit.com"), false)
 })
 
 test("candidatePortalLoginUrl targets candidate origin for cross-host auth", () => {

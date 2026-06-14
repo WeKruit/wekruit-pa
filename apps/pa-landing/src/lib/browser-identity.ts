@@ -317,7 +317,21 @@ export function resolveExplicitOnboardingReturnPath(next: string | null | undefi
 
 export function isCandidateHost(hostname = window.location.hostname): boolean {
   const host = hostname.toLowerCase()
-  return host.startsWith("candidate.") || host === "wekruit-pa-landing.web.app" || host === "localhost" || host === "127.0.0.1"
+  // Every host that serves the full pa-landing app (the `wekruit-pa-landing`
+  // hosting site) is a candidate host — the portal runs in-place, no cross-host
+  // hop. This includes the forward-facing apex `wekruit.com` and `pa.wekruit.com`
+  // (Adam 2026-05: apex is the candidate-facing domain; candidate./pa. are
+  // aliases on the same site). Cross-domain SSO restores the session on each.
+  // Only `layoff.*` is excluded — it runs its own pre-portal flow and hops here.
+  return (
+    host === "wekruit.com" ||
+    host === "www.wekruit.com" ||
+    host === "pa.wekruit.com" ||
+    host.startsWith("candidate.") ||
+    host === "wekruit-pa-landing.web.app" ||
+    host === "localhost" ||
+    host === "127.0.0.1"
+  )
 }
 
 export function isLayoffHost(hostname = window.location.hostname): boolean {
