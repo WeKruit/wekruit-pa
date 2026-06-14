@@ -218,8 +218,13 @@ const VERIFICATION_CODE_OPENER_RE =
 /** Legacy form: "Hello, WeKruit! <token>". Back-compat — in-flight QR links still emit this. */
 const HELLO_WEKRUIT_OPENER_RE =
   /^hello,?\s*wekruit!?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+// Prescreen job opener. Accepts BOTH forms (2026-06-13):
+//   - JOB-ONLY (NEW): "WeKruit_<jobId>_Job" — no uid (phone-is-auth identity).
+//   - JOB+UID (LEGACY, back-compat for in-flight tokens): "WeKruit_<jobId>_<uid>_Job".
+// jobId is `[a-z0-9-]+` (no underscores — normalizeCompanyName collapses all
+// non-alnum to `-`), so the optional uid segment is unambiguous.
 const WEKRUIT_JOB_OPENER_RE =
-  /(?:^|\s)wekruit_([a-z0-9][a-z0-9-]{1,160})_([a-z0-9][a-z0-9_-]{7,127})_job(?:\s|$)/i
+  /(?:^|\s)wekruit_([a-z0-9][a-z0-9-]{1,160})(?:_([a-z0-9][a-z0-9_-]{7,127}))?_job(?:\s|$)/i
 
 /**
  * LinkedIn one-tap re-entry marker (2026-06-03). After the candidate connects
@@ -309,8 +314,20 @@ export function parseHelloWekruitOpener(value: string): { candidateId: string } 
   return candidateId ? { candidateId } : null
 }
 
+/**
+ * True when the text is a prescreen job opener of EITHER form — JOB-ONLY
+ * `WeKruit_<jobId>_Job` (2026-06-13, phone-is-auth) or legacy
+ * `WeKruit_<jobId>_<uid>_Job`. The job-only form carries no uid, so
+ * `parseHelloWekruitOpener` (which returns a candidateId) returns null for it;
+ * this predicate exists so kickoff classification still recognizes it.
+ */
+export function isWekruitJobOpener(value: string): boolean {
+  return WEKRUIT_JOB_OPENER_RE.test(value.trim())
+}
+
 export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {
   if (parseHelloWekruitOpener(value)) return true
+  if (isWekruitJobOpener(value)) return true
   if (parseLinkedinDoneOpener(value)) return true
   const normalized = normalizeControlText(value)
   if (!normalized) return true

@@ -14,13 +14,24 @@ import { isE164 } from "./sendblue/handle-format.js"
  * `identity_conflict:`.
  */
 export const DEV_BYPASS_PHONE = "+14243201960"
-const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
+// Prescreen token parser. Accepts BOTH forms (2026-06-13):
+//   - JOB-ONLY (NEW, minted today): `WeKruit_<jobId>_Job` — no uid. Identity is
+//     phone-is-auth; the token only carries the job. This is the corruption-
+//     proof form (no fragile Firebase push-id uid in page→Messages transit).
+//   - JOB+UID (LEGACY, back-compat for tokens already in flight):
+//     `WeKruit_<jobId>_<uid>_Job`.
+// jobId is `[a-z0-9-]+` (normalizeCompanyName: every non-alnum collapses to `-`,
+// NO underscores) so the optional uid segment is unambiguous: the jobId capture
+// can never swallow a `_`, so a single `_<seg>` before `_Job` is always the uid.
+const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)(?:_([A-Za-z0-9_-]+))?_Job/i
 type CandidatePhoneMatch = { id: string; data: Record<string, unknown> }
 
 /**
- * Extract the userId from a `WeKruit_<jobId>_<userId>_Job` prescreen token.
- * Exported (2026-06-11) so email-sender resolution reuses the EXACT parser
- * this resolver already trusts for uid extraction — never a re-written regex.
+ * Extract the userId from a prescreen token. Returns the uid for the LEGACY
+ * `WeKruit_<jobId>_<userId>_Job` form, or `null` for the new JOB-ONLY
+ * `WeKruit_<jobId>_Job` form (phone-is-auth — no uid in the token). Exported
+ * (2026-06-11) so email-sender resolution reuses the EXACT parser this resolver
+ * already trusts for uid extraction — never a re-written regex.
  */
 export function parsePrescreenCandidateId(text: string): string | null {
   const match = text.match(PRESCREEN_TOKEN_RE)

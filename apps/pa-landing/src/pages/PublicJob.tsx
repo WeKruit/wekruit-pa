@@ -591,9 +591,9 @@ export default function PublicJob() {
   const salary = cfg.level1Reveal?.salaryRange
   const resumeGateValue = resumeGate.status === "ready" ? resumeGate.gate : null
   const uploadUserId = resumeGateValue?.candidateId
-  const smsUserId = resumeGateValue?.candidateId ?? requestedUserId
   const sendNumber = resumeGateValue?.senderNumber ?? null
-  const smsBody = buildWekruitJobOpenerBody(publicJobId, smsUserId)
+  // 2026-06-13 — token is job-only now (phone-is-auth identity); no uid emitted.
+  const smsBody = buildWekruitJobOpenerBody(publicJobId)
   const smsHref = sendNumber ? `sms:${sendNumber}?body=${encodeURIComponent(smsBody)}` : null
 
   const h = hashStringToUint(publicJobId || company)

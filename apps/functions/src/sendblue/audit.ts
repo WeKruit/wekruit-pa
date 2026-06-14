@@ -41,6 +41,16 @@ export type AuditEventType =
   | "email_sender_resolved"
   | "email_sender_resolved_no_phone"
   | "email_sender_unresolved"
+  // Switch-to-phone guidance (2026-06-13) — email-Apple-ID senders are now
+  // sent ONE deterministic reply INTO the email thread asking them to flip
+  // "Start New Conversations From" to their phone number (the rewrite-to-phone
+  // path guaranteed silence on the inbound-only plan). Audited so ops can see
+  // the guidance fire, the 24h cooldown skip, an email-origin STOP, and any
+  // delivery failure.
+  | "email_sender_switch_guidance_sent"
+  | "email_sender_switch_guidance_skipped"
+  | "email_sender_switch_guidance_failed"
+  | "email_sender_stop_keyword"
 
 export type AuditChannel =
   | "imessage_sendblue"

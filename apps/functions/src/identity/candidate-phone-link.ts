@@ -348,7 +348,13 @@ export async function runCandidatePhoneLinkStart(
       body: `WeKruit verification code: ${code}. Use it to connect this web account to your Claire phone thread. It expires in 10 minutes.`,
       idempotencyKey: `candidate_phone_link:${firebaseUid}:${candidate.candidateId}:${requestId}`,
       runtimeApproved: true,
-      runtimeSource: "pa_identity_notice",
+      // INBOUND-FIRST (Adam-locked 2026-06-14): this is a WEBSITE-initiated code,
+      // NOT a reply into a thread that texted us — it must NOT use the
+      // pa_identity_notice RULE-1 exemption. Subject to the never-inbound block:
+      // the code only sends to a phone that already has a Claire thread (the
+      // intended "I've chatted on phone, now connect web" flow). A phone that
+      // never texted us is blocked — they must text us first (inbound-first).
+      runtimeSource: "pa_connect_phone_link",
     })
   } catch {
     await deps.db.collection(PHONE_LINK_COLLECTION).doc(requestId).set(

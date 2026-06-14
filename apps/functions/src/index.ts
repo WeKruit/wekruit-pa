@@ -2531,6 +2531,9 @@ export const paConversationRecoverySweep = onSchedule(
       SENDBLUE_API_KEY_ID,
       SENDBLUE_API_SECRET_KEY,
       SENDBLUE_FROM_NUMBER,
+      // Unanswered-inbound alert (Feature 1) posts to Slack via the shared helper,
+      // which reads PA_SLACK_ALERT_WEBHOOK from process.env. Fail-soft when unset.
+      PA_SLACK_ALERT_WEBHOOK,
     ],
     memory: "1GiB",
     maxInstances: 1,
@@ -2543,6 +2546,13 @@ export const paConversationRecoverySweep = onSchedule(
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
     process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
     process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    // Surface the Slack webhook to the shared alert helper (postSlackAlert reads env).
+    try {
+      const slackWebhook = PA_SLACK_ALERT_WEBHOOK.value().trim()
+      if (slackWebhook && slackWebhook !== "__UNSET__") process.env.PA_SLACK_ALERT_WEBHOOK = slackWebhook
+    } catch {
+      /* leave unset → alert helper no-ops gracefully */
+    }
     try {
       const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
       if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber

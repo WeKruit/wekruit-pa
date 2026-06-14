@@ -1366,7 +1366,9 @@ describe("handleSendblueWebhook", () => {
     assert.equal(prescreenCalls.length, 0, "conflicting token must not start the interview")
     assert.equal(prescreenIdempotency.size, 0, "conflicting token must not stamp prescreen idempotency")
     assert.equal(notices.length, 1)
-    assert.equal(notices[0]!.targetUserId, "mGuQxsTGkisKtptNjg4b")
+    // FIX 2 (2026-06-13) — identity-conflict notice keyed to the RAW inbound phone,
+    // never the token uid (which may not be a resolvable pa-users doc → drop).
+    assert.equal(notices[0]!.targetUserId, "+17167509332")
     assert.equal(notices[0]!.jobId, "hs-11005308-paradigm-gtm-growth")
     assert.equal(notices[0]!.toE164, "+17167509332")
     assert.equal(notices[0]!.fromNumber, "+17174919939")
@@ -1410,7 +1412,11 @@ describe("handleSendblueWebhook", () => {
     const notice = [...outbound.values()][0]!
     assert.equal(notice.toE164, "+17167509332")
     assert.equal(notice.fromNumber, "+17174919939")
-    assert.equal(notice.userId, "mGuQxsTGkisKtptNjg4b")
+    // FIX 2 (2026-06-13) — the unresolved-phone notice is keyed to the RAW inbound
+    // phone, never the (possibly phantom) token uid. Keying to the token uid was
+    // the Maximiliano dead-silence class: outbox getUser(tokenUid)=null →
+    // "user not found" → the notice itself dropped.
+    assert.equal(notice.userId, "+17167509332")
     assert.equal(notice.runtimeSource, "pa_identity_notice")
     assert.match(String(notice.body), /can't start this WeKruit interview from this phone yet/)
   })

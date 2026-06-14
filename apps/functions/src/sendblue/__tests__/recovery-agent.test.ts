@@ -538,4 +538,149 @@ describe("sweepUnansweredInboundForOperatorReview", () => {
     })
     assert.equal(result.unansweredQueued, 1)
   })
+
+  // ── Feature 1: ALERT + ack/tapback exclusion ──────────────────────────────
+
+  it("fires ONE batched alert for newly-queued users, idempotent on re-run", async () => {
+    const { db, stores } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_a: { userId: "u-a", createdAt: iso(8 * HOUR), body: "did my screen go through?", from: "+15550001010" },
+        inb_b: { userId: "u-b", createdAt: iso(9 * HOUR), body: "what's the salary range?", from: "+15550001011" },
+      },
+    })
+    const alerts: Array<Record<string, unknown>> = []
+    const postSlackAlert = async (input: Record<string, unknown>) => {
+      alerts.push(input)
+      return { posted: true }
+    }
+
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAlertEnabled: true,
+      postSlackAlert: postSlackAlert as never,
+    })
+    assert.equal(queued, 2, "both substantive users queued")
+    assert.equal(alerts.length, 1, "exactly ONE batched alert, not one-per-user")
+    const alert = alerts[0]!
+    assert.equal((alert as { level?: string }).level, "warn")
+    assert.match(String((alert as { title?: string }).title), /2 candidate texts unanswered/)
+
+    // alertedAt stamped on each case.
+    const cases = stores.get("pa-recovery-cases")!
+    assert.ok((cases.get("unanswered_u-a_inb_a") as DocData)?.alertedAt, "alertedAt stamped")
+
+    // Re-run: cases already exist → nothing re-queued, no new alert.
+    const again = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAlertEnabled: true,
+      postSlackAlert: postSlackAlert as never,
+    })
+    assert.equal(again, 0, "deduped on (userId, eventId)")
+    assert.equal(alerts.length, 1, "no second alert on re-run")
+  })
+
+  it("EXCLUDES a thread whose last inbound is a pure ack ('thanks') — no queue, no alert", async () => {
+    const { db, stores } = makeFakeDb({
+      "pa-inbound-events": {
+        // pure-ack user: a prior outbound exists (followsClaireMessage = true).
+        inb_ack: { userId: "u-ack", createdAt: iso(8 * HOUR), body: "thanks!", from: "+15550001020" },
+      },
+      "pa-outbound": {
+        out_prior: { userId: "u-ack", createdAt: iso(9 * HOUR), status: "sent", body: "here are your matches" },
+      },
+    })
+    const alerts: unknown[] = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAlertEnabled: true,
+      postSlackAlert: (async (i: unknown) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(queued, 0, "a 'thanks' ack owes no reply → not queued")
+    assert.equal(alerts.length, 0, "no alert for an ack")
+    assert.equal((stores.get("pa-recovery-cases") ?? new Map()).size, 0)
+  })
+
+  it("EXCLUDES a thread acknowledged via tapback (pa-inbound-acks marker exists)", async () => {
+    const { db, stores } = makeFakeDb({
+      "pa-inbound-events": {
+        // substantive-looking text, but Claire tapbacked it (durable marker).
+        inb_tb: { userId: "u-tb", createdAt: iso(8 * HOUR), body: "sounds great see you then", from: "+15550001030" },
+      },
+      "pa-inbound-acks": {
+        inb_tb: { inboundEventId: "inb_tb", userId: "u-tb", via: "tapback", acknowledgedAt: iso(8 * HOUR) },
+      },
+    })
+    const alerts: unknown[] = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAlertEnabled: true,
+      postSlackAlert: (async (i: unknown) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(queued, 0, "tapbacked inbound is handled → not queued")
+    assert.equal(alerts.length, 0)
+    assert.equal((stores.get("pa-recovery-cases") ?? new Map()).size, 0)
+  })
+
+  it("does NOT exclude a real pending QUESTION → it IS queued and alerted (fired once)", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_q: { userId: "u-q", createdAt: iso(7 * HOUR), body: "wait can you re-send the link?", from: "+15550001040" },
+      },
+    })
+    const alerts: unknown[] = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAlertEnabled: true,
+      postSlackAlert: (async (i: unknown) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(queued, 1, "a real pending question awaits a reply → queued")
+    assert.equal(alerts.length, 1, "alert fired once")
+  })
+
+  it("does NOT alert when opt-in is disabled, but STILL queues the ops-review case", async () => {
+    const { db, stores } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_off: { userId: "u-off", createdAt: iso(8 * HOUR), body: "any update on my application?", from: "+15550001050" },
+      },
+    })
+    const alerts: unknown[] = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAlertEnabled: false,
+      postSlackAlert: (async (i: unknown) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(queued, 1, "ops-queue row always writes regardless of alert opt-in")
+    assert.equal(alerts.length, 0, "alert suppressed when not opted in")
+    assert.ok((stores.get("pa-recovery-cases")!.get("unanswered_u-off_inb_off")))
+  })
+
+  it("a STOP/opt-out latest inbound is excluded from the alert (terminal)", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_stop: { userId: "u-stop", createdAt: iso(8 * HOUR), body: "STOP", from: "+15550001060" },
+      },
+    })
+    const alerts: unknown[] = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAlertEnabled: true,
+      postSlackAlert: (async (i: unknown) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(queued, 0, "STOP is terminal → not an unanswered case")
+    assert.equal(alerts.length, 0)
+  })
 })

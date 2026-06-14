@@ -158,7 +158,9 @@ test("runCandidatePhoneLinkStart sends a code only to an existing Claire phone t
     body: "WeKruit verification code: 123456. Use it to connect this web account to your Claire phone thread. It expires in 10 minutes.",
     idempotencyKey: "candidate_phone_link:firebase-1:cand-phone:phone-link-req-1",
     runtimeApproved: true,
-    runtimeSource: "pa_identity_notice",
+    // INBOUND-FIRST: website-initiated code is NOT exempt from RULE-1; it only
+    // reaches a phone that already has a Claire thread (prior inbound).
+    runtimeSource: "pa_connect_phone_link",
   })
   const row = db.fake.read("pa-candidate-phone-link-verifications", "phone-link-req-1")
   assert.equal(row?.status, "pending")

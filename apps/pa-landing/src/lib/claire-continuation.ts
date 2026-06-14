@@ -47,8 +47,16 @@ export function buildClaireContinuationBody(input: ClaireContinuationInput): str
   const candidateId = typeof input.candidateId === "string" ? input.candidateId.trim() : ""
   const jobId = typeof input.jobId === "string" ? input.jobId.trim() : ""
   if (input.phoneVerified && !jobId) return "Hi Claire"
+  // 2026-06-13 — prescreen job token is JOB-ONLY (no uid; phone-is-auth). The
+  // job-only token only carries identity via the inbound PHONE, so it can only
+  // be emitted once a phone is bound. When the phone is ALREADY verified, emit
+  // the job-only token (phone resolves the candidate, trigger phone-is-auth
+  // starts the screen) — and the uid-corruption class is gone. When the phone
+  // is NOT yet bound (website-first), the token's job emerges from PublicJob's
+  // own flow after binding; here we must still bind the new phone to this
+  // profile, so fall through to the candidateId-binding opener.
+  if (jobId && input.phoneVerified) return buildWekruitJobOpenerBody(jobId)
   if (!candidateId) return "Hi Claire"
-  if (jobId) return buildWekruitJobOpenerBody(jobId, candidateId)
   if (input.phoneVerified) return "Hi Claire"
   return buildHelloWekruitOpenerBody(candidateId)
 }

@@ -1383,8 +1383,8 @@ function Done({
   onGo: (r: "dashboard" | "landing") => void
 }) {
   const number = profile.listPosition
-  const openerBody = profile.candidateId && returnJobId
-    ? buildWekruitJobOpenerBody(returnJobId, profile.candidateId)
+  const openerBody = returnJobId
+    ? buildWekruitJobOpenerBody(returnJobId)
     : profile.candidateId
       ? buildHelloWekruitOpenerBody(profile.candidateId)
       : buildHelloWekruitOpenerBody("")

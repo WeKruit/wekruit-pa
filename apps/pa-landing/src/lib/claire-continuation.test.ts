@@ -24,21 +24,24 @@ test("no bound phone → verification-code binding opener (same pa-users uid, ne
   assert.equal(body, "Hi, WeKruit, my verification code is cand-1")
 })
 
-test("job context → job opener token regardless of phone binding", () => {
-  const unbound = buildClaireContinuationBody({
-    senderNumber: "+17174919939",
-    candidateId: "cand-1",
-    phoneVerified: false,
-    jobId: "hs-123-job",
-  })
-  assert.equal(unbound, "WeKruit_hs-123-job_cand-1_Job")
+test("job context + bound phone → JOB-ONLY token (no uid; phone-is-auth, kills uid-corruption class)", () => {
   const bound = buildClaireContinuationBody({
     senderNumber: "+17174919939",
     candidateId: "cand-1",
     phoneVerified: true,
     jobId: "hs-123-job",
   })
-  assert.equal(bound, "WeKruit_hs-123-job_cand-1_Job")
+  assert.equal(bound, "WeKruit_hs-123-job_Job")
+})
+
+test("job context + UNbound phone → binding opener (phone-is-auth needs a bound phone first; bind, then start)", () => {
+  const unbound = buildClaireContinuationBody({
+    senderNumber: "+17174919939",
+    candidateId: "cand-1",
+    phoneVerified: false,
+    jobId: "hs-123-job",
+  })
+  assert.equal(unbound, "Hi, WeKruit, my verification code is cand-1")
 })
 
 test("no candidateId falls back to Hi Claire (cannot mint a binding token)", () => {

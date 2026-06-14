@@ -1,5 +1,13 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent, enqueueOutbound, inboundEventDocId } from "@pa/pa-broker"
+import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
+import { classifyInboundReplyNeed } from "./ack-classifier.js"
+
+// Durable marker collection written by the transport when a turn is acknowledged
+// via tapback / no_reply (claire-agent/transport.ts PA_INBOUND_ACK_COLLECTION).
+// Declared as a literal here (NOT imported from transport.ts) so the recovery
+// sweep's boot graph never pulls the claire-agent SDK chain. MUST stay in sync.
+const PA_INBOUND_ACK_COLLECTION = "pa-inbound-acks"
 
 // 2026-06-11 CORRECTED: 717 IS the live inbound number (243/243 real inbound
 // msgs in 48h arrive on it, incl. 28 brand-new contacts; 305 receives ZERO).
@@ -9,7 +17,12 @@ import { createInboundEvent, enqueueOutbound, inboundEventDocId } from "@pa/pa-b
 // when is_outbound is missing; a missing entry makes the recovery sweep treat
 // our own sends as candidate inbound. (TODO: derive from pa-config/sendblue-pool.)
 const WEKRUIT_SENDERS = new Set(["+17174919939", "+13054507715", "+16146202403"])
-const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
+// Prescreen token, BOTH forms (2026-06-13): JOB-ONLY `WeKruit_<jobId>_Job` (no
+// uid — phone-is-auth; group 2 undefined) and legacy `WeKruit_<jobId>_<uid>_Job`.
+// jobId is hyphen-only `[A-Za-z0-9-]` (no underscore) so the optional uid is
+// unambiguous. When the uid is absent the recovery path resolves identity from
+// the inbound PHONE (see recoverPrescreenTrigger).
+const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)(?:_([A-Za-z0-9_-]+))?_Job/i
 const E164_RE = /^\+[1-9]\d{7,14}$/
 const RAW_COLLECTION = "pa-sendblue-webhook-raw"
 const CASE_COLLECTION = "pa-recovery-cases"
@@ -53,6 +66,14 @@ export type ConversationRecoveryDeps = {
   startPrescreen?: (input: StartPrescreenInput) => Promise<StartPrescreenResult>
   enqueueOutbound?: typeof enqueueOutbound
   createInboundEvent?: typeof createInboundEvent
+  /** Slack alert seam (tests inject a recorder); production = the shared helper. */
+  postSlackAlert?: typeof defaultPostSlackAlert
+  /**
+   * Opt-in gate for the unanswered-inbound ALERT (NOT the ops-queue row — that
+   * always writes). Lets the alert run dev-only first. Defaults to the env flag
+   * `PA_UNANSWERED_ALERT_ENABLED` (truthy = on); explicit value wins for tests.
+   */
+  unansweredAlertEnabled?: boolean
 }
 
 type ParsedWebhook = {
@@ -174,12 +195,27 @@ export async function paConversationRecoverySweepHandler(
 // stale inbound is queued exactly once no matter how many sweeps run.
 // ---------------------------------------------------------------------------
 
+// TUNING (2026-06-12): age threshold a candidate is "unanswered" past. Confirmed
+// at the existing 6h. One constant so it's a one-line change if Adam re-tunes.
 const UNANSWERED_AFTER_MS = 6 * 60 * 60 * 1000
 const UNANSWERED_SCAN_LIMIT = 300
 const UNANSWERED_WRITE_CAP = 25
+// Sample size for the batched alert (mask + list this many users; count is exact).
+const ALERT_SAMPLE_SIZE = 5
+// Dashboard surface that lists needs_operator_review recovery cases.
+const OPS_DASHBOARD_LINK = "https://wekruit-pa.web.app/admin/prescreen-ops"
 
 function unansweredCaseId(userId: string, inboundEventId: string): string {
   return `unanswered_${userId}_${inboundEventId}`
+}
+
+/** Mask a phone for the alert: keep country + last 2 (e.g. +1•••••••39). */
+function maskPhone(phone: string | null | undefined): string {
+  const p = (phone ?? "").trim()
+  if (!p) return "unknown"
+  if (p.length <= 4) return p
+  const cc = p.startsWith("+") ? p.slice(0, 2) : p.slice(0, 1)
+  return `${cc}${"•".repeat(Math.max(3, p.length - cc.length - 2))}${p.slice(-2)}`
 }
 
 export async function sweepUnansweredInboundForOperatorReview(
@@ -212,6 +248,9 @@ export async function sweepUnansweredInboundForOperatorReview(
     if (!latestByUser.has(userId)) latestByUser.set(userId, { eventId: doc.id, createdAt, data })
   }
 
+  // Cases NEWLY queued THIS run — drives the batched alert (one alert per sweep,
+  // never one-per-user). Each entry is alerted exactly once (alertedAt idempotency).
+  const newlyQueued: Array<{ userId: string; eventId: string; phone: string | null; ageHours: number }> = []
   let queued = 0
   for (const [userId, latest] of latestByUser) {
     if (queued >= UNANSWERED_WRITE_CAP) break
@@ -223,9 +262,22 @@ export async function sweepUnansweredInboundForOperatorReview(
     const existing = await deps.db.collection(CASE_COLLECTION).doc(caseId).get()
     if (existing.exists) continue
 
+    // "UNLESS something we know we don't need to respond to" (Adam): a latest
+    // inbound that is a PURE ACK ('thanks'/'ok'/'👍') or STOP/opt-out genuinely
+    // awaits no real reply — Claire correctly tapbacks an ack, and the STOP gate
+    // owns opt-outs. Excluding them keeps the alert focused on inbound that truly
+    // needs a human. A GREETING still awaits a TEXT reply (greeting carve-out), so
+    // it is NOT excluded. followsClaireMessage = does any prior outbound exist for
+    // this user at all (a bare ack with no preceding Claire turn = engage, not skip).
+    const text = typeof latest.data.body === "string" ? latest.data.body : ""
+    const phone = typeof latest.data.from === "string" ? latest.data.from : null
+
     // Any pa-outbound row for this user created AT/after the inbound counts as
     // an answer attempt (pending/sending included — the outbox owns delivery).
+    // We ALSO use the full outbound set to know whether ANY prior Claire turn
+    // exists (followsClaireMessage) for the ack classifier.
     let answered = false
+    let hasAnyPriorOutbound = false
     try {
       let outDocs: Array<{ id: string; data: () => Record<string, unknown> | undefined }>
       try {
@@ -247,6 +299,7 @@ export async function sweepUnansweredInboundForOperatorReview(
           .get()
         outDocs = outSnap.docs as typeof outDocs
       }
+      hasAnyPriorOutbound = outDocs.length > 0
       answered = outDocs.some((d) => {
         const od = (d.data() ?? {}) as Record<string, unknown>
         const createdAt = typeof od.createdAt === "string" ? od.createdAt : ""
@@ -261,8 +314,35 @@ export async function sweepUnansweredInboundForOperatorReview(
     }
     if (answered) continue
 
-    const text = typeof latest.data.body === "string" ? latest.data.body : ""
-    const phone = typeof latest.data.from === "string" ? latest.data.from : null
+    // EXCLUDE acks / STOP: those genuinely need no reply.
+    const replyNeed = classifyInboundReplyNeed(text, { followsClaireMessage: hasAnyPriorOutbound })
+    if (replyNeed === "pure_ack" || replyNeed === "stop") {
+      log("[sendblue][recovery-agent] unanswered inbound excluded (no reply owed)", {
+        userId,
+        inboundEventId: latest.eventId,
+        replyNeed,
+      })
+      continue
+    }
+
+    // EXCLUDE tapbacked / no_reply'd: Claire acknowledged this exact inbound via a
+    // tapback (or a deliberate no_reply), which writes a durable pa-inbound-acks
+    // marker but no pa-outbound row. That is a handled turn, not a dropped one.
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const ackSnap = await deps.db.collection(PA_INBOUND_ACK_COLLECTION).doc(latest.eventId).get()
+      if (ackSnap.exists) {
+        log("[sendblue][recovery-agent] unanswered inbound excluded (acknowledged via tapback/no_reply)", {
+          userId,
+          inboundEventId: latest.eventId,
+          via: String((ackSnap.data() as { via?: unknown } | undefined)?.via ?? ""),
+        })
+        continue
+      }
+    } catch {
+      // Ack-marker read failure → fall through (better to over-alert than miss).
+    }
+
     // eslint-disable-next-line no-await-in-loop
     await deps.db.collection(CASE_COLLECTION).doc(caseId).set(
       stripUndefined({
@@ -282,14 +362,98 @@ export async function sweepUnansweredInboundForOperatorReview(
       { merge: true }
     )
     queued++
+    const ageHours = Math.round(((nowMs - inboundMs) / 3_600_000) * 10) / 10
+    newlyQueued.push({ userId, eventId: latest.eventId, phone, ageHours })
     log("[sendblue][recovery-agent] unanswered inbound queued for operator review", {
       caseId,
       userId,
       inboundEventId: latest.eventId,
-      ageHours: Math.round(((nowMs - inboundMs) / 3_600_000) * 10) / 10,
+      ageHours,
     })
   }
+
+  // ── BATCHED ALERT ─────────────────────────────────────────────────────────
+  // ONE alert summarizing the N users newly queued this run (never N alerts).
+  // Idempotent: each case carries `alertedAt` after it's covered by an alert, so a
+  // re-run never re-alerts the same case (the dedup-on-case-id already prevents
+  // re-queue; this guards a case queued in a PRIOR run but not yet alerted, e.g. if
+  // the alert was disabled then enabled). Fail-soft: the slack helper never throws
+  // and silently no-ops when PA_SLACK_ALERT_WEBHOOK is unset.
+  if (newlyQueued.length > 0) {
+    await fireUnansweredAlert(deps, newlyQueued, now)
+  }
   return queued
+}
+
+/** True when the unanswered-inbound alert is opted in (explicit dep wins, else env flag). */
+function unansweredAlertEnabled(deps: ConversationRecoveryDeps): boolean {
+  if (typeof deps.unansweredAlertEnabled === "boolean") return deps.unansweredAlertEnabled
+  const raw = (process.env.PA_UNANSWERED_ALERT_ENABLED ?? "").trim().toLowerCase()
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on"
+}
+
+/**
+ * Post ONE batched Slack alert for the unanswered users queued this run, then
+ * stamp `alertedAt` on each covered case so it's never re-alerted. Opt-in gated;
+ * when disabled we still stamp NOTHING and just skip (so flipping the flag on later
+ * surfaces the still-open cases). Fully fail-soft.
+ */
+async function fireUnansweredAlert(
+  deps: ConversationRecoveryDeps,
+  newlyQueued: Array<{ userId: string; eventId: string; phone: string | null; ageHours: number }>,
+  now: () => Date,
+): Promise<void> {
+  const log = deps.log ?? console.log
+  if (!unansweredAlertEnabled(deps)) {
+    log("[sendblue][recovery-agent] unanswered alert skipped (not opted in)", {
+      count: newlyQueued.length,
+    })
+    return
+  }
+  const alert = deps.postSlackAlert ?? defaultPostSlackAlert
+  const count = newlyQueued.length
+  const oldest = newlyQueued.reduce((m, c) => Math.max(m, c.ageHours), 0)
+  const sample = newlyQueued
+    .slice()
+    .sort((a, b) => b.ageHours - a.ageHours)
+    .slice(0, ALERT_SAMPLE_SIZE)
+    .map((c) => `${c.userId.slice(0, 8)} (${maskPhone(c.phone)}, ${c.ageHours}h)`)
+    .join("\n")
+
+  try {
+    await alert({
+      level: "warn",
+      title: `${count} candidate text${count === 1 ? "" : "s"} unanswered >6h`,
+      message:
+        `${count} candidate${count === 1 ? "" : "s"} sent a message that genuinely awaits a reply ` +
+        `and got none for over 6h. Pure acks ('thanks'/'👍'), STOP, and tapbacked messages are excluded.`,
+      fields: [
+        { name: "Unanswered users", value: String(count) },
+        { name: "Oldest", value: `${oldest}h` },
+        { name: "Sample", value: sample || "—" },
+      ],
+      link: OPS_DASHBOARD_LINK,
+    })
+    log("[sendblue][recovery-agent] unanswered alert posted", { count, oldestHours: oldest })
+  } catch (err) {
+    log("[sendblue][recovery-agent] unanswered alert failed (non-fatal)", {
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // Stamp `alertedAt` on every case covered by this alert. The case is deduped on
+  // (userId, eventId) so it never re-queues, but the marker makes "already alerted"
+  // explicit for the dashboard + future audit. Best-effort, per-case fail-soft.
+  const nowIso = now().toISOString()
+  for (const c of newlyQueued) {
+    const caseId = unansweredCaseId(c.userId, c.eventId)
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await deps.db.collection(CASE_COLLECTION).doc(caseId).set({ alertedAt: nowIso }, { merge: true })
+    } catch {
+      /* marker stamp is non-load-bearing */
+    }
+  }
 }
 
 function buildConversations(docs: Array<{ id: string; data: () => Record<string, unknown> }>): Map<string, Conversation> {
@@ -497,6 +661,32 @@ async function recoverOrdinaryInbound(
   return "recovered"
 }
 
+/**
+ * Resolve a pa-users doc id from the inbound phone (phone-is-auth identity for
+ * the JOB-ONLY prescreen token, which carries no uid). Deterministic single-doc
+ * pick: a phone resolving to >1 doc is an identity-dup; never silently grab
+ * docs[0] (Firestore implicit order is doc-name asc → a newer orphan could
+ * hijack), so we route ambiguous multi-matches to operator review by returning
+ * null. Single match → that doc id.
+ */
+async function resolveUserIdByPhone(
+  deps: ConversationRecoveryDeps,
+  phoneE164: string | null,
+): Promise<string | null> {
+  if (!phoneE164 || !E164_RE.test(phoneE164)) return null
+  try {
+    const snap = await deps.db
+      .collection(USERS_COLLECTION)
+      .where("phoneE164", "==", phoneE164)
+      .limit(2)
+      .get()
+    if (snap.size === 1) return snap.docs[0]!.id
+  } catch {
+    /* fall through → null → operator review */
+  }
+  return null
+}
+
 async function recoverPrescreenTrigger(
   deps: ConversationRecoveryDeps,
   conversation: Conversation,
@@ -505,7 +695,22 @@ async function recoverPrescreenTrigger(
   now: Date
 ): Promise<"recovered" | "needs_operator_review" | "error"> {
   const inbound = conversation.latestInbound!
-  const [, jobId, userId] = token as [string, string, string]
+  const [, jobId, tokenUserId] = token as [string, string, string | undefined]
+  // PHONE-IS-AUTH (2026-06-13): the new JOB-ONLY token carries no uid; identity
+  // comes from the inbound PHONE. Resolve the texter's pa-users doc by phone so
+  // recovery can still re-drive the start. Legacy job+uid tokens keep using the
+  // token uid (back-compat). Either way the resolved doc is verified below.
+  const userId = tokenUserId ?? (await resolveUserIdByPhone(deps, inbound.from))
+  if (!userId) {
+    await writeRecoveryCase(deps, caseId, now, inbound, {
+      className: "prescreen_token_needs_operator_review",
+      action: "none",
+      status: "needs_operator_review",
+      reason: "phone_not_resolved",
+      jobId,
+    })
+    return "needs_operator_review"
+  }
   const userSnap = await deps.db.collection(USERS_COLLECTION).doc(userId).get()
   const user = userSnap.exists ? (userSnap.data() as { phoneE164?: unknown } | undefined) : undefined
   const userPhone = cleanString(user?.phoneE164, 120)
