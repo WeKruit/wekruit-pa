@@ -54,7 +54,7 @@ const JOBS = "pa-jobs"
 export type PrescreenCandidateChecklistEval = SubmissionAiEvaluation & {
   jobId: string
   candidateId: string
-  /** True when Coresignal research was available; false = judged from transcript only. */
+  /** True when ANY profile evidence (Coresignal/LinkedIn OR résumé/merged profile) was available; false = transcript only. */
   enriched: boolean
 }
 
@@ -94,6 +94,61 @@ function renderResearch(research: SubmissionEvalResearch | undefined): string {
   return lines.join("\n")
 }
 
+/**
+ * The candidate's stored profile evidence — the MERGED LinkedIn+résumé experience
+ * (`pa-users.experienceHighlights`, written by the merge-at-source pipeline) PLUS the
+ * parsed résumé (`parsedCandidateResumes`). This is how a candidate who came in with
+ * ONLY a résumé (no LinkedIn / no live Coresignal match) still gets a profile eval, and
+ * a candidate with both is judged on the merged picture. Fail-open: "" when none.
+ */
+async function loadResumeEvidence(db: Firestore, user: Record<string, unknown>, candidateId: string): Promise<string> {
+  const lines: string[] = []
+  try {
+    const highlights = Array.isArray(user.experienceHighlights) ? user.experienceHighlights : []
+    for (const raw of highlights.slice(0, 12)) {
+      const h = (raw ?? {}) as Record<string, unknown>
+      const title = str(h.title)
+      const company = str(h.company)
+      if (!title && !company) continue
+      const span = str(h.startDate)
+        ? ` (${str(h.startDate)}${h.currentRole === true ? "–present" : str(h.endDate) ? `–${str(h.endDate)}` : ""})`
+        : ""
+      lines.push(`- ${title || "role"} @ ${company || "?"}${span}${str(h.sourceLabel) ? ` [${str(h.sourceLabel)}]` : ""}`)
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const snap = await db.collection("parsedCandidateResumes").where("userId", "==", candidateId).limit(4).get()
+    const docs = snap.docs.map((d) => d.data() as Record<string, unknown>)
+    docs.sort((a, b) => String(b.createdAt ?? b.ingestedAt ?? "").localeCompare(String(a.createdAt ?? a.ingestedAt ?? "")))
+    const resume = docs[0]
+    if (resume) {
+      const yoe = resume.totalYearsExperience
+      if (typeof yoe === "number") lines.push(`résumé total YOE: ${yoe}`)
+      for (const raw of (Array.isArray(resume.experiences) ? resume.experiences : Array.isArray(resume.workHistory) ? resume.workHistory : []).slice(0, 8)) {
+        const e = (raw ?? {}) as Record<string, unknown>
+        const title = str(e.title) || str(e.role) || str(e.position)
+        const company = str(e.company) || str(e.companyName) || str(e.organization)
+        if (!title && !company) continue
+        lines.push(`- résumé: ${title || "role"} @ ${company || "?"}${str(e.duration) || str(e.dates) ? ` (${str(e.duration) || str(e.dates)})` : ""}`)
+      }
+      for (const raw of (Array.isArray(resume.education) ? resume.education : []).slice(0, 6)) {
+        const e = (raw ?? {}) as Record<string, unknown>
+        const school = str(e.school) || str(e.institution_name) || str(e.institution)
+        if (!school) continue
+        lines.push(`- résumé education: ${school}${str(e.degree) ? ` — ${str(e.degree)}` : ""}`)
+      }
+      const topSkills = Array.isArray(resume.topSkills) ? resume.topSkills : []
+      const skills = topSkills.map((s) => (typeof s === "string" ? s : str((s as { value?: unknown })?.value))).filter(Boolean).slice(0, 12)
+      if (skills.length > 0) lines.push(`résumé skills: ${skills.join(", ")}`)
+    }
+  } catch {
+    /* ignore — fail-open */
+  }
+  return lines.join("\n").slice(0, 3_000)
+}
+
 async function loadTranscript(db: Firestore, sessionId: string): Promise<string> {
   try {
     const snap = await db.collection(SESSIONS).doc(sessionId).collection("turns").orderBy("ts", "asc").limit(20).get()
@@ -117,7 +172,7 @@ export function summarizeChecklistEval(e: PrescreenCandidateChecklistEval): stri
   const flags = c.anti.flags.slice(0, 3).join("; ")
   const bg = `school=${e.background.school.verdict} degree=${e.background.degree.verdict} company=${e.background.company.verdict} gpa=${e.background.gpa.verdict}`
   return [
-    `Profile checklist eval (${e.enriched ? "Coresignal-enriched" : "transcript-only"}): verdict=${e.verdict} (conf ${e.confidence.toFixed(2)}).`,
+    `Profile checklist eval (${e.enriched ? "profile-grounded: LinkedIn/Coresignal + résumé" : "transcript-only — no profile on file"}): verdict=${e.verdict} (conf ${e.confidence.toFixed(2)}).`,
     `Hard ${c.hard.met}/${c.hard.total}${gaps ? ` — gaps: ${gaps}` : ""}. Fit ${c.fit.met}/${c.fit.total}. Bonus ${c.bonus.met}/${c.bonus.total}. Anti ${c.anti.flagged} flag(s)${flags ? `: ${flags}` : ""}.`,
     `Background: ${bg}.`,
     e.summary ? `Summary: ${e.summary}` : "",
@@ -202,7 +257,11 @@ export async function runPrescreenCandidateEval(
       log("prescreen_eval.no_linkedin", { sessionId, candidateId })
     }
 
-    const transcript = await loadTranscript(deps.db, sessionId)
+    const [transcript, resumeEvidence] = await Promise.all([
+      loadTranscript(deps.db, sessionId),
+      loadResumeEvidence(deps.db, user, candidateId),
+    ])
+    const hasProfileEvidence = Boolean(research) || resumeEvidence.length > 0
     const recruiterBoard = (job.recruiterBoard ?? {}) as Record<string, unknown>
     const label = (recruiterBoard.label ?? {}) as Record<string, unknown>
     const roleLine = [str(label.title) || str(job.title), str(label.company) || str(job.company)].filter(Boolean).join(" @ ")
@@ -210,11 +269,14 @@ export async function runPrescreenCandidateEval(
     const userText = [
       roleLine ? `Role: ${roleLine}` : null,
       "",
-      "Job rubric checklist (judge the candidate against these from the research + transcript; there are NO recruiter claims here):",
+      "Job rubric checklist (judge the candidate against ALL the evidence below — Coresignal research + résumé/merged profile + transcript; there are NO recruiter claims here):",
       renderChecklist(groups, {}),
       "",
-      "Candidate profile research:",
+      "Candidate Coresignal (LinkedIn) research:",
       renderResearch(research),
+      "",
+      "Candidate résumé / merged LinkedIn+résumé profile:",
+      resumeEvidence || "(no résumé / merged profile on file)",
       "",
       "Prescreen transcript:",
       transcript,
@@ -231,7 +293,7 @@ export async function runPrescreenCandidateEval(
     const evaluation: PrescreenCandidateChecklistEval = {
       ...parsed,
       ...(research ? { research } : {}),
-      enriched: Boolean(research),
+      enriched: hasProfileEvidence,
       jobId,
       candidateId,
       evaluatedAt: now,

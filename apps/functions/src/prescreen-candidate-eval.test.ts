@@ -45,7 +45,7 @@ const checklistGroups = [
   { kind: "bonus", heading: "Nice", items: [{ id: "b1", text: "open source" }] },
 ]
 
-function seed(extraSession: Doc = {}) {
+function seed(extraSession: Doc = {}): Record<string, Record<string, Doc>> {
   return {
     "pa-prescreen-sessions": {
       "ps-1": {
@@ -130,6 +130,28 @@ describe("prescreen-candidate-eval", () => {
     assert.equal(stored.research, undefined)
   })
 
+  it("uses the résumé / merged profile when there is no LinkedIn (enriched=true from résumé)", async () => {
+    const s = seed()
+    // no LinkedIn, but a merged LinkedIn+résumé experience on file
+    s["pa-users"]["cand-1"] = {
+      experienceHighlights: [
+        { title: "Senior Software Engineer", company: "Tesla", startDate: "2026", currentRole: true, sourceLabel: "LinkedIn+Résumé" },
+      ],
+    }
+    const { db, stores } = makeDb(s)
+    let sawResume = false
+    const res = await runPrescreenCandidateEval("ps-1", {
+      db, now: () => NOW,
+      callJudge: async (a) => { sawResume = /Tesla/.test(a.userText) && /merged LinkedIn\+résumé profile/.test(a.userText); return { rawJson: JUDGMENT, usedModel: "m" } },
+      research: { apiKey: null, searchEmployeeIdByLinkedinUrl: async () => null, fetchEmployeeCollect: async () => employee },
+      regenerateDraft: (async () => ({ stored: true })) as never,
+    })
+    assert.equal(res.status, "written")
+    assert.ok(sawResume, "the résumé / merged profile was fed to the judge")
+    const stored = (stores.get("pa-prescreen-sessions")!.get("ps-1")!.review as Record<string, unknown>).candidateChecklistEval as Record<string, unknown>
+    assert.equal(stored.enriched, true, "résumé-only candidate is still profile-grounded")
+  })
+
   it("skips a job with no checklist", async () => {
     const s = seed()
     s["pa-jobs"]["job-1"] = { recruiterBoard: { label: { title: "X" } } } // no checklist groups
@@ -184,6 +206,6 @@ describe("prescreen-candidate-eval", () => {
     })
     assert.match(line, /Hard 0\/1 — gaps: X/)
     assert.match(line, /Anti 1 flag\(s\): Y/)
-    assert.match(line, /Coresignal-enriched/)
+    assert.match(line, /profile-grounded/)
   })
 })
