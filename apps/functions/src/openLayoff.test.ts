@@ -14,6 +14,7 @@ import {
   type EmployerInput,
   type RegisterInput,
 } from "./openLayoff.js"
+import { isBindCode } from "@pa/pa-orchestrator"
 
 type DocData = Record<string, unknown>
 type Store = Map<string, Map<string, DocData>>
@@ -511,6 +512,30 @@ test("runRegisterLayoffCandidate writes candidate source for candidate-host sign
   assert.equal(user.lastLaidOffAt, undefined)
   assert.equal(user.layoffContext, undefined)
   assert.equal((user.candidateContext as DocData).lastCompany, "Rain")
+})
+
+test("runRegisterLayoffCandidate mints a transit-safe bind code when no phone is bound (website-first)", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterLayoffCandidate(
+    registration({ source: "candidate", phone: undefined }),
+    deps(fake)
+  )
+  const code = result.bindCode as string | undefined
+  assert.ok(code, "bindCode present for an unbound-phone registration")
+  assert.equal(isBindCode(code!), true, "code is transit-safe (Crockford, no ambiguous glyphs)")
+  // pa-bind-codes doc maps the code → this candidate, unused.
+  const codeDoc = fake.read(`${PA_COLLECTIONS.bindCodes}/${code}`)!
+  assert.equal(codeDoc.candidateId, result.candidateId)
+  assert.equal(codeDoc.used, false)
+})
+
+test("runRegisterLayoffCandidate does NOT mint a bind code when a phone is provided", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterLayoffCandidate(
+    registration({ source: "candidate" }), // default registration() carries a phone
+    deps(fake)
+  )
+  assert.equal(result.bindCode, undefined, "phone-bound candidate resolves by phone; no code needed")
 })
 
 test("runInitiateSmsPrescreen hands one kickoff to the Claire runtime for the layoff candidate", async () => {

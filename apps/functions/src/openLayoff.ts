@@ -35,6 +35,7 @@ import {
   type WekruitSignupSource,
 } from "@pa/pa-orchestrator"
 import { runLayoffSmsStart, supersedeActivePrescreensForLayoff } from "./layoff-sms-start.js"
+import { issueBindCode } from "./bind-code.js"
 import { sendMailgun, type MailgunConfig } from "./email/mailgun.js"
 import {
   MAILGUN_API_KEY,
@@ -448,6 +449,23 @@ export async function runRegisterLayoffCandidate(
     evidence: [{ source: "system", summary: "Layoff registration email handle" }],
   })
 
+  // Phone-binding opener code (2026-06-13). The website-first candidate (no
+  // bound phone) opens iMessage with "Hi, WeKruit, my code is <CODE>" — the CODE
+  // is the bind mechanism (there's no phone to resolve from yet). Server-mint a
+  // SHORT transit-safe code (Crockford base32 minus ambiguous glyphs) → the
+  // page embeds it instead of the corruption-prone raw uid. Only minted when no
+  // phone is bound; a phone-bound candidate resolves by phone (no code needed).
+  // Best-effort: a mint failure must never fail registration — the client falls
+  // back to "Hi Claire" / the legacy opener.
+  let bindCode: string | undefined
+  if (!phoneE164) {
+    try {
+      bindCode = await issueBindCode(deps.db, candidateId, Date.parse(isoNow) || Date.now())
+    } catch {
+      /* non-fatal — registration still succeeds; client falls back */
+    }
+  }
+
   return {
     candidateId,
     listPosition,
@@ -455,6 +473,7 @@ export async function runRegisterLayoffCandidate(
     senderGroupId: groupId,
     isReregistration,
     mode,
+    ...(bindCode ? { bindCode } : {}),
   }
 }
 

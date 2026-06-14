@@ -199,6 +199,19 @@ export const PA_COLLECTIONS = {
    * cap 5. Server-only (deny-all in firestore.rules — Admin SDK only).
    */
   connectPhoneCodes: "pa-connect-phone-codes",
+  /**
+   * v2.x phone-binding opener codes (2026-06-13). The WEBSITE-FIRST candidate
+   * (no bound phone yet) opens iMessage with "Hi, WeKruit, my code is <CODE>".
+   * Doc id IS the short opaque code (Crockford base32 minus ambiguous glyphs —
+   * no I/L/O/U/0/1) so it survives page→Messages transit without corrupting; the
+   * doc maps code -> candidateId. The inbound webhook resolves code -> candidate
+   * and binds the texted phone to that candidate (the bind mechanism for a
+   * candidate who has NO phone to resolve from yet). Single-use, 24h TTL.
+   * Server-only (deny-all in firestore.rules — Admin SDK only). Replaces the
+   * raw-Firebase-uid opener which mangled in transit (l↔1, I, O↔0, stray -) →
+   * failed/wrong binds.
+   */
+  bindCodes: "pa-bind-codes",
 } as const
 
 /**

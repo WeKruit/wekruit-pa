@@ -23,13 +23,24 @@
  * No candidate-facing prose is composed here (PRD rule 1) — the body strings
  * are existing control tokens, and the runtime turn does the talking.
  */
-import { buildHelloWekruitOpenerBody, buildWekruitJobOpenerBody } from "./hello-wekruit.js"
+import {
+  buildHelloWekruitOpenerBody,
+  buildBindCodeOpenerBody,
+  buildWekruitJobOpenerBody,
+} from "./hello-wekruit.js"
 
 export interface ClaireContinuationInput {
   /** The candidate's sticky WeKruit Sendblue number (the thread recipient). */
   senderNumber?: string | null
   /** pa-users/{uid} — carried in the binding opener when no phone is bound. */
   candidateId?: string | null
+  /**
+   * Server-minted transit-safe bind CODE (2026-06-13). PREFERRED over the raw
+   * `candidateId` in the binding opener when present — the code survives
+   * page→Messages transit (Crockford alphabet, no ambiguous glyphs) where the
+   * uid corrupts → failed/wrong binds. Falls back to the uid opener when absent.
+   */
+  bindCode?: string | null
   /** True when a phone is already bound to this profile (verified phone handle
    *  / phone-code link / Claire thread started). */
   phoneVerified: boolean
@@ -56,8 +67,13 @@ export function buildClaireContinuationBody(input: ClaireContinuationInput): str
   // own flow after binding; here we must still bind the new phone to this
   // profile, so fall through to the candidateId-binding opener.
   if (jobId && input.phoneVerified) return buildWekruitJobOpenerBody(jobId)
-  if (!candidateId) return "Hi Claire"
   if (input.phoneVerified) return "Hi Claire"
+  // Unbound (website-first) → BINDING opener. Prefer the server-minted
+  // transit-safe code; fall back to the uid opener (back-compat parser handles
+  // it) when no code was minted for this profile.
+  const bindCode = typeof input.bindCode === "string" ? input.bindCode.trim() : ""
+  if (bindCode) return buildBindCodeOpenerBody(bindCode)
+  if (!candidateId) return "Hi Claire"
   return buildHelloWekruitOpenerBody(candidateId)
 }
 

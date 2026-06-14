@@ -206,6 +206,43 @@ function normalizeControlText(value: string): string {
 export const HI_WEKRUIT_OPENER_PREFIX = "Hi, WeKruit!"
 /** Back-compat (2026-06-02 reword #1). No longer BUILT; still parsed + sanitized. */
 export const VERIFICATION_CODE_OPENER_PREFIX = "Hi, WeKruit, my verification code is"
+
+/**
+ * Phone-binding opener code (2026-06-13). The WEBSITE-FIRST candidate (no bound
+ * phone yet) needs the opener to carry a token that maps to their pa-users doc —
+ * there is no phone to resolve from, so the token IS the bind mechanism. The
+ * legacy form embedded the raw Firebase push-id uid, which mangles in
+ * page→Messages transit (ambiguous glyphs l↔1, I, O↔0, stray `-`) → the inbound
+ * resolves to no/wrong account (Noah's two-account case). The fix: mint a SHORT
+ * opaque code in a TRANSIT-SAFE alphabet — Crockford base32 minus the ambiguous
+ * glyphs (no I, L, O, U, 0, 1) — so a corrupted code simply will not match a
+ * minted doc (graceful notice) instead of mis-resolving identity.
+ *
+ * Doc-id IS the code in `pa-bind-codes/<CODE>` → { candidateId, ... }; the
+ * server (register CF) mints, the inbound webhook resolves (single-use, 24h
+ * TTL). Mirror of the connect-linkedin token pattern (server-minted +
+ * server-resolved).
+ */
+export const BIND_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
+/** 8 chars over the 30-symbol alphabet ≈ 6.5e11 space — collision-safe, short. */
+export const BIND_CODE_LENGTH = 8
+/** Exact-shape matcher: a minted bind code is precisely N chars of the alphabet. */
+const BIND_CODE_RE = new RegExp(`^[${BIND_CODE_ALPHABET}]{${BIND_CODE_LENGTH}}$`)
+
+/**
+ * Light transit normalize on read: strip whitespace, uppercase. We deliberately
+ * do NOT remap stray ambiguous glyphs (I→1 etc.) — the alphabet EXCLUDES them,
+ * so a corrupted code that introduces one simply will not match a minted doc.
+ * That is the whole point: no ambiguous-glyph remap → no wrong-account bind.
+ */
+export function normalizeBindCode(value: string): string {
+  return value.replace(/\s+/g, "").toUpperCase()
+}
+
+/** True when `value` is exactly the minted bind-code shape (post-normalize). */
+export function isBindCode(value: string): boolean {
+  return BIND_CODE_RE.test(normalizeBindCode(value))
+}
 /** Legacy opener prefix (Adam 2026-05-19 + user_id bind 2026-05-20). Back-compat only. */
 export const HELLO_WEKRUIT_OPENER_PREFIX = "Hello, WeKruit!"
 
@@ -297,11 +334,27 @@ export function buildHelloWekruitOpenerBody(candidateId: string): string {
 }
 
 /**
+ * Build the phone-binding opener carrying a TRANSIT-SAFE bind CODE (2026-06-13).
+ * This is the NEW form the website mints for website-first/unbound-phone
+ * candidates — the code maps to the candidate server-side (pa-bind-codes), so it
+ * never embeds a corruption-prone raw uid. Wording stays "Hi, WeKruit, my
+ * verification code is <CODE>" so the existing VERIFICATION_CODE parser + LLM
+ * sanitizers keep working unchanged; only the payload (code, not uid) changes.
+ */
+export function buildBindCodeOpenerBody(code: string): string {
+  const c = normalizeBindCode(code)
+  if (!c) return VERIFICATION_CODE_OPENER_PREFIX
+  return `${VERIFICATION_CODE_OPENER_PREFIX} ${c}`
+}
+
+/**
  * Parse inbound opener; returns candidateId when the suffix is present. Accepts the
  * new verification-code phrasing AND the legacy "Hello, WeKruit!" phrasing (back-compat
  * for QR codes already in the wild), plus the "WeKruit_<jobId>_<userId>_Job" job token.
  */
-export function parseHelloWekruitOpener(value: string): { candidateId: string } | null {
+export function parseHelloWekruitOpener(
+  value: string,
+): { candidateId: string; bindCode?: undefined } | { bindCode: string; candidateId?: undefined } | null {
   const trimmed = value.trim()
   const jobMatch = trimmed.match(WEKRUIT_JOB_OPENER_RE)
   if (jobMatch?.[2]) return { candidateId: jobMatch[2].trim() }
@@ -310,8 +363,17 @@ export function parseHelloWekruitOpener(value: string): { candidateId: string } 
     trimmed.match(VERIFICATION_CODE_OPENER_RE) ??
     trimmed.match(HELLO_WEKRUIT_OPENER_RE)
   if (!match) return null
-  const candidateId = match[1]?.trim()
-  return candidateId ? { candidateId } : null
+  const token = match[1]?.trim()
+  if (!token) return null
+  // NEW (2026-06-13): a token whose exact shape is the transit-safe bind-code
+  // alphabet is an opaque bind CODE (server-resolved → candidateId), NOT a raw
+  // uid. Firebase push-id uids are 20 chars and routinely contain `_`/`-` and
+  // ambiguous glyphs, so they never collide with the strict 8-char Crockford
+  // shape. Callers that have a `db` resolve `bindCode` → candidateId async;
+  // callers that don't (e.g. the email-sender uid arm) simply see no
+  // `candidateId` and fall through — no wrong bind.
+  if (isBindCode(token)) return { bindCode: normalizeBindCode(token) }
+  return { candidateId: token }
 }
 
 /**

@@ -17,6 +17,21 @@ export function buildHelloWekruitOpenerBody(candidateId: string): string {
 }
 
 /**
+ * 2026-06-13 — phone-binding opener carrying a TRANSIT-SAFE bind CODE (server-
+ * minted; maps code → candidate in pa-bind-codes). PREFERRED over the raw-uid
+ * builder for website-first/unbound-phone candidates: the code uses a Crockford
+ * base32 alphabet (no ambiguous I/L/O/U/0/1) so it survives page→Messages
+ * transit without corrupting → no failed/wrong binds. Wording is unchanged so
+ * back-compat parsers/sanitizers keep working. Code is uppercased on emit; the
+ * inbound parser normalizes the same way.
+ */
+export function buildBindCodeOpenerBody(code: string): string {
+  const c = code.replace(/\s+/g, "").toUpperCase()
+  if (!c) return VERIFICATION_CODE_OPENER_PREFIX
+  return `${VERIFICATION_CODE_OPENER_PREFIX} ${c}`
+}
+
+/**
  * Build the prescreen job-opener body the candidate sends to start a screen.
  *
  * 2026-06-13 — the uid is GONE from the token (Adam directive: kill the

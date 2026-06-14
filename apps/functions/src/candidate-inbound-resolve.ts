@@ -2,6 +2,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle, mergeCandidatesByPhone } from "@pa/pa-persistence"
 import { parseHelloWekruitOpener } from "@pa/pa-orchestrator"
+import { resolveAndConsumeBindCode } from "./bind-code.js"
 import { isE164 } from "./sendblue/handle-format.js"
 
 /**
@@ -427,7 +428,25 @@ export async function resolveInboundUserId(
 
   const trimmedText = typeof inboundText === "string" ? inboundText.trim() : ""
   const parsed = trimmedText ? parseHelloWekruitOpener(trimmedText) : null
-  const tokenCandidateId = parsed?.candidateId ?? (trimmedText ? parsePrescreenCandidateId(trimmedText) : null)
+  // NEW (2026-06-13): the website-first BIND opener now carries a transit-safe
+  // opaque CODE (pa-bind-codes/<CODE> → candidateId), not a raw uid. Resolve +
+  // consume it (single-use, 24h TTL) → candidateId, then bind the texted phone
+  // to that candidate via the same machinery as the uid/legacy path. A failed
+  // code (unknown/expired/used/bad-shape) does NOT bind here — it falls through
+  // to the phone lookup (→ null for a brand-new website-first phone), and the
+  // caller surfaces a graceful "re-tap the link" notice (see resolveBindOpener
+  // + onPaInbound). Never a silent wrong-account bind.
+  let resolvedFromBindCode: string | null = null
+  if (parsed?.bindCode) {
+    try {
+      const consumed = await resolveAndConsumeBindCode(db, parsed.bindCode, phoneE164)
+      if (consumed.ok) resolvedFromBindCode = consumed.candidateId
+    } catch {
+      /* best-effort — fall through to phone lookup, never throw */
+    }
+  }
+  const tokenCandidateId =
+    resolvedFromBindCode ?? parsed?.candidateId ?? (trimmedText ? parsePrescreenCandidateId(trimmedText) : null)
   if (tokenCandidateId) {
     const userRef = db.collection(PA_COLLECTIONS.users).doc(tokenCandidateId)
     const userSnap = await userRef.get()

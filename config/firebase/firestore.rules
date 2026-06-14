@@ -629,6 +629,13 @@ service cloud.firestore {
       // leak the binding (and the doc never holds the plaintext code anyway).
       allow read, write: if false;
     }
+    match /pa-bind-codes/{code} {
+      // Phone-binding opener codes (2026-06-13) — server-only (Admin SDK). The
+      // doc id IS the short opaque code and maps code → candidateId; a client
+      // read would leak the binding. Minted by the register CF, resolved by the
+      // inbound webhook. Never client-readable/writable.
+      allow read, write: if false;
+    }
 
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
