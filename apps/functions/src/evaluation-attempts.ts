@@ -168,6 +168,8 @@ type PrescreenReviewDraftContext = {
   candidateSignal?: string
   /** Human-readable date the candidate DID the prescreen (the draft is often SENT days later). */
   screenDate?: string
+  /** One-line profile checklist eval (Coresignal-enriched, from paPrescreenCandidateEval). */
+  candidateChecklistSummary?: string
   tone?: RejectionTone
 }
 
@@ -483,6 +485,7 @@ async function buildPrescreenDraftContext(
     attemptExplanation?: string
     dimensions?: PrescreenReviewDraftContext["dimensions"]
     screenDate?: string
+    candidateChecklistSummary?: string
   },
   loadTurns: typeof loadPrescreenTurnsForDraft = loadPrescreenTurnsForDraft,
 ): Promise<PrescreenReviewDraftContext> {
@@ -523,6 +526,10 @@ export async function generateAndStorePrescreenAutoDraft(args: {
   now: string
   /** ISO time the candidate DID the screen (defaults to `now` for the inline path). */
   screenDateIso?: string
+  /** Profile checklist eval one-liner (paPrescreenCandidateEval) — folded into the notes. */
+  candidateChecklistSummary?: string
+  /** Accepted for callers that want to force a regen; the generator always (re)writes. */
+  force?: boolean
   composeDraft?: typeof composePrescreenReviewCandidateMessage
   loadTurns?: typeof loadPrescreenTurnsForDraft
   log?: (event: string, payload?: Record<string, unknown>) => void
@@ -544,6 +551,7 @@ export async function generateAndStorePrescreenAutoDraft(args: {
         attemptExplanation: args.attemptExplanation,
         dimensions: args.dimensions,
         screenDate: formatScreenDate(args.screenDateIso ?? args.now),
+        candidateChecklistSummary: args.candidateChecklistSummary,
       },
       args.loadTurns ?? loadPrescreenTurnsForDraft,
     )
@@ -707,6 +715,10 @@ async function composePrescreenReviewCandidateMessage(
     "Prescreen evidence (transcript + per-dimension scoring):",
     evidence || "(no detailed evidence captured)",
     "",
+    context.candidateChecklistSummary
+      ? `Independent profile checklist evaluation (Coresignal-enriched LinkedIn/résumé vs THIS job's rubric — use it to ground internalReviewNotes alongside the transcript): ${context.candidateChecklistSummary}`
+      : null,
+    "",
     rejectionToneInstruction(tone),
     "",
     "ALSO produce internalReviewNotes: an OPERATOR-ONLY detailed cross-check against the recruiter checklist above — per tier (HARD/FIT/ANTI/BONUS) and required skills, what the candidate showed vs needed with evidence, the single deciding gap, and the better-fit role type. This is never shown to the candidate, so it can be specific and direct.",
@@ -800,89 +812,6 @@ function requirePrescreenCandidateMessage(
   return body
 }
 
-function hasReviewProfileSignal(user: Record<string, unknown>): boolean {
-  if (typeof user.latestResumeArtifactId === "string" && user.latestResumeArtifactId.trim()) return true
-  if (typeof user.linkedinUrl === "string" && user.linkedinUrl.trim()) return true
-  if (user.linkedinOauthLinked === true) return true
-  const resumeParseCount = user.resumeParseCount
-  if (typeof resumeParseCount === "number" && Number.isFinite(resumeParseCount) && resumeParseCount > 0) {
-    return true
-  }
-  return false
-}
-
-async function augmentRejectedPrescreenCandidateMessage(args: {
-  db: Firestore
-  userId: string
-  body: string
-  reason: string
-}): Promise<string> {
-  const normalized = args.body.toLowerCase()
-  const prefix = hasConcreteRejectionReason(args.body)
-    ? null
-    : `WeKruit team notes: this specific role probably is not moving forward because ${args.reason}.`
-  const additions: string[] = []
-  if (!/\blinkedin\b|\bresume\b|\brésumé\b/.test(normalized)) {
-    let profileSignalOnFile = false
-    try {
-      const snap = await args.db.collection(PA_COLLECTIONS.users).doc(args.userId).get()
-      profileSignalOnFile = hasReviewProfileSignal((snap.data() ?? {}) as Record<string, unknown>)
-    } catch {
-      profileSignalOnFile = false
-    }
-    additions.push(
-      profileSignalOnFile
-        ? "I have your resume/LinkedIn signal on file and will keep using it with this screen context for future collaboration roles."
-        : "If you add your LinkedIn or resume, I can pull your experience into your profile and pitch future collaboration roles with more context.",
-    )
-  }
-  if (!/matching recommendations|match recommendations|send.*recommend|recommend.*role|matching role/i.test(args.body)) {
-    additions.push("Want me to send matching recommendations too?")
-  }
-  if (!prefix && additions.length === 0) return args.body
-  return [prefix, args.body.replace(/\s+$/g, ""), ...additions].filter(Boolean).join(" ")
-}
-
-function hasConcreteRejectionReason(body: string): boolean {
-  return /\b(because|reason|gap|missing|not enough|did not show|didn't show|lacked|needs?|weaker|ownership|experience|evidence)\b/i.test(body)
-}
-
-function cleanCandidateReason(value: string): string {
-  return value
-    .replace(/\s+/g, " ")
-    .replace(/^(attempt|terminal reason|dimension [^:]+):\s*/i, "")
-    .replace(/[.!?\s]+$/g, "")
-    .trim()
-    .slice(0, 240)
-}
-
-function buildRejectedPrescreenReason(attempt: EvaluationAttempt, decisionReason?: string): string {
-  const explicit = cleanNonEmptyString(decisionReason)
-  if (explicit) return cleanCandidateReason(explicit)
-
-  const blockingGate = attempt.gates.find((gate) => gate.status !== "pass" && cleanNonEmptyString(gate.rationale))
-  if (blockingGate?.rationale) return cleanCandidateReason(blockingGate.rationale)
-
-  const weakestDimension = [...attempt.dimensions]
-    .filter((dimension) => cleanNonEmptyString(dimension.rationale) || dimension.missingEvidence.length > 0)
-    .sort((a, b) => a.score - b.score)[0]
-  if (weakestDimension) {
-    const missing = weakestDimension.missingEvidence.find((item) => cleanNonEmptyString(item))
-    if (missing) return cleanCandidateReason(missing)
-    if (weakestDimension.rationale) return cleanCandidateReason(weakestDimension.rationale)
-  }
-
-  const missingEvidence = attempt.missingEvidence.find((item) => cleanNonEmptyString(item))
-  if (missingEvidence) return cleanCandidateReason(missingEvidence)
-
-  const evidenceSummary = attempt.evidence.find((item) => cleanNonEmptyString(item.summary))?.summary
-  if (evidenceSummary) return cleanCandidateReason(evidenceSummary)
-
-  const explanation = cleanNonEmptyString(attempt.explanation)
-  if (explanation && !/looks good|pass|move forward/i.test(explanation)) return cleanCandidateReason(explanation)
-  return "the screen did not show enough direct evidence for the role's required experience"
-}
-
 function resolveFinalOutcome(
   input: ReviewEvaluationAttemptInput,
   attempt: EvaluationAttempt,
@@ -958,14 +887,11 @@ async function commitPrescreenOutcome(args: {
     jobId: args.attempt.jobId,
     occurredAt: args.reviewedAt,
   })
-  const candidateMessageBody = terminal === "PASS"
-    ? args.candidateMessageBody
-    : await augmentRejectedPrescreenCandidateMessage({
-        db: args.db,
-        userId: args.attempt.candidateId,
-        body: args.candidateMessageBody,
-        reason: buildRejectedPrescreenReason(args.attempt, args.decisionReason),
-      })
+  // Send the operator-approved message EXACTLY as written (Adam 2026-06-14). The
+  // generator already produces a complete message (retention + opt-out built in), so
+  // the old auto-append (resume-on-file / "want recommendations?") was redundant and
+  // overrode the operator's edit. Operator text is now authoritative.
+  const candidateMessageBody = args.candidateMessageBody
 
   const sent = await args.sendSms({
     db: args.db,

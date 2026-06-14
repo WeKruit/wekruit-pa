@@ -112,7 +112,7 @@ const BackgroundSchema = z.object({
   degree: PillarSchema,
   company: PillarSchema,
 })
-const EvalJudgmentSchema = z.object({
+export const EvalJudgmentSchema = z.object({
   verdict: z.enum(["advance", "borderline", "reject"]),
   confidence: z.number(),
   summary: z.string(),
@@ -125,7 +125,7 @@ const EvalJudgmentSchema = z.object({
   }),
   background: BackgroundSchema,
 })
-type EvalJudgment = z.infer<typeof EvalJudgmentSchema>
+export type EvalJudgment = z.infer<typeof EvalJudgmentSchema>
 
 // Strict-mode JSON schema (every property required, additionalProperties
 // false at every level) for callWithFallback's json_schema response format.
@@ -169,7 +169,7 @@ const BACKGROUND_JSON_SCHEMA = {
     company: PILLAR_JSON_SCHEMA,
   },
 } as const
-const EVAL_JUDGMENT_JSON_SCHEMA = {
+export const EVAL_JUDGMENT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["verdict", "confidence", "summary", "reasons", "checklist", "background"],

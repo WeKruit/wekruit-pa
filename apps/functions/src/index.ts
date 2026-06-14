@@ -161,6 +161,11 @@ export { paLivenessSweepDaily } from "./liveness-sweep.js"
 // (idempotent per session via `prescreen-nudge-<sessionId>`).
 export { paPrescreenReviewSlaDaily } from "./prescreen-review-sla.js"
 
+// Enrich + checklist-evaluate the prescreen candidate (LinkedIn/résumé → Coresignal →
+// the SAME hard/fit/anti/bonus + background rubric the recruiter eval uses), per
+// (candidate × job), the moment a session enters pending HITL review. Advisory.
+export { paPrescreenCandidateEval } from "./prescreen-candidate-eval.js"
+
 // 2026-06-11 incident class — daily 08:00 UTC channel canary: dead
 // senderNumber assignments vs the active pa-sendblue-numbers pool (the
 // +17174919939 silent-death detector), zero-active-pool CRITICAL, 24h

@@ -198,9 +198,12 @@ test("operator approval accepts terminal-only prescreen outcome and derives cano
   assert.equal(result.finalOutcome?.kind, "reject")
   assert.equal(result.finalOutcome?.prescreenTerminal, "FAIL")
   assert.equal(result.candidateOutboundId, "out-terminal-only")
-  assert.match(String(sent[0]?.content ?? ""), /because the screen did not show enough production ownership evidence/i)
-  assert.match(String(sent[0]?.content ?? ""), /LinkedIn or resume/i)
-  assert.match(String(sent[0]?.content ?? ""), /matching recommendations/i)
+  // The operator-approved message is sent EXACTLY as written — no backend auto-append
+  // (Adam 2026-06-14: the generator already includes retention/opt-out).
+  assert.equal(
+    sent[0]?.content,
+    "WeKruit reviewed the screen. This specific role is not the right fit, but we will keep you in mind for better matches.",
+  )
 })
 
 test("operator can draft prescreen review messages without committing state or sending outbound", async () => {
