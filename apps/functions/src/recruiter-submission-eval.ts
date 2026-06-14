@@ -432,7 +432,7 @@ function renderJdBlocks(job: Record<string, unknown>): string {
     .join("\n")
 }
 
-function renderChecklist(groups: ChecklistGroup[], ticks: Record<string, boolean>): string {
+export function renderChecklist(groups: ChecklistGroup[], ticks: Record<string, boolean>): string {
   if (groups.length === 0) return "(no rubric checklist configured for this job)"
   return groups
     .map((group) => {

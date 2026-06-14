@@ -66,6 +66,17 @@ export type PrescreenSessionRow = {
       reviewedAt?: string
       decisionOutboundId?: string
     }
+    /** Pre-generated two-tier draft (inline at terminal / 10-day backstop). Never sent. */
+    autoDraft?: {
+      candidateMessageBody?: string
+      decisionReason?: string
+      recommendedActions?: string[]
+      internalReviewNotes?: string
+      tone?: string
+      finalTerminal?: ReviewTerminal
+      draftedBy?: string
+      draftedAt?: string
+    }
   }
   createdAt: string
   updatedAt: string
@@ -124,6 +135,7 @@ type BulkDraftItem = {
   decisionReason: string
   recommendedActionsText: string
   evidenceSummary?: string
+  internalReviewNotes?: string
   error?: string
   status?: "drafted" | "queued"
 }
@@ -306,6 +318,7 @@ export function PrescreenReviewDrawer({
   const [candidateMessageBody, setCandidateMessageBody] = useState("")
   const [decisionReason, setDecisionReason] = useState("")
   const [recommendedActionsText, setRecommendedActionsText] = useState("")
+  const [internalReviewNotes, setInternalReviewNotes] = useState("")
   const [busy, setBusy] = useState(false)
   const [draftBusy, setDraftBusy] = useState(false)
 
@@ -323,9 +336,15 @@ export function PrescreenReviewDrawer({
           cleanReviewTerminal(loaded.session.terminal) ??
           "FAIL"
         setSelectedTerminal(proposed)
-        setCandidateMessageBody(loaded.session.review?.candidateDecision?.candidateMessageBody ?? "")
-        setDecisionReason(loaded.session.review?.candidateDecision?.decisionReason ?? "")
-        setRecommendedActionsText(actionsText(loaded.session.review?.candidateDecision?.recommendedActions, proposed))
+        // Prefer a committed decision; otherwise seed from the pre-generated
+        // two-tier autoDraft (inline at terminal / 10-day backstop) so the
+        // personalized rejection is already filled in — operator edits + sends.
+        const committed = loaded.session.review?.candidateDecision
+        const autoDraft = loaded.session.review?.autoDraft
+        setCandidateMessageBody(committed?.candidateMessageBody ?? autoDraft?.candidateMessageBody ?? "")
+        setDecisionReason(committed?.decisionReason ?? autoDraft?.decisionReason ?? "")
+        setRecommendedActionsText(actionsText(committed?.recommendedActions ?? autoDraft?.recommendedActions, proposed))
+        setInternalReviewNotes(autoDraft?.internalReviewNotes ?? "")
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
       } finally {
@@ -350,6 +369,7 @@ export function PrescreenReviewDrawer({
       if (draft?.candidateMessageBody) setCandidateMessageBody(draft.candidateMessageBody)
       if (draft?.decisionReason) setDecisionReason(draft.decisionReason)
       if (draft?.recommendedActions) setRecommendedActionsText(actionsText(draft.recommendedActions, selectedTerminal))
+      if (draft?.internalReviewNotes) setInternalReviewNotes(draft.internalReviewNotes)
     } catch (e) {
       if (!candidateMessageBody.trim()) setCandidateMessageBody(buildLocalDraftMessage(selectedTerminal, detail))
       if (!decisionReason.trim()) setDecisionReason(buildLocalDecisionReason(selectedTerminal, detail))
@@ -459,6 +479,25 @@ export function PrescreenReviewDrawer({
                   style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
                 />
               </label>
+              {internalReviewNotes.trim() ? (
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderLeft: "3px solid #94a3b8",
+                    borderRadius: 6,
+                    background: "#f8fafc",
+                    padding: "0.6rem 0.7rem",
+                    fontSize: "0.82em",
+                    color: "#334155",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>
+                    Internal review notes · operator-only — never sent to the candidate
+                  </div>
+                  {internalReviewNotes}
+                </div>
+              ) : null}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button type="button" onClick={() => void draftWithLlm()} disabled={draftBusy}>
                   {draftBusy ? "Drafting..." : "Draft with LLM"}
@@ -522,18 +561,22 @@ export function BulkRejectDrawer({
         )
         setItems(rows.map((row) => {
           const draft = bySession.get(row.id)
+          // Fall back to the pre-generated inline autoDraft if the fresh draft is missing.
+          const auto = row.review?.autoDraft
           const terminal = row.terminal === "HARD_STOP" ? "HARD_STOP" : "FAIL"
+          const message = draft?.candidateMessageBody ?? auto?.candidateMessageBody ?? ""
           return {
             sessionId: row.id,
             row,
             attemptId: draft?.attemptId ?? row.evaluationAttemptId ?? row.review?.evaluationAttemptId,
             terminal,
-            message: draft?.candidateMessageBody ?? "",
-            decisionReason: draft?.decisionReason ?? "",
-            recommendedActionsText: actionsText(draft?.recommendedActions, terminal),
+            message,
+            decisionReason: draft?.decisionReason ?? auto?.decisionReason ?? "",
+            recommendedActionsText: actionsText(draft?.recommendedActions ?? auto?.recommendedActions, terminal),
             evidenceSummary: draft?.evidenceSummary,
-            status: draft ? "drafted" : undefined,
-            error: draft ? undefined : "No draft returned.",
+            internalReviewNotes: draft?.internalReviewNotes ?? auto?.internalReviewNotes,
+            status: message ? "drafted" : undefined,
+            error: message ? undefined : "No draft returned.",
           }
         }))
       } catch (e) {
@@ -541,15 +584,20 @@ export function BulkRejectDrawer({
         setErr(e instanceof Error ? e.message : String(e))
         setItems(rows.map((row) => {
           const terminal = row.terminal === "HARD_STOP" ? "HARD_STOP" : "FAIL"
+          const auto = row.review?.autoDraft
           return {
             sessionId: row.id,
             row,
             attemptId: row.evaluationAttemptId ?? row.review?.evaluationAttemptId,
             terminal,
-            message: "",
-            decisionReason: "",
-            recommendedActionsText: actionsText(undefined, terminal),
-            error: "LLM draft failed; open row review or paste reviewed content before approval.",
+            message: auto?.candidateMessageBody ?? "",
+            decisionReason: auto?.decisionReason ?? "",
+            recommendedActionsText: actionsText(auto?.recommendedActions, terminal),
+            internalReviewNotes: auto?.internalReviewNotes,
+            status: auto?.candidateMessageBody ? "drafted" : undefined,
+            error: auto?.candidateMessageBody
+              ? undefined
+              : "LLM draft failed; open row review or paste reviewed content before approval.",
           }
         }))
       } finally {
@@ -628,6 +676,14 @@ export function BulkRejectDrawer({
             </div>
             {item.evidenceSummary ? (
               <div style={{ color: "#334155", fontSize: "0.84em" }}>{item.evidenceSummary}</div>
+            ) : null}
+            {item.internalReviewNotes?.trim() ? (
+              <details style={{ fontSize: "0.82em", color: "#334155" }}>
+                <summary style={{ cursor: "pointer", color: "#475569", fontWeight: 600 }}>
+                  Internal review notes · operator-only
+                </summary>
+                <div style={{ whiteSpace: "pre-wrap", marginTop: 4, color: "#475569" }}>{item.internalReviewNotes}</div>
+              </details>
             ) : null}
             <label style={labelStyle}>
               Final outcome

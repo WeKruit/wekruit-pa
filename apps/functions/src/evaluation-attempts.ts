@@ -16,6 +16,7 @@ import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { sendProactiveSchedulingInvite } from "./claire-agent/scheduling-invite.js"
 import { markPrescreenTerminalOutcome } from "./prescreen-outcome-service.js"
 import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
+import { extractChecklistGroups, renderChecklist } from "./recruiter-submission-eval.js"
 import {
   ANTHROPIC_API_KEY,
   CALCOM_API_KEY,
@@ -80,6 +81,9 @@ export interface DraftPrescreenReviewMessage {
   decisionReason: string
   recommendedActions: string[]
   evidenceSummary: string
+  /** Operator-only detailed reason: the per-tier checklist cross-check. Never sent to the candidate. */
+  internalReviewNotes?: string
+  tone?: RejectionTone
 }
 
 export type PrescreenCandidateDecision = {
@@ -129,6 +133,14 @@ type PrescreenDraftTurn = {
   }
 }
 
+/**
+ * Candidate-facing tone for the rejection draft (Adam 2026-06-14): be honest and
+ * genuine, never fake. A strong candidate who is simply wrong-for-this-role hears
+ * their real strength + a redirect; a genuinely under-qualified candidate hears
+ * the real gap named kindly + a redirect to where they DO fit — not "you suck".
+ */
+export type RejectionTone = "strong_wrong_role" | "honest_underqualified" | "neutral_pass"
+
 type PrescreenReviewDraftContext = {
   sessionId: string
   candidateId: string
@@ -147,6 +159,34 @@ type PrescreenReviewDraftContext = {
     rationale?: string
   }>
   turns: PrescreenDraftTurn[]
+  // Job-side requirements, cross-checked so the rejection speaks the SAME language
+  // recruiters see (the recruiterBoard checklist tiers + required skills).
+  jobTitle?: string
+  company?: string
+  requiredSkills?: string[]
+  checklistText?: string
+  candidateSignal?: string
+  tone?: RejectionTone
+}
+
+/**
+ * Pick the candidate-facing tone from the screen outcome. HARD_STOP or a clearly
+ * low score → name the real gap (honest_underqualified); a near-miss FAIL → frame
+ * as a strong candidate in the wrong role. PASS → neutral warm next-step.
+ */
+export function selectRejectionTone(context: {
+  finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+  score?: number
+  scoreMax?: number
+}): RejectionTone {
+  if (context.finalTerminal === "PASS") return "neutral_pass"
+  if (context.finalTerminal === "HARD_STOP") return "honest_underqualified"
+  const ratio =
+    typeof context.score === "number" && typeof context.scoreMax === "number" && context.scoreMax > 0
+      ? context.score / context.scoreMax
+      : undefined
+  if (ratio !== undefined && ratio < 0.5) return "honest_underqualified"
+  return "strong_wrong_role"
 }
 
 export async function runReviewEvaluationAttempt(
@@ -266,25 +306,28 @@ export async function runDraftPrescreenReviewMessages(
       throw new HttpsError("failed-precondition", `Prescreen session ${sessionId} is missing candidateId or jobId.`)
     }
 
-    const context: PrescreenReviewDraftContext = {
-      sessionId,
-      candidateId,
-      jobId,
-      proposedTerminal: cleanNonEmptyString(attempt.proposedOutcome?.prescreenTerminal) ?? cleanNonEmptyString(session.terminal),
-      finalTerminal: input.terminal,
-      terminalReason: cleanNonEmptyString(session.terminalReason),
-      score: numberOrUndefined(session.score),
-      scoreMax: numberOrUndefined(session.scoreMax),
-      threshold: numberOrUndefined(session.threshold),
-      attemptExplanation: cleanNonEmptyString(attempt.explanation),
-      dimensions: attempt.dimensions?.slice(0, 8).map((d) => ({
-        dimensionId: d.dimensionId,
-        score: d.score,
-        confidence: d.confidence,
-        rationale: d.rationale,
-      })),
-      turns: await loadTurns(deps.db, sessionId),
-    }
+    const context = await buildPrescreenDraftContext(
+      deps.db,
+      {
+        sessionId,
+        candidateId,
+        jobId,
+        proposedTerminal: cleanNonEmptyString(attempt.proposedOutcome?.prescreenTerminal) ?? cleanNonEmptyString(session.terminal),
+        finalTerminal: input.terminal,
+        terminalReason: cleanNonEmptyString(session.terminalReason),
+        score: numberOrUndefined(session.score),
+        scoreMax: numberOrUndefined(session.scoreMax),
+        threshold: numberOrUndefined(session.threshold),
+        attemptExplanation: cleanNonEmptyString(attempt.explanation),
+        dimensions: attempt.dimensions?.slice(0, 8).map((d) => ({
+          dimensionId: d.dimensionId,
+          score: d.score,
+          confidence: d.confidence,
+          rationale: d.rationale,
+        })),
+      },
+      loadTurns,
+    )
     const composed = await composeDraft(context)
     const normalized = normalizePrescreenDraftDecision(context.finalTerminal, composed, context)
     drafts.push({
@@ -295,6 +338,7 @@ export async function runDraftPrescreenReviewMessages(
       proposedTerminal: context.proposedTerminal,
       finalTerminal: input.terminal,
       ...normalized,
+      tone: composed.tone ?? context.tone,
     })
   }
 
@@ -334,6 +378,181 @@ async function loadPrescreenTurnsForDraft(
     .limit(12)
     .get()
   return turnsSnap.docs.map((doc) => doc.data() as PrescreenDraftTurn)
+}
+
+/**
+ * Load the job-side requirements that the rejection should cross-check against:
+ * the recruiter checklist (same hard/fit/anti/bonus tiers recruiters screen
+ * against), required skills, and a human title/company. Fail-open: any error
+ * yields an empty context (the draft still works off the transcript).
+ */
+async function loadPrescreenJobContext(
+  db: Firestore,
+  jobId: string,
+): Promise<Pick<PrescreenReviewDraftContext, "jobTitle" | "company" | "requiredSkills" | "checklistText">> {
+  try {
+    const snap = await db.collection("pa-jobs").doc(jobId).get()
+    const job = (snap.data() ?? {}) as Record<string, unknown>
+    const groups = extractChecklistGroups(job)
+    const checklistText = groups.length > 0 ? renderChecklist(groups, {}) : undefined
+    const recruiterBoard = (job.recruiterBoard ?? {}) as Record<string, unknown>
+    const label = (recruiterBoard.label ?? {}) as Record<string, unknown>
+    const jobTitle =
+      cleanNonEmptyString(label.title) ?? cleanNonEmptyString(job.title) ?? cleanNonEmptyString(job.roleTitle)
+    const company =
+      cleanNonEmptyString(label.company) ?? cleanNonEmptyString(job.company) ?? cleanNonEmptyString(job.companyName)
+    const requiredSkills = Array.isArray(job.requiredSkills)
+      ? job.requiredSkills
+          .map((s) => cleanNonEmptyString(typeof s === "string" ? s : (s as { value?: unknown })?.value))
+          .filter((s): s is string => Boolean(s))
+          .slice(0, 20)
+      : undefined
+    return {
+      jobTitle,
+      company,
+      requiredSkills: requiredSkills && requiredSkills.length > 0 ? requiredSkills : undefined,
+      checklistText,
+    }
+  } catch {
+    return {}
+  }
+}
+
+/** Lightweight candidate profile signal (current role / stage / yoe / top skills). Fail-open. */
+async function loadPrescreenCandidateSignal(db: Firestore, candidateId: string): Promise<string | undefined> {
+  try {
+    const snap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+    const u = (snap.data() ?? {}) as Record<string, unknown>
+    const bits: string[] = []
+    const current = cleanNonEmptyString(u.recentRoleTitle)
+    if (current) bits.push(`current role: ${current}`)
+    const stage = cleanNonEmptyString(u.careerStage)
+    if (stage) bits.push(`career stage: ${stage}`)
+    const yoe = u.yoeRange
+    if (Array.isArray(yoe) && yoe.length === 2) bits.push(`yoe: ${yoe[0]}-${yoe[1]}`)
+    const tags = (u.tags ?? {}) as Record<string, unknown>
+    if (Array.isArray(tags.skills)) {
+      const skills = tags.skills
+        .map((s) => cleanNonEmptyString(typeof s === "string" ? s : (s as { value?: unknown })?.value))
+        .filter((s): s is string => Boolean(s))
+        .slice(0, 12)
+      if (skills.length > 0) bits.push(`skills: ${skills.join(", ")}`)
+    }
+    return bits.length > 0 ? bits.join("; ") : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Build the full draft context for a session (turns + job requirements + candidate
+ * signal + tone). Shared by the on-demand draft callable and the inline auto-draft.
+ */
+async function buildPrescreenDraftContext(
+  db: Firestore,
+  args: {
+    sessionId: string
+    candidateId: string
+    jobId: string
+    finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+    proposedTerminal?: string
+    terminalReason?: string
+    score?: number
+    scoreMax?: number
+    threshold?: number
+    attemptExplanation?: string
+    dimensions?: PrescreenReviewDraftContext["dimensions"]
+  },
+  loadTurns: typeof loadPrescreenTurnsForDraft = loadPrescreenTurnsForDraft,
+): Promise<PrescreenReviewDraftContext> {
+  const [turns, jobCtx, candidateSignal] = await Promise.all([
+    loadTurns(db, args.sessionId),
+    loadPrescreenJobContext(db, args.jobId),
+    loadPrescreenCandidateSignal(db, args.candidateId),
+  ])
+  return {
+    ...args,
+    ...jobCtx,
+    candidateSignal,
+    tone: selectRejectionTone(args),
+    turns,
+  }
+}
+
+/**
+ * Generate the two-tier draft INLINE at terminal (Adam 2026-06-14) and store it on
+ * the session as `review.autoDraft`. NEVER sends — a human still commits from the
+ * dashboard. Fully fail-open: a draft/LLM error never breaks the terminal flow.
+ * Idempotent-ish: callers pass `force` to refresh; default skips if a draft exists.
+ */
+export async function generateAndStorePrescreenAutoDraft(args: {
+  db: Firestore
+  sessionId: string
+  candidateId: string
+  jobId: string
+  attemptId?: string
+  terminal: "PASS" | "FAIL" | "HARD_STOP"
+  proposedTerminal?: string
+  score?: number
+  scoreMax?: number
+  threshold?: number
+  attemptExplanation?: string
+  terminalReason?: string
+  dimensions?: PrescreenReviewDraftContext["dimensions"]
+  now: string
+  composeDraft?: typeof composePrescreenReviewCandidateMessage
+  loadTurns?: typeof loadPrescreenTurnsForDraft
+  log?: (event: string, payload?: Record<string, unknown>) => void
+}): Promise<{ stored: boolean }> {
+  const log = args.log ?? (() => {})
+  try {
+    const context = await buildPrescreenDraftContext(
+      args.db,
+      {
+        sessionId: args.sessionId,
+        candidateId: args.candidateId,
+        jobId: args.jobId,
+        finalTerminal: args.terminal,
+        proposedTerminal: args.proposedTerminal,
+        terminalReason: args.terminalReason,
+        score: args.score,
+        scoreMax: args.scoreMax,
+        threshold: args.threshold,
+        attemptExplanation: args.attemptExplanation,
+        dimensions: args.dimensions,
+      },
+      args.loadTurns ?? loadPrescreenTurnsForDraft,
+    )
+    const composed = await (args.composeDraft ?? composePrescreenReviewCandidateMessage)(context)
+    await args.db.collection("pa-prescreen-sessions").doc(args.sessionId).set(
+      {
+        review: {
+          autoDraft: {
+            candidateMessageBody: composed.candidateMessageBody,
+            decisionReason: composed.decisionReason,
+            recommendedActions: composed.recommendedActions,
+            internalReviewNotes: composed.internalReviewNotes ?? composed.evidenceSummary,
+            tone: composed.tone ?? context.tone ?? selectRejectionTone(context),
+            finalTerminal: args.terminal,
+            draftedBy: "auto_inline",
+            draftedAt: args.now,
+            ...(args.attemptId ? { evaluationAttemptId: args.attemptId } : {}),
+          },
+          updatedAt: args.now,
+        },
+        updatedAt: args.now,
+      },
+      { merge: true },
+    )
+    log("prescreen.auto_draft.stored", { sessionId: args.sessionId, terminal: args.terminal, tone: composed.tone })
+    return { stored: true }
+  } catch (err) {
+    log("prescreen.auto_draft.failed", {
+      sessionId: args.sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return { stored: false }
+  }
 }
 
 function buildPrescreenDraftEvidenceSummary(context: PrescreenReviewDraftContext): string {
@@ -384,39 +603,85 @@ const PRESCREEN_REVIEW_DRAFT_SCHEMA = {
       type: "string",
       description: "One short operator-facing summary of the evidence used for the draft.",
     },
+    internalReviewNotes: {
+      type: "string",
+      description:
+        "OPERATOR-ONLY (never shown to the candidate). A detailed per-tier cross-check against the job's recruiter checklist: for HARD / FIT / ANTI / BONUS and required skills, what the candidate showed vs needed (cite transcript/profile evidence), the single deciding gap, and the better-fit role type. Multi-line is fine.",
+    },
   },
 } as const
 
+/** Tone-specific candidate-message instruction. Honest + warm + genuine, never fake (Adam 2026-06-14). */
+function rejectionToneInstruction(tone: RejectionTone): string {
+  switch (tone) {
+    case "neutral_pass":
+      return "The WeKruit team is moving this screen forward. Draft a warm next-step message in Claire's lowercase, friendly iMessage voice. Do NOT promise employment."
+    case "strong_wrong_role":
+      return [
+        "Outcome: the hiring manager is not moving forward on THIS specific role, but the candidate is genuinely strong — just wrong-fit for this one.",
+        "Draft candidateMessageBody in Claire's warm, lowercase, genuine iMessage voice. It MUST:",
+        "- acknowledge ONE real, evidence-backed strength of theirs (no generic flattery, no invented praise),",
+        "- be honest that the hiring manager passed on this specific role,",
+        "- redirect to the kind/level of role they'd line up better with,",
+        "- make retention explicit: they stay in the WeKruit pool, you'll keep matching them, and if a team's interested you'll text to set up an interview,",
+        "- end with a soft opt-out note (they can reply STOP to pause matches).",
+        "Never a cold form letter. Never mention scores, thresholds, PASS/FAIL, or internal systems.",
+      ].join("\n")
+    case "honest_underqualified":
+    default:
+      return [
+        "Outcome: the candidate is genuinely under-qualified / not a fit for this role's hard requirements.",
+        "Be HONEST and GENUINE — do NOT fake praise or pretend their background is strong when it isn't. But be WARM and kind, never demeaning.",
+        "Draft candidateMessageBody in Claire's warm, lowercase iMessage voice. It MUST:",
+        "- appreciate the time they put into the screen,",
+        "- name the REAL fit gap plainly and kindly (the concrete must-have they're earlier on) — frame it as 'not the right match', not as a personal failing,",
+        "- redirect constructively to the kind/level of role they WOULD be a stronger fit for,",
+        "- keep them in the pool: you'll point better-fit roles their way, and if a team's interested you'll set up an interview,",
+        "- end with a soft opt-out note (reply STOP anytime).",
+        "Tell them where they CAN fit, not that they fell short. Never mention scores, thresholds, PASS/FAIL, or internal systems.",
+      ].join("\n")
+  }
+}
+
 async function composePrescreenReviewCandidateMessage(
   context: PrescreenReviewDraftContext,
-): Promise<Pick<DraftPrescreenReviewMessage, "candidateMessageBody" | "decisionReason" | "recommendedActions" | "evidenceSummary">> {
+): Promise<Pick<DraftPrescreenReviewMessage, "candidateMessageBody" | "decisionReason" | "recommendedActions" | "evidenceSummary" | "internalReviewNotes" | "tone">> {
   const openai = getOpenAIConfig()
   if (!openai.apiKey) {
     throw new HttpsError("failed-precondition", "PA_OPENAI_AGENT_API_KEY is required to draft prescreen review messages.")
   }
   const anthropic = getAnthropicConfig()
   const evidence = buildPrescreenDraftEvidenceSummary(context)
-  // Graceful committed rejection (Adam 2026-06-10): honest that THIS role isn't moving forward,
-  // warm, and explicit that the candidate stays in WeKruit's pool with more roles coming — a
-  // rejection is never an exit from the marketplace, and never a cold form letter.
-  const outcomeInstruction =
-    context.finalTerminal === "PASS"
-      ? "The WeKruit team is moving this screen forward. Draft a warm next-step message without promising employment."
-      : "The WeKruit team is not moving this specific role forward. Draft a warm, honest message with one concrete, evidence-backed reason, framed as notes that help WeKruit pitch the right hiring manager next time. Make retention explicit: they stay in WeKruit's candidate pool, and Claire can send better-fit roles if they want. If resume or LinkedIn context is missing, mention that adding it helps future collaboration roles get pitched with more context. Never a cold form letter."
+  const tone = context.tone ?? selectRejectionTone(context)
+  const roleLine =
+    context.jobTitle || context.company
+      ? `Role: ${[context.jobTitle, context.company].filter(Boolean).join(" @ ")}`
+      : null
   const userText = [
     `Session: ${context.sessionId}`,
     `Candidate: ${context.candidateId}`,
     `Job: ${context.jobId}`,
+    roleLine,
     `AI proposed terminal: ${context.proposedTerminal ?? "unknown"}`,
     `Selected terminal: ${context.finalTerminal}`,
     typeof context.score === "number" && typeof context.scoreMax === "number"
       ? `Internal score: ${context.score}/${context.scoreMax}, threshold=${context.threshold ?? "unknown"}`
       : null,
+    context.requiredSkills && context.requiredSkills.length > 0
+      ? `Required skills: ${context.requiredSkills.join(", ")}`
+      : null,
     "",
-    "Evidence:",
+    "Recruiter checklist (the SAME hard/fit/anti/bonus tiers recruiters screen against — judge the candidate against these from the transcript/profile, do NOT trust any ticks):",
+    context.checklistText || "(no recruiter checklist configured for this job)",
+    "",
+    context.candidateSignal ? `Candidate profile signal: ${context.candidateSignal}` : null,
+    "",
+    "Prescreen evidence (transcript + per-dimension scoring):",
     evidence || "(no detailed evidence captured)",
     "",
-    outcomeInstruction,
+    rejectionToneInstruction(tone),
+    "",
+    "ALSO produce internalReviewNotes: an OPERATOR-ONLY detailed cross-check against the recruiter checklist above — per tier (HARD/FIT/ANTI/BONUS) and required skills, what the candidate showed vs needed with evidence, the single deciding gap, and the better-fit role type. This is never shown to the candidate, so it can be specific and direct.",
   ].filter((line): line is string => line !== null).join("\n")
 
   const result = await callWithFallback({
@@ -424,9 +689,11 @@ async function composePrescreenReviewCandidateMessage(
     baseURL: openai.baseURL,
     anthropicApiKey: anthropic.apiKey ?? undefined,
     systemPrompt:
-      "You draft WeKruit candidate iMessages after the WeKruit team reviews a prescreen. " +
-      "Return JSON only. Never mention PASS, FAIL, HARD_STOP, scores, thresholds, internal review systems, or evaluation ids. " +
-      "Do not invent evidence. Do not include PII. Keep it concise, direct, and editable by the operator.",
+      "You draft WeKruit candidate iMessages after a prescreen, PLUS detailed operator-only review notes. " +
+      "Return JSON only. The candidateMessageBody is sent to a real candidate over iMessage: warm, genuine, Claire's lowercase voice, " +
+      "NEVER mention PASS, FAIL, HARD_STOP, scores, thresholds, internal review systems, or evaluation ids, and NEVER fake praise. " +
+      "internalReviewNotes is operator-only and may be specific. Do not invent evidence. Do not include PII beyond what is given. " +
+      "Keep the candidate message concise and editable by the operator.",
     userText,
     schemaName: "PrescreenReviewCandidateMessageDraft",
     schema: PRESCREEN_REVIEW_DRAFT_SCHEMA as unknown as Record<string, unknown>,
@@ -436,6 +703,7 @@ async function composePrescreenReviewCandidateMessage(
     decisionReason?: string
     recommendedActions?: unknown
     evidenceSummary?: string
+    internalReviewNotes?: string
   }
   try {
     parsed = JSON.parse(result.rawJson)
@@ -446,7 +714,7 @@ async function composePrescreenReviewCandidateMessage(
   if (normalized.candidateMessageBody.length > 2_000) {
     throw new HttpsError("internal", "LLM returned an invalid candidate message draft.")
   }
-  return normalized
+  return { ...normalized, tone }
 }
 
 function normalizePrescreenDraftDecision(
@@ -456,9 +724,10 @@ function normalizePrescreenDraftDecision(
     decisionReason?: unknown
     recommendedActions?: unknown
     evidenceSummary?: unknown
+    internalReviewNotes?: unknown
   },
   context: PrescreenReviewDraftContext,
-): Pick<DraftPrescreenReviewMessage, "candidateMessageBody" | "decisionReason" | "recommendedActions" | "evidenceSummary"> {
+): Pick<DraftPrescreenReviewMessage, "candidateMessageBody" | "decisionReason" | "recommendedActions" | "evidenceSummary" | "internalReviewNotes"> {
   const candidateMessageBody = cleanNonEmptyString(raw.candidateMessageBody)
   if (!candidateMessageBody || candidateMessageBody.length > 2_000) {
     throw new HttpsError("internal", "LLM returned an invalid candidate message draft.")
@@ -470,11 +739,14 @@ function normalizePrescreenDraftDecision(
     cleanNonEmptyString(raw.decisionReason) ??
     defaultDecisionReason(terminal, evidenceSummary)
   const recommendedActions = cleanStringArray(raw.recommendedActions, 3, 160)
+  const internalReviewNotes =
+    cleanNonEmptyString(raw.internalReviewNotes)?.slice(0, 4_000) ?? evidenceSummary
   return {
     candidateMessageBody,
     decisionReason,
     recommendedActions: recommendedActions.length > 0 ? recommendedActions : defaultRecommendedActions(terminal),
     evidenceSummary,
+    internalReviewNotes,
   }
 }
 

@@ -8,6 +8,8 @@ import {
 import {
   runDraftPrescreenReviewMessages,
   runReviewEvaluationAttempt,
+  generateAndStorePrescreenAutoDraft,
+  selectRejectionTone,
 } from "../evaluation-attempts.js"
 
 const NOW = "2026-05-20T00:00:00.000Z"
@@ -260,6 +262,104 @@ test("operator can draft prescreen review messages without committing state or s
   const session = store.get("pa-prescreen-sessions")!.get("ps-1") as Record<string, unknown>
   assert.equal(session.terminalActionPendingReview, true)
   assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 0)
+})
+
+test("selectRejectionTone: PASS→neutral, HARD_STOP→honest, low-score FAIL→honest, near-miss FAIL→strong", () => {
+  assert.equal(selectRejectionTone({ finalTerminal: "PASS" }), "neutral_pass")
+  assert.equal(selectRejectionTone({ finalTerminal: "HARD_STOP" }), "honest_underqualified")
+  assert.equal(selectRejectionTone({ finalTerminal: "FAIL", score: 0.3, scoreMax: 1 }), "honest_underqualified")
+  assert.equal(selectRejectionTone({ finalTerminal: "FAIL", score: 0.85, scoreMax: 1 }), "strong_wrong_role")
+  // No score on a plain FAIL → strong_wrong_role (give the benefit of the doubt, no harsh framing)
+  assert.equal(selectRejectionTone({ finalTerminal: "FAIL" }), "strong_wrong_role")
+})
+
+test("generateAndStorePrescreenAutoDraft stores review.autoDraft inline and never sends", async () => {
+  const { db, store } = makeDb({
+    "pa-jobs": {
+      "job-1": {
+        title: "Senior Backend Engineer",
+        recruiterBoard: {
+          label: { title: "Senior Backend Engineer", company: "Invoko" },
+          checklist: { groups: [{ kind: "hard", items: [{ id: "h1", text: "5+ yrs backend" }] }] },
+        },
+        requiredSkills: ["go", "postgres"],
+      },
+    },
+    "pa-users": { "cand-1": { recentRoleTitle: "Backend Intern", careerStage: "junior" } },
+    "pa-prescreen-sessions": { "ps-1": { sessionId: "ps-1", userId: "cand-1", jobId: "job-1" } },
+  })
+
+  let composeCalls = 0
+  let capturedContext: Record<string, unknown> | undefined
+  const logs: Array<{ event: string; payload?: Record<string, unknown> }> = []
+  const res = await generateAndStorePrescreenAutoDraft({
+    db,
+    sessionId: "ps-1",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    attemptId: "attempt-1",
+    terminal: "HARD_STOP",
+    score: 0.3,
+    scoreMax: 1,
+    now: NOW,
+    loadTurns: async () => [
+      { qId: "backend_depth", reply: "mostly intern-level CRUD work", scored: { aggregate: { s: 0.3, c: 0.8, summary: "shallow backend depth" } } },
+    ],
+    log: (event, payload) => logs.push({ event, payload }),
+    composeDraft: async (context) => {
+      composeCalls += 1
+      capturedContext = context as unknown as Record<string, unknown>
+      return {
+        candidateMessageBody: "hey — appreciate the time. this one needs 5+ yrs owning backend and you're earlier on that, so it's not the right match. you'd fit better at mid-level backend roles — i'll send those.",
+        decisionReason: "Earlier-career vs a senior backend requirement.",
+        recommendedActions: ["Keep your profile active."],
+        evidenceSummary: "junior signal vs senior req",
+        internalReviewNotes: "HARD: 5+ yrs backend — MISSED (intern + <1yr). Deciding gap: seniority. Better fit: mid-level backend IC.",
+        tone: "honest_underqualified",
+      }
+    },
+  })
+
+  assert.equal(res.stored, true, `expected stored; logs=${JSON.stringify(logs)}`)
+  assert.equal(composeCalls, 1)
+  // The enriched context must carry the job requirements + recruiter checklist.
+  assert.equal(capturedContext?.jobTitle, "Senior Backend Engineer")
+  assert.equal(capturedContext?.company, "Invoko")
+  assert.match(String(capturedContext?.checklistText ?? ""), /5\+ yrs backend/)
+  assert.match(String(capturedContext?.candidateSignal ?? ""), /Backend Intern/)
+  assert.equal(capturedContext?.tone, "honest_underqualified")
+  const session = store.get("pa-prescreen-sessions")!.get("ps-1") as Record<string, unknown>
+  const review = session.review as Record<string, unknown>
+  const autoDraft = review.autoDraft as Record<string, unknown>
+  assert.ok(autoDraft, "review.autoDraft written")
+  assert.equal(autoDraft.draftedBy, "auto_inline")
+  assert.equal(autoDraft.finalTerminal, "HARD_STOP")
+  assert.equal(autoDraft.tone, "honest_underqualified")
+  assert.match(String(autoDraft.candidateMessageBody), /not the right match/)
+  assert.match(String(autoDraft.internalReviewNotes), /Deciding gap: seniority/)
+  // Inline draft is store-only: the session must NOT be marked sent/committed.
+  assert.notEqual(review.status, "approved")
+  assert.notEqual(review.status, "overridden")
+  assert.equal(session.terminalActionPendingReview, undefined) // generator never flips review state
+})
+
+test("generateAndStorePrescreenAutoDraft is fail-open: a compose error never throws", async () => {
+  const { db } = makeDb({
+    "pa-prescreen-sessions": { "ps-2": { sessionId: "ps-2", userId: "cand-2", jobId: "job-2" } },
+  })
+  const res = await generateAndStorePrescreenAutoDraft({
+    db,
+    sessionId: "ps-2",
+    candidateId: "cand-2",
+    jobId: "job-2",
+    terminal: "FAIL",
+    now: NOW,
+    loadTurns: async () => [],
+    composeDraft: async () => {
+      throw new Error("LLM down")
+    },
+  })
+  assert.equal(res.stored, false)
 })
 
 test("operator override writes correction event and updates external-supply projection", async () => {
