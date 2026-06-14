@@ -428,7 +428,7 @@ export function PrescreenReviewDrawer({
   }
 
   return (
-    <SideDrawer title="Prescreen quick review" subtitle={sessionId} onClose={onClose}>
+    <SideDrawer title="Prescreen quick review" subtitle={sessionId} onClose={onClose} wide>
       {loading ? <LoadingState label="Loading review..." /> : null}
       {err ? <div className="notice notice-bad" style={{ fontSize: "0.85em" }}>{err}</div> : null}
       {detail ? (
@@ -454,9 +454,9 @@ export function PrescreenReviewDrawer({
                 <textarea
                   value={candidateMessageBody}
                   onChange={(e) => setCandidateMessageBody(e.target.value)}
-                  rows={7}
+                  rows={11}
                   placeholder="Write the exact iMessage WeKruit should send after approval."
-                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                  style={reviewTextareaStyle}
                 />
               </label>
               <label style={labelStyle}>
@@ -464,9 +464,9 @@ export function PrescreenReviewDrawer({
                 <textarea
                   value={decisionReason}
                   onChange={(e) => setDecisionReason(e.target.value)}
-                  rows={3}
+                  rows={4}
                   placeholder="One evidence-backed reason candidates can see."
-                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                  style={reviewTextareaStyle}
                 />
               </label>
               <label style={labelStyle}>
@@ -474,28 +474,36 @@ export function PrescreenReviewDrawer({
                 <textarea
                   value={recommendedActionsText}
                   onChange={(e) => setRecommendedActionsText(e.target.value)}
-                  rows={4}
+                  rows={6}
                   placeholder="One action per line."
-                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                  style={reviewTextareaStyle}
                 />
               </label>
               {internalReviewNotes.trim() ? (
                 <div
                   style={{
                     border: "1px solid #e2e8f0",
-                    borderLeft: "3px solid #94a3b8",
+                    borderLeft: "4px solid #94a3b8",
                     borderRadius: 6,
                     background: "#f8fafc",
-                    padding: "0.6rem 0.7rem",
-                    fontSize: "0.82em",
-                    color: "#334155",
-                    whiteSpace: "pre-wrap",
+                    padding: "0.8rem 0.9rem",
                   }}
                 >
-                  <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>
+                  <div style={{ fontWeight: 700, color: "#475569", marginBottom: 8, fontSize: "0.9em" }}>
                     Internal review notes · operator-only — never sent to the candidate
                   </div>
-                  {internalReviewNotes}
+                  <div
+                    style={{
+                      fontSize: "0.94em",
+                      lineHeight: 1.55,
+                      color: "#334155",
+                      whiteSpace: "pre-wrap",
+                      maxHeight: 360,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {internalReviewNotes}
+                  </div>
                 </div>
               ) : null}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -701,8 +709,8 @@ export function BulkRejectDrawer({
               <textarea
                 value={item.message}
                 onChange={(e) => updateItem(item.sessionId, { message: e.target.value })}
-                rows={5}
-                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                rows={8}
+                style={reviewTextareaStyle}
               />
             </label>
             <label style={labelStyle}>
@@ -710,8 +718,8 @@ export function BulkRejectDrawer({
               <textarea
                 value={item.decisionReason}
                 onChange={(e) => updateItem(item.sessionId, { decisionReason: e.target.value })}
-                rows={3}
-                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                rows={4}
+                style={reviewTextareaStyle}
               />
             </label>
             <label style={labelStyle}>
@@ -719,8 +727,8 @@ export function BulkRejectDrawer({
               <textarea
                 value={item.recommendedActionsText}
                 onChange={(e) => updateItem(item.sessionId, { recommendedActionsText: e.target.value })}
-                rows={4}
-                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                rows={5}
+                style={reviewTextareaStyle}
               />
             </label>
             {item.error ? <div style={{ color: "#b91c1c", fontSize: "0.82em" }}>{item.error}</div> : null}
@@ -839,7 +847,7 @@ export function SideDrawer({
           top: 0,
           right: 0,
           height: "100vh",
-          width: wide ? "min(760px, 96vw)" : "min(560px, 96vw)",
+          width: wide ? "min(880px, 96vw)" : "min(560px, 96vw)",
           background: "var(--cream-3, #fff)",
           borderLeft: "1px solid var(--border, #e2e8f0)",
           boxShadow: "-12px 0 32px rgba(15, 23, 42, 0.18)",
@@ -871,8 +879,10 @@ export function SideDrawer({
 
 const labelStyle: CSSProperties = {
   display: "grid",
-  gap: 4,
-  fontSize: "0.88em",
+  gap: 6,
+  fontSize: "0.95em",
+  fontWeight: 600,
+  color: "#334155",
 }
 
 const inputStyle: CSSProperties = {
@@ -882,6 +892,20 @@ const inputStyle: CSSProperties = {
   borderRadius: 4,
   fontSize: "0.9em",
   boxSizing: "border-box",
+}
+
+// Larger, more readable style for the editable review textareas (candidate message,
+// decision reason, recommended actions) — these were too small/cramped to read.
+const reviewTextareaStyle: CSSProperties = {
+  width: "100%",
+  padding: "0.65rem 0.75rem",
+  border: "1px solid #cbd5e1",
+  borderRadius: 6,
+  fontSize: "1em",
+  lineHeight: 1.55,
+  boxSizing: "border-box",
+  resize: "vertical",
+  fontFamily: "inherit",
 }
 
 const cardStyle: CSSProperties = {
