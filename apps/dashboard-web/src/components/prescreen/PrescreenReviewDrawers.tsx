@@ -382,13 +382,6 @@ export function PrescreenReviewDrawer({
     }
   }
 
-  function useEvidenceDraft() {
-    if (!detail) return
-    setCandidateMessageBody(buildLocalDraftMessage(selectedTerminal, detail))
-    setDecisionReason(buildLocalDecisionReason(selectedTerminal, detail))
-    setRecommendedActionsText(actionsText(undefined, selectedTerminal))
-  }
-
   async function approve() {
     if (!detail?.attempt?.attemptId) return
     const body = candidateMessageBody.trim()
@@ -506,23 +499,30 @@ export function PrescreenReviewDrawer({
                   </div>
                 </div>
               ) : null}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" onClick={() => void draftWithLlm()} disabled={draftBusy}>
-                  {draftBusy ? "Drafting..." : "Draft with LLM"}
-                </button>
-                <button
-                  type="button"
-                  onClick={useEvidenceDraft}
-                >
-                  Use evidence draft
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void approve()}
-                  disabled={busy || !candidateMessageBody.trim() || !decisionReason.trim() || parseRecommendedActions(recommendedActionsText).length === 0}
-                >
-                  {busy ? "Queuing..." : "Approve and queue iMessage"}
-                </button>
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ fontSize: "0.84em", color: "#64748b" }}>
+                  Pre-drafted by Claire — edit the message above if needed, then send.
+                  Nothing goes to the candidate until you click <strong>Approve &amp; send</strong>.
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={() => void approve()}
+                    disabled={busy || !candidateMessageBody.trim() || !decisionReason.trim() || parseRecommendedActions(recommendedActionsText).length === 0}
+                    style={primaryBtnStyle}
+                  >
+                    {busy ? "Sending…" : "Approve & send iMessage"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void draftWithLlm()}
+                    disabled={draftBusy}
+                    style={subtleBtnStyle}
+                    title="Throw away the current draft and generate a fresh one"
+                  >
+                    {draftBusy ? "Regenerating…" : "Regenerate draft"}
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -915,4 +915,25 @@ const cardStyle: CSSProperties = {
   background: "#fff",
   display: "grid",
   gap: 8,
+}
+
+const primaryBtnStyle: CSSProperties = {
+  padding: "0.55rem 1.1rem",
+  background: "#1e293b",
+  color: "#fff",
+  border: "1px solid #1e293b",
+  borderRadius: 6,
+  fontSize: "0.95em",
+  fontWeight: 600,
+  cursor: "pointer",
+}
+
+const subtleBtnStyle: CSSProperties = {
+  padding: "0.45rem 0.8rem",
+  background: "transparent",
+  color: "#64748b",
+  border: "1px solid #cbd5e1",
+  borderRadius: 6,
+  fontSize: "0.85em",
+  cursor: "pointer",
 }
