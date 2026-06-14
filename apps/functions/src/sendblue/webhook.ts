@@ -45,9 +45,18 @@ import { classifyInboundSender, normalizeEmailHandle } from "./handle-format.js"
 import {
   bindEmailSenderHandle,
   createEmailSenderReviewItem,
+  ensureEmailInboundEvidence,
   resolveEmailSender,
+  sendSwitchToPhoneGuidance,
+  shouldSendSwitchToPhoneGuidance,
   type EmailSenderResolution,
 } from "./email-sender-resolution.js"
+// Deterministic SMS STOP/START gate — must win even for email-Apple-ID senders
+// (safety first; an email-origin STOP is honored BEFORE switch-to-phone guidance).
+import {
+  classifyOptOutKeyword,
+  runStopGate,
+} from "../claire-agent/stop-gate.js"
 import { parseInboundTapback } from "./tapback-parser.js"
 // v1.8 Phase 77.2 — TriggerRouter table-driven dispatch for the new
 // pre-screen + compact triggers. Strangler step 2: ADDITIVE — runs before
@@ -734,22 +743,36 @@ export async function handleSendblueWebhook(
     }
   }
 
-  // ---- 3c1. Sender-format gate (2026-05-20 hardening, reworked 2026-06-11)
-  // Sendblue accepts inbound from email-based Apple IDs but its REST API has
-  // NO outbound path to email handles, and downstream identity assumes E.164.
-  // The original gate (GH #142) silently rejected EVERY email sender — by
-  // 2026-06-11 that had vaporized ~10 real candidates' prescreen triggers,
-  // verification codes, and follow-ups. New behavior for email senders:
-  // resolve to a known pa-users doc (uid token in text → existing email
-  // binding → pa-users email match) and REWRITE fromNumber/chatId onto the
-  // candidate's canonical phone so the EXISTING pipeline (triggers,
-  // rate-limit, typing hint, enqueue) runs unchanged and replies flow to the
-  // phone Sendblue CAN reach. Unresolvable senders are still rejected, but
-  // with a distinct audit + an ops review item instead of silence. The gate
-  // stays BEFORE rate-limit, which then keys on the canonical phone.
+  // ---- 3c1. Sender-format gate (2026-05-20 hardening, reworked 2026-06-13)
+  // Sendblue accepts inbound from email-based Apple IDs ("Start New
+  // Conversations From: Apple ID/Email" on the sender's iPhone), but its REST
+  // API has NO outbound path to a person's PHONE that never texted us
+  // (inbound-only plan: RULE-1 / 400 INBOUND_ONLY_PLAN).
+  //
+  // The PRIOR rework (2026-06-11) resolved the email sender to their pa-users
+  // doc and REWROTE fromNumber/chatId onto the profile PHONE so the pipeline
+  // could run — but that phone never texted us, so every reply to it was
+  // blocked → the candidate got SILENCE (live: Sylvia +15419084350, Poojan).
+  //
+  // NEW behavior (Adam + Sendblue support): replying INTO THE EMAIL THREAD that
+  // just texted us IS allowed on the inbound-only plan. So we send ONE
+  // deterministic guidance bubble back to the EMAIL handle asking the candidate
+  // to flip "Start New Conversations From" to their phone number, then text us
+  // again. We do NOT rewrite-to-phone and we do NOT proceed into pitch/prescreen
+  // this turn (they're not reachable on phone yet). Identity is still
+  // resolved/bound so the next phone-origin text is recognized immediately.
+  //
+  // SAFETY FIRST: an email-origin STOP keyword is honored BEFORE any guidance —
+  // the deterministic STOP gate runs with toE164 = the email handle (reply into
+  // the inbound thread). Idempotent: guidance is sent at most once per email
+  // handle per 24h cooldown so a candidate who keeps texting from email is not
+  // spammed every message. The gate stays BEFORE rate-limit.
   const senderFormat = classifyInboundSender(normalized.fromNumber)
   if (senderFormat === "email_apple_id") {
     const emailHandle = normalizeEmailHandle(normalized.fromNumber)
+
+    // Resolve + bind identity (best-effort) so the NEXT phone-origin text is
+    // recognized — even though we will NOT proceed into the pipeline this turn.
     let resolution: EmailSenderResolution | null = null
     try {
       resolution = await resolveEmailSender(deps.db, {
@@ -758,14 +781,10 @@ export async function handleSendblueWebhook(
         log,
       })
     } catch (err) {
-      // resolveEmailSender is fail-soft internally; belt + braces.
       log("[sendblue][webhook] resolveEmailSender threw (treated as unresolved)",
         err instanceof Error ? err.message : String(err))
     }
-    if (resolution && resolution.phoneE164) {
-      // Resolved + reachable phone: bind the email→userId handle (idempotent,
-      // best-effort), audit, then rewrite onto the canonical phone and let the
-      // pipeline continue. Original email handle preserved as rawSenderHandle.
+    if (resolution) {
       await bindEmailSenderHandle(deps.db, {
         userId: resolution.userId,
         emailHandle,
@@ -773,85 +792,112 @@ export async function handleSendblueWebhook(
         method: resolution.method,
         log,
       })
+    }
+
+    // SAFETY: email-origin STOP/START wins over guidance. Run the deterministic
+    // gate with toE164 = the email handle so the confirmation lands in the same
+    // thread that texted us (allowed). Requires inbound evidence first so the
+    // outbox RULE-1 consent gate permits the confirmation reply. We only run the
+    // full gate when we resolved a userId (the gate writes pa-users.doNotContact
+    // and would otherwise create a junk doc keyed on the email handle).
+    if (resolution && classifyOptOutKeyword(normalized.text) !== null) {
+      const stopUserId = resolution.userId
+      await ensureEmailInboundEvidence(deps.db, {
+        emailHandle,
+        messageHandle: normalized.messageHandle,
+        ...(normalized.toNumber ? { toNumber: normalized.toNumber } : {}),
+        ...(normalized.service ? { service: normalized.service } : {}),
+        reason: "email_stop_keyword",
+        log,
+      })
+      const evId = inboundEventDocId(normalized.idempotencyKey)
+      const stopResult = await runStopGate(
+        deps.db,
+        {
+          eventId: evId,
+          userId: stopUserId,
+          sessionId: stopUserId,
+          toE164: emailHandle,
+          text: normalized.text,
+          inboundMessageHandle: normalized.messageHandle,
+        },
+        { log: (event, payload) => log(event, payload) },
+      )
       await safeAudit(
         deps,
         {
-          type: "email_sender_resolved",
+          type: "email_sender_stop_keyword",
           channel: "imessage_sendblue",
           fromNumber: emailHandle,
           correlationId: normalized.messageHandle,
-          payload: {
-            userId: resolution.userId,
-            method: resolution.method,
-            phoneE164: resolution.phoneE164,
-          },
+          payload: { userId: stopUserId, action: stopResult.action },
         },
         log
       )
-      normalized = {
-        ...normalized,
-        fromNumber: resolution.phoneE164,
-        chatId: `iMessage;-;${resolution.phoneE164}`,
-        rawSenderHandle: emailHandle,
-      }
-      log("[sendblue][webhook] email_sender_rewritten", {
-        userId: resolution.userId,
-        method: resolution.method,
-        correlationId: normalized.messageHandle,
-      })
-      // Fall through — downstream sees the canonical phone.
-    } else if (resolution) {
-      // Resolved but NO usable phone: bind + audit + ops review item, 200.
-      // We cannot reply on any channel (Sendblue can't send to the email).
-      await bindEmailSenderHandle(deps.db, {
-        userId: resolution.userId,
-        emailHandle,
-        messageHandle: normalized.messageHandle,
-        method: resolution.method,
-        log,
-      })
-      await safeAudit(
-        deps,
-        {
-          type: "email_sender_resolved_no_phone",
-          channel: "imessage_sendblue",
-          fromNumber: emailHandle,
-          correlationId: normalized.messageHandle,
-          payload: { userId: resolution.userId, method: resolution.method },
-        },
-        log
-      )
-      await createEmailSenderReviewItem(deps.db, {
-        kind: "email_sender_resolved_no_phone",
-        emailHandle,
-        messageHandle: normalized.messageHandle,
-        userId: resolution.userId,
-        log,
-      })
-      reply(res, 200, { ok: true, ignored: "email_sender_resolved_no_phone" })
+      reply(res, 200, { ok: true, action: stopResult.action ?? "email_sender_stop" })
       return
-    } else {
-      // Unresolved: still reject, but VISIBLY — distinct audit + review item.
+    }
+
+    // Guidance: at most once per email handle per 24h (dedup marker). A repeat
+    // text within the cooldown → no second guidance (handled silently, 200).
+    const shouldSend = await shouldSendSwitchToPhoneGuidance(deps.db, { emailHandle, log })
+    if (!shouldSend) {
       await safeAudit(
         deps,
         {
-          type: "email_sender_unresolved",
+          type: "email_sender_switch_guidance_skipped",
           channel: "imessage_sendblue",
           fromNumber: emailHandle,
-          reason: senderFormat,
+          reason: "cooldown",
           correlationId: normalized.messageHandle,
+          ...(resolution ? { payload: { userId: resolution.userId } } : {}),
         },
         log
       )
+      reply(res, 200, { ok: true, ignored: "email_sender_switch_guidance_cooldown" })
+      return
+    }
+
+    const guidance = await sendSwitchToPhoneGuidance(deps.db, {
+      emailHandle,
+      messageHandle: normalized.messageHandle,
+      ...(normalized.toNumber ? { toNumber: normalized.toNumber } : {}),
+      ...(resolution ? { userId: resolution.userId } : {}),
+      ...(normalized.service ? { service: normalized.service } : {}),
+      log,
+    })
+    await safeAudit(
+      deps,
+      {
+        type: guidance.sent
+          ? "email_sender_switch_guidance_sent"
+          : "email_sender_switch_guidance_failed",
+        channel: "imessage_sendblue",
+        fromNumber: emailHandle,
+        correlationId: normalized.messageHandle,
+        ...(guidance.sent ? {} : { reason: guidance.reason }),
+        ...(resolution ? { payload: { userId: resolution.userId, method: resolution.method } } : {}),
+      },
+      log
+    )
+    // If we genuinely could NOT reply on the email thread (evidence/enqueue
+    // failed), file an ops review item so the candidate is not lost in silence.
+    if (!guidance.sent) {
       await createEmailSenderReviewItem(deps.db, {
         kind: "email_sender_unresolved",
         emailHandle,
         messageHandle: normalized.messageHandle,
+        ...(resolution ? { userId: resolution.userId } : {}),
         log,
       })
-      reply(res, 200, { ok: true, ignored: "email_sender_unresolved" })
-      return
     }
+    reply(res, 200, {
+      ok: true,
+      ignored: guidance.sent
+        ? "email_sender_switch_guidance_sent"
+        : "email_sender_switch_guidance_failed",
+    })
+    return
   } else if (senderFormat !== "e164_phone") {
     // Neither E.164 nor email — keep the original defensive reject.
     await safeAudit(

@@ -1,17 +1,17 @@
 /**
  * Identity hardening 2026-05-20 — webhook gates non-E.164 senders.
  *
- * REWORKED 2026-06-11 (email-sender SEV): email-Apple-ID senders are no
- * longer silently rejected — they go through `resolveEmailSender` first.
- * An UNRESOLVABLE email sender is still rejected with a 200, but with the
- * distinct `email_sender_unresolved` audit (plus an ops review item) so a
- * human sees it. The resolved/rewrite paths are covered by
- * `webhook-email-sender-resolution.test.ts`; this file keeps the gate's
- * boundary behavior:
+ * REWORKED 2026-06-13 (switch-to-phone guidance): email-Apple-ID senders are no
+ * longer rejected at all — replying INTO the email thread is allowed on the
+ * inbound-only plan, so we send ONE guidance bubble back to the email handle
+ * asking them to flip "Start New Conversations From" to their phone number. This
+ * applies whether or not we can resolve their identity (identity is not needed
+ * to reply to the thread that just texted us). The guidance dedup/STOP/resolved
+ * cases are covered by `webhook-email-sender-resolution.test.ts`; this file
+ * keeps the gate's boundary behavior:
  *
- *  1. `from_number: "user@icloud.com"` with no resolvable identity →
- *     200 OK ignored (`email_sender_unresolved`), audit recorded,
- *     no pa-inbound-events row created.
+ *  1. `from_number: "user@icloud.com"` (unresolvable) → 200 OK, ONE switch-to-
+ *     phone guidance reply enqueued to the email handle, no pitch/prescreen.
  *  2. `from_number: "+15551234567"` (E.164) → 200 OK accepted, gate not fired.
  *  3. `from_number: "1234"` (garbage / not E.164, not email) → 200 OK ignored,
  *     `non_e164_sender_rejected` audit recorded.
@@ -34,6 +34,8 @@ function makeFakeDb() {
   const rawWebhook: DocData[] = []
   const tapbacks: DocData[] = []
   const conflicts = new Map<string, DocData>()
+  const guidance = new Map<string, DocData>()
+  const outbound = new Map<string, DocData>()
 
   function genericDocRef(store: Map<string, DocData>, id: string) {
     return {
@@ -44,6 +46,14 @@ function makeFakeDb() {
       async set(data: DocData, options?: { merge?: boolean }) {
         if (options?.merge) store.set(id, { ...(store.get(id) ?? {}), ...data })
         else store.set(id, { ...data })
+      },
+      async create(data: DocData) {
+        if (store.has(id)) {
+          const err: Error & { code?: number } = new Error("ALREADY_EXISTS")
+          err.code = 6
+          throw err
+        }
+        store.set(id, { ...data })
       },
     }
   }
@@ -78,12 +88,14 @@ function makeFakeDb() {
     "pa-rate-limit": { doc(id: string) { return genericDocRef(rateLimit, id) } },
     "pa-sendblue-webhook-raw": { add(d: DocData) { rawWebhook.push(d); return Promise.resolve({ id: "r_1" }) } },
     "pa-tapback-events": { add(d: DocData) { tapbacks.push(d); return Promise.resolve({ id: `t_${tapbacks.length}` }) } },
-    "pa-outbound": { doc(id: string) { return genericDocRef(new Map(), id) }, where() { return { limit() { return this }, async get() { return { docs: [], empty: true, size: 0 } } } } },
+    "pa-outbound": { doc(id: string) { return genericDocRef(outbound, id) }, where() { return { limit() { return this }, async get() { return { docs: [], empty: true, size: 0 } } } } },
     "pa-users": { doc(id: string) { return genericDocRef(new Map(), id) }, where() { return { limit() { return this }, async get() { return { docs: [], empty: true, size: 0 } } } } },
     "pa-candidate-handles": { doc(id: string) { return genericDocRef(new Map(), id) } },
     // Email-sender resolution 2026-06-11 — unresolved senders write an ops
     // review item here (idempotent, fail-soft).
     "pa-candidate-identity-conflicts": { doc(id: string) { return genericDocRef(conflicts, id) } },
+    // Switch-to-phone guidance 2026-06-13 — dedup marker store.
+    "pa-email-switch-guidance": { doc(id: string) { return genericDocRef(guidance, id) } },
   }
   const db = {
     collection(name: string) {
@@ -96,7 +108,7 @@ function makeFakeDb() {
     },
   } as unknown as Parameters<typeof handleSendblueWebhook>[2]["db"]
 
-  return { db, inbound, audit, conflicts }
+  return { db, inbound, audit, conflicts, guidance, outbound }
 }
 
 function sign(body: string, secret = SECRET): string {
@@ -132,16 +144,17 @@ describe("Identity hardening — Sendblue webhook rejects non-E.164 sender", () 
   beforeEach(() => { _clearFeatureFlagCache() })
   afterEach(() => { _clearFeatureFlagCache() })
 
-  it("rejects UNRESOLVABLE email-based Apple ID sender with a visible audit + review item", async () => {
-    const { db, inbound, audit, conflicts } = makeFakeDb()
+  it("UNRESOLVABLE email-based Apple ID sender → switch-to-phone guidance into the email thread", async () => {
+    const { db, audit, guidance, outbound } = makeFakeDb()
     const body = JSON.stringify({
       // Token "abc123" is too short for the opener parsers and nothing in the
-      // fake db matches the email — every resolution arm misses.
+      // fake db matches the email — every resolution arm misses. Guidance still
+      // sends (identity is not needed to reply to the thread that texted us).
       content: "Hello, WeKruit! abc123",
       from_number: "alice@icloud.com",
       to_number: "+14243201960",
       message_handle: "msg-email-apple-1",
-      date_sent: "2026-05-20T10:00:00Z",
+      date_sent: "2026-06-13T10:00:00Z",
       status: "RECEIVED",
       service: "iMessage",
     })
@@ -151,15 +164,15 @@ describe("Identity hardening — Sendblue webhook rejects non-E.164 sender", () 
 
     assert.equal(res.statusCode, 200, "200 OK so Sendblue doesn't retry")
     const bodyOut = res.bodyOut as { ok: boolean; ignored?: string }
-    assert.equal(bodyOut.ignored, "email_sender_unresolved", "explicit ignore reason (no longer silent)")
-    assert.equal(inbound.size, 0, "no pa-inbound-events row was created")
-    const rejected = audit.filter((a) => a.type === "email_sender_unresolved")
-    assert.equal(rejected.length, 1, "audit row recorded once")
-    assert.equal(rejected[0]!.fromNumber, "alice@icloud.com", "audit preserves raw sender for forensics")
-    assert.equal(conflicts.size, 1, "ops review item written so a human sees the drop")
-    const item = [...conflicts.values()][0]!
-    assert.equal(item.kind, "email_sender_unresolved")
-    assert.equal(item.status, "open")
+    assert.equal(bodyOut.ignored, "email_sender_switch_guidance_sent", "guidance, not silence")
+    const sends = [...outbound.values()]
+    assert.equal(sends.length, 1, "exactly one guidance reply enqueued")
+    assert.equal(sends[0]!.toE164, "alice@icloud.com", "reply goes to the email handle")
+    assert.equal(sends[0]!.runtimeSource, "pa_identity_notice")
+    assert.equal(guidance.size, 1, "dedup marker stamped")
+    const sent = audit.filter((a) => a.type === "email_sender_switch_guidance_sent")
+    assert.equal(sent.length, 1, "guidance-sent audit recorded")
+    assert.equal(sent[0]!.fromNumber, "alice@icloud.com", "audit preserves raw sender for forensics")
   })
 
   it("accepts E.164 sender (proves the gate isn't over-broad)", async () => {

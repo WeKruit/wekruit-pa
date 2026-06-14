@@ -30,6 +30,7 @@
 import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { enqueueOutbound, inboundEventDocId } from "@pa/pa-broker"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
 import { parseHelloWekruitOpener } from "@pa/pa-orchestrator"
 import { parsePrescreenCandidateId } from "../candidate-inbound-resolve.js"
@@ -253,4 +254,232 @@ export async function createEmailSenderReviewItem(
     log("[sendblue][email-sender] review item write failed (non-fatal)",
       err instanceof Error ? err.message : String(err))
   }
+}
+
+// ─── Switch-to-phone guidance (Adam + Sendblue support, 2026-06-13) ─────────
+//
+// REPLACES the rewrite-onto-phone behavior that GUARANTEED silence. When an
+// iPhone has "Start New Conversations From: Apple ID/Email", inbound arrives
+// with an EMAIL from_number and our outbound to that person's PHONE is blocked
+// by the inbound-only plan (RULE-1 / 400 INBOUND_ONLY_PLAN) — every reply
+// vaporized (live: Sylvia +15419084350, Poojan). The phone never texted us, so
+// it has no consent and no reachable channel.
+//
+// What IS allowed on the inbound-only plan: replying INTO THE EXACT THREAD that
+// just texted us — i.e. back to the EMAIL handle. Sendblue's send-message API
+// takes the recipient in `number`; `sendImessage`/`normalizePeer` preserve an
+// email handle verbatim, so the reply lands in the email iMessage thread. We
+// send ONE deterministic guidance bubble asking the candidate to flip
+// "Start New Conversations From" to their phone number, then text us again. We
+// do NOT proceed into pitch/prescreen this turn (they're not reachable on phone
+// yet). Identity is still resolved/bound so the next phone-origin text is
+// recognized.
+//
+// runtimeSource = "pa_identity_notice": this is the canonical exemption for a
+// reply INTO the inbound thread (the email handle just texted us). The key
+// difference from the prior connect-phone violation is the recipient — the
+// EMAIL handle, never a rewritten phone.
+
+/** Cooldown before the SAME email handle may receive the guidance again. */
+export const SWITCH_TO_PHONE_GUIDANCE_COOLDOWN_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Candidate-facing guidance copy (warm, Claire voice). Deterministic — a
+ * compliance/identity notice, not LLM prose. The Apple support link is included
+ * because the existing identity-notice copy patterns carry actionable links.
+ */
+export const SWITCH_TO_PHONE_GUIDANCE_TEXT =
+  "hey! i got your message 🙏 quick thing — your iMessage is sending from your email, " +
+  "and i can only text you back on your phone number. on your iPhone: Settings → Apps → " +
+  "Messages → Send & Receive → under “Start New Conversations From” tap your phone " +
+  "number. then text me again and i’ll jump right in. (more: https://support.apple.com/en-us/101744)"
+
+/** Marker collection — one doc per email handle records the last guidance send. */
+export const PA_EMAIL_SWITCH_GUIDANCE_COLLECTION = "pa-email-switch-guidance"
+
+function switchGuidanceDocId(emailHandle: string): string {
+  const { handleHash } = hashCandidateHandle("email", emailHandle)
+  return `email_switch_to_phone_${handleHash.slice(0, 40)}`
+}
+
+/**
+ * Idempotency / cooldown check for the switch-to-phone guidance. Returns true
+ * when guidance should be sent (no prior send, or the last send is older than
+ * the cooldown). Fail-OPEN on a read error is wrong here (it would spam on a
+ * transient outage), so we fail-CLOSED: an unreadable marker → skip this turn.
+ */
+export async function shouldSendSwitchToPhoneGuidance(
+  db: Firestore,
+  input: { emailHandle: string; nowMs?: number; log?: Log },
+): Promise<boolean> {
+  const log = input.log ?? (() => undefined)
+  const emailHandle = input.emailHandle.trim().toLowerCase()
+  if (!emailHandle) return false
+  const nowMs = typeof input.nowMs === "number" ? input.nowMs : Date.now()
+  try {
+    const snap = await db
+      .collection(PA_EMAIL_SWITCH_GUIDANCE_COLLECTION)
+      .doc(switchGuidanceDocId(emailHandle))
+      .get()
+    if (!snap.exists) return true
+    const lastSentAtMs = Number((snap.data() as { lastSentAtMs?: unknown })?.lastSentAtMs ?? 0)
+    if (!Number.isFinite(lastSentAtMs) || lastSentAtMs <= 0) return true
+    return nowMs - lastSentAtMs >= SWITCH_TO_PHONE_GUIDANCE_COOLDOWN_MS
+  } catch (err) {
+    log("[sendblue][email-sender] guidance dedup read failed (fail-closed, skip)",
+      err instanceof Error ? err.message : String(err))
+    return false
+  }
+}
+
+/** Stamp the guidance marker so a repeat text within the cooldown stays silent. */
+async function recordSwitchToPhoneGuidanceSent(
+  db: Firestore,
+  input: { emailHandle: string; nowMs: number; log?: Log },
+): Promise<void> {
+  const log = input.log ?? (() => undefined)
+  const emailHandle = input.emailHandle.trim().toLowerCase()
+  try {
+    await db
+      .collection(PA_EMAIL_SWITCH_GUIDANCE_COLLECTION)
+      .doc(switchGuidanceDocId(emailHandle))
+      .set(
+        {
+          handleId: hashCandidateHandle("email", emailHandle).handleId,
+          handleHash: hashCandidateHandle("email", emailHandle).handleHash,
+          lastSentAtMs: input.nowMs,
+          lastSentAt: new Date(input.nowMs).toISOString(),
+          emailMasked: maskEmail(emailHandle),
+        },
+        { merge: true },
+      )
+  } catch (err) {
+    log("[sendblue][email-sender] guidance marker write failed (non-fatal)",
+      err instanceof Error ? err.message : String(err))
+  }
+}
+
+export type SwitchToPhoneGuidanceResult =
+  | { sent: true }
+  | { sent: false; reason: "cooldown" | "evidence_write_failed" | "enqueue_failed" }
+
+/**
+ * Enqueue ONE switch-to-phone guidance reply INTO the inbound email thread.
+ *
+ * The outbox RULE-1 gate refuses to POST to a recipient with no prior inbound
+ * evidence. The email handle DID just text us, so we FIRST write a completed
+ * `pa-inbound-events` evidence row whose actual transport sender (rawSenderHandle
+ * + original.from_number) IS the email handle — the same shape the trigger path
+ * writes — so `hasPriorInboundEvidence(emailHandle)` passes and the reply lands.
+ * Then we enqueue the guidance to `toE164 = emailHandle` and stamp the dedup
+ * marker. Best-effort throughout; never throws.
+ *
+ * `userId` is the resolved candidate when known, else the email handle (so the
+ * outbound row + evidence have a stable owner key for an unrecognized sender).
+ */
+/**
+ * Write a completed `pa-inbound-events` evidence row recording that THIS email
+ * handle texted us, so the outbox RULE-1 consent gate (`hasPriorInboundEvidence`)
+ * permits a reply INTO the email thread. Mirrors the trigger-evidence shape:
+ * the ACTUAL transport sender (rawSenderHandle + original.from_number) IS the
+ * email handle, so the gate's provider-field preference resolves to EMAIL
+ * consent (exactly the handle we reply to) and never to a profile phone.
+ * Idempotent on the inbound message handle. Returns false on a real write
+ * failure (caller must not POST without consent evidence).
+ */
+export async function ensureEmailInboundEvidence(
+  db: Firestore,
+  input: { emailHandle: string; messageHandle: string; toNumber?: string; service?: string; reason?: string; nowMs?: number; log?: Log },
+): Promise<boolean> {
+  const log = input.log ?? (() => undefined)
+  const emailHandle = input.emailHandle.trim().toLowerCase()
+  const nowMs = typeof input.nowMs === "number" ? input.nowMs : Date.now()
+  const evidenceKey = `sendblue-${input.messageHandle}`
+  const evidenceId = inboundEventDocId(evidenceKey)
+  try {
+    const nowIso = new Date(nowMs).toISOString()
+    await db
+      .collection(PA_COLLECTIONS.inboundEvents)
+      .doc(evidenceId)
+      .create({
+        id: evidenceId,
+        channel: "imessage",
+        status: "completed",
+        idempotencyKey: evidenceKey,
+        rawPayload: {
+          kind: "imessage",
+          source: "sendblue",
+          fromNumber: emailHandle,
+          toNumber: input.toNumber,
+          text: `[${input.reason ?? "email_inbound_evidence"}]`,
+          chatId: `iMessage;-;${emailHandle}`,
+          messageHandle: input.messageHandle,
+          service: input.service ?? "iMessage",
+          participant: emailHandle,
+          rawSenderHandle: emailHandle,
+          original: { from_number: emailHandle },
+        },
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        attemptCount: 0,
+        maxAttempts: 0,
+        correlationId: input.messageHandle,
+        completedReason: input.reason ?? "email_inbound_evidence",
+      })
+    return true
+  } catch (err) {
+    // code 6 = ALREADY_EXISTS — a retry; the row is there, proceed.
+    if ((err as { code?: number }).code === 6) return true
+    log("[sendblue][email-sender] inbound evidence write failed",
+      err instanceof Error ? err.message : String(err))
+    return false
+  }
+}
+
+export async function sendSwitchToPhoneGuidance(
+  db: Firestore,
+  input: {
+    emailHandle: string
+    messageHandle: string
+    toNumber?: string
+    userId?: string
+    service?: string
+    nowMs?: number
+    log?: Log
+  },
+): Promise<SwitchToPhoneGuidanceResult> {
+  const log = input.log ?? (() => undefined)
+  const emailHandle = input.emailHandle.trim().toLowerCase()
+  const nowMs = typeof input.nowMs === "number" ? input.nowMs : Date.now()
+  const ownerId = input.userId?.trim() || emailHandle
+
+  // Inbound evidence FIRST — the outbox consent gate reads it before POSTing.
+  const evidenceOk = await ensureEmailInboundEvidence(db, {
+    emailHandle,
+    messageHandle: input.messageHandle,
+    ...(input.toNumber ? { toNumber: input.toNumber } : {}),
+    ...(input.service ? { service: input.service } : {}),
+    reason: "email_switch_to_phone_guidance",
+    nowMs,
+    log,
+  })
+  if (!evidenceOk) return { sent: false, reason: "evidence_write_failed" }
+
+  try {
+    await enqueueOutbound(db, {
+      userId: ownerId,
+      toE164: emailHandle,
+      body: SWITCH_TO_PHONE_GUIDANCE_TEXT,
+      idempotencyKey: `out-sendblue-email-switch-${switchGuidanceDocId(emailHandle)}`,
+      runtimeApproved: true,
+      runtimeSource: "pa_identity_notice",
+    })
+  } catch (err) {
+    log("[sendblue][email-sender] guidance enqueue failed",
+      err instanceof Error ? err.message : String(err))
+    return { sent: false, reason: "enqueue_failed" }
+  }
+
+  await recordSwitchToPhoneGuidanceSent(db, { emailHandle, nowMs, log })
+  return { sent: true }
 }
