@@ -524,8 +524,8 @@ const LANDING_STYLES = `
 .wk-hero { padding: 56px 0 80px; position: relative; }
 .wk-hero__grid {
   display: grid;
-  grid-template-columns: 1.05fr 0.95fr;
-  gap: 64px;
+  grid-template-columns: 1.35fr 0.65fr;
+  gap: 48px;
   align-items: center;
 }
 .wk-hero__h1 {
@@ -534,17 +534,17 @@ const LANDING_STYLES = `
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-width: min(100%, 640px);
-  font-size: clamp(48px, 5.4vw, 66px);
-  line-height: 1.03;
-  letter-spacing: -0.022em;
+  max-width: min(100%, 760px);
+  font-size: clamp(56px, 6.2vw, 84px);
+  line-height: 1.0;
+  letter-spacing: -0.03em;
   color: var(--wk-ink);
-  margin: 16px 0 22px;
+  margin: 16px 0 24px;
   overflow: visible;
 }
 .wk-hero__h1 > span {
   display: block;
-  line-height: 1.03;
+  line-height: 1.0;
   white-space: nowrap;
 }
 .wk-hero__h1 .wk-accent {
@@ -734,11 +734,13 @@ const LANDING_STYLES = `
 /* Job list -------------------------------------------------------------- */
 .wk-joblist {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: stretch;
 }
 .wk-jobcard {
   display: flex; flex-direction: column; gap: 12px;
+  height: 100%;
   padding: 22px;
   background: var(--wk-cream-3);
   border: 1px solid var(--wk-border);
@@ -793,7 +795,7 @@ const LANDING_STYLES = `
 }
 .wk-jobcard__hm-name { color: var(--wk-ink-2); font-size: 13.5px; line-height: 1.3; }
 .wk-jobcard__hm-name strong { color: var(--wk-ink); font-weight: 600; }
-.wk-jobcard__footer { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.wk-jobcard__footer { display: flex; flex-direction: column; gap: 10px; margin-top: auto; padding-top: 6px; }
 .wk-jobcard__seats { color: var(--wk-ink-3); font-size: 12.5px; font-weight: 500; }
 .wk-jobcard__cta { pointer-events: none; }
 .wk-jobcard:hover .wk-jobcard__cta { background: #1C0F04; }
@@ -912,7 +914,7 @@ const LANDING_STYLES = `
 
 /* Mobile ---------------------------------------------------------------- */
 @media (max-width: 1180px) {
-  .wk-hero__h1 { font-size: clamp(46px, 5.2vw, 60px); }
+  .wk-hero__h1 { font-size: clamp(48px, 5.6vw, 68px); }
 }
 @media (max-width: 980px) {
   .wk-hero { padding: 28px 0 40px; }
