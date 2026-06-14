@@ -221,6 +221,56 @@ test("pendingMatch (public-page wkr_uid) → STARTS bound to phone account, role
   assert.equal(fired?.role, "public_page")
 })
 
+// ── Case 7: JOB-ONLY token (no uid, 2026-06-13 corruption-proof mint) → STARTS for phone ──
+test("JOB-ONLY token `WeKruit_<jobId>_Job` (no uid) → STARTS for the phone's account, no notice, no uid to corrupt", async () => {
+  const deps = makeDeps({ phoneUserId: "phoneRealUid", startableJob: true })
+  const trig = new PrescreenTrigger(deps)
+
+  // The new mint: no uid in the token at all. Identity is the inbound phone.
+  assert.equal(trig.match("WeKruit_invoko-pm_Job"), true, "job-only token still matches the trigger")
+  const outcome = await trig.handle(makeCtx("WeKruit_invoko-pm_Job"))
+
+  assert.deepEqual(outcome, { kind: "handled", action: "prescreen_triggered" })
+  assert.equal(deps.notices.length, 0)
+  assert.equal(deps.runCalls.length, 1)
+  assert.equal(deps.runCalls[0].userId, "phoneRealUid", "session bound to the PHONE's real account")
+  assert.equal(
+    deps.runCalls[0].sourceRequestedUserId,
+    undefined,
+    "no token uid → no source attribution (phone is the only identity)",
+  )
+  assert.equal(deps.runCalls[0].allowMatchedBypass, true)
+  assert.ok(deps.audits.find((a) => a.type === "trigger_phone_is_auth_start"))
+})
+
+// ── Case 8: JOB-ONLY token + bogus job → graceful notice to phone, never silent ──
+test("JOB-ONLY token with a BOGUS jobId → graceful notice TO PHONE (never dead silence)", async () => {
+  const deps = makeDeps({ phoneUserId: "phoneRealUid", startableJob: false })
+  const trig = new PrescreenTrigger(deps)
+
+  const outcome = await trig.handle(makeCtx("WeKruit_bogus-corrupted-job_Job"))
+
+  assert.deepEqual(outcome, { kind: "handled", action: "prescreen_access_issue_notified" })
+  assert.equal(deps.runCalls.length, 0)
+  assert.equal(deps.notices.length, 1)
+  const notice = deps.notices[0] as { targetUserId: string; toE164: string; content: string }
+  assert.equal(notice.targetUserId, "phoneRealUid", "notice keyed to the real phone account")
+  assert.equal(notice.toE164, "+14086498808")
+  assert.equal(notice.content, PRESCREEN_ACCESS_ISSUE_NOTICE)
+})
+
+// ── Case 9: JOB-ONLY token where the phone IS the self uid → still starts (self path) ──
+test("JOB-ONLY token, phone resolves to a real user → starts (no uid means it can never be 'self'; phone-is-auth carries it)", async () => {
+  const deps = makeDeps({ phoneUserId: "selfUid", startableJob: true })
+  const trig = new PrescreenTrigger(deps)
+
+  const outcome = await trig.handle(makeCtx("WeKruit_invoko-pm_Job"))
+
+  assert.deepEqual(outcome, { kind: "handled", action: "prescreen_triggered" })
+  assert.equal(deps.runCalls.length, 1)
+  assert.equal(deps.runCalls[0].userId, "selfUid")
+})
+
 // ── Bonus: lookup throws identity_conflict → notice keyed to phone, not token uid ──
 test("lookup identity_conflict → notice keyed to the raw inbound phone (never the token uid)", async () => {
   const deps = makeDeps({

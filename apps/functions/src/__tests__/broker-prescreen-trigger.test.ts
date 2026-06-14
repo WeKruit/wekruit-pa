@@ -32,6 +32,20 @@ describe("decideBrokerPrescreenTrigger", () => {
     )
   })
 
+  it("authorizes a JOB-ONLY token (no uid → phone-is-auth) for the resolved user", () => {
+    assert.deepEqual(
+      decideBrokerPrescreenTrigger(
+        "WeKruit_rain-software-engineer-fullstack-8849f6ef_Job",
+        "U7AwKT8nLDRa35DkuBxq",
+      ),
+      {
+        kind: "authorized",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        userId: "U7AwKT8nLDRa35DkuBxq",
+      },
+    )
+  })
+
   it("ignores normal candidate replies", () => {
     assert.deepEqual(
       decideBrokerPrescreenTrigger(

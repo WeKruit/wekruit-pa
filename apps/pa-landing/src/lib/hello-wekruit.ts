@@ -16,6 +16,20 @@ export function buildHelloWekruitOpenerBody(candidateId: string): string {
   return `${VERIFICATION_CODE_OPENER_PREFIX} ${id}`
 }
 
-export function buildWekruitJobOpenerBody(jobId: string, candidateId: string): string {
-  return `WeKruit_${jobId.trim()}_${candidateId.trim()}_Job`
+/**
+ * Build the prescreen job-opener body the candidate sends to start a screen.
+ *
+ * 2026-06-13 — the uid is GONE from the token (Adam directive: kill the
+ * page→Messages glyph-corruption class at the source). Firebase push-id uids
+ * carry ambiguous glyphs (`l`↔`1`, `I`, stray `-`) that mangle in iMessage
+ * transit; a corrupted uid resolved to no account → DEAD SILENCE (Maximiliano,
+ * Aditya, Sydney). Identity is now PHONE-IS-AUTH (prescreen trigger resolves the
+ * candidate from the inbound phone, not the token uid). The jobId is the only
+ * payload — and it's validated against pa-jobs, so a corrupted jobId just fails
+ * the match (graceful notice), never silently mis-resolves identity.
+ *
+ * `candidateId` is accepted-but-unused for call-site back-compat.
+ */
+export function buildWekruitJobOpenerBody(jobId: string, _candidateId?: string): string {
+  return `WeKruit_${jobId.trim()}_Job`
 }

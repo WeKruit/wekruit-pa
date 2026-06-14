@@ -25,7 +25,18 @@
 
 import type { Trigger, TriggerContext, TriggerOutcome } from "./router.js"
 
-const PRESCREEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
+// Prescreen token, BOTH forms (2026-06-13):
+//   - JOB-ONLY (NEW): `WeKruit_<jobId>_Job` — no uid. Group 2 is undefined and
+//     identity comes from the inbound PHONE (phone-is-auth start below). This is
+//     the corruption-proof form: no fragile Firebase push-id uid in page→Messages
+//     transit (the `l`↔`1`/`I`/stray-`-` glyph class that dead-silenced 3 victims).
+//   - JOB+UID (LEGACY, back-compat for in-flight tokens): `WeKruit_<jobId>_<uid>_Job`.
+// jobId char-class is closed `[A-Za-z0-9-]` (NO underscore — normalizeCompanyName
+// collapses every non-alnum to `-`); the uid segment is optional. Because jobId
+// can never contain `_`, the single optional `_<seg>` before `_Job` is
+// unambiguously the uid. Closed classes also defend against injection of `/` `\n`
+// `?` etc.
+const PRESCREEN_RE = /WeKruit_([A-Za-z0-9-]+)(?:_([A-Za-z0-9_-]+))?_Job/i
 
 export const PRESCREEN_IDENTITY_CONFLICT_NOTICE =
   "This interview link is already tied to a different phone/account. If this is you, continue from that message thread, or reopen the job page and use the phone you want Claire to text."

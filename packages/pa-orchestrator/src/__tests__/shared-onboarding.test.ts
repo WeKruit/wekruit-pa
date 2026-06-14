@@ -47,7 +47,7 @@ test("back-compat openers still parse (in-flight QR links from prior prints)", (
   assert.equal(parseHelloWekruitOpener("Hello, WeKruit!"), null)
 })
 
-test("job interview opener binds the inbound phone to the candidate id", () => {
+test("LEGACY job interview opener (job+uid) still binds the inbound phone to the candidate id", () => {
   assert.deepEqual(
     parseHelloWekruitOpener("WeKruit_photon-macos-devops_abc_user_99_Job"),
     { candidateId: "abc_user_99" },
@@ -56,6 +56,18 @@ test("job interview opener binds the inbound phone to the candidate id", () => {
     parseHelloWekruitOpener("Wekruit_photon-macos-devops_abc-user-99_Job"),
     { candidateId: "abc-user-99" },
   )
+})
+
+test("NEW job-only opener (no uid → phone-is-auth) parses to null candidateId but IS a kickoff", () => {
+  // Job-only token: identity comes from the inbound phone, not the token. The
+  // candidateId parser returns null (no uid to extract) — the phone resolves
+  // the candidate downstream.
+  assert.equal(parseHelloWekruitOpener("WeKruit_photon-macos-devops_Job"), null)
+  assert.equal(parseHelloWekruitOpener("WeKruit_hs-10996795-invoko-product-manager_Job"), null)
+  // It must still classify as a kickoff/greeting (never a stray slot answer).
+  assert.equal(isSharedOnboardingGreetingOrKickoff("WeKruit_photon-macos-devops_Job"), true)
+  // And the legacy job+uid form is a kickoff too.
+  assert.equal(isSharedOnboardingGreetingOrKickoff("WeKruit_photon-macos-devops_abc_user_99_Job"), true)
 })
 
 test("LinkedIn-done re-entry marker round-trips the connect TOKEN (not a candidateId)", () => {
