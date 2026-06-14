@@ -94,6 +94,10 @@ export async function callOpenAIResponses(
 
   const resp = await client.responses.create({
     model: args.model,
+    // Route same-prompt-type calls to the same cache node so OpenAI's automatic
+    // prompt caching reuses the stable system-prompt (+ rubric) prefix across the
+    // many candidates evaluated against one prompt — cuts input cost + latency.
+    prompt_cache_key: args.schemaName,
     input: [
       { role: "system", content: args.systemPrompt },
       { role: "user", content: args.userText },
@@ -106,7 +110,7 @@ export async function callOpenAIResponses(
         strict: args.strict ?? true,
       },
     },
-  })
+  } as Parameters<typeof client.responses.create>[0])
 
   // Defensive output-text extraction — Responses API exposes the structured
   // payload either at `output_text` (newer SDKs) or in `output[0].content[0].text`.

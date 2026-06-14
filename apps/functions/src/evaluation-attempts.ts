@@ -635,7 +635,8 @@ export const PRESCREEN_REVIEW_DRAFT_SCHEMA = {
   properties: {
     candidateMessageBody: {
       type: "string",
-      description: "Candidate-facing iMessage body, 1-3 short sentences, no internal score/status jargon.",
+      description:
+        "Candidate-facing iMessage body (2-5 sentences). Warm, CONCRETE, grounded in the candidate's actual transcript answers; frames the decision as WeKruit having taken their screen to the hiring manager and discussed it, then names the specific gap(s). No internal score/status jargon. No cold form-letter platitudes.",
     },
     decisionReason: {
       type: "string",
@@ -662,34 +663,29 @@ export const PRESCREEN_REVIEW_DRAFT_SCHEMA = {
 
 /** Tone-specific candidate-message instruction. Honest + warm + genuine, never fake (Adam 2026-06-14). */
 function rejectionToneInstruction(tone: RejectionTone): string {
-  switch (tone) {
-    case "neutral_pass":
-      return "The WeKruit team is moving this screen forward. Draft a warm next-step message in Claire's lowercase, friendly iMessage voice. Do NOT promise employment."
-    case "strong_wrong_role":
-      return [
-        "Outcome: the hiring manager is not moving forward on THIS specific role, but the candidate is genuinely strong — just wrong-fit for this one.",
-        "Draft candidateMessageBody in Claire's warm, lowercase, genuine iMessage voice. It MUST:",
-        "- acknowledge ONE real, evidence-backed strength of theirs (no generic flattery, no invented praise),",
-        "- be honest that the hiring manager passed on this specific role,",
-        "- redirect to the kind/level of role they'd line up better with,",
-        "- make retention explicit: they stay in the WeKruit pool, you'll keep matching them, and if a team's interested you'll text to set up an interview,",
-        "- end with a soft opt-out note (they can reply STOP to pause matches).",
-        "Never a cold form letter. Never mention scores, thresholds, PASS/FAIL, or internal systems.",
-      ].join("\n")
-    case "honest_underqualified":
-    default:
-      return [
-        "Outcome: the candidate is genuinely under-qualified / not a fit for this role's hard requirements.",
-        "Be HONEST and GENUINE — do NOT fake praise or pretend their background is strong when it isn't. But be WARM and kind, never demeaning.",
-        "Draft candidateMessageBody in Claire's warm, lowercase iMessage voice. It MUST:",
-        "- appreciate the time they put into the screen,",
-        "- name the REAL fit gap plainly and kindly (the concrete must-have they're earlier on) — frame it as 'not the right match', not as a personal failing,",
-        "- redirect constructively to the kind/level of role they WOULD be a stronger fit for,",
-        "- keep them in the pool: you'll point better-fit roles their way, and if a team's interested you'll set up an interview,",
-        "- end with a soft opt-out note (reply STOP anytime).",
-        "Tell them where they CAN fit, not that they fell short. Never mention scores, thresholds, PASS/FAIL, or internal systems.",
-      ].join("\n")
+  if (tone === "neutral_pass") {
+    return "The WeKruit team is moving this screen forward. Draft a warm next-step message in Claire's lowercase, friendly iMessage voice. Do NOT promise employment."
   }
+  // Adam 2026-06-14: ADVOCATE framing + concrete, grounded in the candidate's own words.
+  const shared = [
+    "FRAME (required): WeKruit took the candidate's screen TO the hiring manager and talked through their fit — Claire ADVOCATED for them. Open in that posture, e.g. \"i shared your screen with the hiring manager and we talked through your fit\" / \"i went to bat for you with the hiring manager\". Do NOT write a cold \"after reviewing your responses we won't move forward\".",
+    "GROUND IT IN WHAT THEY ACTUALLY SAID: reference 1-2 specifics from their transcript answers — lightly quote or closely paraphrase a concrete thing they mentioned (a project, a number, a decision) so it reads personal, not generic.",
+    "BE SPECIFIC ABOUT THE GAP(S) the hiring manager flagged: name the concrete hard requirement(s) that weren't evidenced (e.g. \"experimentation/metrics on a shipped consumer product\", \"a hands-on user-research loop\") — never a vague \"not the right fit\".",
+    "Then redirect to the kind/level of role they'd fit better, keep retention explicit (they stay in the WeKruit pool, you'll keep matching them, and if a team's interested you'll set up an interview), and end with a soft opt-out (reply STOP).",
+    "BANNED phrasings — do NOT use any of: \"we won't move forward with this role\", \"glad we got a chance to learn more about your experience\", or any cold form-letter platitude. Warm, specific, honest, Claire's lowercase voice. NEVER mention scores, thresholds, PASS/FAIL, or internal systems.",
+  ]
+  if (tone === "strong_wrong_role") {
+    return [
+      "Outcome: a genuinely STRONG candidate, just wrong-fit for THIS role.",
+      "Acknowledge ONE real, evidence-backed strength of theirs (grounded in their actual answer — no invented praise).",
+      ...shared,
+    ].join("\n")
+  }
+  return [
+    "Outcome: the candidate is genuinely under-qualified for this role's hard requirements.",
+    "Be HONEST about the gap (no fake praise), but WARM and kind — appreciate the time they put in. Tell them where they CAN fit, not that they fell short.",
+    ...shared,
+  ].join("\n")
 }
 
 async function composePrescreenReviewCandidateMessage(
@@ -753,8 +749,9 @@ async function composePrescreenReviewCandidateMessage(
       "NEVER mention PASS, FAIL, HARD_STOP, scores, thresholds, internal review systems, or evaluation ids, and NEVER fake praise. " +
       "This message is human-reviewed then SENT LATER — NEVER say 'today', 'this morning', or imply the screen just happened; reference the prescreen date if given, else keep it time-neutral. " +
       "Address the candidate by their FIRST NAME when given, else a warm no-name greeting — NEVER use an id, handle, email, or the literal word 'user'. " +
+      "Frame the decision as WeKruit having taken the candidate's screen to the HIRING MANAGER and discussed it (advocate posture), then name the SPECIFIC gap(s) the hiring manager flagged, grounded in the candidate's OWN transcript answers — never a cold 'we won't move forward, glad to learn more' platitude. " +
       "internalReviewNotes is operator-only and may be specific. Do not invent evidence. Do not include PII beyond what is given. " +
-      "Keep the candidate message concise and editable by the operator.",
+      "Keep the candidate message warm, specific, and editable by the operator.",
     userText,
     schemaName: "PrescreenReviewCandidateMessageDraft",
     schema: PRESCREEN_REVIEW_DRAFT_SCHEMA as unknown as Record<string, unknown>,
