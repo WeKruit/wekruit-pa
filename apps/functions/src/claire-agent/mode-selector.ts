@@ -12,8 +12,13 @@
  * one source of truth (v2.0 rule #8). All reads FAIL-SAFE (any error → triage, never throws).
  *
  * Decision (priority order):
- *   1. ACTIVE PRESCREEN (a non-terminal `pa-prescreen-sessions` doc) → defer to the legacy runner
- *      for now (deferToLegacy). Prescreen-on-the-thin-tool-route is the next slice.
+ *   1. ACTIVE PRESCREEN (a non-terminal `pa-prescreen-sessions` doc) → the deterministic prescreen
+ *      runner (PreScreenPipeline) owns the turn (deferToLegacy=true). This is INTENTIONAL + STABLE,
+ *      NOT a pending migration (Adam-locked 2026-06-14): the scored interview belongs on the
+ *      deterministic FSM (auditable per-answer scoring + hard gates — no LLM free-styling a PASS),
+ *      while the thin agent owns the CONVERSATIONAL modes (triage / onboarding). Two layers by
+ *      design: deterministic interview + scoring, then the post-screen autoDraft for human review.
+ *      Do NOT "consolidate" prescreen onto the thin tool-route — keep the separation as-is.
  *   2. ONBOARDING INCOMPLETE → mode "onboarding"; seed the process store from `sharedOnboarding`
  *      so the FSM tools enforce order, and tell the agent which slot the inbound answers
  *      (`onboardingSlot`/`awaitingAnswer`) + the current question text (`pendingStep`). Cold start
