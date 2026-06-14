@@ -702,7 +702,21 @@ async function composePrescreenReviewCandidateMessage(
     context.jobTitle || context.company
       ? `Role: ${[context.jobTitle, context.company].filter(Boolean).join(" @ ")}`
       : null
+  // userText is ordered STABLE-INSTRUCTIONS-FIRST, then per-candidate data.
+  // OpenAI prompt caching reuses the longest identical token prefix (≥1024-token
+  // eligibility, 128-token increments). Front-loading the tone rubric + judging +
+  // internalReviewNotes instructions (identical across every candidate of a given
+  // tone) makes that prefix long and cacheable; the variable candidate block trails
+  // so it never poisons the cached prefix. prompt_cache_key (provider) routes these
+  // same-workload calls to the same cache node.
   const userText = [
+    // ---- STABLE INSTRUCTION PREFIX (identical per tone → cacheable) ----
+    rejectionToneInstruction(tone),
+    "",
+    "Judge the candidate against the recruiter checklist tiers (hard/fit/anti/bonus) shown in the CANDIDATE-SPECIFIC section below, using the transcript + profile evidence — do NOT trust any pre-filled ticks.",
+    "ALSO produce internalReviewNotes: an OPERATOR-ONLY detailed cross-check against that recruiter checklist — per tier (HARD/FIT/ANTI/BONUS) and required skills, what the candidate showed vs needed with evidence, the single deciding gap, and the better-fit role type. This is never shown to the candidate, so it can be specific and direct.",
+    "",
+    "=== CANDIDATE-SPECIFIC DETAILS ===",
     `Session: ${context.sessionId}`,
     `Candidate internal id (an internal handle — NEVER write this in the candidate message): ${context.candidateId}`,
     context.candidateFirstName
@@ -722,7 +736,7 @@ async function composePrescreenReviewCandidateMessage(
       ? `Required skills: ${context.requiredSkills.join(", ")}`
       : null,
     "",
-    "Recruiter checklist (the SAME hard/fit/anti/bonus tiers recruiters screen against — judge the candidate against these from the transcript/profile, do NOT trust any ticks):",
+    "Recruiter checklist (the SAME hard/fit/anti/bonus tiers recruiters screen against):",
     context.checklistText || "(no recruiter checklist configured for this job)",
     "",
     context.candidateSignal ? `Candidate profile signal: ${context.candidateSignal}` : null,
@@ -733,10 +747,6 @@ async function composePrescreenReviewCandidateMessage(
     context.candidateChecklistSummary
       ? `Independent profile checklist evaluation (Coresignal-enriched LinkedIn/résumé vs THIS job's rubric — use it to ground internalReviewNotes alongside the transcript): ${context.candidateChecklistSummary}`
       : null,
-    "",
-    rejectionToneInstruction(tone),
-    "",
-    "ALSO produce internalReviewNotes: an OPERATOR-ONLY detailed cross-check against the recruiter checklist above — per tier (HARD/FIT/ANTI/BONUS) and required skills, what the candidate showed vs needed with evidence, the single deciding gap, and the better-fit role type. This is never shown to the candidate, so it can be specific and direct.",
   ].filter((line): line is string => line !== null).join("\n")
 
   const result = await callWithFallback({
