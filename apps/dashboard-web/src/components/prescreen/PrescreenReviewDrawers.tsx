@@ -77,9 +77,27 @@ export type PrescreenSessionRow = {
       draftedBy?: string
       draftedAt?: string
     }
+    /** Profile checklist eval (paPrescreenCandidateEval): LinkedIn/Coresignal + résumé vs the job rubric. Advisory. */
+    candidateChecklistEval?: PrescreenCandidateChecklistEval
   }
   createdAt: string
   updatedAt: string
+}
+
+type EvalTally = { met?: number; total?: number; gaps?: string[] }
+type EvalAntiTally = { flagged?: number; total?: number; flags?: string[] }
+type EvalPillar = { verdict?: "strong" | "weak" | "unknown"; evidence?: string }
+export type PrescreenCandidateChecklistEval = {
+  verdict?: "advance" | "borderline" | "reject"
+  confidence?: number
+  summary?: string
+  reasons?: string[]
+  checklist?: { hard?: EvalTally; fit?: EvalTally; bonus?: EvalTally; anti?: EvalAntiTally }
+  background?: { school?: EvalPillar; gpa?: EvalPillar; degree?: EvalPillar; company?: EvalPillar }
+  research?: { headline?: string; companies?: Array<{ name?: string; role?: string }>; education?: Array<{ school?: string }> }
+  enriched?: boolean
+  evaluatedAt?: string
+  model?: string
 }
 
 export type Row = PrescreenSessionRow
@@ -427,6 +445,7 @@ export function PrescreenReviewDrawer({
       {detail ? (
         <div style={{ display: "grid", gap: 14 }}>
           <ReviewSummary detail={detail} />
+          <ChecklistEvalPanel evaluation={detail.session.review?.candidateChecklistEval} />
           <TranscriptPreview turns={detail.turns} />
           {detail.session.terminalActionPendingReview ? (
             <div style={{ display: "grid", gap: 8 }}>
@@ -807,6 +826,57 @@ export function DrawerKV({ label, value }: { label: string; value: ReactNode }) 
     <div style={{ display: "grid", gridTemplateColumns: "90px minmax(0, 1fr)", gap: 8, fontSize: "0.85em" }}>
       <span style={{ color: "#64748b" }}>{label}</span>
       <code style={{ overflowWrap: "anywhere" }}>{value}</code>
+    </div>
+  )
+}
+
+function pillarTone(v?: string): "ok" | "warn" | "muted" {
+  return v === "strong" ? "ok" : v === "weak" ? "warn" : "muted"
+}
+
+/** Read-only structured view of the profile checklist eval (Coresignal + résumé vs the job rubric). */
+function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChecklistEval }) {
+  if (!evaluation) return null
+  const c = evaluation.checklist ?? {}
+  const tally = (t?: EvalTally) => `${t?.met ?? 0}/${t?.total ?? 0}`
+  const verdictTone = evaluation.verdict === "advance" ? "ok" : evaluation.verdict === "reject" ? "warn" : "info"
+  return (
+    <div style={{ border: "1px solid #c7d2fe", borderLeft: "4px solid #6366f1", borderRadius: 8, background: "#eef2ff", padding: "0.85rem 0.95rem", display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: "0.95em", color: "#3730a3" }}>Profile checklist evaluation</strong>
+        <Badge tone={verdictTone}>{evaluation.verdict ?? "—"}</Badge>
+        <span style={{ fontSize: "0.8em", color: "#4338ca" }}>
+          conf {typeof evaluation.confidence === "number" ? evaluation.confidence.toFixed(2) : "—"} ·{" "}
+          {evaluation.enriched ? "LinkedIn/Coresignal + résumé" : "transcript-only"} · advisory
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: "0.86em", color: "#1e293b" }}>
+        <span><strong>Hard</strong> {tally(c.hard)}</span>
+        <span><strong>Fit</strong> {tally(c.fit)}</span>
+        <span><strong>Bonus</strong> {tally(c.bonus)}</span>
+        <span><strong>Anti</strong> {c.anti?.flagged ?? 0} flag(s)</span>
+      </div>
+      {(c.hard?.gaps?.length ?? 0) > 0 ? (
+        <div style={{ fontSize: "0.82em", color: "#334155" }}>
+          <strong style={{ color: "#b91c1c" }}>Hard gaps:</strong> {c.hard!.gaps!.slice(0, 6).join(" · ")}
+        </div>
+      ) : null}
+      {(c.anti?.flags?.length ?? 0) > 0 ? (
+        <div style={{ fontSize: "0.82em", color: "#334155" }}>
+          <strong style={{ color: "#b91c1c" }}>Anti flags:</strong> {c.anti!.flags!.slice(0, 6).join(" · ")}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: "0.8em" }}>
+        {(["school", "degree", "company", "gpa"] as const).map((k) => (
+          <Badge key={k} tone={pillarTone(evaluation.background?.[k]?.verdict)}>{k}: {evaluation.background?.[k]?.verdict ?? "—"}</Badge>
+        ))}
+      </div>
+      {evaluation.research?.companies?.length ? (
+        <div style={{ fontSize: "0.8em", color: "#475569" }}>
+          profile: {evaluation.research.companies.slice(0, 4).map((x) => `${x.role ?? "?"}@${x.name ?? "?"}`).join(" · ")}
+        </div>
+      ) : null}
+      {evaluation.summary ? <div style={{ fontSize: "0.84em", color: "#334155" }}>{evaluation.summary}</div> : null}
     </div>
   )
 }
