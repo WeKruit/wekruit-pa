@@ -185,7 +185,9 @@ export function makeAnthropicClaimAlert(
 
 export const paAnthropicKeyHealth = onSchedule(
   {
-    schedule: "every 30 minutes",
+    // Every 2h (12/day): Anthropic is a FALLBACK tier — if its key dies, the
+    // OpenAI primary still serves, so 2h detection is plenty (vs OpenAI's 30min).
+    schedule: "0 */2 * * *",
     timeZone: "UTC",
     memory: "256MiB",
     timeoutSeconds: 60,
