@@ -683,4 +683,58 @@ describe("sweepUnansweredInboundForOperatorReview", () => {
     assert.equal(queued, 0, "STOP is terminal → not an unanswered case")
     assert.equal(alerts.length, 0)
   })
+
+  // ── 2026-06-14 (Adam): default-ON + lower window + escalation ──────────────
+
+  it("DEFAULT ON — alert fires with no explicit opt-in (warn level under 12h)", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_d: { userId: "u-d", createdAt: iso(8 * HOUR), body: "can you help me?", from: "+15550001070" },
+      },
+    })
+    const alerts: Array<Record<string, unknown>> = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      // no unansweredAlertEnabled → defaults ON now
+      postSlackAlert: (async (i: Record<string, unknown>) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(queued, 1)
+    assert.equal(alerts.length, 1, "alert fires by default")
+    assert.equal(alerts[0].level, "warn")
+  })
+
+  it("ESCALATES to error-level when the oldest unanswered crosses 12h", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_e: { userId: "u-e", createdAt: iso(14 * HOUR), body: "still waiting…", from: "+15550001071" },
+      },
+    })
+    const alerts: Array<Record<string, unknown>> = []
+    await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      postSlackAlert: (async (i: Record<string, unknown>) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(alerts.length, 1)
+    assert.equal(alerts[0].level, "error", "14h old → escalated")
+  })
+
+  it("configurable window: a 90-min-old inbound IS flagged when unansweredAfterMs=60min", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_w: { userId: "u-w", createdAt: iso(90 * 60 * 1000), body: "hello?", from: "+15550001072" },
+      },
+    })
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAfterMs: 60 * 60 * 1000,
+      unansweredAlertEnabled: false,
+    })
+    assert.equal(queued, 1, "90min > 60min threshold → flagged (6h window would have missed it)")
+  })
 })

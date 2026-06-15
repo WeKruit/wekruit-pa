@@ -70,11 +70,17 @@ export type ConversationRecoveryDeps = {
   /** Slack alert seam (tests inject a recorder); production = the shared helper. */
   postSlackAlert?: typeof defaultPostSlackAlert
   /**
-   * Opt-in gate for the unanswered-inbound ALERT (NOT the ops-queue row — that
-   * always writes). Lets the alert run dev-only first. Defaults to the env flag
-   * `PA_UNANSWERED_ALERT_ENABLED` (truthy = on); explicit value wins for tests.
+   * Gate for the unanswered-inbound ALERT (NOT the ops-queue row — that always
+   * writes). 2026-06-14 (Adam): DEFAULT ON. Set env `PA_UNANSWERED_ALERT_ENABLED`
+   * to a falsy value (0/false/no/off) to disable; explicit dep value wins (tests).
    */
   unansweredAlertEnabled?: boolean
+  /**
+   * Age (ms) past which an unanswered inbound is flagged. 2026-06-14 (Adam:
+   * "6h is too long"): default 60min, overridable via env `PA_UNANSWERED_AFTER_MIN`;
+   * explicit dep value wins (tests).
+   */
+  unansweredAfterMs?: number
 }
 
 type ParsedWebhook = {
@@ -196,9 +202,20 @@ export async function paConversationRecoverySweepHandler(
 // stale inbound is queued exactly once no matter how many sweeps run.
 // ---------------------------------------------------------------------------
 
-// TUNING (2026-06-12): age threshold a candidate is "unanswered" past. Confirmed
-// at the existing 6h. One constant so it's a one-line change if Adam re-tunes.
-const UNANSWERED_AFTER_MS = 6 * 60 * 60 * 1000
+// TUNING (2026-06-14, Adam "6h is too long"): default age threshold lowered to
+// 60min. Overridable per-run (deps.unansweredAfterMs) or via env
+// PA_UNANSWERED_AFTER_MIN (minutes) with no redeploy.
+const DEFAULT_UNANSWERED_AFTER_MIN = 60
+/** Escalate the batched alert to error-level when the oldest unanswered crosses this. */
+const UNANSWERED_ESCALATE_HOURS = 12
+function resolveUnansweredAfterMs(deps: ConversationRecoveryDeps): number {
+  if (typeof deps.unansweredAfterMs === "number" && deps.unansweredAfterMs > 0) {
+    return deps.unansweredAfterMs
+  }
+  const envMin = Number.parseFloat((process.env.PA_UNANSWERED_AFTER_MIN ?? "").trim())
+  const minutes = Number.isFinite(envMin) && envMin > 0 ? envMin : DEFAULT_UNANSWERED_AFTER_MIN
+  return minutes * 60 * 1000
+}
 const UNANSWERED_SCAN_LIMIT = 300
 const UNANSWERED_WRITE_CAP = 25
 // Sample size for the batched alert (mask + list this many users; count is exact).
@@ -225,6 +242,7 @@ export async function sweepUnansweredInboundForOperatorReview(
   const log = deps.log ?? console.log
   const now = deps.now ?? (() => new Date())
   const nowMs = now().getTime()
+  const afterMs = resolveUnansweredAfterMs(deps)
 
   let docs: Array<{ id: string; data: () => Record<string, unknown> | undefined }>
   try {
@@ -256,7 +274,7 @@ export async function sweepUnansweredInboundForOperatorReview(
   for (const [userId, latest] of latestByUser) {
     if (queued >= UNANSWERED_WRITE_CAP) break
     const inboundMs = Date.parse(latest.createdAt)
-    if (!Number.isFinite(inboundMs) || nowMs - inboundMs <= UNANSWERED_AFTER_MS) continue
+    if (!Number.isFinite(inboundMs) || nowMs - inboundMs <= afterMs) continue
 
     const caseId = unansweredCaseId(userId, latest.eventId)
     // eslint-disable-next-line no-await-in-loop
@@ -351,7 +369,7 @@ export async function sweepUnansweredInboundForOperatorReview(
         className: "unanswered_inbound_needs_operator_review",
         action: "none",
         status: "needs_operator_review",
-        reason: "no_assistant_outbound_after_inbound_6h",
+        reason: "no_assistant_outbound_after_inbound",
         userId,
         inboundEventId: latest.eventId,
         latestInboundAt: latest.createdAt,
@@ -386,11 +404,16 @@ export async function sweepUnansweredInboundForOperatorReview(
   return queued
 }
 
-/** True when the unanswered-inbound alert is opted in (explicit dep wins, else env flag). */
+/**
+ * True when the unanswered-inbound alert should fire. 2026-06-14 (Adam):
+ * DEFAULT ON — only an explicit falsy env (0/false/no/off) disables it.
+ * Explicit dep value always wins (tests).
+ */
 function unansweredAlertEnabled(deps: ConversationRecoveryDeps): boolean {
   if (typeof deps.unansweredAlertEnabled === "boolean") return deps.unansweredAlertEnabled
   const raw = (process.env.PA_UNANSWERED_ALERT_ENABLED ?? "").trim().toLowerCase()
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on"
+  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false
+  return true
 }
 
 /**
@@ -414,6 +437,10 @@ async function fireUnansweredAlert(
   const alert = deps.postSlackAlert ?? defaultPostSlackAlert
   const count = newlyQueued.length
   const oldest = newlyQueued.reduce((m, c) => Math.max(m, c.ageHours), 0)
+  const thresholdHours = Math.round((resolveUnansweredAfterMs(deps) / 3_600_000) * 10) / 10
+  // Escalate to error-level once the oldest unanswered text crosses the
+  // escalation window — a candidate ghosted that long is a churn risk.
+  const level: "warn" | "error" = oldest >= UNANSWERED_ESCALATE_HOURS ? "error" : "warn"
   const sample = newlyQueued
     .slice()
     .sort((a, b) => b.ageHours - a.ageHours)
@@ -423,11 +450,11 @@ async function fireUnansweredAlert(
 
   try {
     await alert({
-      level: "warn",
-      title: `${count} candidate text${count === 1 ? "" : "s"} unanswered >6h`,
+      level,
+      title: `${count} candidate text${count === 1 ? "" : "s"} unanswered >${thresholdHours}h`,
       message:
         `${count} candidate${count === 1 ? "" : "s"} sent a message that genuinely awaits a reply ` +
-        `and got none for over 6h. Pure acks ('thanks'/'👍'), STOP, and tapbacked messages are excluded.`,
+        `and got none for over ${thresholdHours}h. Pure acks ('thanks'/'👍'), STOP, and tapbacked messages are excluded.`,
       fields: [
         { name: "Unanswered users", value: String(count) },
         { name: "Oldest", value: `${oldest}h` },

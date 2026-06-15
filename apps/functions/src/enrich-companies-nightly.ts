@@ -35,7 +35,8 @@ import {
 } from "@wekruit/shared-tags"
 
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
-import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
+import { ANTHROPIC_API_KEY, MAILGUN_SECRETS, PA_SLACK_ALERT_WEBHOOK } from "./orchestrator-deps.js"
+import { withScheduledAlert } from "./lib/with-scheduled-alert.js"
 
 // ---------------------------------------------------------------------------
 // Secrets (Firebase v2 params) — declared once so the wrapper can list them.
@@ -880,10 +881,11 @@ export const paEnrichCompaniesNightly = onSchedule(
     // CLEARBIT_KEY intentionally omitted — secret isn't set in this project
     // (Clearbit free tier optional). Runtime falls back to env var lookup;
     // when neither resolves the cascade skips the Clearbit tier entirely.
-    secrets: [ANTHROPIC_API_KEY],
+    secrets: [ANTHROPIC_API_KEY, PA_SLACK_ALERT_WEBHOOK, ...MAILGUN_SECRETS],
     retryCount: 0,
   },
-  async () => {
+  // 2026-06-14 — alert (email + Slack) if this weekly batch throws (was silent).
+  withScheduledAlert("paEnrichCompaniesNightly", async () => {
     const clearbitKey = process.env.CLEARBIT_KEY?.trim() || null
     const anthropicKey = readSecret(ANTHROPIC_API_KEY) ?? (process.env.ANTHROPIC_API_KEY?.trim() || null)
     const deps = makeFirestoreDeps({
@@ -894,7 +896,7 @@ export const paEnrichCompaniesNightly = onSchedule(
     })
     const counters = await runEnrichmentBatch("all_stale", [], DEFAULT_LIMIT, deps)
     logger.info("[enrich-companies] nightly done", counters)
-  }
+  })
 )
 
 export const paEnrichCompaniesAdHoc = onCall(

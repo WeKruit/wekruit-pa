@@ -37,11 +37,25 @@ import { onSchedule } from "firebase-functions/v2/scheduler"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { postSlackAlert as defaultPostSlackAlert } from "./lib/slack-alert.js"
+import { notifyOps } from "./lib/ops-alert.js"
+import { MAILGUN_SECRETS, PA_SLACK_ALERT_WEBHOOK } from "./orchestrator-deps.js"
 
 const POOL = "pa-sendblue-numbers"
 const USERS = "pa-users"
 const OUTBOUND = "pa-outbound"
 const INBOUND_EVENTS = "pa-inbound-events"
+/** pa-config doc holding the live Sendblue number pool (capacity caps). */
+const POOL_CONFIG_DOC = "pa-config/sendblue-pool"
+
+// ── Phone-number capacity (Adam 2026-06-14): alert as a % of each public
+// number's configured `newUserCap` so the alert auto-tracks when the cap moves
+// (live cap = 550 on 2026-06-14). Thresholds env-overridable. ───────────────
+export const CAPACITY_INFO_PCT = 0.7
+export const CAPACITY_WARN_PCT = 0.85
+export const CAPACITY_CRITICAL_PCT = 1.0
+/** Dead-letter queue depth (24h) over which we alert. */
+export const DEAD_LETTER_DEPTH_THRESHOLD = 100
+const DEAD_LETTER_STATUSES = ["dead_letter", "dead_letter_rate_limited"] as const
 
 export const WINDOW_MS = 24 * 60 * 60 * 1000
 /** failures > 10% of sends → breach. */
@@ -163,6 +177,109 @@ export function evaluateInboundLiveness(
 }
 
 // ---------------------------------------------------------------------------
+// (5) Phone-number capacity — % of each public number's configured newUserCap.
+// ---------------------------------------------------------------------------
+
+export type CapacityBand = "ok" | "info" | "warn" | "critical"
+
+export type NumberCapacity = {
+  number: string
+  /** Active reachable users assigned to this number (phone present, not deleted). */
+  reachable: number
+  /** Configured `newUserCap` from pa-config/sendblue-pool. */
+  cap: number
+  /** reachable / cap (0 when cap <= 0). */
+  pct: number
+  band: CapacityBand
+}
+
+export type CapacityThresholds = {
+  info: number
+  warn: number
+  critical: number
+}
+
+export function capacityBand(pct: number, t: CapacityThresholds): CapacityBand {
+  if (pct >= t.critical) return "critical"
+  if (pct >= t.warn) return "warn"
+  if (pct >= t.info) return "info"
+  return "ok"
+}
+
+/**
+ * Per-public-number capacity verdict. Admin-only numbers and numbers without a
+ * configured `newUserCap` are skipped (no capacity rule to enforce). Sorted by
+ * pct desc so the worst offender leads the alert.
+ */
+export function evaluateCapacity(
+  numbers: ReadonlyArray<{ number?: unknown; newUserCap?: unknown; adminOnly?: unknown; status?: unknown }>,
+  reachableByNumber: ReadonlyMap<string, number>,
+  thresholds: CapacityThresholds = {
+    info: CAPACITY_INFO_PCT,
+    warn: CAPACITY_WARN_PCT,
+    critical: CAPACITY_CRITICAL_PCT,
+  },
+): NumberCapacity[] {
+  const out: NumberCapacity[] = []
+  for (const n of numbers) {
+    const number = str(n.number)
+    if (!number) continue
+    if (n.adminOnly === true) continue
+    const cap = typeof n.newUserCap === "number" && n.newUserCap > 0 ? n.newUserCap : 0
+    if (cap <= 0) continue // no capacity rule configured for this number
+    const reachable = reachableByNumber.get(number) ?? 0
+    const pct = reachable / cap
+    out.push({ number, reachable, cap, pct, band: capacityBand(pct, thresholds) })
+  }
+  return out.sort((a, b) => b.pct - a.pct)
+}
+
+/** Highest band across all numbers (drives the single alert's severity). */
+export function worstCapacityBand(caps: ReadonlyArray<NumberCapacity>): CapacityBand {
+  let worst: CapacityBand = "ok"
+  const rank: Record<CapacityBand, number> = { ok: 0, info: 1, warn: 2, critical: 3 }
+  for (const c of caps) if (rank[c.band] > rank[worst]) worst = c.band
+  return worst
+}
+
+export type DeadLetterVerdict = {
+  count: number
+  breached: boolean
+}
+
+/** (6) Dead-letter queue depth over the window. */
+export function evaluateDeadLetterDepth(
+  rows: ReadonlyArray<{ status?: unknown }>,
+  threshold: number = DEAD_LETTER_DEPTH_THRESHOLD,
+): DeadLetterVerdict {
+  let count = 0
+  for (const row of rows) {
+    if ((DEAD_LETTER_STATUSES as ReadonlyArray<string>).includes(str(row.status))) count++
+  }
+  return { count, breached: count > threshold }
+}
+
+/** Map an ops band to a notify level. */
+function bandToLevel(band: CapacityBand): "info" | "warn" | "error" {
+  if (band === "critical") return "error"
+  if (band === "warn") return "warn"
+  return "info"
+}
+
+/** Read capacity thresholds, allowing env overrides (PA_CAPACITY_*_PCT). */
+export function capacityThresholdsFromEnv(env: NodeJS.ProcessEnv = process.env): CapacityThresholds {
+  const num = (v: string | undefined, fallback: number) => {
+    const n = Number.parseFloat((v ?? "").trim())
+    return Number.isFinite(n) && n > 0 && n <= 1 ? n : fallback
+  }
+  return {
+    info: num(env.PA_CAPACITY_INFO_PCT, CAPACITY_INFO_PCT),
+    warn: num(env.PA_CAPACITY_WARN_PCT, CAPACITY_WARN_PCT),
+    critical: num(env.PA_CAPACITY_CRITICAL_PCT, CAPACITY_CRITICAL_PCT),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner — injectable db / now / log / alert (tests use a fake db).
 // ---------------------------------------------------------------------------
 
@@ -178,6 +295,8 @@ export type ChannelHealthResult = {
   deadSender: DeadSenderVerdict
   outbound: OutboundHealthVerdict
   inbound: InboundLivenessVerdict
+  capacity: NumberCapacity[]
+  deadLetter: DeadLetterVerdict
   alertsSent: number
   errors: number
 }
@@ -220,9 +339,13 @@ export async function paChannelHealthHandler(deps: ChannelHealthDeps): Promise<C
     deadSender: { zeroActivePool: true, count: 0, numbers: [], sampleUserIds: [] },
     outbound: { sent: 0, failed: 0, failureRate: null, breached: false, reason: null },
     inbound: { inboundCount: 0, outboundSent: 0, inboundDead: false },
+    capacity: [],
+    deadLetter: { count: 0, breached: false },
     alertsSent: 0,
     errors: 0,
   }
+  /** Active reachable users per senderNumber — populated by the users scan below. */
+  const reachableByNumber = new Map<string, number>()
 
   const fireAlert = async (input: Parameters<typeof defaultPostSlackAlert>[0]) => {
     try {
@@ -260,6 +383,16 @@ export async function paChannelHealthHandler(deps: ChannelHealthDeps): Promise<C
       senderNumber: row.data.senderNumber,
     }))
     result.deadSender = evaluateDeadSenderAssignments(result.activePoolNumbers, users)
+    // Reachable-user count per number (for the capacity check): a user counts if
+    // it has a senderNumber + a phone + is not deleted.
+    for (const row of toRows(usersSnap)) {
+      const sender = str(row.data.senderNumber)
+      if (!sender) continue
+      const phone = str(row.data.phoneE164)
+      const lifecycle = str(row.data.candidateLifecycleState)
+      if (!phone || lifecycle === "deleted") continue
+      reachableByNumber.set(sender, (reachableByNumber.get(sender) ?? 0) + 1)
+    }
   } catch (err) {
     result.errors++
     result.deadSender = evaluateDeadSenderAssignments(result.activePoolNumbers, [])
@@ -303,7 +436,9 @@ export async function paChannelHealthHandler(deps: ChannelHealthDeps): Promise<C
   // ── (3) Outbound health (last 24h) ────────────────────────────────────────
   try {
     const rows = await queryRecentRows(deps.db, OUTBOUND, cutoffIso, OUTBOUND_SCAN_LIMIT)
-    result.outbound = evaluateOutboundHealth(rows.map((row) => ({ status: row.data.status })))
+    const statuses = rows.map((row) => ({ status: row.data.status }))
+    result.outbound = evaluateOutboundHealth(statuses)
+    result.deadLetter = evaluateDeadLetterDepth(statuses)
   } catch (err) {
     result.errors++
     log("pa.channel.outbound_query_failed", {
@@ -365,17 +500,74 @@ export async function paChannelHealthHandler(deps: ChannelHealthDeps): Promise<C
     })
   }
 
+  // ── (5) Phone-number capacity (% of configured newUserCap) ────────────────
+  try {
+    const poolDoc = await deps.db.doc(POOL_CONFIG_DOC).get()
+    const poolData = (poolDoc.data() ?? {}) as { numbers?: unknown }
+    const numbers = Array.isArray(poolData.numbers)
+      ? (poolData.numbers as Array<Record<string, unknown>>)
+      : []
+    result.capacity = evaluateCapacity(numbers, reachableByNumber, capacityThresholdsFromEnv())
+  } catch (err) {
+    result.errors++
+    log("pa.channel.capacity_query_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  const flaggedCapacity = result.capacity.filter((c) => c.band !== "ok")
+  if (flaggedCapacity.length > 0) {
+    const worst = worstCapacityBand(flaggedCapacity)
+    const severity = worst === "critical" ? "CRITICAL" : worst === "warn" ? "ERROR" : "INFO"
+    log("pa.channel.capacity_threshold", {
+      severity,
+      worst,
+      flagged: flaggedCapacity.map((c) => ({ number: c.number, reachable: c.reachable, cap: c.cap, pct: c.pct })),
+    })
+    await fireAlert({
+      level: bandToLevel(worst),
+      title: `Sendblue number capacity ${worst === "critical" ? "AT/OVER cap" : worst === "warn" ? "high" : "rising"}`,
+      message:
+        `One or more public Sendblue numbers crossed a capacity threshold (active reachable users vs configured newUserCap). ` +
+        `Provision/expand the pool before a number fills — Product Rule 10 keeps each group ~300-500 active users.`,
+      fields: flaggedCapacity.map((c) => ({
+        name: c.number,
+        value: `${c.reachable}/${c.cap} (${Math.round(c.pct * 100)}%) — ${c.band}`,
+      })),
+    })
+  }
+
+  // ── (6) Dead-letter queue depth (24h) ─────────────────────────────────────
+  if (result.deadLetter.breached) {
+    log("pa.channel.dead_letter_depth", {
+      severity: "ERROR",
+      count: result.deadLetter.count,
+      threshold: DEAD_LETTER_DEPTH_THRESHOLD,
+    })
+    await fireAlert({
+      level: "warn",
+      title: "Outbound dead-letter queue depth high",
+      message:
+        `${result.deadLetter.count} outbound message(s) hit dead_letter in the last 24h ` +
+        `(> ${DEAD_LETTER_DEPTH_THRESHOLD}). These never delivered — check Sendblue rate-limit / plan status.`,
+      fields: [{ name: "dead-letter (24h)", value: String(result.deadLetter.count) }],
+    })
+  }
+
   if (
     !result.deadSender.zeroActivePool &&
     result.deadSender.count === 0 &&
     !result.outbound.breached &&
-    !result.inbound.inboundDead
+    !result.inbound.inboundDead &&
+    flaggedCapacity.length === 0 &&
+    !result.deadLetter.breached
   ) {
     log("pa.channel.health_ok", {
       activePoolNumbers: result.activePoolNumbers,
       outboundSent: result.outbound.sent,
       outboundFailed: result.outbound.failed,
       inboundCount: result.inbound.inboundCount,
+      capacity: result.capacity.map((c) => ({ number: c.number, pct: Math.round(c.pct * 100) })),
     })
   }
 
@@ -392,7 +584,9 @@ export const paChannelHealthDaily = onSchedule(
     memory: "256MiB",
     timeoutSeconds: 300,
     region: "us-central1",
-    secrets: ["PA_SLACK_ALERT_WEBHOOK"],
+    // Route alerts to EMAIL (Adam 2026-06-14) + Slack via notifyOps — bind both
+    // channels' secrets so they're available in process.env at runtime.
+    secrets: [PA_SLACK_ALERT_WEBHOOK, ...MAILGUN_SECRETS],
     retryCount: 0,
   },
   async () => {
@@ -406,6 +600,12 @@ export const paChannelHealthDaily = onSchedule(
           logger.info(`[channel-health] ${event}`, payload ?? {})
         }
       },
+      // Every channel-health alert now dispatches via notifyOps (email + Slack).
+      // We keep the postSlackAlert seam name for the deps-injected unit tests.
+      postSlackAlert: (async (input) => {
+        const r = await notifyOps(input)
+        return { posted: r.anyDelivered }
+      }) as typeof defaultPostSlackAlert,
     })
     logger.info("[channel-health] done", result)
   },
