@@ -31,6 +31,13 @@ export interface PrescreenState {
   threshold: number
   terminal: "PASS" | "FAIL" | null
   terminalCommits: number
+  /**
+   * qIds that are INFORMATIONAL/non-gating — recorded (so the FSM advances past them)
+   * but EXCLUDED from the PASS/FAIL average. Used for the default AI-acceleration capture
+   * question (prescreen-ai-question.ts) so it never changes a terminal verdict. Optional:
+   * absent/empty → byte-identical legacy behaviour (every scored question gates).
+   */
+  informational?: string[]
 }
 
 export interface PrescreenNext {
@@ -131,7 +138,15 @@ export function recordPrescreenScore(
   const next = earliestPending(state)
   if (!next) {
     // (4) DETERMINISTIC ROLLUP — CODE decides PASS/FAIL, not the LLM.
-    const vals = Object.values(state.scores).map((s) => s.score)
+    // INFORMATIONAL questions (e.g. the default AI-acceleration capture) are recorded but
+    // EXCLUDED from the average so they never change the verdict (non-gating). When EVERY
+    // scored question is informational (shouldn't happen — a real screen always has gating
+    // questions), fall back to all scores so we never divide by zero.
+    const informational = new Set(state.informational ?? [])
+    const gatingEntries = Object.entries(state.scores).filter(([qId]) => !informational.has(qId))
+    const vals = (gatingEntries.length > 0 ? gatingEntries : Object.entries(state.scores)).map(
+      ([, s]) => s.score,
+    )
     const avg = vals.reduce((a, b) => a + b, 0) / vals.length
     state.terminal = avg >= thresholdOf(state) ? "PASS" : "FAIL"
     state.terminalCommits += 1 // prove commit-once

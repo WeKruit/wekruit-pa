@@ -66,6 +66,7 @@ import {
   recordPrescreenScore,
   type PrescreenState,
 } from "../reducers/prescreen-fsm.js"
+import { AI_QUESTION_QID } from "../prescreen-ai-question.js"
 
 /**
  * Per-session process state the tools read/write. Onboarding + prescreen FSM
@@ -468,6 +469,24 @@ export function buildProcessTools(
             }),
           )
       }
+      // DEFAULT AI-acceleration capture (Adam directive): when the informational AI question is
+      // answered, persist the candidate's verbatim answer GLOBALLY to pa-users.tags.aiAccelerationUsage
+      // via the D8 sole writer (applyPartialUserTags). This is the durable cross-session SKIP signal —
+      // its presence means future prescreen sessions do NOT re-append the question. NOT canonical tagging
+      // (open free text, never an enum → the no-regex-in-tagging rule does not apply). Best-effort; a
+      // write failure never blocks the verdict. `value` is the raw answer (not the judged score).
+      if (result.ok && question === AI_QUESTION_QID && ctx.db && ctx.userId) {
+        await applyPartialUserTags(
+          ctx.db,
+          ctx.userId,
+          { aiAccelerationUsage: { value: answer.trim(), updatedAt: ctx.nowIso() } } as PartialUserTags,
+          { source: "chat", nowIso: ctx.nowIso(), log: ctx.log },
+        ).catch((err: unknown) =>
+          ctx.log("prescreen.ai_usage.write_error", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
+      }
       ctx.log("prescreen.score.recorded", {
         question,
         score: result.score,
@@ -477,6 +496,7 @@ export function buildProcessTools(
         rubricApplied: Boolean(rubric),
         resumeApplied: Boolean(resumeSnippet),
         wroteBack: Boolean(ctx.prescreenSessionId),
+        aiUsageCaptured: question === AI_QUESTION_QID,
       })
       // return the REDUCER's verdict — never declare pass/fail here.
       return result
