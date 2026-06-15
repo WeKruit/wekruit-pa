@@ -70,24 +70,39 @@ function makeDb(userDoc: Record<string, unknown>) {
   return { db, writes: () => writes }
 }
 
-test("2026-06-05 supersede: canary returning candidate (parsed résumé on file) on a PLAIN text → warm returning greeting, marks complete, NO wall, NO re-pitch", async () => {
-  // SUPERSEDES the old WS-2 'website-profile → postParsePitch' on a plain returning text (Adam 2026-06-05:
-  // a returning user saying 'Hi' wants a greeting + matches, not their résumé re-pitched). The genuine
-  // 'just parsed, pitch now' path is the cvParsedTrigger re-entry (separate test below), NOT this.
+test("ALREADY-PITCHED canary returning candidate (parsed résumé on file) on a PLAIN text → warm greeting, marks complete, NO wall, NO re-pitch", async () => {
+  // An already-pitched returner (pitchedAt set) saying 'Hi' wants a warm we-know-you greeting + matches,
+  // NOT their résumé re-pitched. The genuine 'just parsed, pitch now' path is the cvParsedTrigger
+  // re-entry (separate test below); the FIRST-text-in pitch for a never-pitched recognized user is the
+  // test directly below this one (Adam 2026-06-15).
   const { db, writes } = makeDb({
     latestResumeArtifactId: "candidate_upload_abc_123",
+    pitchedAt: "2026-06-10T00:00:00.000Z", // already pitched → no re-pitch
     // sharedOnboarding absent → isSharedOnboardingActiveUser false; onboardingState not complete.
   })
   const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "hey" })
   assert.equal(decision.mode, "triage")
-  assert.equal(decision.warmReturningGreeting, true, "known/returning plain text → warm greeting")
-  assert.notEqual(decision.postParsePitch, true, "plain returning text must NOT re-pitch (that's the parse re-entry's job)")
+  assert.equal(decision.warmReturningGreeting, true, "already-pitched returning plain text → warm greeting")
+  assert.notEqual(decision.postParsePitch, true, "already-pitched plain text must NOT re-pitch")
   // it did NOT bootstrap the onboarding wall (no onboardingState:"pending" write).
   const bootstrapped = writes().some((w) => w.onboardingState === "pending")
   assert.equal(bootstrapped, false, "must NOT cold-start the onboarding wall")
   // it DID mark onboarding complete (self-heal so it never re-enters the wall).
   const completed = writes().some((w) => w.onboardingState === "complete")
   assert.equal(completed, true, "must mark onboarding complete")
+})
+
+test("FIRST text-in: recognized canary (ingested background) NEVER pitched → warm PITCH (postParsePitch), not a cold matches-question (Adam 2026-06-15: Leonard)", async () => {
+  // A recognized candidate who just bound their phone and texts in for the first time (pitchedAt unset)
+  // must get the warm, we-know-you 3-bubble PITCH — not "want me to pull matches? tell me role+location".
+  // warmReturningGreeting is set as a companion so a pitch-composer miss still falls through to warm copy.
+  const { db, writes } = makeDb({ latestResumeArtifactId: "candidate_upload_abc_123" }) // no pitchedAt
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "Hi, my verification code is DPA6C438" })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.postParsePitch, true, "recognized never-pitched first text → warm pitch")
+  assert.equal(decision.warmReturningGreeting, true, "companion so a pitch miss falls through to warm copy, never a bare reply")
+  const bootstrapped = writes().some((w) => w.onboardingState === "pending")
+  assert.equal(bootstrapped, false, "must NOT cold-start the onboarding wall")
 })
 
 test("2026-06-06 (Adam): NON-canary with a parsed-profile fixture → PITCH, NEVER the onboarding wall (recognized background; supersedes the old non-canary cold-start)", async () => {
@@ -337,12 +352,12 @@ test("COLD-OPEN LOCK B3 — KNOWN canary via experienceHighlights only → warm 
   assert.equal(isRoleQuestionDecision(decision), false)
 })
 
-test("COLD-OPEN LOCK B4 — KNOWN canary via parsed-résumé artifact on a PLAIN text → warm greeting (not re-pitch, not role question)", async () => {
-  const { db } = makeDb({ latestResumeArtifactId: "candidate_upload_xyz" })
+test("COLD-OPEN LOCK B4 — KNOWN canary via parsed-résumé artifact, ALREADY pitched, on a PLAIN text → warm greeting (not re-pitch, not role question)", async () => {
+  const { db } = makeDb({ latestResumeArtifactId: "candidate_upload_xyz", pitchedAt: "2026-06-10T00:00:00.000Z" })
   const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "Hi" })
   assert.equal(decision.mode, "triage")
-  assert.equal(decision.warmReturningGreeting, true, "parsed-résumé returning user's plain 'Hi' → warm greeting")
-  assert.notEqual(decision.postParsePitch, true, "plain returning text must NOT re-pitch")
+  assert.equal(decision.warmReturningGreeting, true, "already-pitched parsed-résumé returner's plain 'Hi' → warm greeting")
+  assert.notEqual(decision.postParsePitch, true, "already-pitched plain text must NOT re-pitch")
   assert.equal(isRoleQuestionDecision(decision), false)
 })
 
