@@ -44,6 +44,7 @@ import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm
 import { AI_QUESTION_QID } from "./claire-agent/prescreen-ai-question.js"
 import { isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
 import { isStaleClosedPrescreenSession } from "./prescreen-staleness.js"
+import { classifyInboundReplyNeed } from "./sendblue/ack-classifier.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
@@ -580,7 +581,82 @@ function hasIncompleteOnboardingQuestion(user: Record<string, unknown> | undefin
   return typeof pipeline?.currentQId === "string" || /^q_[a-z0-9_]+_asked$/.test(String(user.onboardingState ?? ""))
 }
 
-function detectSimpleYesNo(body: string): "yes" | "no" | "ambiguous" {
+/**
+ * POST-TERMINAL MATCHING IS OPT-IN (Adam 2026-06-15 live bug). After a prescreen
+ * reaches a terminal and Claire sends the handoff/next-step note, the candidate's
+ * reply must NOT bridge into matching unless it is an EXPLICIT matching request.
+ *
+ * The previous gate (detectSimpleYesNo) treated a bare "sure" / "ok" / "sounds
+ * good" — including a COURTESY ACK of the pending review like "Sure. Looking
+ * forward for the update." — as a "yes, proceed to matching", so Claire sent
+ * "pulling a few fresh matches 🔍" unrequested. That's the gap: gating existed
+ * (matching only after a settled terminal) but the proceed signal was a generic
+ * yes, not an explicit opt-in.
+ *
+ * Returns:
+ *   - "yes"       → an UNAMBIGUOUS request to find/see roles → proceed to matching.
+ *   - "no"        → an explicit decline.
+ *   - "ambiguous" → anything else, INCLUDING a polite acknowledgment of the review
+ *                   ("sure", "ok", "sounds good", "thanks", "looking forward to the
+ *                   update") → re-offer matching (warm hold); never auto-match.
+ *
+ * NOTE on no-regex-in-tagging: this is a deliver/control-flow decision (proceed to
+ * find_match vs warm hold), NOT a text→enum tag classification, so a deterministic
+ * matcher is allowed here (same scope as ack-classifier.ts). The "yes" allowlist
+ * mirrors the TRIAGE HARD RULE match-command list in claire-agent/prompt.ts.
+ */
+function detectPostTerminalMatchingIntent(body: string): "yes" | "no" | "ambiguous" {
+  const normalized = body.trim().toLowerCase()
+  if (!normalized) return "ambiguous"
+
+  // Explicit decline still respected (verbatim from the old yes/no detector).
+  if (
+    /^(no|nope|nah|pass|skip|later|not now|don'?t|do not|no thanks|no thank you)\b/i.test(normalized) ||
+    /\b(not right now|i'?m good|i am good|good for now|i'?ll pass|i will pass|don'?t want|do not want)\b/i.test(normalized)
+  ) {
+    return "no"
+  }
+
+  // A polite acknowledgment of the pending review is NOT an opt-in. Reuse the
+  // shared ack-classifier (pure_ack / greeting / stop) — a "thanks 👍" / "ok" /
+  // "sounds good" / bare emoji following Claire's handoff is an ack, not a request.
+  const ackNeed = classifyInboundReplyNeed(normalized, { followsClaireMessage: true })
+  if (ackNeed === "pure_ack" || ackNeed === "greeting" || ackNeed === "stop") {
+    return "ambiguous"
+  }
+
+  // EXPLICIT matching request only (mirrors prompt.ts TRIAGE match-command list).
+  // Multi-clause courtesy replies that merely START with "sure"/"ok" ("Sure.
+  // Looking forward for the update.") fall through to "ambiguous" — they are not
+  // a verb phrase asking for roles.
+  const wantsMatching =
+    /\b(find|pull|show|recommend|send|get)\b[^.!?]*\b(me\b[^.!?]*)?(role|roles|job|jobs|match|matches|position|positions|opening|openings|opportunit)/i.test(
+      normalized,
+    ) ||
+    /\b(match me|recommend (me )?(some )?(roles|jobs)|what (else|other).*(role|roles|job|jobs|have)|other (roles|jobs|matches|options))\b/i.test(
+      normalized,
+    ) ||
+    /\b(yes|yeah|yep|sure|ok|okay)\b[, ]+\b(pull|find|show|match|recommend|send|go|do it|please)\b/i.test(normalized) ||
+    /^(go ahead and (match|pull|find|recommend)|pull them|match me|lfg)\b/i.test(normalized)
+
+  if (wantsMatching) return "yes"
+
+  return "ambiguous"
+}
+
+/**
+ * SECOND-STAGE detector: used ONLY after Claire has already asked the explicit
+ * "Do you want to proceed?" offer (retentionStage await_basic_onboarding /
+ * await_daily_opt_in). Here the candidate is answering THAT offer, so a SHORT bare
+ * affirmative ("yes" / "sure" / "ok" / "sounds good") is a legitimate opt-in — but
+ * a MULTI-CLAUSE courtesy reply ("Sure. Looking forward for the update.") that only
+ * happens to start with an affirmative token is NOT, because it acknowledges the
+ * review rather than answering the proceed question. Decline still wins outright.
+ *
+ * Kept separate from detectPostTerminalMatchingIntent so the FIRST post-terminal
+ * turn (no offer asked yet) NEVER reaches this lenient bare-yes path.
+ */
+function detectSimpleYesNoForProceedOffer(body: string): "yes" | "no" | "ambiguous" {
   const normalized = body.trim().toLowerCase()
   if (!normalized) return "ambiguous"
   if (
@@ -589,7 +665,13 @@ function detectSimpleYesNo(body: string): "yes" | "no" | "ambiguous" {
   ) {
     return "no"
   }
-  if (/^(yes|yeah|yep|yup|sure|ok|okay|alright|all right|sounds good|please|go ahead|let'?s|down)\b/i.test(normalized)) {
+  // A SHORT bare affirmative answering the explicit offer is a yes. We reuse the
+  // ack-classifier's pure_ack judgment (it already maps short "yes"/"sure"/"ok"/
+  // "sounds good"/"yep" to pure_ack, and longer multi-clause replies to "other").
+  // This is what cleanly separates "yes"/"sure thank you" (a yes to the offer) from
+  // "Sure. Looking forward for the update." (a courtesy ack of the review → other →
+  // ambiguous → re-offer). No state-contradicting auto-match on a polite ack.
+  if (classifyInboundReplyNeed(normalized, { followsClaireMessage: true }) === "pure_ack") {
     return "yes"
   }
   return "ambiguous"
@@ -1092,7 +1174,29 @@ export async function runPrescreenTurnIfActive(
 
     let text: string | undefined
     if (retentionStage === "await_basic_onboarding" || retentionStage === "await_daily_opt_in" || !alreadyAcked) {
-      const yn = detectSimpleYesNo(args.replyText)
+      // POST-TERMINAL MATCHING IS OPT-IN (Adam 2026-06-15 live bug): a courtesy ack
+      // of the pending review ("Sure. Looking forward for the update.", "sounds
+      // good", "thanks", "ok") must NOT bridge into matching.
+      //
+      // TWO STAGES:
+      //   (a) FIRST post-terminal reply (proceed prompt NOT yet asked): Claire only
+      //       sent the handoff/next-step note. A bare ack here is acknowledging the
+      //       review, NOT requesting matches — require an EXPLICIT matching request;
+      //       otherwise send the OFFER ("Do you want to proceed?"). This is the seam
+      //       that fired "pulling a few fresh matches 🔍" on a courtesy ack.
+      //   (b) Proceed prompt WAS asked (stage await_basic_onboarding/await_daily_opt_in):
+      //       the candidate is directly answering "Do you want to proceed?", so a bare
+      //       "yes"/"sure"/"ok" is a legitimate opt-in to that explicit offer.
+      const proceedPromptAlreadyAsked =
+        retentionStage === "await_basic_onboarding" || retentionStage === "await_daily_opt_in"
+      const matchIntent = detectPostTerminalMatchingIntent(args.replyText)
+      let yn: "yes" | "no" | "ambiguous" = matchIntent
+      // ONLY when the explicit proceed offer was already asked AND the intent is
+      // ambiguous (not an explicit yes/no), a SHORT bare affirmative answering that
+      // offer counts as opt-in. An explicit "no" / explicit match request is kept.
+      if (yn === "ambiguous" && proceedPromptAlreadyAsked) {
+        yn = detectSimpleYesNoForProceedOffer(args.replyText)
+      }
       if (yn === "ambiguous") {
         text = postPrescreenOnboardingPrompt(args.lang ?? "en", lookup.terminal)
         try {

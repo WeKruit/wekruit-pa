@@ -744,6 +744,118 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((session?.postPrescreenRetention as { basicOnboardingOptIn?: boolean } | undefined)?.basicOnboardingOptIn, true)
   })
 
+  it("does NOT match on a COURTESY ACK after a prescreen terminal — offers instead (Adam 2026-06-15 live bug)", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+        onboardingStatus: "invited",
+        onboardingState: "pending",
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        // FIRST post-terminal turn — no proceed prompt asked yet (no postPrescreenRetention stage).
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    let firedRecs = false
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      // The EXACT live-bug reply: a courtesy ack of the pending review, NOT a match request.
+      replyText: "Sure. Looking forward for the update.",
+      fireJobRecs: async () => {
+        firedRecs = true
+        return { ok: true, jobCount: 3 }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    // OFFER is made; NO "pulling matches" / onboarding bridge fired.
+    assert.match(sent[0] ?? "", /Do you want to proceed/i)
+    assert.doesNotMatch(sent[0] ?? "", /pull a few matches/i)
+    assert.doesNotMatch(sent[0] ?? "", /thanks for completing the screen/i)
+    assert.equal(firedRecs, false, "a courtesy ack must NOT fire find_match")
+    // Stays in the offer stage so an explicit yes next turn can proceed.
+    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
+    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_basic_onboarding")
+  })
+
+  it("an EXPLICIT matching request after a terminal yields to the agent (find_match path), not the courtesy-ack offer", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+        onboardingStatus: "invited",
+        onboardingState: "pending",
+        tags: {
+          targetRoleFunction: ["software_engineering"],
+          targetLocations: ["san_francisco_bay_area"],
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      // An explicit new matching intent is recognized as such → the deterministic
+      // retention branch yields (handled:false) so the agent's find_match handles it.
+      // It must NOT be swallowed by the courtesy-ack offer prompt.
+      replyText: "yes, pull some roles for me",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    // Explicit intent → yields to runtime (the agent owns matching). The deterministic
+    // path does NOT send the "Do you want to proceed?" courtesy-ack offer here.
+    assert.equal(result.handled, false)
+    assert.equal(sent.length, 0)
+  })
+
   it("converges to ONLY the location ask when role is already derived (LinkedIn/résumé enrich) — never re-asks role", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
@@ -2251,8 +2363,11 @@ describe("stale-timeout PAUSE follow-up (universal copy-accuracy)", () => {
     })
     assert.equal(result.handled, true)
     assert.equal(sent.length, 1)
-    // Legacy retention flow still engages (here: 'ok' reads as a yes -> the post-screen onboarding
-    // bridge) — the stale-timeout suppression must NOT touch a deliberate user-exit pause.
-    assert.match(sent[0]!, /thanks for completing the screen/i)
+    // POST-TERMINAL MATCHING IS OPT-IN (Adam 2026-06-15): a bare "ok" on the FIRST
+    // post-terminal turn is a courtesy ack, NOT a request to match — Claire OFFERS
+    // ("Do you want to proceed?") instead of bridging into onboarding/matching. The
+    // retention flow still engages (offer is made); the stale-timeout suppression
+    // must NOT touch a deliberate user-exit pause (that part is unchanged).
+    assert.match(sent[0]!, /Do you want to proceed/i)
   })
 })
