@@ -38,7 +38,6 @@ import { sendMailgun, type MailgunConfig, type MailgunSendResult } from "../emai
 export const DEFAULT_OPS_ALERT_EMAILS = [
   "admin1@wekruit.com",
   "adam.ylol@wekruit.com",
-  "noah.liu@wekruit.com",
 ] as const
 
 const ALERTS_COLLECTION = "pa-alerts"
@@ -112,8 +111,8 @@ const LEVEL_EMOJI: Record<OpsAlertInput["level"], string> = {
 /** First-writer-wins dedup on `pa-alerts/{key}`. Fail-OPEN (alert) if the store throws. */
 async function claimDedupe(d: OpsAlertDedupe): Promise<boolean> {
   const nowMs = d.nowMs ?? Date.now()
-  const ref = d.db.collection(ALERTS_COLLECTION).doc(d.key)
   try {
+    const ref = d.db.collection(ALERTS_COLLECTION).doc(d.key)
     return await d.db.runTransaction(async (tx) => {
       const snap = await tx.get(ref)
       if (snap.exists) return false
@@ -128,6 +127,43 @@ async function claimDedupe(d: OpsAlertDedupe): Promise<boolean> {
     // Dedup store unreachable → fail OPEN. A missed alert is worse than a dup.
     return true
   }
+}
+
+/**
+ * Throttle helper: returns true iff this is the FIRST claim of `key` (so the
+ * caller should alert). Use a time-bucketed key to rate-limit a repeating
+ * condition, e.g. `capacity-+1717-info-2026-W24` (weekly) or
+ * `unanswered-2026-06-14-21` (hourly). First-writer-wins on `pa-alerts/{key}`;
+ * fail-OPEN (returns true) when the store is unreachable.
+ */
+export async function claimOpsAlertOnce(
+  db: Firestore,
+  key: string,
+  nowMs?: number
+): Promise<boolean> {
+  return claimDedupe({ db, key, nowMs })
+}
+
+/** UTC hour bucket `YYYY-MM-DD-HH` for hourly throttle keys. */
+export function hourBucket(nowMs: number): string {
+  return new Date(nowMs).toISOString().slice(0, 13)
+}
+
+/** UTC ISO week bucket `YYYY-Www` for weekly throttle keys. */
+export function isoWeekBucket(nowMs: number): string {
+  const d = new Date(nowMs)
+  const day = (d.getUTCDay() + 6) % 7 // Mon=0
+  const thursday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day + 3))
+  const firstThursday = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4))
+  const week =
+    1 +
+    Math.round(
+      ((thursday.getTime() - firstThursday.getTime()) / 86400000 -
+        3 +
+        ((firstThursday.getUTCDay() + 6) % 7)) /
+        7
+    )
+  return `${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}`
 }
 
 /**

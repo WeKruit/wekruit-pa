@@ -2,6 +2,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent, enqueueOutbound, inboundEventDocId } from "@pa/pa-broker"
 import { isBindCode } from "@pa/pa-orchestrator"
 import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
+import { claimOpsAlertOnce, hourBucket } from "../lib/ops-alert.js"
 import { classifyInboundReplyNeed } from "./ack-classifier.js"
 
 // Durable marker collection written by the transport when a turn is acknowledged
@@ -398,8 +399,19 @@ export async function sweepUnansweredInboundForOperatorReview(
   // re-queue; this guards a case queued in a PRIOR run but not yet alerted, e.g. if
   // the alert was disabled then enabled). Fail-soft: the slack helper never throws
   // and silently no-ops when PA_SLACK_ALERT_WEBHOOK is unset.
-  if (newlyQueued.length > 0) {
-    await fireUnansweredAlert(deps, newlyQueued, now)
+  if (newlyQueued.length > 0 && unansweredAlertEnabled(deps)) {
+    // THROTTLE (Adam 2026-06-14: don't overload email): the sweep runs every
+    // 10min, so cap the unanswered email to ONCE PER HOUR. The full open queue
+    // is always on the ops dashboard — this is a heads-up, not the system of
+    // record. claimOpsAlertOnce fail-opens if the store is unreachable.
+    const throttleKey = `unanswered-alert-${hourBucket(now().getTime())}`
+    if (await claimOpsAlertOnce(deps.db, throttleKey, now().getTime())) {
+      await fireUnansweredAlert(deps, newlyQueued, now)
+    } else {
+      log("[sendblue][recovery-agent] unanswered alert throttled (already alerted this hour)", {
+        count: newlyQueued.length,
+      })
+    }
   }
   return queued
 }

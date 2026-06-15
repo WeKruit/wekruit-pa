@@ -15,6 +15,9 @@ import {
   notifyOps,
   opsAlertRecipients,
   resolveMailgunFromEnv,
+  claimOpsAlertOnce,
+  hourBucket,
+  isoWeekBucket,
   DEFAULT_OPS_ALERT_EMAILS,
 } from "./ops-alert.js"
 
@@ -48,8 +51,9 @@ function stubFetch(): { calls: Array<{ url: string; body: string }> } {
 const MG = { apiKey: "key-x", domain: "mg.wekruit.com", from: "Claire <c@mg.wekruit.com>", region: "us" as const }
 
 describe("opsAlertRecipients", () => {
-  it("defaults to the three operators when env empty", () => {
+  it("defaults to exactly admin1@ + adam.ylol@ when env empty (Adam 2026-06-14)", () => {
     assert.deepEqual(opsAlertRecipients(""), [...DEFAULT_OPS_ALERT_EMAILS])
+    assert.deepEqual([...DEFAULT_OPS_ALERT_EMAILS], ["admin1@wekruit.com", "adam.ylol@wekruit.com"])
   })
   it("parses comma/space/semicolon separated emails", () => {
     assert.deepEqual(opsAlertRecipients("a@x.com, b@y.com;c@z.com"), ["a@x.com", "b@y.com", "c@z.com"])
@@ -172,5 +176,44 @@ describe("notifyOps", () => {
     assert.equal(r1.anyDelivered, true)
     assert.equal(r2.deduped, true)
     assert.equal(r2.anyDelivered, false)
+  })
+})
+
+describe("throttle helpers", () => {
+  function txDb() {
+    const store = new Map<string, unknown>()
+    return {
+      collection() {
+        return { doc(id: string) { return { id } } }
+      },
+      async runTransaction(fn: (tx: unknown) => Promise<boolean>) {
+        const tx = {
+          async get(ref: { id: string }) { return { exists: store.has(ref.id) } },
+          set(ref: { id: string }, data: unknown) { store.set(ref.id, data) },
+        }
+        return fn(tx)
+      },
+    } as unknown as import("firebase-admin/firestore").Firestore
+  }
+
+  it("claimOpsAlertOnce: first claim true, repeat of same key false", async () => {
+    const db = txDb()
+    assert.equal(await claimOpsAlertOnce(db, "capacity-info-2026-W24"), true)
+    assert.equal(await claimOpsAlertOnce(db, "capacity-info-2026-W24"), false)
+    assert.equal(await claimOpsAlertOnce(db, "capacity-warn-2026-W24"), true, "escalated band = new key = re-alert")
+  })
+
+  it("claimOpsAlertOnce fail-OPEN when the store throws (alert rather than miss)", async () => {
+    const brokenDb = {
+      collection() { return { doc(id: string) { return { id } } } },
+      async runTransaction() { throw new Error("firestore down") },
+    } as unknown as import("firebase-admin/firestore").Firestore
+    assert.equal(await claimOpsAlertOnce(brokenDb, "k"), true)
+  })
+
+  it("hourBucket / isoWeekBucket produce stable bucket keys", () => {
+    const ms = Date.parse("2026-06-14T21:35:00Z")
+    assert.equal(hourBucket(ms), "2026-06-14T21")
+    assert.match(isoWeekBucket(ms), /^2026-W\d{2}$/)
   })
 })

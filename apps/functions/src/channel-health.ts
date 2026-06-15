@@ -37,7 +37,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { postSlackAlert as defaultPostSlackAlert } from "./lib/slack-alert.js"
-import { notifyOps } from "./lib/ops-alert.js"
+import { notifyOps, claimOpsAlertOnce, isoWeekBucket } from "./lib/ops-alert.js"
 import { MAILGUN_SECRETS, PA_SLACK_ALERT_WEBHOOK } from "./orchestrator-deps.js"
 
 const POOL = "pa-sendblue-numbers"
@@ -524,17 +524,26 @@ export async function paChannelHealthHandler(deps: ChannelHealthDeps): Promise<C
       worst,
       flagged: flaggedCapacity.map((c) => ({ number: c.number, reachable: c.reachable, cap: c.cap, pct: c.pct })),
     })
-    await fireAlert({
-      level: bandToLevel(worst),
-      title: `Sendblue number capacity ${worst === "critical" ? "AT/OVER cap" : worst === "warn" ? "high" : "rising"}`,
-      message:
-        `One or more public Sendblue numbers crossed a capacity threshold (active reachable users vs configured newUserCap). ` +
-        `Provision/expand the pool before a number fills — Product Rule 10 keeps each group ~300-500 active users.`,
-      fields: flaggedCapacity.map((c) => ({
-        name: c.number,
-        value: `${c.reachable}/${c.cap} (${Math.round(c.pct * 100)}%) — ${c.band}`,
-      })),
-    })
+    // THROTTLE (Adam 2026-06-14: don't overload email): the daily run would
+    // otherwise email every day while a number sits above threshold. Send at
+    // most once per ISO-week per worst-band — escalating to a higher band
+    // (info→warn→critical) changes the key, so a worsening situation re-alerts.
+    const capKey = `capacity-${worst}-${isoWeekBucket(now().getTime())}`
+    if (await claimOpsAlertOnce(deps.db, capKey, now().getTime())) {
+      await fireAlert({
+        level: bandToLevel(worst),
+        title: `Sendblue number capacity ${worst === "critical" ? "AT/OVER cap" : worst === "warn" ? "high" : "rising"}`,
+        message:
+          `One or more public Sendblue numbers crossed a capacity threshold (active reachable users vs configured newUserCap). ` +
+          `Provision/expand the pool before a number fills — Product Rule 10 keeps each group ~300-500 active users.`,
+        fields: flaggedCapacity.map((c) => ({
+          name: c.number,
+          value: `${c.reachable}/${c.cap} (${Math.round(c.pct * 100)}%) — ${c.band}`,
+        })),
+      })
+    } else {
+      log("pa.channel.capacity_alert_throttled", { worst, key: capKey })
+    }
   }
 
   // ── (6) Dead-letter queue depth (24h) ─────────────────────────────────────
