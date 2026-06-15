@@ -47,4 +47,12 @@ describe("toResumeEmbedUrl", () => {
     assert.equal(r.kind, "gview")
     assert.ok(r.embedUrl?.startsWith("https://docs.google.com/viewer?url="))
   })
+
+  it("a spoofed host is NOT treated as Google (no arbitrary-prefix match)", () => {
+    // `endsWith("drive.google.com")` would wrongly accept these — exact/subdomain match must not.
+    const spoofDrive = toResumeEmbedUrl("https://evildrive.google.com/file/d/ABC/view")
+    assert.notEqual(spoofDrive.kind, "drive")
+    const spoofDocs = toResumeEmbedUrl("https://notdocs.google.com/document/d/ABC/edit")
+    assert.notEqual(spoofDocs.kind, "drive")
+  })
 })
