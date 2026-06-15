@@ -2,6 +2,7 @@ import type {
   PrescreenReviewQuestion,
   StrictReviewBucket,
 } from "./prescreen-review-classification.js"
+import type { PrescreenEngagementSignal } from "./prescreen-engagement.js"
 
 /**
  * Shared contract for the `paAdminPrescreenOpsSnapshot` admin callable
@@ -97,6 +98,8 @@ export type PrescreenOpsSessionReview = {
   pendingAckOutboundId?: string
   decisionOutboundId?: string
   candidateDecision?: Record<string, unknown>
+  /** Advisory effort/engagement signal (review.engagementSignal). Never a gate. */
+  engagementSignal?: PrescreenEngagementSignal
   [key: string]: unknown
 }
 
