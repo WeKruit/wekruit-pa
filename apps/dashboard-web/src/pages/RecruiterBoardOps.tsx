@@ -18,6 +18,8 @@ import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
   runRecruiterSubmissionAction,
   sendRecruiterSubmissionComment,
+  type ChecklistMark,
+  type RecruiterChecklistMarks,
   type RecruiterCandidateRejectionCategory,
   type RecruiterCandidateTier,
   type RecruiterSubmissionRejectionInput,
@@ -36,6 +38,11 @@ interface SubmissionAiAntiTally {
   flags?: string[]
 }
 
+interface SubmissionAiPillar {
+  verdict?: "strong" | "weak" | "unknown"
+  evidence?: string
+}
+
 interface SubmissionAiEvaluation {
   verdict?: "advance" | "borderline" | "reject"
   confidence?: number
@@ -46,6 +53,13 @@ interface SubmissionAiEvaluation {
     fit?: SubmissionAiChecklistTally
     bonus?: SubmissionAiChecklistTally
     anti?: SubmissionAiAntiTally
+  }
+  /** Background pillars the AI evaluated from research/résumé. */
+  background?: {
+    school?: SubmissionAiPillar
+    gpa?: SubmissionAiPillar
+    degree?: SubmissionAiPillar
+    company?: SubmissionAiPillar
   }
   research?: {
     source?: string
@@ -125,6 +139,8 @@ interface BoardSubmissionDoc {
   recruiterEmail?: string
   aiEvaluation?: SubmissionAiEvaluation
   requestedInfo?: SubmissionRequestedInfoEntry[]
+  /** Operator's saved per-item checklist assessment (AI mark + override). */
+  adminChecklistMarks?: { marks?: Record<string, ChecklistMark>; by?: string; at?: string }
   createdAt?: { seconds?: number } | string | null
   createdAtMs?: number
 }
@@ -737,6 +753,211 @@ function ExtraFieldsDetail({ extraFields }: { extraFields?: Record<string, strin
   )
 }
 
+// ---- Per-item checklist assessment (AI marks + operator override) ----------
+// Mirrors the candidate prescreen ChecklistEvalPanel: each rubric item gets a
+// ✓/✗/⚑ derived from the AI eval's gaps/flags, and the operator can override any
+// item. Lives on the board review panel so recruiter submissions are reviewed the
+// same way candidates are.
+
+type ChecklistTierKind = "hard" | "fit" | "bonus" | "anti"
+const CHECKLIST_TIER_ORDER: ChecklistTierKind[] = ["hard", "fit", "anti", "bonus"]
+const CHECKLIST_TIER_LABEL: Record<ChecklistTierKind, string> = {
+  hard: "Hard — must have",
+  fit: "Fit — strong signals",
+  anti: "Anti-signals",
+  bonus: "Bonus — nice to have",
+}
+
+interface BoardChecklistItemRow {
+  key: string
+  text: string
+  aiMark: ChecklistMark
+  mark: ChecklistMark
+  overridden: boolean
+}
+interface BoardChecklistGroupRow {
+  kind: ChecklistTierKind
+  heading: string
+  items: BoardChecklistItemRow[]
+  met: number
+  total: number
+}
+
+const norm = (s: string): string => s.trim().toLowerCase()
+
+function aiMarkForItem(
+  kind: ChecklistTierKind,
+  text: string,
+  evaluation: SubmissionAiEvaluation | undefined,
+): ChecklistMark {
+  const checklist = evaluation?.checklist
+  if (kind === "anti") {
+    const flags = (checklist?.anti?.flags ?? []).map(norm)
+    return flags.includes(norm(text)) ? "flag" : "clear"
+  }
+  const gaps = (checklist?.[kind]?.gaps ?? []).map(norm)
+  return gaps.includes(norm(text)) ? "gap" : "met"
+}
+
+/** Cycle a single item's mark: good ↔ bad for its tier. */
+function cycleChecklistMark(kind: ChecklistTierKind, current: ChecklistMark): ChecklistMark {
+  if (kind === "anti") return current === "flag" ? "clear" : "flag"
+  return current === "gap" ? "met" : "gap"
+}
+
+function buildBoardChecklist(
+  groups: BoardChecklistGroupDoc[] | undefined,
+  evaluation: SubmissionAiEvaluation | undefined,
+  overrides: RecruiterChecklistMarks,
+): BoardChecklistGroupRow[] {
+  return (groups ?? [])
+    .map((group): BoardChecklistGroupRow | null => {
+      const kind = (group.kind ?? "hard") as ChecklistTierKind
+      const items = (group.items ?? [])
+        .map((item): BoardChecklistItemRow | null => {
+          const text = (item.text ?? item.id ?? "").trim()
+          if (!text) return null
+          const key = (item.id ?? item.text ?? "").trim()
+          const aiMark = aiMarkForItem(kind, text, evaluation)
+          const ov = overrides[key]
+          const mark = ov ?? aiMark
+          return { key, text, aiMark, mark, overridden: ov != null && ov !== aiMark }
+        })
+        .filter((item): item is BoardChecklistItemRow => Boolean(item))
+      if (items.length === 0) return null
+      const good = (m: ChecklistMark) => m === "met" || m === "clear"
+      return {
+        kind,
+        heading: group.heading?.trim() || CHECKLIST_TIER_LABEL[kind] || kind,
+        items,
+        met: items.filter((i) => good(i.mark)).length,
+        total: items.length,
+      }
+    })
+    .filter((group): group is BoardChecklistGroupRow => Boolean(group))
+    .sort((a, b) => CHECKLIST_TIER_ORDER.indexOf(a.kind) - CHECKLIST_TIER_ORDER.indexOf(b.kind))
+}
+
+/** Quick-reject chips grouped under candidate background, mirroring the recruiter
+ *  submission screening design (school / GPA / degree / company pillars). */
+const BACKGROUND_REJECT_CHIPS: Array<{ id: string; label: string }> = [
+  { id: "weak_school", label: "Weak / non-target school" },
+  { id: "low_gpa", label: "Low GPA" },
+  { id: "degree_mismatch", label: "Degree / field mismatch" },
+  { id: "weak_company_pedigree", label: "Weak company pedigree" },
+  { id: "no_relevant_domain", label: "No relevant domain" },
+  { id: "over_leveled", label: "Over-leveled / too senior" },
+  { id: "under_leveled", label: "Under-leveled" },
+]
+
+const BACKGROUND_PILLARS: Array<{ key: "school" | "gpa" | "degree" | "company"; label: string }> = [
+  { key: "school", label: "School" },
+  { key: "gpa", label: "GPA" },
+  { key: "degree", label: "Degree" },
+  { key: "company", label: "Company" },
+]
+
+function markGlyph(mark: ChecklistMark): string {
+  return mark === "gap" ? "✗" : mark === "flag" ? "⚑" : "✓"
+}
+function markColor(mark: ChecklistMark): string {
+  return mark === "gap" || mark === "flag" ? "#b91c1c" : "#15803d"
+}
+function pillarTone(verdict: string | undefined): { bg: string; fg: string } {
+  if (verdict === "weak") return { bg: "#fcebeb", fg: "#791f1f" }
+  if (verdict === "strong") return { bg: "#e1f5ee", fg: "#0f6e56" }
+  return { bg: "#f1efe8", fg: "#777" }
+}
+
+function BoardChecklistPanel({
+  groups,
+  evaluation,
+  marks,
+  saved,
+  saving,
+  onCycle,
+  onSave,
+}: {
+  groups: BoardChecklistGroupDoc[]
+  evaluation: SubmissionAiEvaluation | undefined
+  marks: RecruiterChecklistMarks
+  saved: RecruiterChecklistMarks
+  saving: boolean
+  onCycle: (key: string, kind: ChecklistTierKind, current: ChecklistMark, aiMark: ChecklistMark) => void
+  onSave: () => void
+}) {
+  const rows = buildBoardChecklist(groups, evaluation, marks)
+  const background = evaluation?.background
+  const hasBackground =
+    background && BACKGROUND_PILLARS.some(({ key }) => {
+      const v = background[key]?.verdict
+      return v === "strong" || v === "weak"
+    })
+  if (rows.length === 0 && !hasBackground) return null
+  const markKeys = Object.keys(marks)
+  const savedKeys = Object.keys(saved)
+  const dirty = markKeys.length !== savedKeys.length || markKeys.some((k) => marks[k] !== saved[k])
+  const overrideCount = markKeys.length
+  return (
+    <div style={{ border: "1px solid #c7d2fe", borderLeft: "4px solid #6366f1", borderRadius: 8, background: "#f5f6ff", padding: "12px 14px", display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 13, color: "#3730a3" }}>Checklist assessment</strong>
+        <span style={{ fontSize: 11, color: "#6366f1" }}>AI marks · click an item to override</span>
+        {overrideCount > 0 && <span style={{ fontSize: 11, color: "#4338ca" }}>· {overrideCount} edited</span>}
+      </div>
+
+      {hasBackground && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: "#6f6256", fontWeight: 700 }}>Background</span>
+          {BACKGROUND_PILLARS.map(({ key, label }) => {
+            const p = background?.[key]
+            const v = p?.verdict
+            if (v !== "strong" && v !== "weak" && v !== "unknown") return null
+            const tone = pillarTone(v)
+            return (
+              <span key={key} title={p?.evidence} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: tone.bg, color: tone.fg }}>
+                {label}: {v}
+              </span>
+            )
+          })}
+        </div>
+      )}
+
+      {rows.map((group) => (
+        <div key={group.kind} style={{ display: "grid", gap: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.03em", color: "#4338ca", textTransform: "uppercase" }}>
+            {group.heading} · {group.met}/{group.total}
+          </div>
+          {group.items.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => onCycle(item.key, group.kind, item.mark, item.aiMark)}
+              title="Click to override the AI mark"
+              style={{ display: "flex", gap: 8, alignItems: "flex-start", textAlign: "left", background: "transparent", border: "none", padding: "2px 0", cursor: "pointer", fontSize: 12.5, lineHeight: 1.4 }}
+            >
+              <span style={{ color: markColor(item.mark), fontWeight: 700, width: 14, flexShrink: 0 }}>{markGlyph(item.mark)}</span>
+              <span style={{ color: item.mark === "gap" || item.mark === "flag" ? "#1e293b" : "#64748b" }}>
+                {item.text}
+                {item.overridden && <span style={{ marginLeft: 6, fontSize: 10, color: "#6366f1", fontWeight: 700 }}>edited</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      ))}
+
+      <button
+        type="button"
+        disabled={saving || !dirty}
+        onClick={onSave}
+        style={{ justifySelf: "start", padding: "5px 12px", fontSize: 12, fontWeight: 600, border: "1px solid #6366f1", borderRadius: 6, background: dirty ? "#6366f1" : "#e0e2f5", color: dirty ? "#fff" : "#9095c4", cursor: saving || !dirty ? "default" : "pointer" }}
+      >
+        {saving ? "Saving…" : dirty ? "Save assessment" : "Saved"}
+      </button>
+    </div>
+  )
+}
+
 function AiDetail({ submission }: { submission: BoardSubmissionDoc }) {
   const evaluation = submission.aiEvaluation
   if (!evaluation) {
@@ -914,6 +1135,9 @@ function CandidateReviewPanel({
   onRequestMessage,
   onApplyAction,
   onCommentCount,
+  checklistGroups,
+  onSaveMarks,
+  marksSaving,
 }: {
   submission: BoardSubmissionDoc
   busy: boolean
@@ -932,9 +1156,34 @@ function CandidateReviewPanel({
   onRejectReason: (value: string) => void
   onRequestInfoOpen: (open: boolean) => void
   onRequestMessage: (value: string) => void
-  onApplyAction: (action: RecruiterSubmissionAction, options?: { requestMessage?: string; rejection?: RecruiterSubmissionRejectionInput }) => void
+  onApplyAction: (action: RecruiterSubmissionAction, options?: { requestMessage?: string; rejection?: RecruiterSubmissionRejectionInput; checklistMarks?: RecruiterChecklistMarks }) => void
   onCommentCount: (submissionId: string, count: number) => void
+  checklistGroups: BoardChecklistGroupDoc[]
+  onSaveMarks: (marks: RecruiterChecklistMarks) => void
+  marksSaving: boolean
 }) {
+  // Local per-item checklist override marks (seeded from the saved assessment)
+  // and quick-reject chip selections. Reset per submission via `key` at the render site.
+  const savedMarks = submission.adminChecklistMarks?.marks ?? {}
+  const [marks, setMarks] = useState<RecruiterChecklistMarks>(() => ({ ...savedMarks }))
+  const [reasonChips, setReasonChips] = useState<Set<string>>(() => new Set())
+  function cycleMark(key: string, kind: ChecklistTierKind, current: ChecklistMark, aiMark: ChecklistMark) {
+    const next = cycleChecklistMark(kind, current)
+    setMarks((prev) => {
+      const copy = { ...prev }
+      if (next === aiMark) delete copy[key]
+      else copy[key] = next
+      return copy
+    })
+  }
+  function toggleReasonChip(id: string) {
+    setReasonChips((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
   const stage = submissionStage(submission.status)
   const status = statusDisplay(submission.status)
   const chip = verdictChip(submission.aiEvaluation)
@@ -1001,6 +1250,18 @@ function CandidateReviewPanel({
             {submission.candidate.notes}
           </div>
         )}
+      </div>
+
+      <div style={reviewSectionStyle}>
+        <BoardChecklistPanel
+          groups={checklistGroups}
+          evaluation={submission.aiEvaluation}
+          marks={marks}
+          saved={savedMarks}
+          saving={marksSaving}
+          onCycle={cycleMark}
+          onSave={() => onSaveMarks(marks)}
+        />
       </div>
 
       <div style={reviewSectionStyle}>
@@ -1084,12 +1345,39 @@ function CandidateReviewPanel({
                 </select>
               </label>
             </div>
+            <div style={{ display: "grid", gap: 5 }}>
+              <div style={{ fontSize: 11, color: "#6f6256", fontWeight: 700 }}>Background quick-reject</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {BACKGROUND_REJECT_CHIPS.map((chip) => {
+                  const active = reasonChips.has(chip.id)
+                  return (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => toggleReasonChip(chip.id)}
+                      style={{
+                        padding: "3px 10px",
+                        fontSize: 11,
+                        borderRadius: 999,
+                        cursor: "pointer",
+                        border: active ? "1px solid #d9a8a0" : "1px solid #e2d6cc",
+                        background: active ? "#fdeceA" : "#fff",
+                        color: active ? "#9c3a1d" : "#6f6256",
+                        fontWeight: active ? 700 : 500,
+                      }}
+                    >
+                      {active ? "✓ " : ""}{chip.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
             <textarea
               value={rejectReason}
               onChange={(e) => onRejectReason(e.target.value)}
               rows={4}
               maxLength={4000}
-              placeholder="Why this candidate is rejected"
+              placeholder="Why this candidate is rejected (the quick-reject chips above are saved too)"
               aria-label="Rejection reason"
               style={{ width: "100%", padding: "7px 8px", border: "1px solid #d9c9bb", borderRadius: 6, fontSize: 12 }}
             />
@@ -1098,7 +1386,13 @@ function CandidateReviewPanel({
               disabled={rejectDisabled}
               aria-disabled={rejectDisabled}
               onClick={() => onApplyAction("reject", {
-                rejection: { category: rejectCategory, candidateTier: rejectTier, reason: rejectReason.trim() },
+                rejection: {
+                  category: rejectCategory,
+                  candidateTier: rejectTier,
+                  reason: rejectReason.trim(),
+                  ...(reasonChips.size > 0 ? { reasons: [...reasonChips] } : {}),
+                },
+                ...(Object.keys(marks).length > 0 ? { checklistMarks: marks } : {}),
               })}
               style={{ ...actionButtonStyle, justifySelf: "start", border: "1px solid #d9a8a0", background: "#fdf3f1", color: "#9c3a1d", ...dim }}
             >
@@ -1315,6 +1609,7 @@ export default function RecruiterBoardOps() {
   const [bulkError, setBulkError] = useState<string | null>(null)
   const [submissionFilter, setSubmissionFilter] = useState<BoardSubmissionFilter>("pending")
   const [inFlightId, setInFlightId] = useState<string | null>(null)
+  const [marksSavingId, setMarksSavingId] = useState<string | null>(null)
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [reloadKey, setReloadKey] = useState(0)
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
@@ -1505,10 +1800,32 @@ export default function RecruiterBoardOps() {
     }
   }
 
+  async function saveChecklistMarks(submission: BoardSubmissionDoc, marks: RecruiterChecklistMarks) {
+    if (inFlightId || bulkRejecting || marksSavingId) return
+    setMarksSavingId(submission.id)
+    setActionErrors((prev) => {
+      const next = { ...prev }
+      delete next[submission.id]
+      return next
+    })
+    try {
+      await runRecruiterSubmissionAction({ submissionId: submission.id, action: "save_marks", checklistMarks: marks })
+      setSubmissions((prev) =>
+        prev.map((s) =>
+          s.id === submission.id ? { ...s, adminChecklistMarks: { marks, at: new Date().toISOString() } } : s,
+        ),
+      )
+    } catch (error) {
+      setActionErrors((prev) => ({ ...prev, [submission.id]: error instanceof Error ? error.message : String(error) }))
+    } finally {
+      setMarksSavingId(null)
+    }
+  }
+
   async function applyAction(
     submission: BoardSubmissionDoc,
     action: RecruiterSubmissionAction,
-    options?: { requestMessage?: string; rejection?: RecruiterSubmissionRejectionInput },
+    options?: { requestMessage?: string; rejection?: RecruiterSubmissionRejectionInput; checklistMarks?: RecruiterChecklistMarks },
   ) {
     if (inFlightId || bulkRejecting) return
     const priorStatus = submission.status
@@ -1526,6 +1843,7 @@ export default function RecruiterBoardOps() {
         action,
         ...(action === "request_info" && options?.requestMessage ? { requestMessage: options.requestMessage } : {}),
         ...(action === "reject" && options?.rejection ? { rejection: options.rejection } : {}),
+        ...(options?.checklistMarks ? { checklistMarks: options.checklistMarks } : {}),
       })
       setSubmissions((prev) =>
         prev.map((s) =>
@@ -1533,6 +1851,9 @@ export default function RecruiterBoardOps() {
             ? {
                 ...s,
                 status: result.status,
+                ...(options?.checklistMarks
+                  ? { adminChecklistMarks: { marks: options.checklistMarks, at: new Date().toISOString() } }
+                  : {}),
                 ...(action === "request_info" && options?.requestMessage
                   ? { requestedInfo: [...(s.requestedInfo ?? []), { message: options.requestMessage, at: new Date().toISOString(), by: "WeKruit" }] }
                   : {}),
@@ -1901,6 +2222,7 @@ export default function RecruiterBoardOps() {
           </div>
           {selectedSubmission && (
             <CandidateReviewPanel
+              key={selectedSubmission.id}
               submission={selectedSubmission}
               busy={inFlightId === selectedSubmission.id}
               blocked={inFlightId !== null}
@@ -1920,6 +2242,9 @@ export default function RecruiterBoardOps() {
               onRequestMessage={setRequestMessage}
               onApplyAction={(action, options) => void applyAction(selectedSubmission, action, options)}
               onCommentCount={handleCommentCount}
+              checklistGroups={selectedJob?.recruiterBoard?.checklist?.groups ?? []}
+              onSaveMarks={(marks) => void saveChecklistMarks(selectedSubmission, marks)}
+              marksSaving={marksSavingId === selectedSubmission.id}
             />
           )}
         </div>

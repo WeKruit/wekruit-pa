@@ -11,17 +11,24 @@ export type RecruiterSubmissionAction =
   | "wekruit_interview"
   | "client_review"
   | "hired"
+  | "save_marks"
 
 export type RecruiterCandidateRejectionCategory = "quality" | "role_fit"
 export type RecruiterCandidateTier = "tier_1" | "tier_2" | "tier_3"
+
+/** Operator per-item checklist assessment (AI mark + override) keyed by rubric item. */
+export type ChecklistMark = "met" | "gap" | "flag" | "clear"
+export type RecruiterChecklistMarks = Record<string, ChecklistMark>
 
 export interface RecruiterSubmissionRejectionInput {
   category: RecruiterCandidateRejectionCategory
   candidateTier: RecruiterCandidateTier
   reason: string
+  /** Structured quick-reject chip ids the operator tapped (e.g. "weak_school"). */
+  reasons?: string[]
 }
 
-/** Client-side mirror of the callable's status writes (for optimistic UI). */
+/** Client-side mirror of the callable's status writes (for optimistic UI). save_marks does NOT change status. */
 export const RECRUITER_SUBMISSION_ACTION_TO_STATUS: Record<RecruiterSubmissionAction, string> = {
   advance: "advanced",
   reject: "rejected",
@@ -31,6 +38,7 @@ export const RECRUITER_SUBMISSION_ACTION_TO_STATUS: Record<RecruiterSubmissionAc
   wekruit_interview: "wekruit_interview",
   client_review: "client_review",
   hired: "hired",
+  save_marks: "",
 }
 
 export interface RecruiterSubmissionActionInput {
@@ -39,6 +47,7 @@ export interface RecruiterSubmissionActionInput {
   note?: string
   requestMessage?: string
   rejection?: RecruiterSubmissionRejectionInput
+  checklistMarks?: RecruiterChecklistMarks
   adminToken?: string
 }
 

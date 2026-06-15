@@ -492,4 +492,66 @@ describe("runAdminRecruiterSubmissionAction", () => {
     )
     assert.equal(mfs.writeLog.length, 0)
   })
+
+  it("save_marks persists adminChecklistMarks without changing status or decision", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    const result = await run(mfs, {
+      submissionId: "sub-1",
+      action: "save_marks",
+      checklistMarks: { "item-a": "met", "item-b": "gap" },
+    })
+
+    assert.deepEqual(result, { ok: true, submissionId: "sub-1", status: "submitted" })
+    const doc = await readDoc(mfs)
+    assert.equal(doc.status, "submitted") // unchanged
+    assert.equal(doc.adminDecision, undefined) // no decision written
+    assert.deepEqual(doc.adminChecklistMarks, {
+      marks: { "item-a": "met", "item-b": "gap" },
+      by: "admin1@wekruit.com",
+      at: now,
+    })
+    // status history untouched (still just the seeded submitted entry)
+    assert.equal((doc.statusHistory as unknown[]).length, 1)
+  })
+
+  it("save_marks with no marks is rejected", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    await assert.rejects(
+      () => run(mfs, { submissionId: "sub-1", action: "save_marks", checklistMarks: {} }),
+      (err) => err instanceof HttpsError && err.code === "invalid-argument",
+    )
+  })
+
+  it("reject persists quick-reject chip reasons and merges them into recruiterFeedbackReasons", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    await run(mfs, {
+      submissionId: "sub-1",
+      action: "reject",
+      rejection: {
+        category: "quality",
+        candidateTier: "tier_3",
+        reason: "school + company too weak",
+        reasons: ["weak_school", "weak_company_pedigree"],
+      },
+      checklistMarks: { "hard-1": "gap" },
+    })
+
+    const doc = await readDoc(mfs)
+    assert.equal(doc.status, "rejected")
+    const rejection = doc.rejection as Record<string, unknown>
+    assert.deepEqual(rejection.reasons, ["weak_school", "weak_company_pedigree"])
+    // chip ids are merged (deduped) into the recruiter feedback reasons
+    const feedbackReasons = doc.recruiterFeedbackReasons as string[]
+    assert.ok(feedbackReasons.includes("weak_school"))
+    assert.ok(feedbackReasons.includes("weak_company_pedigree"))
+    assert.equal(new Set(feedbackReasons).size, feedbackReasons.length) // no dupes
+    // checklist marks bundled with the decision
+    assert.deepEqual((doc.adminChecklistMarks as Record<string, unknown>).marks, { "hard-1": "gap" })
+  })
 })
