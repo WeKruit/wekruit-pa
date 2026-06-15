@@ -99,21 +99,20 @@ describe("parseResumeText", () => {
     assert.deepEqual(result.parsed.proposedTags, [])
   })
 
-  it("rejects proposedTags with abbreviated tokens (regex pattern enforces lowercase + length)", async () => {
+  it("DROPS invalid proposedTags instead of failing the parse (Chang Shu resilience 2026-06-15)", async () => {
     const badParsed = {
       ...VALID_PARSED,
-      // Empty string fails the regex (must start with [a-z]).
-      proposedTags: [""],
+      // Mix of invalid (empty, disallowed chars, caps) and valid tokens. The
+      // invalid ones must be filtered out — NOT throw and block the candidate.
+      proposedTags: ["", "c++", "f#", "Caps", "valid_tag"],
     }
-    await assert.rejects(
-      () =>
-        parseResumeText({
-          apiKey: "sk-test",
-          resumeText: "stub",
-          retry: { attempts: 1, sleep: async () => {} },
-          clientFactory: () => clientWithJson(badParsed),
-        })
-    )
+    const result = await parseResumeText({
+      apiKey: "sk-test",
+      resumeText: "stub",
+      retry: { attempts: 1, sleep: async () => {} },
+      clientFactory: () => clientWithJson(badParsed),
+    })
+    assert.deepEqual(result.parsed.proposedTags, ["valid_tag"])
   })
 
   it("Phase 53 — falls through to Anthropic secondary when primary 5xx", async () => {
