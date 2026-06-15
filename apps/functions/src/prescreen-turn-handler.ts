@@ -16,6 +16,11 @@
 import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import {
+  AI_USAGE_SHARED_KEY,
+  applyPartialUserTags,
+  isRegisteredSharedKey,
+  mergeUserPrescreenSharedAnswers,
+  type PartialUserTags,
   KeywordSetJudge,
   PreScreenPipeline,
   WEKRUIT_CANDIDATE_SOURCE,
@@ -36,6 +41,7 @@ import {
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
 import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm.js"
+import { AI_QUESTION_QID } from "./claire-agent/prescreen-ai-question.js"
 import { isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
 import { isStaleClosedPrescreenSession } from "./prescreen-staleness.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
@@ -1583,6 +1589,15 @@ async function finalizePrescreenTurnResult(params: {
       ts: new Date().toISOString(),
     })
 
+  // DEFAULT AI-acceleration question (Adam directive) — ASK-ONCE persist on the LEGACY/FSM path.
+  // When the appended q_ai_acceleration was the question just answered on this turn (it is appended
+  // LAST, so this is normally the terminal-driving turn), dual-write the answer with the SAME writers
+  // the thin path uses (process-tools.ts): the generalized cross-session store
+  // pa-users.prescreenSharedAnswers["ai_usage"] (sole writer) PLUS the back-compat skip tag
+  // tags.aiAccelerationUsage. Best-effort; a write failure NEVER blocks the verdict. The AI question is
+  // non-gating (weight 0 / GOOD_TO_HAVE), so this only persists fluency — it does not affect PASS/FAIL.
+  await persistLegacyAiQuestionAnswer({ args, sessionId, activeQId, result, log })
+
   const reviewTerminal =
     result.action.kind === "terminal" ? prescreenHumanReviewTerminal(result.action.terminal) : null
   let textSent = result.text
@@ -1666,6 +1681,74 @@ async function finalizePrescreenTurnResult(params: {
     sessionId,
     terminal: result.state.terminal,
     textSent,
+  }
+}
+
+/**
+ * ASK-ONCE persist for the legacy/FSM default AI-acceleration question. Mirrors the thin path's
+ * dual-write in claire-agent/tools/process-tools.ts so BOTH paths feed the same cross-session store.
+ * Fires only on the turn that just answered q_ai_acceleration (activeQId === AI_QUESTION_QID and the
+ * Q now has an answer on record). Idempotent in practice: the AI Q is answered exactly once per
+ * session (last question), and the merge writer is recency-guarded. Best-effort — never throws.
+ */
+async function persistLegacyAiQuestionAnswer(params: {
+  args: RunPrescreenTurnArgs
+  sessionId: string
+  activeQId: string
+  result: Awaited<ReturnType<PreScreenPipeline["runTurn"]>>
+  log: (event: string, payload: Record<string, unknown>) => void
+}): Promise<void> {
+  const { args, sessionId, activeQId, result, log } = params
+  const logOpt = (event: string, payload?: Record<string, unknown>) => log(event, payload ?? {})
+  if (activeQId !== AI_QUESTION_QID) return
+  const qState = result.state.questions?.[AI_QUESTION_QID]
+  // Only persist once the AI question is actually answered this turn (answeredAt stamped). A clarify
+  // round leaves answeredAt unset → skip until it resolves.
+  if (!qState || typeof qState.answeredAt !== "string") return
+  const reply = Array.isArray(qState.evidenceReplies)
+    ? qState.evidenceReplies.join(" ").trim()
+    : (args.replyText ?? "").trim()
+  if (!reply) return
+  const nowIso = new Date().toISOString()
+  try {
+    if (isRegisteredSharedKey(AI_USAGE_SHARED_KEY)) {
+      await mergeUserPrescreenSharedAnswers(
+        args.db,
+        args.userId,
+        {
+          sharedKey: AI_USAGE_SHARED_KEY,
+          reply,
+          evidenceReplies: [reply],
+          ...(typeof qState.finalS === "number" ? { finalS: qState.finalS } : {}),
+          sourceSessionId: sessionId,
+          sourceJobId: result.state.jobId,
+          answeredAt: nowIso,
+          updatedAt: nowIso,
+        },
+        { nowIso, log: logOpt },
+      )
+    }
+  } catch (err) {
+    log("prescreen.legacy_ai_question.shared_answer_write_error", {
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  // BACK-COMPAT skip signal (migration window) — keep tags.aiAccelerationUsage warm so the legacy
+  // shouldSkipAiQuestion branch + any reader still skips on the next session. Drop once carry-over is
+  // the sole read path.
+  try {
+    await applyPartialUserTags(
+      args.db,
+      args.userId,
+      { aiAccelerationUsage: { value: reply, updatedAt: nowIso } } as PartialUserTags,
+      { source: "chat", nowIso, log: logOpt },
+    )
+  } catch (err) {
+    log("prescreen.legacy_ai_question.tag_write_error", {
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
 }
 

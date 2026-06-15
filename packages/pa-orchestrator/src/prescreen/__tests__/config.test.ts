@@ -233,3 +233,32 @@ test("Phase 78: PrescreenConfigSchema lets author pick ordering (no auto-sort)",
   assert.equal(cfg.questions[0].qId, "q_z")
   assert.equal(cfg.questions[0].type, "GOOD_TO_HAVE")
 })
+
+test("SPEC §5a: sharedKey accepted + flows through configToStateQuestions", () => {
+  const cfg = parsePrescreenConfig({
+    ...validConfig,
+    questions: [
+      { ...validQuestion, qId: "q_ai", sharedKey: "ai_usage" },
+      { ...validQuestion, qId: "q_job_specific" }, // no sharedKey
+    ],
+  })
+  assert.equal(cfg.questions[0].sharedKey, "ai_usage")
+  assert.equal(cfg.questions[1].sharedKey, undefined)
+  const mapped = configToStateQuestions(cfg)
+  assert.equal(mapped[0].sharedKey, "ai_usage")
+  assert.equal("sharedKey" in mapped[1], false)
+})
+
+test("SPEC §5a: sharedKey rejects non-[a-z0-9_] tokens", () => {
+  const r = safeParsePrescreenConfig({
+    ...validConfig,
+    questions: [{ ...validQuestion, qId: "q1", sharedKey: "AI Usage!" }],
+  })
+  assert.equal(r.ok, false)
+})
+
+test("SPEC §10: config WITHOUT any sharedKey is unchanged (dormant-safe)", () => {
+  const cfg = parsePrescreenConfig(validConfig)
+  const mapped = configToStateQuestions(cfg)
+  assert.equal("sharedKey" in mapped[0], false)
+})

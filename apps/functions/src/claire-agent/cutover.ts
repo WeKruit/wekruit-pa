@@ -1229,6 +1229,12 @@ export async function maybeRunThinClaire(
         ...(decision.prescreenContext ? { prescreenContext: decision.prescreenContext } : {}),
         ...(decision.prescreenResumeSnippet ? { prescreenResumeSnippet: decision.prescreenResumeSnippet } : {}),
         ...(decision.prescreenSessionId ? { prescreenSessionId: decision.prescreenSessionId } : {}),
+        // SPEC §6/§7 — cross-session shared-answer write key + provenance jobId + carry-over reference hooks.
+        ...(decision.prescreenJobId ? { prescreenJobId: decision.prescreenJobId } : {}),
+        ...(decision.prescreenSharedKeys ? { prescreenSharedKeys: decision.prescreenSharedKeys } : {}),
+        ...(decision.prescreenCarriedReferences
+          ? { prescreenCarriedReferences: decision.prescreenCarriedReferences }
+          : {}),
         // cv-parsed re-entry: this turn is the post-parse PITCH turn (mode-selector set postParsePitch).
         // Threaded so prompt.ts swaps the generic kickoff for the PART-2 pitch. Canary-only by construction
         // (cvParsedReentry requires isCanaryUser); default off for everyone else.

@@ -7469,6 +7469,20 @@ export {
   type PrescreenQuestionConfig,
   type KeywordSpecConfig,
 } from "./prescreen/config.js"
+// SPEC — cross-session prescreen answer reuse (shared question key + global memory).
+export {
+  PRESCREEN_SHARED_KEYS,
+  AI_USAGE_SHARED_KEY,
+  isRegisteredSharedKey,
+  type PrescreenSharedKey,
+} from "./prescreen/shared-keys.js"
+export {
+  mergeUserPrescreenSharedAnswers,
+  readUserPrescreenSharedAnswers,
+  PrescreenSharedAnswerSchema,
+  type PrescreenSharedAnswer,
+  type PrescreenSharedAnswers,
+} from "./tags/prescreen-shared-answers-writer.js"
 export {
   emptyPreScreenState,
   InMemoryPreScreenStore,

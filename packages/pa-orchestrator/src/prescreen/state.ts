@@ -56,6 +56,23 @@ export interface PreScreenQuestionState {
   answeredAt?: string
   /** Reason field set when this Q caused a terminal state. */
   terminalCause?: "type_gate_fail" | "viability_fail" | "max_clarify_exhausted"
+  /**
+   * SPEC §5a — authored cross-job identity. When set, an answer to this question is
+   * shared across jobs via `pa-users/{uid}.prescreenSharedAnswers[sharedKey]`
+   * (skip + carry). Absent for job-specific questions.
+   */
+  sharedKey?: string
+  /**
+   * SPEC §7.4 — provenance when this question was PRE-ANSWERED at session start from
+   * the candidate's global shared-answer store (the candidate was NOT asked it this
+   * session; the stored reply was re-judged against this job's rubric). Absent for
+   * questions answered live in this session.
+   */
+  carriedFrom?: {
+    sourceSessionId: string
+    sourceJobId: string
+    answeredAt: string
+  }
 }
 
 /**
@@ -121,7 +138,13 @@ export function emptyPreScreenState(args: {
   sessionId: string
   userId: string
   jobId: string
-  questions: Array<{ qId: string; type: QuestionType; weight: number; matchThreshold?: number }>
+  questions: Array<{
+    qId: string
+    type: QuestionType
+    weight: number
+    matchThreshold?: number
+    sharedKey?: string
+  }>
   threshold?: number
   confidenceThreshold?: number
   maxClarifyRounds?: number
@@ -135,6 +158,7 @@ export function emptyPreScreenState(args: {
       type: q.type,
       weight: q.weight,
       ...(q.matchThreshold !== undefined ? { matchThreshold: q.matchThreshold } : {}),
+      ...(q.sharedKey !== undefined ? { sharedKey: q.sharedKey } : {}),
       clarifyRounds: 0,
     }
     scoreMax += q.weight

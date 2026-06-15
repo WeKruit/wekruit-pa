@@ -42,6 +42,7 @@ import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-too
 import { isThinPrescreenEnabled } from "./flags.js"
 import { buildThinPrescreenSeed, type AiQuestionOptions } from "./prescreen-config.js"
 import { loadPrescreenContext } from "./prescreen-context.js"
+import { readUserPrescreenSharedAnswers, AI_USAGE_SHARED_KEY } from "@pa/pa-orchestrator"
 import {
   AI_QUESTION_QID,
   roleFunctionFromJob,
@@ -81,6 +82,13 @@ export interface ModeDecision {
   prescreenResumeSnippet?: string
   /** prescreen (thin): the REAL pa-prescreen-sessions doc id (score write-back + terminal fire). */
   prescreenSessionId?: string
+  /** prescreen (thin): the REAL pa-jobs job id (shared-answer write provenance). */
+  prescreenJobId?: string
+  /** prescreen (thin): qId → authored sharedKey (cross-session shared-answer write key). SPEC §5a. */
+  prescreenSharedKeys?: Record<string, string>
+  /** prescreen (thin): qId → a natural-language reference for a carried (pre-answered) shared question
+   *  so the agent references the prior answer instead of re-asking it (SPEC §7 / decision 3). */
+  prescreenCarriedReferences?: Record<string, string>
   /** cv-parsed re-entry (Adam 2026-06-02): this turn is the post-parse pitch turn — swap the generic
    *  kickoff for the PART-2 proactive pitch (consumed by prompt.ts). Set only for the resume_parse_completed
    *  re-entry (canary), never on a normal onboarding/triage turn. */
@@ -436,20 +444,35 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
       // skip here (the builder is pure). Skip if the durable global tag is set OR any prior session
       // already scored the AI question. Fail-soft: any error → still append (better to ask than drop).
       let aiQuestion: AiQuestionOptions = { append: true, roleFunction: roleFunctionFromJob(jobData, config) }
+      // SPEC §7 — the candidate's GLOBAL shared-answer store. A shared question (incl. the appended AI
+      // question) whose key is in this store is carried (not re-asked). Read once here; fail-soft → {}.
+      let sharedAnswers: Awaited<ReturnType<typeof readUserPrescreenSharedAnswers>> = {}
       try {
         const userSnap = await args.db.collection(USERS).doc(args.userId).get()
         const userTags = (userSnap.exists ? userSnap.data()?.tags : null) as
           | Record<string, unknown>
           | null
         const priorAi = await hasPriorAiQuestionScored(args.db, args.userId, ps.jobId)
+        sharedAnswers = await readUserPrescreenSharedAnswers(args.db, args.userId, { log })
+        // Cross-session skip for the appended AI question: skip it when EITHER the new generalized
+        // store carries `ai_usage` OR the legacy tags.aiAccelerationUsage signal is set (back-compat
+        // migration window) OR a prior session scored it.
+        const aiUsageCarried = Boolean(sharedAnswers[AI_USAGE_SHARED_KEY]?.reply)
         aiQuestion = {
-          append: !shouldSkipAiQuestion(userTags, priorAi),
+          append: !aiUsageCarried && !shouldSkipAiQuestion(userTags, priorAi),
           roleFunction: roleFunctionFromJob(jobData, config),
         }
       } catch {
         /* fail-open: keep append:true */
       }
-      const seed = buildThinPrescreenSeed(config, ps.session ?? null, "en", aiQuestion)
+      // Carry-over: for the only authored sharedKey today (ai_usage), the question is INFORMATIONAL
+      // (non-gating), so re-judge is a no-op on the verdict — we carry the stored answer as-is
+      // (SPEC §7 option b is explicitly allowed when re-judge is infeasible/unnecessary). When a
+      // future GATING sharedKey is authored, supply carryOver.reJudgedScores here (re-judged against
+      // THIS job's rubric via the in-tool judge) before seeding.
+      const seed = buildThinPrescreenSeed(config, ps.session ?? null, "en", aiQuestion, {
+        sharedAnswers,
+      })
       if (seed.questionIds.length === 0) {
         // No usable questions → don't strand the candidate on a thin engine with nothing to ask.
         log("mode.prescreen_thin_no_questions", { userId: args.userId, jobId: ps.jobId })
@@ -459,11 +482,23 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
       store.prescreen = seed.prescreen
       // résumé arc + prior-session callbacks (extra reads paid ONLY on a thin prescreen turn).
       const pc = await loadPrescreenContext(args.db, args.userId, ps.jobId, seed.prompts)
+      // SPEC §7 / decision 3 — fold the carry-over reference hooks into the prescreen context so Claire
+      // REFERENCES a pre-answered shared question naturally instead of re-asking it (the FSM already
+      // auto-skips it via its carried score). Rides the existing prescreenContext channel → no new prompt
+      // field. Empty when nothing was carried (dormant).
+      const carriedRefs = Object.values(seed.carriedReferences)
+      const contextText =
+        carriedRefs.length > 0
+          ? [pc.contextText, `Already answered in a prior session (do NOT re-ask): ${carriedRefs.join(" ")}`]
+              .filter((s) => s && s.trim())
+              .join("\n\n")
+          : pc.contextText
       log("mode.prescreen_thin", {
         userId: args.userId,
         jobId: ps.jobId,
         questions: seed.questionIds.length,
         priorScored: Object.keys(seed.prescreen.scores).length,
+        carried: seed.carriedQuestionIds.length,
       })
       return {
         mode: "prescreen",
@@ -472,9 +507,14 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
         processStore: store,
         prescreenPrompts: seed.prompts,
         judgeContext: seed.judgeContext,
-        prescreenContext: pc.contextText,
+        prescreenContext: contextText,
         prescreenResumeSnippet: pc.resumeSnippet,
         prescreenSessionId: ps.sessionId,
+        prescreenJobId: ps.jobId,
+        prescreenSharedKeys: seed.sharedKeys,
+        ...(Object.keys(seed.carriedReferences).length > 0
+          ? { prescreenCarriedReferences: seed.carriedReferences }
+          : {}),
       }
     } catch (err) {
       // Any seeding failure → fall back to the legacy runner so the candidate still gets a reply.

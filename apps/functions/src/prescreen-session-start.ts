@@ -23,10 +23,17 @@ import {
   emptyPreScreenState,
   type PrescreenConfig,
 } from "@pa/pa-orchestrator"
+import { readUserPrescreenSharedAnswers, AI_USAGE_SHARED_KEY } from "@pa/pa-orchestrator"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { markFirstInterviewStarted } from "./prescreen-outcome-service.js"
 import { isClaireEntryUxCanary } from "./claire-agent/canary.js"
 import { isEnrichmentInFlight } from "./claire-agent/enrichment-inflight.js"
+import {
+  AI_QUESTION_QID,
+  legacyAiQuestionConfig,
+  roleFunctionFromJob,
+  shouldSkipAiQuestion,
+} from "./claire-agent/prescreen-ai-question.js"
 
 type RuntimeSmsSender = (args: {
   to: string
@@ -136,6 +143,108 @@ const PENDING_INVITES_COLLECTION = "pa-prescreen-pending-invites"
  */
 export const PROFILE_READINESS_HOLD_COPY =
   "i'm still reading through your resume/experience so i can start this screen with the right context - one sec. if you'd rather not wait, just reply and i'll start the screen right away"
+
+const USERS_COLLECTION = "pa-users"
+const PRESCREEN_SESSIONS_COLLECTION = "pa-prescreen-sessions"
+
+/**
+ * DEFAULT AI-acceleration question on the LEGACY/FSM prescreen path (Adam directive: EVERY screen
+ * asks it "from now on"). The thin path already appends it (prescreen-config.ts buildThinPrescreenSeed);
+ * this is the legacy analogue. REUSES the same role→prompt map + ask-once skip from
+ * claire-agent/prescreen-ai-question.ts so both paths agree.
+ *
+ * Resolves the cross-session ask-once skip with the SAME signals as mode-selector (so a candidate who
+ * answered on the thin path is not re-asked on legacy and vice versa):
+ *   - the generalized global store pa-users.prescreenSharedAnswers["ai_usage"], OR
+ *   - the legacy back-compat tag pa-users.tags.aiAccelerationUsage, OR
+ *   - any PRIOR terminal/in-progress (other-job) session that already scored q_ai_acceleration.
+ * Fail-open: on any read error → APPEND (better to ask than silently drop the Adam-mandated question).
+ *
+ * Returns the config to use for the session: the original config when skipping, else a SHALLOW COPY
+ * with the synthetic NON-GATING q_ai_acceleration appended LAST. Injected AFTER zod parse (the schema
+ * weight floor of 0.1 forbids weight:0 in a parsed config) and never re-validated, so weight 0 is safe.
+ */
+async function withLegacyAiQuestion(
+  db: Firestore,
+  userId: string,
+  jobId: string,
+  jobData: Record<string, unknown> | null,
+  cfg: PrescreenConfig,
+  log: (event: string, payload: Record<string, unknown>) => void,
+): Promise<PrescreenConfig> {
+  const logOpt = (event: string, payload?: Record<string, unknown>) => log(event, payload ?? {})
+  // Config already declares the qId (defensive) → never double-append.
+  if (cfg.questions.some((q) => q.qId === AI_QUESTION_QID)) return cfg
+
+  let skip = false
+  try {
+    const [userSnap, sharedAnswers, priorScored] = await Promise.all([
+      db.collection(USERS_COLLECTION).doc(userId).get(),
+      readUserPrescreenSharedAnswers(db, userId, { log: logOpt }),
+      hasPriorLegacyAiQuestionScored(db, userId, jobId),
+    ])
+    const userTags = (userSnap.exists ? userSnap.data()?.tags : null) as
+      | Record<string, unknown>
+      | null
+    const aiUsageCarried = Boolean(sharedAnswers[AI_USAGE_SHARED_KEY]?.reply)
+    skip = aiUsageCarried || shouldSkipAiQuestion(userTags, priorScored)
+  } catch (err) {
+    // fail-open: keep skip=false (append). Better to ask than drop the mandated question.
+    log("prescreen.legacy_ai_question.skip_resolve_error", {
+      jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    skip = false
+  }
+  if (skip) {
+    log("prescreen.legacy_ai_question.skipped", { jobId, userId })
+    return cfg
+  }
+  const aiQ = legacyAiQuestionConfig(roleFunctionFromJob(jobData, cfg as unknown as Record<string, unknown>))
+  log("prescreen.legacy_ai_question.appended", { jobId, userId, roleFunction: aiQ.prompt.en.slice(0, 40) })
+  // Shallow copy + append LAST so gating MUST_HAVE/PROBING question order is untouched.
+  return { ...cfg, questions: [...cfg.questions, aiQ as unknown as (typeof cfg.questions)[number]] }
+}
+
+/**
+ * Cross-session ASK-ONCE backup signal for the legacy path: did any OTHER session already score
+ * q_ai_acceleration? Mirrors mode-selector.hasPriorAiQuestionScored (userId-only query + in-memory
+ * scan; the current in-progress same-job session is excluded). Fail-soft → false (default to asking).
+ */
+async function hasPriorLegacyAiQuestionScored(
+  db: Firestore,
+  userId: string,
+  currentJobId: string,
+): Promise<boolean> {
+  try {
+    const snap = await db
+      .collection(PRESCREEN_SESSIONS_COLLECTION)
+      .where("userId", "==", userId)
+      .limit(20)
+      .get()
+    for (const doc of snap.docs) {
+      const d = doc.data() as Record<string, unknown>
+      // legacy FSM writes per-Q state under `questions`; thin writes `scored`/`scores`.
+      const fromQuestions =
+        d.questions && typeof d.questions === "object" && AI_QUESTION_QID in (d.questions as object)
+          ? ((d.questions as Record<string, unknown>)[AI_QUESTION_QID] as Record<string, unknown>)
+          : null
+      const answeredInQuestions =
+        fromQuestions != null && typeof fromQuestions.answeredAt === "string"
+      const scored = (d.scored ?? d.scores) as Record<string, unknown> | undefined
+      const answeredInScored =
+        scored != null && typeof scored === "object" && AI_QUESTION_QID in scored
+      if (answeredInQuestions || answeredInScored) {
+        // ignore the current job's still-open session being re-counted as "prior"
+        if (typeof d.jobId === "string" && d.jobId === currentJobId && d.terminal == null) continue
+        return true
+      }
+    }
+  } catch {
+    /* fail-soft */
+  }
+  return false
+}
 
 type PendingPrescreenStart = {
   status?: unknown
@@ -852,21 +961,26 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
 
   // 3. Persist fresh session state.
   const sessRef = args.db.collection("pa-prescreen-sessions").doc(sessionId)
-  const firstQText = cfg.questions[0].prompt.en
+  // DEFAULT AI-acceleration question (Adam directive) — append the role-tailored, NON-GATING
+  // q_ai_acceleration LAST onto the legacy config (ask-once skip resolved here). The state build +
+  // cfgSnapshot below BOTH read this augmented config, so the per-turn binding auto-asks it and the
+  // FSM scores it with weight 0 (verdict unaffected). Q1 (firstQText) is untouched — append-only.
+  const effectiveCfg = await withLegacyAiQuestion(args.db, args.userId, args.jobId, data ?? null, cfg, log)
+  const firstQText = effectiveCfg.questions[0].prompt.en
 
   const state = emptyPreScreenState({
     sessionId,
     userId: args.userId,
     jobId: args.jobId,
-    questions: configToStateQuestions(cfg),
-    threshold: cfg.threshold,
-    confidenceThreshold: cfg.confidenceThreshold,
-    maxClarifyRounds: Math.max(cfg.maxClarifyRounds, MIN_PRESCREEN_PROBE_ROUNDS),
+    questions: configToStateQuestions(effectiveCfg),
+    threshold: effectiveCfg.threshold,
+    confidenceThreshold: effectiveCfg.confidenceThreshold,
+    maxClarifyRounds: Math.max(effectiveCfg.maxClarifyRounds, MIN_PRESCREEN_PROBE_ROUNDS),
     nowIso,
   })
   await sessRef.set({
     ...state,
-    cfgSnapshot: cfg, // snapshot of config at session start
+    cfgSnapshot: effectiveCfg, // snapshot of (augmented) config at session start
     e164: args.toE164,
     workSession: {
       kind: "job_prescreen",

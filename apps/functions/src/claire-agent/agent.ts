@@ -737,6 +737,13 @@ export interface RunClaireTurnDeps {
   prescreenResumeSnippet?: string
   /** prescreen: the REAL pa-prescreen-sessions doc id (for score write-back + the terminal-action fire). */
   prescreenSessionId?: string
+  /** prescreen: the REAL pa-jobs job id (shared-answer write provenance). SPEC §6. */
+  prescreenJobId?: string
+  /** prescreen: qId → authored sharedKey (cross-session shared-answer write key). SPEC §5a. */
+  prescreenSharedKeys?: Record<string, string>
+  /** prescreen: qId → reference hook for a carried (pre-answered) shared question — the agent references
+   *  the prior answer instead of re-asking it (SPEC §7 / decision 3). */
+  prescreenCarriedReferences?: Record<string, string>
   /** cv-parsed re-entry (Adam 2026-06-02): the résumé just finished parsing → PITCH from the freshly
    *  loaded profile, then offer find_match. Set by cutover for the resume_parse_completed event (canary). */
   postParsePitch?: boolean
@@ -889,6 +896,10 @@ export async function runClaireTurn(
   if (deps.judgeContext) (ctx as ProcessToolContext).prescreenJudgeContext = deps.judgeContext
   if (deps.prescreenResumeSnippet) (ctx as ProcessToolContext).prescreenResumeSnippet = deps.prescreenResumeSnippet
   if (deps.prescreenSessionId) (ctx as ProcessToolContext).prescreenSessionId = deps.prescreenSessionId
+  // SPEC §6 — the shared-answer write seam reads jobId + qId→sharedKey off ctx to persist a finalized
+  // shared question's answer to the GLOBAL cross-session store (pa-users.prescreenSharedAnswers).
+  if (deps.prescreenJobId) (ctx as ProcessToolContext).prescreenJobId = deps.prescreenJobId
+  if (deps.prescreenSharedKeys) (ctx as ProcessToolContext).prescreenSharedKeys = deps.prescreenSharedKeys
 
   // TEST SEAM: hand the tracked transport to a test so it can simulate a mid-run tool delivery through the
   // exact wrapper the never-silent backstop counts (production never sets onToolTransportReady). Fail-open.

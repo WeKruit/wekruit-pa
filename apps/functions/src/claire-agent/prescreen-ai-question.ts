@@ -11,9 +11,16 @@
  * candidate free text into an enum; we only pick a canned PROMPT from the JOB's roleFunction).
  *
  * NON-GATING: the appended question is marked `informational` so the prescreen FSM records
- * its answer (advancing the flow) but EXCLUDES it from the PASS/FAIL average. The captured
- * answer is persisted GLOBALLY to `pa-users.tags.aiAccelerationUsage` (via the existing
- * applyPartialUserTags sole writer) so it is asked once across the candidate's lifetime.
+ * its answer (advancing the flow) but EXCLUDES it from the PASS/FAIL average.
+ *
+ * MIGRATED (SPEC cross-session-prescreen-answer-reuse): this question now carries the authored
+ * sharedKey `ai_usage` (see prescreen-config.ts buildThinPrescreenSeed). The captured answer is
+ * persisted GLOBALLY to the AUTHORITATIVE store `pa-users.prescreenSharedAnswers["ai_usage"]` (via
+ * the mergeUserPrescreenSharedAnswers sole writer) so it is asked once across the candidate's
+ * lifetime AND carried forward (re-judged) into future sessions. The legacy
+ * `pa-users.tags.aiAccelerationUsage` is kept as a BACK-COMPAT skip signal during the migration
+ * window (dual-written by the finalize seam, still read by shouldSkipAiQuestion below) — drop it
+ * once every session reads the carry-over store.
  *
  * Pure + dependency-free (no Firestore, no LLM) — L1-testable.
  */
@@ -115,6 +122,50 @@ export function aiQuestionPromptFor(roleFunctions: readonly string[] | null | un
 /** The judge/grounding rubric for the AI question. */
 export function aiQuestionRubric(): string {
   return AI_QUESTION_RUBRIC
+}
+
+/**
+ * Build the synthetic LEGACY/FSM prescreen question entry for the default AI-acceleration question,
+ * shaped like a parsed `PrescreenQuestionConfig` so it can be APPENDED (last) to the parsed config's
+ * `questions[]` AFTER zod parse (the schema's weight floor of 0.1 forbids injecting weight:0 before
+ * parse — we never round-trip this through the schema). REUSED by the legacy session-start seam so the
+ * deterministic FSM asks the SAME role-tailored question the thin path appends.
+ *
+ * NON-GATING on legacy: `type:"GOOD_TO_HAVE"` (defaultMatchThresholdForType=0 → the type gate never
+ * HARD_STOPs it) + `weight:0` (contributes 0 to BOTH state.score and scoreMax → the PASS/FAIL ratio
+ * score/scoreMax is unchanged, and remainingMaxScore is unaffected so it can never trigger a false
+ * PAUSE). It carries the `ai_usage` sharedKey for cross-session skip/carry parity with thin.
+ *
+ * The synthetic `keywords` entry exists ONLY to satisfy the per-turn KeywordSetJudge binding (the
+ * binding throws on a question with no keywords); its hint is the informational rubric — the question
+ * is non-gating regardless of the judge's score.
+ *
+ * @param roleFunctions the job's roleFunction tokens (role-tailored prompt; generic fallback if empty).
+ * @param lang text language for the bilingual prompt (zh mirrors en — these are canned English asks).
+ */
+export function legacyAiQuestionConfig(roleFunctions: readonly string[] | null | undefined): {
+  qId: string
+  type: "GOOD_TO_HAVE"
+  weight: number
+  sharedKey: string
+  prompt: { zh: string; en: string }
+  clarifyPrompt: { zh: string; en: string }
+  keywords: Array<{ keyword: string; hint: string }>
+} {
+  const promptEn = aiQuestionPromptFor(roleFunctions)
+  const clarifyEn =
+    "No worries if you're early with AI — just tell me what (if anything) you've tried and how it fit into your workflow."
+  return {
+    qId: AI_QUESTION_QID,
+    type: "GOOD_TO_HAVE",
+    // NON-GATING: weight 0 → adds 0 to score AND scoreMax (verdict ratio unchanged).
+    weight: 0,
+    sharedKey: "ai_usage",
+    prompt: { zh: promptEn, en: promptEn },
+    clarifyPrompt: { zh: clarifyEn, en: clarifyEn },
+    // Single rubric-hint keyword so the KeywordSetJudge binding has something to score.
+    keywords: [{ keyword: "ai_usage", hint: aiQuestionRubric() }],
+  }
 }
 
 /**
