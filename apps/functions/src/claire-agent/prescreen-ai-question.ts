@@ -125,6 +125,50 @@ export function aiQuestionRubric(): string {
 }
 
 /**
+ * Build the synthetic LEGACY/FSM prescreen question entry for the default AI-acceleration question,
+ * shaped like a parsed `PrescreenQuestionConfig` so it can be APPENDED (last) to the parsed config's
+ * `questions[]` AFTER zod parse (the schema's weight floor of 0.1 forbids injecting weight:0 before
+ * parse — we never round-trip this through the schema). REUSED by the legacy session-start seam so the
+ * deterministic FSM asks the SAME role-tailored question the thin path appends.
+ *
+ * NON-GATING on legacy: `type:"GOOD_TO_HAVE"` (defaultMatchThresholdForType=0 → the type gate never
+ * HARD_STOPs it) + `weight:0` (contributes 0 to BOTH state.score and scoreMax → the PASS/FAIL ratio
+ * score/scoreMax is unchanged, and remainingMaxScore is unaffected so it can never trigger a false
+ * PAUSE). It carries the `ai_usage` sharedKey for cross-session skip/carry parity with thin.
+ *
+ * The synthetic `keywords` entry exists ONLY to satisfy the per-turn KeywordSetJudge binding (the
+ * binding throws on a question with no keywords); its hint is the informational rubric — the question
+ * is non-gating regardless of the judge's score.
+ *
+ * @param roleFunctions the job's roleFunction tokens (role-tailored prompt; generic fallback if empty).
+ * @param lang text language for the bilingual prompt (zh mirrors en — these are canned English asks).
+ */
+export function legacyAiQuestionConfig(roleFunctions: readonly string[] | null | undefined): {
+  qId: string
+  type: "GOOD_TO_HAVE"
+  weight: number
+  sharedKey: string
+  prompt: { zh: string; en: string }
+  clarifyPrompt: { zh: string; en: string }
+  keywords: Array<{ keyword: string; hint: string }>
+} {
+  const promptEn = aiQuestionPromptFor(roleFunctions)
+  const clarifyEn =
+    "No worries if you're early with AI — just tell me what (if anything) you've tried and how it fit into your workflow."
+  return {
+    qId: AI_QUESTION_QID,
+    type: "GOOD_TO_HAVE",
+    // NON-GATING: weight 0 → adds 0 to score AND scoreMax (verdict ratio unchanged).
+    weight: 0,
+    sharedKey: "ai_usage",
+    prompt: { zh: promptEn, en: promptEn },
+    clarifyPrompt: { zh: clarifyEn, en: clarifyEn },
+    // Single rubric-hint keyword so the KeywordSetJudge binding has something to score.
+    keywords: [{ keyword: "ai_usage", hint: aiQuestionRubric() }],
+  }
+}
+
+/**
  * Read a job's roleFunction tokens off its raw doc / prescreen config (defensive — the field
  * lives on the job doc as `roleFunction`, occasionally mirrored onto the config).
  */
