@@ -16,8 +16,16 @@ interface PoolNumber {
   adminOnly?: boolean
   capacity?: number
   dailySendCap?: number
+  /** Safety buffer subtracted from dailySendCap — sends stop at (cap − buffer). */
+  sendCapBuffer?: number
+  sendCapWindowHours?: number
   newUserCap?: number
   assignedNewUsers?: number
+}
+
+const DEFAULT_SEND_CAP_BUFFER = 50
+function sendCapCutoffIso(windowHours = 24): string {
+  return new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
 }
 
 interface PoolConfig {
@@ -33,6 +41,7 @@ export default function SendbluePool() {
   // Live attached-user counts (pa-users.senderNumber == number), via server-side
   // count() aggregation — no doc reads. This is the real load-balancing truth.
   const [counts, setCounts] = useState<Record<string, number>>({})
+  const [sentCounts, setSentCounts] = useState<Record<string, number>>({})
   const [totalAssigned, setTotalAssigned] = useState<number | null>(null)
   const [countsLoading, setCountsLoading] = useState(false)
 
@@ -40,14 +49,27 @@ export default function SendbluePool() {
     setCountsLoading(true)
     try {
       const users = collection(db(), "pa-users")
+      const outbound = collection(db(), "pa-outbound")
       const nums = [...new Set(numbers.map((n) => n.number.trim()).filter(Boolean))]
       const entries = await Promise.all(
         nums.map(async (num) => {
-          const snap = await getCountFromServer(query(users, where("senderNumber", "==", num)))
-          return [num, snap.data().count] as const
+          const attached = await getCountFromServer(query(users, where("senderNumber", "==", num)))
+          // Rolling-window sends from this number — needs the (sentFromNumber, sentAt)
+          // index; degrade to -1 ("—") if it is still building.
+          let sent24h = -1
+          try {
+            const s = await getCountFromServer(
+              query(outbound, where("sentFromNumber", "==", num), where("sentAt", ">=", sendCapCutoffIso(24))),
+            )
+            sent24h = s.data().count
+          } catch {
+            sent24h = -1
+          }
+          return [num, attached.data().count, sent24h] as const
         }),
       )
-      setCounts(Object.fromEntries(entries))
+      setCounts(Object.fromEntries(entries.map(([num, a]) => [num, a])))
+      setSentCounts(Object.fromEntries(entries.map(([num, , s]) => [num, s])))
       const assignedSnap = await getCountFromServer(query(users, where("senderNumber", "!=", null)))
       setTotalAssigned(assignedSnap.data().count)
     } catch {
@@ -165,6 +187,9 @@ export default function SendbluePool() {
               <th style={{ textAlign: "left" }}>New-user cap</th>
               <th style={{ textAlign: "left" }}>Assigned</th>
               <th style={{ textAlign: "left" }}>Daily cap</th>
+              <th style={{ textAlign: "left" }}>Send cap/day</th>
+              <th style={{ textAlign: "left" }}>Buffer</th>
+              <th style={{ textAlign: "left" }}>Sent 24h</th>
               <th></th>
             </tr>
           </thead>
@@ -252,6 +277,44 @@ export default function SendbluePool() {
                     onChange={(e) => updateNumber(i, { capacity: parseInt(e.target.value, 10) || 0 })}
                     style={{ width: "100px" }}
                   />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    value={n.dailySendCap ?? ""}
+                    placeholder="800"
+                    title="Hard daily SEND cap (rolling window). Enforced at (cap − buffer). Empty = no send-cap enforcement."
+                    onChange={(e) => updateNumber(i, { dailySendCap: e.target.value === "" ? undefined : parseInt(e.target.value, 10) || 0 })}
+                    style={{ width: "80px" }}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    value={n.sendCapBuffer ?? ""}
+                    placeholder={String(DEFAULT_SEND_CAP_BUFFER)}
+                    title="Safety buffer subtracted from the send cap"
+                    onChange={(e) => updateNumber(i, { sendCapBuffer: e.target.value === "" ? undefined : parseInt(e.target.value, 10) || 0 })}
+                    style={{ width: "60px" }}
+                  />
+                </td>
+                <td>
+                  {(() => {
+                    const s = sentCounts[n.number.trim()]
+                    if (s === undefined) return <span style={{ color: "#94a3b8" }}>{countsLoading ? "…" : ""}</span>
+                    if (s < 0) return <span style={{ color: "#94a3b8" }} title="index building">—</span>
+                    const hard = n.dailySendCap
+                    if (!Number.isInteger(hard) || !hard || hard <= 0) {
+                      return <span style={{ color: "#64748b" }} title="no send cap set">{s}</span>
+                    }
+                    const eff = Math.max(0, hard - (n.sendCapBuffer ?? DEFAULT_SEND_CAP_BUFFER))
+                    const atCap = s >= eff
+                    return (
+                      <span style={{ fontWeight: 700, color: atCap ? "#b91c1c" : s >= eff * 0.8 ? "#b45309" : "#0f766e" }} title={atCap ? "at effective cap — sends defer" : "rolling-24h sends / effective cap"}>
+                        {s}<span style={{ color: "#94a3b8", fontWeight: 400 }}> / {eff}</span>{atCap ? " ⛔" : ""}
+                      </span>
+                    )
+                  })()}
                 </td>
                 <td>
                   <button onClick={() => removeNumber(i)}>Remove</button>

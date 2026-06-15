@@ -29,6 +29,8 @@ import { sendTypingIndicator as defaultSendTypingIndicator, computeTypingDwellMs
 import type { SendblueSendResponse } from "./types.js"
 import { getFlag, getDailyOutboundCount, incrementDailyOutbound } from "@pa/pa-persistence"
 import { recordAuditEvent } from "./audit.js"
+import { findSendbluePoolNumber, loadSendbluePool } from "./pool.js"
+import { countRecentSendsForNumber, effectiveSendCap, sendCapWindowCutoffIso } from "./send-cap.js"
 import { outboundExpiresAtTs } from "./ttl.js"
 import { createHash } from "node:crypto"
 import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
@@ -947,6 +949,48 @@ export async function paSendblueOutboxHandler(
         explicitFromNumber = userSenderNumber
       }
     }
+    // ---- 5c. Per-number rolling SEND cap (Adam 2026-06-15) ---------------
+    // Protect THIS line from exceeding its daily Sendblue message limit: count
+    // sends in the rolling window and DEFER (revert pending → the 5-min retry
+    // sweep re-sends once the window frees) at (dailySendCap − buffer). Distinct
+    // from the GLOBAL daily quota above. Flag-gated + fail-open: never block a
+    // send on a count error or when the number has no dailySendCap configured.
+    // (`sentFromNumber` is recorded below at send time; the rolling count starts
+    // empty and fills over the window — a built-in gentle ramp.)
+    if (
+      explicitFromNumber &&
+      String(await getFlag(deps.db, "sendbluePerNumberSendCapEnabled", { env: process.env }, "1")) !== "0"
+    ) {
+      try {
+        const poolNumber = findSendbluePoolNumber(await loadSendbluePool(deps.db), explicitFromNumber)
+        const cap = poolNumber ? effectiveSendCap(poolNumber) : null
+        if (poolNumber && cap !== null) {
+          const cutoff = sendCapWindowCutoffIso(poolNumber, now().getTime())
+          const recent = await countRecentSendsForNumber(deps.db, explicitFromNumber, cutoff)
+          if (recent >= cap) {
+            await ref.set(
+              {
+                status: "pending",
+                capacityDeferred: true,
+                capacityDeferredAt: now().toISOString(),
+                capacityDeferredReason: `per-number send cap reached (${recent}/${cap} in window) on ${explicitFromNumber}`,
+                updatedAt: now().toISOString(),
+                expiresAtTs: outboundExpiresAtTs(now()),
+              },
+              { merge: true },
+            )
+            log("pa.outbox.send_cap_deferred", { docId, userId, fromNumber: explicitFromNumber, recent, cap })
+            return
+          }
+        }
+      } catch (err) {
+        log(
+          "[sendblue][outbox] per-number send-cap check failed (fail-open, sending)",
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
     // Rec-card path — when the row carries a media_url, deliver as an iMessage
     // image attachment with `body` as the caption. Text-only rows omit it and
     // the send is byte-identical to the pre-card path.
@@ -990,6 +1034,9 @@ export async function paSendblueOutboxHandler(
         sentAt: now().toISOString(),
         updatedAt: now().toISOString(),
         expiresAtTs: outboundExpiresAtTs(now()),
+        // Denormalized line this message was actually sent from — powers the
+        // per-number rolling send-cap count (send-cap.ts).
+        ...(explicitFromNumber ? { sentFromNumber: explicitFromNumber } : {}),
         ...(messageHandle ? { messageHandle, sendblueUuid: response.uuid ?? messageHandle } : {}),
         sendblueStatus: response.status,
         ...(mediaRequested
