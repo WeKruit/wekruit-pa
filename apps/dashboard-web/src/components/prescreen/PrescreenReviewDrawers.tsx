@@ -26,6 +26,7 @@ import {
 import { StrictReviewBadge } from "./PrescreenReviewControls.js"
 import { Badge, LoadingState } from "../ui.js"
 import { db } from "../../lib/firebase.js"
+import { CandidateResumePreview } from "../CandidateResumePreview.js"
 import {
   classifyPrescreenReviewRow,
   type PrescreenReviewQuestion,
@@ -1050,60 +1051,23 @@ function pillarTone(v?: string): "ok" | "warn" | "muted" {
  *  summary; candidate-upload résumés keep no downloadable file). Sits right above
  *  the checklist eval so the operator can cross-check the eval against the source. */
 function CandidateSourcesCard({ sources }: { sources: CandidateSources | null }) {
-  const [showResume, setShowResume] = useState(false)
-  const linkedinUrl = sources?.linkedinUrl
-  const resume = sources?.resume
-  const hasResume = Boolean(resume?.fileName || resume?.summary)
-  // Render nothing only once we know there is genuinely nothing to show.
-  if (sources && !linkedinUrl && !hasResume) return null
-  return (
-    <div style={{ ...cardStyle, background: "#f8fafc" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: "0.95em", color: "#334155" }}>Candidate sources</strong>
-        {!sources ? <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>loading…</span> : null}
-        {linkedinUrl ? (
-          <a href={linkedinUrl} target="_blank" rel="noreferrer" style={sourceLinkStyle} title={linkedinUrl}>
-            in · LinkedIn ↗
-          </a>
-        ) : sources ? (
-          <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>no LinkedIn on file</span>
-        ) : null}
-        {hasResume ? (
-          <button
-            type="button"
-            onClick={() => setShowResume((v) => !v)}
-            style={{ ...sourceLinkStyle, cursor: "pointer", background: "#fff" }}
-            title={resume?.fileName ?? "résumé"}
-          >
-            📄 {resume?.fileName ?? "Résumé"} {showResume ? "▲" : "▼"}
-          </button>
-        ) : sources ? (
-          <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>no résumé on file</span>
-        ) : null}
+  if (sources === null) {
+    return (
+      <div style={{ ...cardStyle, background: "#f8fafc" }}>
+        <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>loading candidate sources…</span>
       </div>
-      {showResume ? (
-        resume?.summary ? (
-          <div
-            style={{
-              marginTop: 4,
-              fontSize: "0.9em",
-              lineHeight: 1.55,
-              color: "#334155",
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              borderTop: "1px solid rgba(0,0,0,0.08)",
-              paddingTop: 10,
-            }}
-          >
-            {resume.summary}
-          </div>
-        ) : (
-          <div style={{ marginTop: 4, fontSize: "0.85em", color: "#94a3b8", borderTop: "1px solid rgba(0,0,0,0.08)", paddingTop: 10 }}>
-            Résumé on file{resume?.fileName ? ` (${resume.fileName})` : ""}; no parsed summary stored. The checklist eval below still uses it.
-          </div>
-        )
-      ) : null}
-    </div>
+    )
+  }
+  // Shared résumé/candidate UI with the recruiter submission review. Prescreen uploads
+  // keep no downloadable résumé URL, so the shared preview shows LinkedIn + the parsed
+  // summary (no iframe); recruiter submissions, which carry a real URL, get the inline
+  // résumé. Same component, one source of truth.
+  return (
+    <CandidateResumePreview
+      linkedinUrl={sources.linkedinUrl}
+      fileName={sources.resume?.fileName}
+      parsedSummary={sources.resume?.summary}
+    />
   )
 }
 
