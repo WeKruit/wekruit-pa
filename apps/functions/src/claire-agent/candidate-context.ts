@@ -260,6 +260,13 @@ export function renderPrescreenContextText(
     !activeScreen &&
     mostRecentTerminal !== null &&
     (mostRecentTerminal.terminal === "PASS" || rejectedTerminal || (mostRecentTerminal.terminal === "PAUSE" && !mostRecentTerminal.staleClosed))
+  // The MOST RECENT terminal being under WeKruit-team review is the handoff the
+  // candidate just acked — suppress the matching offer for that turn so a courtesy
+  // ack ("looking forward to the update") can't bridge into matching. An OLDER
+  // screen still under review (while the most recent is settled) does NOT suppress
+  // the offer — matching off the latest settled terminal is still fine (Adam
+  // 2026-06-15 post-terminal opt-in; T8 keeps offering off a settled PAUSE).
+  const mostRecentPendingReview = !activeScreen && mostRecentTerminal?.pendingReview === true
 
   const activeRoleLabel = activeScreen
     ? [activeScreen.jobTitle, activeScreen.company].filter(Boolean).join(" @ ") || activeScreen.jobId || "this role"
@@ -299,15 +306,32 @@ export function renderPrescreenContextText(
           "NOT send recommendations off the back of the timeout — matching resumes only if THEY ask for roles.",
         ].join(" ")
       : "",
-    // ── MATCHING ONLY AFTER A REAL TERMINAL (Adam priority 3). ──
-    realTerminal && !staleTimedOut
+    // ── POST-TERMINAL MATCHING IS OPT-IN (Adam priority 3 + 2026-06-15 live bug). ──
+    // While an outcome is UNDER WEKRUIT TEAM REVIEW, do NOT even put matching on the
+    // table in the same breath — just hold warmly. The candidate's polite ack of the
+    // review ("sure", "sounds good", "looking forward to the update") is NOT a request
+    // to match, and must NEVER trigger find_match.
+    realTerminal && !staleTimedOut && mostRecentPendingReview
       ? [
-          "Their screens are settled (no active screen), so matching is back on the table. If the candidate",
-          "states a target role, seniority, or constraint, CAPTURE it (record_onboarding_answer /",
+          "Their most recent screen is still under WeKruit team review. Do NOT offer job matching or call find_match this turn.",
+          "If the candidate sends a polite acknowledgment of the review ('sure', 'sounds good', 'thanks', 'ok',",
+          "'looking forward to the update'), that is an ACK — reply with a warm, brief hold (you've got their",
+          "screen, the team is reviewing it, you'll text the next step) and ask for NOTHING. Do NOT say 'pulling",
+          "matches' and do NOT call find_match. Matching only resumes if they LATER explicitly ask for roles.",
+        ].join(" ")
+      : "",
+    realTerminal && !staleTimedOut && !mostRecentPendingReview
+      ? [
+          "Their screens are settled (no active screen), so matching is back on the table — but matching is OPT-IN.",
+          "If the candidate states a target role, seniority, or constraint, CAPTURE it (record_onboarding_answer /",
           "set_matching_preferences — map their words to the canonical enum yourself) and OFFER to find OTHER",
-          "matching roles, framed naturally — e.g. 'I can use your resume/LinkedIn to find better-fit roles' —",
-          "then find_match on a yes. Do NOT re-pitch the paused/failed job. Do not echo their answer back as",
-          "the whole reply.",
+          "matching roles ONCE, framed naturally — e.g. 'I can use your resume/LinkedIn to find better-fit roles'.",
+          "Then call find_match ONLY when the candidate EXPLICITLY asks for roles — a clear matching request like",
+          "'yes pull roles', 'show me jobs', 'find me matches', 'what else do you have', 'recommend roles'. A bare",
+          "COURTESY ACKNOWLEDGMENT ('sure', 'ok', 'sounds good', 'thanks', 'looking forward to the update', a",
+          "tapback/emoji) is NOT a matching request — reply with a warm, brief acknowledgment and do NOT call",
+          "find_match. When in doubt, ask once more rather than auto-matching. Do NOT re-pitch the paused/failed",
+          "job. Do not echo their answer back as the whole reply.",
           rejectedTerminal && opts?.profileSignalOnFile === false
             ? "They have NO resume or LinkedIn on file: before recommendations, suggest adding one so future collaboration roles can be pitched with their real background instead of repeating screens — then ask if they want recommendations."
             : "",

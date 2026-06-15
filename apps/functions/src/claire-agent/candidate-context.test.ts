@@ -129,6 +129,31 @@ test("renderPrescreenContextText: rejection with NO profile signal asks for resu
   assert.match(text, /ask if they want recommendations/)
 })
 
+test("renderPrescreenContextText: a settled terminal makes matching OPT-IN — courtesy ack is NOT a match request (Adam 2026-06-15)", () => {
+  const text = renderPrescreenContextText(
+    [screen({ sessionId: "f", terminal: "PASS", endedAtMs: 10 })],
+    { profileSignalOnFile: true },
+  )
+  assert.match(text, /matching is OPT-IN/)
+  assert.match(text, /ONLY when the candidate EXPLICITLY asks/)
+  assert.match(text, /COURTESY ACKNOWLEDGMENT/)
+  assert.match(text, /looking forward to the update.*is NOT a matching request|is NOT a matching request/)
+  assert.match(text, /do NOT call\s+find_match/i)
+})
+
+test("renderPrescreenContextText: a PASS still UNDER WEKRUIT TEAM REVIEW does NOT offer matching — courtesy ack gets a warm hold", () => {
+  const text = renderPrescreenContextText(
+    [screen({ sessionId: "p", terminal: "PASS", pendingReview: true, endedAtMs: 10 })],
+    { profileSignalOnFile: true },
+  )
+  // Pending-review branch suppresses the matching offer entirely.
+  assert.match(text, /Do NOT offer job matching or call find_match this turn/)
+  assert.match(text, /that is an ACK/)
+  assert.match(text, /Matching only resumes if they LATER explicitly ask/)
+  // The non-pending "matching is back on the table" offer must NOT render while pending review.
+  assert.doesNotMatch(text, /matching is back on the table/)
+})
+
 test("terminalLabel: stale PAUSE is timed out / not under review; user-exit PAUSE stays paused", () => {
   assert.match(
     terminalLabel(screen({ terminal: "PAUSE", staleClosed: true })),
