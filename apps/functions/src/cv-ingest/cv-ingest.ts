@@ -46,6 +46,10 @@ import {
 } from "./industry-second-pass.js"
 import { checkResumeGate } from "./cv-gate.js"
 import {
+  extractResumeTextViaVision,
+  primaryTextLooksUsable,
+} from "./vision-text-fallback.js"
+import {
   isQuotaExhausted,
   readQuotaCount,
   incrementQuota,
@@ -182,6 +186,16 @@ export type IngestCvDeps = {
   fetchPdf?: (url: string) => Promise<{ bytes: Uint8Array; contentType?: string }>
   /** Inject for tests; defaults to pdf-parse npm extraction. */
   parsePdf?: (bytes: Uint8Array) => Promise<{ text: string; numPages?: number }>
+  /**
+   * Inject for tests; defaults to Anthropic vision/OCR on the raw PDF bytes.
+   * Second extractor used ONLY when the primary text layer is empty or garbled
+   * (image/scanned/CID-font PDFs). Fail-soft: null = unavailable/unusable.
+   */
+  extractTextViaVision?: (
+    bytes: Uint8Array,
+    log: (event: string, payload?: Record<string, unknown>) => void,
+    userId: string | undefined,
+  ) => Promise<string | null>
   /** Inject for tests; defaults to OpenAI Responses API + json_schema. */
   llmExtract?: (text: string) => Promise<{
     parsed: StructuredCv
@@ -1994,6 +2008,7 @@ export async function ingestCv(
   const nowIso = deps?.nowIso ?? (() => new Date().toISOString())
   const fetchPdf = deps?.fetchPdf ?? defaultFetchPdf
   const parsePdf = deps?.parsePdf ?? defaultParsePdf
+  const extractTextViaVision = deps?.extractTextViaVision ?? extractResumeTextViaVision
   const llmExtract = deps?.llmExtract ?? defaultLlmExtract
   const mem0AddFn = deps?.mem0Add ?? defaultMem0Add
   const lookupUserForFollowup =
@@ -2216,21 +2231,49 @@ export async function ingestCv(
   // 3-min black box is observable — pa.cv_ingest.timing {step, ms} per step + usedTier on the LLM parse.
   let text: string
   const tPdf0 = Date.now()
+  let primaryText = ""
+  let primaryThrew = false
   try {
     const out = await parsePdf(bytes)
-    text = (out.text ?? "").slice(0, MAX_TEXT_BYTES)
+    primaryText = (out.text ?? "").slice(0, MAX_TEXT_BYTES)
     log("pa.cv_ingest.timing", { step: "parse_pdf", ms: Date.now() - tPdf0, userId: args.userId })
-    if (!text.trim()) {
-      log("pa.cv_ingest.error", { stage: "parse", error: "empty_text", userId: args.userId })
-      return { ok: false, reason: "pdf_parse_failed" }
-    }
   } catch (err) {
+    primaryThrew = true
     log("pa.cv_ingest.error", {
       stage: "parse",
       error: err instanceof Error ? err.message : String(err),
       userId: args.userId,
     })
-    return { ok: false, reason: "pdf_parse_failed" }
+  }
+
+  // The primary text layer (pdf-parse) has NO OCR and silently returns empty or
+  // garbled text on image/scanned résumés and broken-font (CID/Type0) PDFs —
+  // dead-ending the candidate forever (Adam 2026-06-15, Chang Shu incident). When
+  // the primary result is unusable, recover via a vision/OCR pass over the raw
+  // bytes. Fail-soft: vision unavailable/unusable → original pdf_parse_failed.
+  if (primaryThrew || !primaryTextLooksUsable(primaryText)) {
+    const tVision0 = Date.now()
+    const recovered = await extractTextViaVision(bytes, log, args.userId)
+    log("pa.cv_ingest.timing", {
+      step: "vision_fallback",
+      ms: Date.now() - tVision0,
+      recovered: Boolean(recovered),
+      primaryEmpty: !primaryText.trim(),
+      primaryThrew,
+      userId: args.userId,
+    })
+    if (recovered && recovered.trim()) {
+      text = recovered.slice(0, MAX_TEXT_BYTES)
+    } else if (primaryText.trim()) {
+      // Vision unavailable but the primary returned *some* text — fall back to it
+      // rather than hard-failing a borderline-garbled extract.
+      text = primaryText
+    } else {
+      log("pa.cv_ingest.error", { stage: "parse", error: "empty_text", userId: args.userId })
+      return { ok: false, reason: "pdf_parse_failed" }
+    }
+  } else {
+    text = primaryText
   }
 
   // 3. LLM structured extraction.

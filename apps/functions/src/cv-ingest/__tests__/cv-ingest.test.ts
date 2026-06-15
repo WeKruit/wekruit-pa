@@ -293,6 +293,90 @@ describe("ingestCv", () => {
     assert.equal(state.resumes.length, 0)
   })
 
+  it("primary parse empty + vision fallback recovers text → ok:true (image/scanned PDF)", async () => {
+    const { db, state } = makeFakeDb()
+    let visionCalls = 0
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      {
+        db,
+        skipLimitEnforcement: true,
+        fetchPdf: async () => ({ bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), contentType: "application/pdf" }),
+        parsePdf: async () => ({ text: "" }), // image/scanned → no text layer
+        extractTextViaVision: async () => {
+          visionCalls++
+          return "Jane Doe\nSoftware Engineer at WeKruit\nReact, TypeScript, Firestore"
+        },
+        llmExtract: async () => ({ parsed: happyParsed() }),
+      }
+    )
+    assert.equal(visionCalls, 1, "vision fallback must fire when primary text is empty")
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+  })
+
+  it("primary parse garbled (CID font) + vision fallback recovers → ok:true", async () => {
+    const { db, state } = makeFakeDb()
+    let visionCalls = 0
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      {
+        db,
+        skipLimitEnforcement: true,
+        fetchPdf: async () => ({ bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), contentType: "application/pdf" }),
+        // Broken-font extraction: replacement-char mojibake, no real words.
+        parsePdf: async () => ({ text: "��� �� ���� ��".repeat(8) }),
+        extractTextViaVision: async () => {
+          visionCalls++
+          return "Jane Doe\nProduct Manager at WeKruit\nRoadmaps, SQL, Analytics"
+        },
+        llmExtract: async () => ({ parsed: happyParsed() }),
+      }
+    )
+    assert.equal(visionCalls, 1, "vision fallback must fire when primary text is garbled")
+    assert.equal(res.ok, true)
+    assert.equal(state.resumes.length, 1)
+  })
+
+  it("primary parse usable → vision fallback NOT called (no extra cost on good PDFs)", async () => {
+    const { db } = makeFakeDb()
+    let visionCalls = 0
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      {
+        db,
+        skipLimitEnforcement: true,
+        fetchPdf: async () => ({ bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), contentType: "application/pdf" }),
+        parsePdf: async () => ({ text: "Jane Doe\nSoftware Engineer at WeKruit. Built React and TypeScript apps." }),
+        extractTextViaVision: async () => {
+          visionCalls++
+          return "should not run"
+        },
+        llmExtract: async () => ({ parsed: happyParsed() }),
+      }
+    )
+    assert.equal(visionCalls, 0, "good PDFs must skip the vision fallback entirely")
+    assert.equal(res.ok, true)
+  })
+
+  it("primary empty + vision unavailable (null) → still pdf_parse_failed", async () => {
+    const { db, state } = makeFakeDb()
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/cv.pdf" },
+      {
+        db,
+        skipLimitEnforcement: true,
+        fetchPdf: async () => ({ bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), contentType: "application/pdf" }),
+        parsePdf: async () => ({ text: "" }),
+        extractTextViaVision: async () => null, // no key / model error
+        llmExtract: async () => ({ parsed: happyParsed() }),
+      }
+    )
+    assert.equal(res.ok, false)
+    assert.ok(!res.ok && res.reason === "pdf_parse_failed")
+    assert.equal(state.resumes.length, 0)
+  })
+
   it("LLM extract returns malformed shape → returns ok:false reason:llm_parse_failed", async () => {
     const { db, state } = makeFakeDb()
     const res = await ingestCv(
