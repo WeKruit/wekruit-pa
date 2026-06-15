@@ -21,6 +21,7 @@ import type {
 import { AdminPrescreenSessionLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   BulkRejectDrawer,
+  EngagementBadge,
   PrescreenReviewDrawer,
   terminalTone,
   type Row,
@@ -459,9 +460,12 @@ export default function PrescreenOps() {
                                     </Badge>
                                   </td>
                                   <td style={cellStyle}>
-                                    <Badge tone={bucketTone(row.classification.bucket)}>
-                                      {row.classification.label}
-                                    </Badge>
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                      <Badge tone={bucketTone(row.classification.bucket)}>
+                                        {row.classification.label}
+                                      </Badge>
+                                      <EngagementBadge signal={row.review?.engagementSignal} />
+                                    </div>
                                   </td>
                                   <td style={cellStyle}>{scorePercent(row)}</td>
                                   <td style={cellStyle}>

@@ -11,9 +11,12 @@ import type { CSSProperties, ReactNode } from "react"
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import {
   classifyCandidateProfile,
+  computePrescreenEngagement,
   deriveCandidateSource,
+  engagementTone,
   type CandidateListUserDoc,
   type EvaluationAttempt,
+  type PrescreenEngagementSignal,
 } from "@pa/core-types"
 import {
   AdminJobLink,
@@ -79,6 +82,8 @@ export type PrescreenSessionRow = {
     }
     /** Profile checklist eval (paPrescreenCandidateEval): LinkedIn/Coresignal + résumé vs the job rubric. Advisory. */
     candidateChecklistEval?: PrescreenCandidateChecklistEval
+    /** Effort/engagement signal — how much the candidate typed/shared. Advisory, never a gate. */
+    engagementSignal?: PrescreenEngagementSignal
   }
   createdAt: string
   updatedAt: string
@@ -572,6 +577,7 @@ export function PrescreenReviewDrawer({
           <ReviewSummary detail={detail} />
           <CandidateSourcesCard sources={sources} />
           <ChecklistEvalPanel evaluation={detail.session.review?.candidateChecklistEval} />
+          <EngagementPanel signal={detail.session.review?.engagementSignal} turns={detail.turns} />
           <TranscriptPreview turns={detail.turns} />
           <OtherSessionsPanel sessions={otherSessions} />
           {detail.session.terminalActionPendingReview ? (
@@ -824,9 +830,12 @@ export function BulkRejectDrawer({
                   {item.row.terminal ?? "IN_PROGRESS"}
                 </div>
               </div>
-              <Badge tone={item.status === "queued" ? "ok" : item.error ? "warn" : "info"}>
-                {item.status === "queued" ? "queued" : item.error ? "needs edit" : "draft"}
-              </Badge>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <EngagementBadge signal={item.row.review?.engagementSignal} />
+                <Badge tone={item.status === "queued" ? "ok" : item.error ? "warn" : "info"}>
+                  {item.status === "queued" ? "queued" : item.error ? "needs edit" : "draft"}
+                </Badge>
+              </div>
             </div>
             {item.evidenceSummary ? (
               <div style={{ color: "#334155", fontSize: "0.84em" }}>{item.evidenceSummary}</div>
@@ -907,6 +916,7 @@ export function ReviewSummary({ detail }: { detail: ReviewDetail }) {
         <Badge tone="info">
           {detail.session.score?.toFixed(2)}/{detail.session.scoreMax?.toFixed(2)} ({(ratio * 100).toFixed(0)}%)
         </Badge>
+        <EngagementBadge signal={detail.session.review?.engagementSignal} />
       </div>
       <DrawerKV label="Job" value={<AdminJobLink jobId={detail.session.jobId} />} />
       <DrawerKV label="User" value={<AdminUserLink userId={detail.session.userId} />} />
@@ -1092,6 +1102,55 @@ function CandidateSourcesCard({ sources }: { sources: CandidateSources | null })
             Résumé on file{resume?.fileName ? ` (${resume.fileName})` : ""}; no parsed summary stored. The checklist eval below still uses it.
           </div>
         )
+      ) : null}
+    </div>
+  )
+}
+
+/** Compact badge for the engagement (effort) level — reused in the row + bulk views. */
+export function EngagementBadge({ signal }: { signal?: PrescreenEngagementSignal }) {
+  if (!signal) return null
+  const emoji = signal.level === "high" ? "✍️" : signal.level === "low" ? "💤" : "·"
+  return (
+    <Badge tone={engagementTone(signal.level)} >
+      {emoji} effort: {signal.level}
+    </Badge>
+  )
+}
+
+/**
+ * Engagement (effort) signal — how much the candidate actually typed / shared across
+ * their answers. ADVISORY: it ranks/triages effort, it is NEVER a gate or a reject
+ * reason. Shows the persisted `review.engagementSignal`; if a session hasn't been
+ * signalled yet, it computes a live estimate from the transcript so the operator always
+ * sees something.
+ */
+function EngagementPanel({ signal, turns }: { signal?: PrescreenEngagementSignal; turns: PrescreenTurn[] }) {
+  const persisted = Boolean(signal)
+  const effective: PrescreenEngagementSignal =
+    signal ?? computePrescreenEngagement(turns.map((t) => t.reply))
+  if (effective.answeredCount === 0) return null
+  const tone = engagementTone(effective.level)
+  const accent = tone === "ok" ? "#15803d" : tone === "warn" ? "#b45309" : "#475569"
+  const bg = tone === "ok" ? "#f0fdf4" : tone === "warn" ? "#fffbeb" : "#f8fafc"
+  return (
+    <div style={{ border: `1px solid ${accent}33`, borderLeft: `5px solid ${accent}`, borderRadius: 10, background: bg, padding: "1rem 1.2rem", display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: "1.05em", color: accent }}>Engagement · effort signal</strong>
+        <EngagementBadge signal={effective} />
+        <span style={{ fontSize: "0.85em", color: "#64748b" }}>
+          {effective.label} · advisory — ranking only, never a reject reason
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: "0.95em", color: "#1e293b" }}>
+        <span><strong>{effective.answeredCount}</strong> answers</span>
+        <span><strong>{effective.totalWords}</strong> words</span>
+        <span>avg <strong>{effective.avgWordsPerAnswer}</strong> w/answer</span>
+        <span><strong>{effective.detailedAnswerCount}</strong> detailed</span>
+        <span><strong>{effective.shortAnswerCount}</strong> very short</span>
+      </div>
+      {!persisted ? (
+        <div style={{ fontSize: "0.8em", color: "#94a3b8" }}>live estimate from the transcript — not yet saved on the session</div>
       ) : null}
     </div>
   )

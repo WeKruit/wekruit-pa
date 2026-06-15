@@ -42,6 +42,7 @@ import {
   type SubmissionEvalResearch,
 } from "./recruiter-submission-eval.js"
 import { generateAndStorePrescreenAutoDraft } from "./evaluation-attempts.js"
+import { runPrescreenEngagementSignal } from "./prescreen-engagement-signal.js"
 
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
@@ -403,6 +404,14 @@ export const paPrescreenCandidateEval = onDocumentWritten(
     const before = event.data?.before?.data() as Record<string, unknown> | undefined
     const after = event.data?.after?.data() as Record<string, unknown> | undefined
     if (!pendingReviewJustEntered(before, after)) return
+
+    // Advisory engagement (effort) signal — pure metric over the candidate's replies,
+    // no LLM/Coresignal. Runs independently so a session with no job checklist (which
+    // skips the checklist eval below) still gets an engagement signal. Fail-open.
+    await runPrescreenEngagementSignal(event.params.sessionId, {
+      db: getFirestore(),
+      log: (e2, f) => logger.info(`[prescreen-engagement] ${e2}`, f ?? {}),
+    })
 
     for (const s of [PA_OPENAI_AGENT_API_KEY, CORESIGNAL_API_KEY] as const) {
       try {
