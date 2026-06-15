@@ -209,10 +209,12 @@ export default function SendbluePool() {
                     const num = n.number.trim()
                     const c = counts[num]
                     if (c === undefined) return <span style={{ color: "#94a3b8" }}>{countsLoading ? "…" : "—"}</span>
-                    const cap = n.capacity
+                    // Compare against the USER-ATTACHMENT cap (newUserCap), NOT the
+                    // daily-send cap (capacity). Those are different limits.
+                    const cap = n.newUserCap ?? n.capacity
                     const over = typeof cap === "number" && cap > 0 && c > cap
                     return (
-                      <span style={{ fontWeight: 700, color: over ? "#b91c1c" : "#0f766e" }} title={over ? `over capacity (${cap})` : "live attached users"}>
+                      <span style={{ fontWeight: 700, color: over ? "#b91c1c" : "#0f766e" }} title={over ? `over user cap (${cap})` : "live attached users / new-user cap"}>
                         {c}
                         {typeof cap === "number" ? <span style={{ color: "#94a3b8", fontWeight: 400 }}> / {cap}</span> : null}
                         {over ? " ⚠" : ""}
