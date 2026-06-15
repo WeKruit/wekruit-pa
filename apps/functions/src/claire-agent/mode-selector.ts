@@ -40,8 +40,13 @@ import type { ClaireMode } from "./types.js"
 import { DEFAULT_ONBOARDING_SLOTS } from "./reducers/onboarding-fsm.js"
 import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-tools.js"
 import { isThinPrescreenEnabled } from "./flags.js"
-import { buildThinPrescreenSeed } from "./prescreen-config.js"
+import { buildThinPrescreenSeed, type AiQuestionOptions } from "./prescreen-config.js"
 import { loadPrescreenContext } from "./prescreen-context.js"
+import {
+  AI_QUESTION_QID,
+  roleFunctionFromJob,
+  shouldSkipAiQuestion,
+} from "./prescreen-ai-question.js"
 import { isCanaryUser, isClaireEntryUxCanary } from "./canary.js"
 import { isEnrichmentInFlight } from "./enrichment-inflight.js"
 import { shouldNudgeGmail } from "./gmail-nudge.js"
@@ -160,6 +165,38 @@ async function hasActivePrescreen(
   } catch {
     return { active: false } // stub db (evals) / query error → fail-safe
   }
+}
+
+/**
+ * Cross-session SKIP backup: did ANY prior prescreen session score the AI question (q_ai_acceleration)?
+ * Index-light: userId-only query + in-memory scan (mirrors prescreen-context.loadPriorScreens — avoids a
+ * `!=` / composite index). Fail-soft → false (so the durable tag remains the primary skip signal and we
+ * default to ASKING on error rather than dropping it).
+ */
+async function hasPriorAiQuestionScored(
+  db: Firestore,
+  userId: string,
+  currentJobId: string,
+): Promise<boolean> {
+  try {
+    const snap = await db.collection(PRESCREEN_SESSIONS).where("userId", "==", userId).limit(20).get()
+    for (const doc of snap.docs) {
+      // The CURRENT in-progress session is excluded — only PRIOR sessions count for cross-session skip.
+      if (doc.id) {
+        const d = doc.data() as Record<string, unknown>
+        // The score tool writes back to `scored` (qId → {score,evidence}); also tolerate `scores`.
+        const scored = (d.scored ?? d.scores) as Record<string, unknown> | undefined
+        if (scored && typeof scored === "object" && AI_QUESTION_QID in scored) {
+          // ignore the current job's still-open session being re-counted as "prior"
+          if (typeof d.jobId === "string" && d.jobId === currentJobId && d.terminal == null) continue
+          return true
+        }
+      }
+    }
+  } catch {
+    /* fail-soft */
+  }
+  return false
 }
 
 /** Write the cold-start sharedOnboarding/workSession doc (legacy buildSharedOnboardingStartedState shape). */
@@ -390,11 +427,29 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     // in-progress session (resume keeps prior scores). All reads fail-safe → defer on any miss.
     try {
       const jobSnap = await args.db.collection("pa-jobs").doc(ps.jobId).get()
-      const config = (jobSnap.exists ? jobSnap.data()?.prescreenConfig : null) as
+      const jobData = (jobSnap.exists ? jobSnap.data() : null) as Record<string, unknown> | null
+      const config = (jobData?.prescreenConfig ?? null) as
         | Record<string, unknown>
         | null
         | undefined
-      const seed = buildThinPrescreenSeed(config, ps.session ?? null)
+      // DEFAULT AI-acceleration question (Adam directive) — resolve role tailoring + cross-session
+      // skip here (the builder is pure). Skip if the durable global tag is set OR any prior session
+      // already scored the AI question. Fail-soft: any error → still append (better to ask than drop).
+      let aiQuestion: AiQuestionOptions = { append: true, roleFunction: roleFunctionFromJob(jobData, config) }
+      try {
+        const userSnap = await args.db.collection(USERS).doc(args.userId).get()
+        const userTags = (userSnap.exists ? userSnap.data()?.tags : null) as
+          | Record<string, unknown>
+          | null
+        const priorAi = await hasPriorAiQuestionScored(args.db, args.userId, ps.jobId)
+        aiQuestion = {
+          append: !shouldSkipAiQuestion(userTags, priorAi),
+          roleFunction: roleFunctionFromJob(jobData, config),
+        }
+      } catch {
+        /* fail-open: keep append:true */
+      }
+      const seed = buildThinPrescreenSeed(config, ps.session ?? null, "en", aiQuestion)
       if (seed.questionIds.length === 0) {
         // No usable questions → don't strand the candidate on a thin engine with nothing to ask.
         log("mode.prescreen_thin_no_questions", { userId: args.userId, jobId: ps.jobId })

@@ -438,6 +438,20 @@ export const UserTagsSchema = z.object({
    */
   preferenceHardness: PreferenceHardnessSchema.optional(),
 
+  // ---- prescreen-captured durable answers ------------------------------
+  /**
+   * The candidate's free-text answer to the default prescreen AI-acceleration
+   * question ("how do you use AI to accelerate your day-to-day work?"). Captured
+   * once, GLOBALLY, by the thin prescreen flow (informational/non-gating — see
+   * apps/functions/src/claire-agent/prescreen-ai-question.ts). Its presence is the
+   * cross-session SKIP signal: once set, the AI question is NOT re-appended to any
+   * future prescreen session. `value` is verbatim prose (open text, never an enum
+   * → no canonical-tagging rule applies); `updatedAt` is the capture ISO time.
+   */
+  aiAccelerationUsage: z
+    .object({ value: z.string(), updatedAt: z.string().optional() })
+    .optional(),
+
   // ---- bookkeeping -----------------------------------------------------
   lastUpdatedFromCv: z.string().optional(),
   lastUpdatedFromChat: z.string().optional(),

@@ -24,6 +24,7 @@ import {
   type PrescreenScore,
   type PrescreenState,
 } from "./reducers/prescreen-fsm.js"
+import { AI_QUESTION_QID, aiQuestionPromptFor, aiQuestionRubric } from "./prescreen-ai-question.js"
 
 /** Lang-agnostic text pick from a bilingual `{zh,en}` (or a plain string). */
 function pickText(v: unknown, lang: "en" | "zh" = "en"): string {
@@ -74,16 +75,34 @@ function judgeContextForQuestion(q: RawQuestion, lang: "en" | "zh"): string {
 }
 
 /**
+ * Options for the DEFAULT AI-acceleration question appended to every session (Adam directive).
+ * Resolved by the caller (mode-selector) from the job's roleFunction + the cross-session skip
+ * signal so this builder stays pure (no Firestore/LLM here).
+ */
+export interface AiQuestionOptions {
+  /** Append the default AI-acceleration question? (false when the candidate already answered it.) */
+  append: boolean
+  /** The job's roleFunction tokens — selects the role-tailored prompt (generic fallback if empty). */
+  roleFunction?: readonly string[] | null
+}
+
+/**
  * Map a job's prescreen config (+ optional in-progress session) → the thin prescreen seed.
  *
  * @param config  the `pa-jobs/{jobId}.prescreenConfig` object (raw Firestore data).
  * @param session optional `pa-prescreen-sessions/{id}` data so a RESUMED session keeps prior scores
  *                + terminal (the reducer rejects post-terminal re-score; resume must not re-ask).
+ * @param lang    text language pick for bilingual prompts.
+ * @param aiQuestion optional DEFAULT AI-acceleration question control — when `append:true` and the
+ *                qId isn't already present/scored, a role-tailored, NON-GATING `q_ai_acceleration`
+ *                question is appended as the LAST question. Skip-aware: a resumed session that
+ *                already scored it (carried via `session.scored`) never re-appends.
  */
 export function buildThinPrescreenSeed(
   config: Record<string, unknown> | null | undefined,
   session?: Record<string, unknown> | null,
   lang: "en" | "zh" = "en",
+  aiQuestion?: AiQuestionOptions | null,
 ): ThinPrescreenSeed {
   const rawQs = Array.isArray(config?.questions) ? (config!.questions as RawQuestion[]) : []
   const questionIds: string[] = []
@@ -97,6 +116,19 @@ export function buildThinPrescreenSeed(
     if (prompt) prompts[qId] = prompt
     const jc = judgeContextForQuestion(q, lang)
     if (jc) judgeContext[qId] = jc
+  }
+
+  // DEFAULT AI-acceleration question (Adam directive): append a role-tailored, NON-GATING
+  // `q_ai_acceleration` as the LAST question on EVERY session, unless the caller resolved the
+  // cross-session skip (already answered) OR the config already declares the qId. Appended to
+  // `questionIds` BEFORE the resume-score carry-over loop so a resumed session that already
+  // scored it carries the score forward (and the FSM treats it as done — no re-ask).
+  const informational: string[] = []
+  if (aiQuestion?.append && !questionIds.includes(AI_QUESTION_QID)) {
+    questionIds.push(AI_QUESTION_QID)
+    prompts[AI_QUESTION_QID] = aiQuestionPromptFor(aiQuestion.roleFunction)
+    judgeContext[AI_QUESTION_QID] = aiQuestionRubric()
+    informational.push(AI_QUESTION_QID)
   }
 
   // Threshold: config-level wins; else the thin default (avg >= 0.6).
@@ -137,6 +169,7 @@ export function buildThinPrescreenSeed(
     threshold: cfgThreshold,
     terminal,
     terminalCommits: terminal ? 1 : 0,
+    ...(informational.length > 0 ? { informational } : {}),
   }
 
   return { questionIds, prescreen, prompts, judgeContext }
