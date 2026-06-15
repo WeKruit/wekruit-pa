@@ -725,6 +725,19 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     hasAnyProfileSignal(user)
   ) {
     if (!onboardingComplete) await markSharedOnboardingComplete(args.db, args.userId, now)
+    // PITCH-BEFORE-MATCH on FIRST text-in (Adam 2026-06-15: "it's not returning — it's a first-time
+    // user; even a return, say something as if we know them"). A recognized candidate (ingested
+    // background) who has NEVER been pitched — e.g. someone who just bound their phone via a
+    // verification code and texts in for the first time (Leonard) — must get the warm, we-know-you
+    // 3-bubble PITCH (composePitchTurn at cutover.ts:1073, self-gated on !pitchedAt), NOT a cold
+    // "want me to pull matches? tell me role+location" question. We also set warmReturningGreeting so
+    // that if the pitch composer finds nothing pitchable and falls through, the agent still opens with
+    // the warm we-know-you greeting copy — never a bare reply. Once pitchedAt is stamped, subsequent
+    // texts fall to the warm greeting alone (no re-pitch). Deterministic — NO LLM, NO text→enum regex.
+    if (hasIngestedBackground(user) && user.pitchedAt == null) {
+      log("mode.recognized_first_pitch_on_text", { userId: args.userId })
+      return { mode: "triage", postParsePitch: true, warmReturningGreeting: true, ...inFlightDecision }
+    }
     log("mode.warm_returning_greeting", { userId: args.userId })
     return { mode: "triage", warmReturningGreeting: true, ...inFlightDecision }
   }
