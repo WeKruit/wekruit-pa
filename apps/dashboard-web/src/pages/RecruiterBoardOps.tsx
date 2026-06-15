@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
+import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { db } from "../lib/firebase.js"
 import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
@@ -557,7 +558,7 @@ const boardTableStyle: CSSProperties = {
 
 const selectedBoardTableStyle: CSSProperties = {
   ...boardTableStyle,
-  minWidth: 620,
+  minWidth: 360,
   fontSize: 11,
 }
 
@@ -624,7 +625,9 @@ const selectedReviewShellStyle: CSSProperties = {
   width: "calc(100vw - 240px - 64px)",
   maxWidth: "calc(100vw - 240px - 64px)",
   display: "grid",
-  gridTemplateColumns: "minmax(620px, 1fr) minmax(520px, min(640px, 34vw))",
+  // Review is the main event — give the candidate panel the bulk of the width (room for
+  // a full-size inline résumé), keep the list a secondary rail on the left.
+  gridTemplateColumns: "minmax(360px, 0.6fr) minmax(720px, 1.5fr)",
   gap: 16,
   alignItems: "start",
 }
@@ -1250,6 +1253,14 @@ function CandidateReviewPanel({
             {submission.candidate.notes}
           </div>
         )}
+      </div>
+
+      <div style={reviewSectionStyle}>
+        <CandidateResumePreview
+          resumeUrl={submission.candidate?.resumeUrl}
+          linkedinUrl={submission.candidate?.linkedinUrl}
+          height="74vh"
+        />
       </div>
 
       <div style={reviewSectionStyle}>

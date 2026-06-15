@@ -8,11 +8,13 @@ const source = readFileSync(resolve(import.meta.dirname, "../RecruiterBoardOps.t
 describe("RecruiterBoardOps selected-review layout", () => {
   it("uses the unused right canvas for the candidate review rail", () => {
     assert.match(source, /const selectedReviewShellStyle: CSSProperties = \{[\s\S]*width: "calc\(100vw - 240px - 64px\)"/)
-    assert.match(source, /gridTemplateColumns: "minmax\(620px, 1fr\) minmax\(520px, min\(640px, 34vw\)\)"/)
+    // Review rail is the dominant column now (room for a full-size inline résumé); the
+    // board list is the secondary rail on the left.
+    assert.match(source, /gridTemplateColumns: "minmax\(360px, 0\.6fr\) minmax\(720px, 1\.5fr\)"/)
   })
 
   it("shrinks board tables while a candidate is open", () => {
-    assert.match(source, /const selectedBoardTableStyle: CSSProperties = \{[\s\S]*minWidth: 620/)
+    assert.match(source, /const selectedBoardTableStyle: CSSProperties = \{[\s\S]*minWidth: 360/)
     assert.match(source, /selectedSubmission \? selectedBoardTableStyle : boardTableStyle/)
   })
 
