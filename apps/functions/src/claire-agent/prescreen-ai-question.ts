@@ -131,10 +131,15 @@ export function aiQuestionRubric(): string {
  * parse — we never round-trip this through the schema). REUSED by the legacy session-start seam so the
  * deterministic FSM asks the SAME role-tailored question the thin path appends.
  *
- * NON-GATING on legacy: `type:"GOOD_TO_HAVE"` (defaultMatchThresholdForType=0 → the type gate never
- * HARD_STOPs it) + `weight:0` (contributes 0 to BOTH state.score and scoreMax → the PASS/FAIL ratio
- * score/scoreMax is unchanged, and remainingMaxScore is unaffected so it can never trigger a false
- * PAUSE). It carries the `ai_usage` sharedKey for cross-session skip/carry parity with thin.
+ * NON-GATING + ALWAYS-ASKED on legacy: `type:"ALWAYS_ASK"` (Adam 2026-06-14). ALWAYS_ASK is
+ * non-gating exactly like GOOD_TO_HAVE (DEFAULT_TYPE_THRESHOLDS.ALWAYS_ASK=0 → the type gate never
+ * HARD_STOPs it) AND, unlike GOOD_TO_HAVE, the PreScreenPipeline DEFERS any terminal (PASS / FAIL /
+ * HARD_STOP / PAUSE) to ask it FIRST when it is still unanswered — so it is asked even when an
+ * EARLIER gating MUST_HAVE/PROBING question hard-stops before the queue reaches it (the live bug:
+ * the screen HARD_STOPped on a gating question and finalized before ever asking the AI question).
+ * `weight:0` keeps it non-scoring (contributes 0 to BOTH state.score and scoreMax → the PASS/FAIL
+ * ratio is unchanged; the answer is captured, never scored into the verdict). It carries the
+ * `ai_usage` sharedKey for cross-session skip/carry parity with thin.
  *
  * The synthetic `keywords` entry exists ONLY to satisfy the per-turn KeywordSetJudge binding (the
  * binding throws on a question with no keywords); its hint is the informational rubric — the question
@@ -145,7 +150,7 @@ export function aiQuestionRubric(): string {
  */
 export function legacyAiQuestionConfig(roleFunctions: readonly string[] | null | undefined): {
   qId: string
-  type: "GOOD_TO_HAVE"
+  type: "ALWAYS_ASK"
   weight: number
   sharedKey: string
   prompt: { zh: string; en: string }
@@ -157,7 +162,9 @@ export function legacyAiQuestionConfig(roleFunctions: readonly string[] | null |
     "No worries if you're early with AI — just tell me what (if anything) you've tried and how it fit into your workflow."
   return {
     qId: AI_QUESTION_QID,
-    type: "GOOD_TO_HAVE",
+    // ALWAYS_ASK: non-gating like GOOD_TO_HAVE, but the pipeline DEFERS any terminal to ask it
+    // first when still unanswered (asked even when an earlier gating question hard-stops).
+    type: "ALWAYS_ASK",
     // NON-GATING: weight 0 → adds 0 to score AND scoreMax (verdict ratio unchanged).
     weight: 0,
     sharedKey: "ai_usage",

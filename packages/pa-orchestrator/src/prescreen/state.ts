@@ -102,6 +102,21 @@ export interface PreScreenState {
   terminal: PreScreenTerminal
   /** Human-readable reason set on terminal transition. */
   terminalReason?: string
+  /**
+   * ALWAYS_ASK deferral stash (Adam 2026-06-14). When the FSM has DECIDED a
+   * terminal (PASS/FAIL/HARD_STOP/PAUSE) but an unanswered, not-skipped
+   * ALWAYS_ASK question still remains, the pipeline does NOT finalize: it stashes
+   * the already-computed verdict here and re-points `currentQId` at the
+   * ALWAYS_ASK question so it gets asked first. The verdict is AUTHORITATIVE on
+   * re-entry — once all ALWAYS_ASK questions are answered, this stashed terminal
+   * is replayed verbatim (NEVER recomputed via evalFinal), so an ALWAYS_ASK
+   * answer can never convert a HARD_STOP/PAUSE into PASS/FAIL. Absent when no
+   * terminal is pending.
+   */
+  pendingTerminal?: {
+    terminal: Exclude<PreScreenTerminal, null>
+    reason: string
+  }
   /** Product-level session boundary; durable profile data lives elsewhere. */
   workSession?: {
     kind: "job_prescreen"

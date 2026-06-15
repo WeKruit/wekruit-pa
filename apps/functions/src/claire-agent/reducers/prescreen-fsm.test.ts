@@ -106,3 +106,49 @@ test("nextPrescreenQuestion surfaces the committed terminal once all scored", ()
   assert.equal(next.pending, null)
   assert.equal(next.terminal, "PASS", "terminal surfaced, no re-ask")
 })
+
+// ── ALWAYS_ASK (Adam 2026-06-14) ────────────────────────────────────────────
+// On the thin path the AI question is appended LAST and the FSM only rolls up a
+// terminal when earliestPending()===null, so the question is ALREADY asked. These
+// tests pin the non-gating + ask-before-terminal invariants explicitly.
+
+test("ALWAYS_ASK: non-gating — a trailing ALWAYS_ASK score is EXCLUDED from the verdict average", () => {
+  // Two gating Qs avg 0.9 → PASS; the ALWAYS_ASK question scored 0.0 must NOT drag it to FAIL.
+  const p: PrescreenState = {
+    questions: ["a", "b", "q_ai_acceleration"],
+    scores: {},
+    threshold: 0.6,
+    terminal: null,
+    terminalCommits: 0,
+    informational: ["q_ai_acceleration"],
+    alwaysAsk: ["q_ai_acceleration"],
+  }
+  recordPrescreenScore(p, "a", { score: 0.9 })
+  recordPrescreenScore(p, "b", { score: 0.9 })
+  // Still pending the ALWAYS_ASK question — must NOT have committed a terminal yet.
+  assert.equal(p.terminal, null, "must not finalize while the ALWAYS_ASK question is pending")
+  assert.equal(nextPrescreenQuestion(p).pending, "q_ai_acceleration")
+  // Answer it 0.0 → PASS (gating avg 0.9, AI excluded).
+  const r = recordPrescreenScore(p, "q_ai_acceleration", { score: 0.0 })
+  assert.equal(r.terminal, "PASS", "ALWAYS_ASK score is excluded from the average → verdict unchanged")
+  assert.equal(p.terminal, "PASS")
+  assert.equal(p.terminalCommits, 1)
+})
+
+test("ALWAYS_ASK: must-be-asked-before-terminal — gating Qs done but AI pending → surfaced as next, not finalized", () => {
+  const p: PrescreenState = {
+    questions: ["a", "q_ai_acceleration"],
+    scores: {},
+    threshold: 0.6,
+    terminal: null,
+    terminalCommits: 0,
+    informational: ["q_ai_acceleration"],
+    alwaysAsk: ["q_ai_acceleration"],
+  }
+  const r = recordPrescreenScore(p, "a", { score: 0.2 }) // would be a FAIL on its own
+  assert.equal(p.terminal, null, "no terminal while the ALWAYS_ASK question is unanswered")
+  assert.equal(r.pending, "q_ai_acceleration", "the ALWAYS_ASK question is surfaced as next")
+  // Answer the AI question → the (FAIL) verdict finalizes, AI excluded from the average.
+  const r2 = recordPrescreenScore(p, "q_ai_acceleration", { score: 1.0 })
+  assert.equal(r2.terminal, "FAIL", "gating avg 0.2 < 0.6 → FAIL; the high AI score does not rescue it")
+})

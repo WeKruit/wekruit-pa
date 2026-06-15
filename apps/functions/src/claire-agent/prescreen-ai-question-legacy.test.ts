@@ -6,7 +6,7 @@
  *  (a) shaped like a parsed PrescreenQuestionConfig (qId, type, weight, sharedKey, prompt,
  *      clarifyPrompt, keywords) so the session-start state build + per-turn KeywordSetJudge binding
  *      both accept it,
- *  (b) NON-GATING — appended with weight 0 / GOOD_TO_HAVE it contributes 0 to BOTH scoreMax and
+ *  (b) NON-GATING — appended with weight 0 / ALWAYS_ASK it contributes 0 to BOTH scoreMax and
  *      score, so the legacy weighted-ratio verdict (score/scoreMax) is byte-identical with vs without
  *      it, and a 0.0 OR 1.0 AI score cannot move PASS/FAIL,
  *  (c) appended LAST (gating question order untouched),
@@ -58,7 +58,7 @@ function withAiQuestion(cfg: PrescreenConfig): PrescreenConfig {
 test("legacyAiQuestionConfig: shape is FSM-binding compatible + non-gating + role-tailored", () => {
   const aiQ = legacyAiQuestionConfig(["software_engineering"])
   assert.equal(aiQ.qId, AI_QUESTION_QID)
-  assert.equal(aiQ.type, "GOOD_TO_HAVE") // → defaultMatchThresholdForType=0 → never HARD_STOPs
+  assert.equal(aiQ.type, "ALWAYS_ASK") // → non-gating (threshold 0, never HARD_STOPs) + asked before any terminal
   assert.equal(aiQ.weight, 0) // → 0 to scoreMax AND score → verdict unaffected
   assert.equal(aiQ.sharedKey, "ai_usage") // cross-session ask-once parity with thin
   // bilingual prompt + clarify + >=1 keyword so the per-turn KeywordSetJudge binding never throws.
