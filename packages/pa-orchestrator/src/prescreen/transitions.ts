@@ -64,6 +64,7 @@ export const DEFAULT_TYPE_THRESHOLDS: Record<QuestionType, number> = {
   MUST_HAVE: 1.0, // failing score blocks only after caller exhausts probe rounds
   PROBING: 0.7,
   GOOD_TO_HAVE: 0, // never blocks
+  ALWAYS_ASK: 0, // never blocks (non-gating, like GOOD_TO_HAVE) — Adam 2026-06-14
 }
 
 export type TypeGateOutcome =
@@ -87,7 +88,8 @@ export function evalTypeGate(args: {
   confidenceThreshold: number
 }): TypeGateOutcome {
   const tau_m = args.matchThreshold ?? DEFAULT_TYPE_THRESHOLDS[args.type]
-  if (args.type === "GOOD_TO_HAVE") return { action: "proceed" }
+  // GOOD_TO_HAVE + ALWAYS_ASK are non-gating: a low score NEVER hard-stops.
+  if (args.type === "GOOD_TO_HAVE" || args.type === "ALWAYS_ASK") return { action: "proceed" }
   if (args.type === "MUST_HAVE") {
     if (args.s < tau_m) return { action: "hard_stop", cause: "type_gate_fail", type: args.type }
     return { action: "proceed" }

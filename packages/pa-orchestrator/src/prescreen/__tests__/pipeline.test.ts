@@ -1533,3 +1533,208 @@ test("Control: genuine hard-fail still early-terminates (zero-evidence across al
   assert.equal(result?.action.kind, "terminal")
   if (result?.action.kind === "terminal") assert.equal(result.action.terminal, "PAUSE")
 })
+
+// ════════════════════════════════════════════════════════════════════════════
+// ALWAYS_ASK — non-gating, ask-once, must-be-asked-before-terminal (Adam 2026-06-14)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The live bug: a gating MUST_HAVE HARD_STOPs BEFORE the trailing AI question is
+// reached, so the screen finalizes the terminal and never asks it. ALWAYS_ASK
+// fixes this: the pipeline DEFERS any terminal to ask the unanswered ALWAYS_ASK
+// question first, then finalizes the SAME (unchanged) verdict.
+
+test("ALWAYS_ASK: a gating HARD_STOP DEFERS to ask the trailing ALWAYS_ASK question first, then finalizes the SAME verdict (the live bug)", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      // q_core MUST_HAVE always scores low → HARD_STOPs after 2 clarify rounds.
+      q_core: makeQ("q_core", [
+        { perKeyword: [{ keyword: "q_core", match: 0.2, confidence: 0.9, evidence: "x", reasoning: "y" }] },
+        { perKeyword: [{ keyword: "q_core", match: 0.2, confidence: 0.9, evidence: "x", reasoning: "y" }] },
+        { perKeyword: [{ keyword: "q_core", match: 0.2, confidence: 0.9, evidence: "x", reasoning: "y" }] },
+      ]),
+      // The ALWAYS_ASK AI question — never reached by normal advance (it's LAST and the gating Q halts).
+      q_ai_acceleration: makeQ("q_ai_acceleration", [
+        { perKeyword: [{ keyword: "q_ai_acceleration", match: 0.0, confidence: 0.9, evidence: "", reasoning: "" }] },
+      ]),
+    },
+    store,
+  })
+  await setupSession(pipeline, store, [
+    { qId: "q_core", type: "MUST_HAVE", weight: 3 },
+    { qId: "q_ai_acceleration", type: "ALWAYS_ASK", weight: 0 },
+  ])
+
+  // Turns 1-2: q_core clarify rounds.
+  const r1 = await pipeline.runTurn({ sessionId: "s1", reply: "weak", lang: "en", nowIso: "2026-05-12T00:01:00Z", judgeCtx: ctx })
+  assert.equal(r1.action.kind, "clarify")
+  const r2 = await pipeline.runTurn({ sessionId: "s1", reply: "still weak", lang: "en", nowIso: "2026-05-12T00:02:00Z", judgeCtx: ctx })
+  assert.equal(r2.action.kind, "clarify")
+
+  // Turn 3: q_core would HARD_STOP — but ALWAYS_ASK is pending, so the terminal is DEFERRED.
+  const r3 = await pipeline.runTurn({ sessionId: "s1", reply: "no other example", lang: "en", nowIso: "2026-05-12T00:03:00Z", judgeCtx: ctx })
+  assert.equal(r3.action.kind, "advance", "the HARD_STOP must be deferred to ask the ALWAYS_ASK question")
+  if (r3.action.kind === "advance") assert.equal(r3.action.toQId, "q_ai_acceleration")
+  assert.equal(r3.state.terminal, null, "no terminal is set during the deferral window")
+  assert.equal(r3.state.currentQId, "q_ai_acceleration", "currentQId points at the ALWAYS_ASK question")
+  assert.equal(r3.state.pendingTerminal?.terminal, "HARD_STOP", "the decided verdict is stashed, not finalized")
+  // The deferred turn emits the ALWAYS_ASK question's own prompt — NOT terminal text.
+  assert.match(r3.text, /q_ai_acceleration/i)
+
+  // Turn 4: candidate answers the AI question (scored 0.0) → the STASHED HARD_STOP finalizes UNCHANGED.
+  const r4 = await pipeline.runTurn({ sessionId: "s1", reply: "i don't really use AI", lang: "en", nowIso: "2026-05-12T00:04:00Z", judgeCtx: ctx })
+  assert.equal(r4.action.kind, "terminal")
+  if (r4.action.kind === "terminal") {
+    assert.equal(r4.action.terminal, "HARD_STOP", "the verdict is the STASHED HARD_STOP — NOT recomputed into PASS/FAIL")
+  }
+  assert.equal(r4.state.terminal, "HARD_STOP")
+  assert.equal(r4.state.pendingTerminal, undefined, "the stash is cleared once the verdict finalizes")
+  assert.ok(r4.state.questions.q_ai_acceleration.answeredAt, "the ALWAYS_ASK answer is captured")
+  assert.equal(r4.state.score, 0, "the ALWAYS_ASK answer (weight 0) contributes nothing to score")
+})
+
+test("ALWAYS_ASK: deferring a PAUSE preserves PAUSE (not converted to FAIL via evalFinal on re-entry)", async () => {
+  const store = new InMemoryPreScreenStore()
+  // Two gating GOOD_TO_HAVE Qs scored 0 → viability PAUSE after hysteresis, plus a trailing ALWAYS_ASK.
+  const store0 = (qId: string) => makeQ(qId, [{ perKeyword: [{ keyword: qId, match: 0, confidence: 0.9, evidence: "", reasoning: "" }] }])
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: store0("q1"),
+      q2: store0("q2"),
+      q3: store0("q3"),
+      q_ai_acceleration: makeQ("q_ai_acceleration", [
+        { perKeyword: [{ keyword: "q_ai_acceleration", match: 1.0, confidence: 0.9, evidence: "great", reasoning: "great" }] },
+      ]),
+    },
+    store,
+  })
+  await setupSession(
+    pipeline,
+    store,
+    [
+      { qId: "q1", type: "GOOD_TO_HAVE", weight: 1 },
+      { qId: "q2", type: "GOOD_TO_HAVE", weight: 1 },
+      { qId: "q3", type: "GOOD_TO_HAVE", weight: 1 },
+      { qId: "q_ai_acceleration", type: "ALWAYS_ASK", weight: 0 },
+    ],
+    0.95
+  )
+  let sawDeferral = false
+  let final
+  for (let i = 0; i < 6; i++) {
+    const r = await pipeline.runTurn({ sessionId: "s1", reply: `t${i}`, lang: "en", nowIso: `2026-05-12T00:0${i}:00Z`, judgeCtx: ctx })
+    if (r.action.kind === "advance" && r.action.toQId === "q_ai_acceleration" && r.state.pendingTerminal?.terminal === "PAUSE") {
+      sawDeferral = true
+    }
+    if (r.action.kind === "terminal") { final = r; break }
+  }
+  assert.equal(sawDeferral, true, "the PAUSE must be deferred to ask the ALWAYS_ASK question")
+  assert.equal(final?.action.kind, "terminal")
+  if (final?.action.kind === "terminal") {
+    assert.equal(final.action.terminal, "PAUSE", "the stashed PAUSE finalizes — NOT recomputed into FAIL")
+  }
+})
+
+test("ALWAYS_ASK: NON-GATING — a 0.0 AI score does NOT change the (PASS) verdict on the happy path", async () => {
+  // q_core PASSes; ALWAYS_ASK is the last question, asked via NORMAL advance (no deferral needed because
+  // the terminal only fires once the AI question is already answered). Verdict must equal the no-AI PASS.
+  const run = async (aiMatch: number) => {
+    const store = new InMemoryPreScreenStore()
+    const pipeline = new PreScreenPipeline({
+      questions: {
+        q_core: makeQ("q_core", [{ perKeyword: [{ keyword: "q_core", match: 1.0, confidence: 0.9, evidence: "ok", reasoning: "ok" }] }]),
+        q_ai_acceleration: makeQ("q_ai_acceleration", [{ perKeyword: [{ keyword: "q_ai_acceleration", match: aiMatch, confidence: 0.9, evidence: "", reasoning: "" }] }]),
+      },
+      store,
+    })
+    await setupSession(pipeline, store, [
+      { qId: "q_core", type: "MUST_HAVE", weight: 3 },
+      { qId: "q_ai_acceleration", type: "ALWAYS_ASK", weight: 0 },
+    ])
+    // Turn 1: answer q_core → advance to the ALWAYS_ASK question (normal advance, no deferral).
+    const r1 = await pipeline.runTurn({ sessionId: "s1", reply: "shipped it", lang: "en", nowIso: "2026-05-12T00:01:00Z", judgeCtx: ctx })
+    assert.equal(r1.action.kind, "advance")
+    if (r1.action.kind === "advance") assert.equal(r1.action.toQId, "q_ai_acceleration")
+    assert.equal(r1.state.pendingTerminal, undefined, "no deferral needed when the AI question is reached by normal advance")
+    // Turn 2: answer the AI question → PASS.
+    const r2 = await pipeline.runTurn({ sessionId: "s1", reply: "ai answer", lang: "en", nowIso: "2026-05-12T00:02:00Z", judgeCtx: ctx })
+    return r2
+  }
+  const low = await run(0.0)
+  const high = await run(1.0)
+  assert.equal(low.action.kind, "terminal")
+  assert.equal(high.action.kind, "terminal")
+  if (low.action.kind === "terminal" && high.action.kind === "terminal") {
+    assert.equal(low.action.terminal, "PASS")
+    assert.equal(high.action.terminal, low.action.terminal, "AI score does not move the verdict")
+  }
+  assert.equal(low.state.score, high.state.score, "ALWAYS_ASK weight 0 contributes nothing to score")
+  assert.equal(low.state.scoreMax, high.state.scoreMax, "ALWAYS_ASK weight 0 contributes nothing to scoreMax")
+})
+
+test("ALWAYS_ASK: ASK-ONCE — an already-answered ALWAYS_ASK question is NOT re-asked (no deferral)", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q_core: makeQ("q_core", [
+        { perKeyword: [{ keyword: "q_core", match: 0.2, confidence: 0.9, evidence: "x", reasoning: "y" }] },
+        { perKeyword: [{ keyword: "q_core", match: 0.2, confidence: 0.9, evidence: "x", reasoning: "y" }] },
+        { perKeyword: [{ keyword: "q_core", match: 0.2, confidence: 0.9, evidence: "x", reasoning: "y" }] },
+      ]),
+      q_ai_acceleration: makeQ("q_ai_acceleration", [
+        { perKeyword: [{ keyword: "q_ai_acceleration", match: 1.0, confidence: 0.9, evidence: "", reasoning: "" }] },
+      ]),
+    },
+    store,
+  })
+  await setupSession(pipeline, store, [
+    { qId: "q_core", type: "MUST_HAVE", weight: 3 },
+    { qId: "q_ai_acceleration", type: "ALWAYS_ASK", weight: 0 },
+  ])
+  // Pre-mark the ALWAYS_ASK question as already answered (carried from a prior session).
+  const seeded = await store.load("s1")
+  seeded!.questions.q_ai_acceleration.answeredAt = "2026-05-11T00:00:00Z"
+  seeded!.questions.q_ai_acceleration.finalS = 1.0
+  await store.save(seeded!)
+
+  // q_core HARD_STOPs after probing → since the ALWAYS_ASK question is ALREADY answered, finalize directly.
+  const r1 = await pipeline.runTurn({ sessionId: "s1", reply: "weak", lang: "en", nowIso: "2026-05-12T00:01:00Z", judgeCtx: ctx })
+  assert.equal(r1.action.kind, "clarify")
+  const r2 = await pipeline.runTurn({ sessionId: "s1", reply: "still weak", lang: "en", nowIso: "2026-05-12T00:02:00Z", judgeCtx: ctx })
+  assert.equal(r2.action.kind, "clarify")
+  const r3 = await pipeline.runTurn({ sessionId: "s1", reply: "no example", lang: "en", nowIso: "2026-05-12T00:03:00Z", judgeCtx: ctx })
+  assert.equal(r3.action.kind, "terminal", "an already-answered ALWAYS_ASK question is not re-asked → terminal fires directly")
+  if (r3.action.kind === "terminal") assert.equal(r3.action.terminal, "HARD_STOP")
+  assert.equal(r3.state.pendingTerminal, undefined)
+})
+
+test("ALWAYS_ASK: MULTIPLE ALWAYS_ASK questions are ALL asked before the terminal finalizes", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q_core: makeQ("q_core", [{ perKeyword: [{ keyword: "q_core", match: 1.0, confidence: 0.9, evidence: "ok", reasoning: "ok" }] }]),
+      q_a1: makeQ("q_a1", [{ perKeyword: [{ keyword: "q_a1", match: 0.5, confidence: 0.9, evidence: "", reasoning: "" }] }]),
+      q_a2: makeQ("q_a2", [{ perKeyword: [{ keyword: "q_a2", match: 0.5, confidence: 0.9, evidence: "", reasoning: "" }] }]),
+    },
+    store,
+  })
+  // q_core PASSes; then two ALWAYS_ASK questions follow. Normal advance reaches q_a1; once q_a1 is
+  // answered the terminal would fire but q_a2 (ALWAYS_ASK) is still pending → defer to ask it too.
+  await setupSession(pipeline, store, [
+    { qId: "q_core", type: "MUST_HAVE", weight: 3 },
+    { qId: "q_a1", type: "ALWAYS_ASK", weight: 0 },
+    { qId: "q_a2", type: "ALWAYS_ASK", weight: 0 },
+  ])
+  const asked: string[] = []
+  let final
+  for (let i = 0; i < 6; i++) {
+    const cur = await store.load("s1")
+    if (cur?.terminal) break
+    asked.push(cur!.currentQId!)
+    const r = await pipeline.runTurn({ sessionId: "s1", reply: `t${i}`, lang: "en", nowIso: `2026-05-12T00:0${i}:00Z`, judgeCtx: ctx })
+    if (r.action.kind === "terminal") { final = r; break }
+  }
+  assert.ok(asked.includes("q_a1") && asked.includes("q_a2"), "both ALWAYS_ASK questions are asked")
+  assert.equal(final?.action.kind, "terminal")
+  if (final?.action.kind === "terminal") assert.equal(final.action.terminal, "PASS")
+})

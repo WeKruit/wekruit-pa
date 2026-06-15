@@ -183,11 +183,17 @@ export function buildThinPrescreenSeed(
   // `questionIds` BEFORE the resume-score carry-over loop so a resumed session that already
   // scored it carries the score forward (and the FSM treats it as done — no re-ask).
   const informational: string[] = []
+  // ALWAYS_ASK (Adam 2026-06-14): the appended AI question is ALWAYS_ASK — non-gating
+  // (in `informational`, excluded from the verdict) AND must-be-asked-before-terminal
+  // (in `alwaysAsk`, so the FSM never finalizes while it is pending). On thin it is appended
+  // LAST so earliestPending() already reaches it; `alwaysAsk` makes the invariant explicit.
+  const alwaysAsk: string[] = []
   if (aiQuestion?.append && !questionIds.includes(AI_QUESTION_QID)) {
     questionIds.push(AI_QUESTION_QID)
     prompts[AI_QUESTION_QID] = aiQuestionPromptFor(aiQuestion.roleFunction)
     judgeContext[AI_QUESTION_QID] = aiQuestionRubric()
     informational.push(AI_QUESTION_QID)
+    alwaysAsk.push(AI_QUESTION_QID)
     // The appended AI question is a shared question keyed `ai_usage` (SPEC migration of the MVP).
     sharedKeys[AI_QUESTION_QID] = AI_USAGE_SHARED_KEY
   }
@@ -258,6 +264,7 @@ export function buildThinPrescreenSeed(
     terminal,
     terminalCommits: terminal ? 1 : 0,
     ...(informational.length > 0 ? { informational } : {}),
+    ...(alwaysAsk.length > 0 ? { alwaysAsk } : {}),
   }
 
   return { questionIds, prescreen, prompts, judgeContext, sharedKeys, carriedQuestionIds, carriedReferences }

@@ -38,6 +38,21 @@ export interface PrescreenState {
    * absent/empty → byte-identical legacy behaviour (every scored question gates).
    */
   informational?: string[]
+  /**
+   * ALWAYS_ASK qIds (Adam 2026-06-14): "have to ask unless already asked". These are a
+   * SUPERSET role of `informational` (non-gating: excluded from the verdict average) PLUS
+   * a MUST-BE-ASKED-BEFORE-TERMINAL invariant — the FSM never commits a terminal while any
+   * ALWAYS_ASK qId is still pending (not in `scores`).
+   *
+   * On the thin path this invariant is ALREADY satisfied by construction: the AI question is
+   * appended LAST to `questions[]` and the FSM only rolls up a terminal when `earliestPending()
+   * === null` (it never short-circuits mid-flow). This field makes the invariant EXPLICIT +
+   * robust: if a future change ever introduces early termination, the rollup refuses to finalize
+   * while an ALWAYS_ASK qId is pending, surfacing it as the next question instead. Members SHOULD
+   * also appear in `informational` (kept in sync by buildThinPrescreenSeed) so they never gate.
+   * Absent/empty → no ALWAYS_ASK question → byte-identical legacy behaviour.
+   */
+  alwaysAsk?: string[]
 }
 
 export interface PrescreenNext {
@@ -59,6 +74,19 @@ export interface PrescreenRecordResult {
 /** Earliest question not yet scored — the single source of "what's next". */
 function earliestPending(state: PrescreenState): string | null {
   return state.questions.find((q) => !(q in state.scores)) ?? null
+}
+
+/**
+ * First ALWAYS_ASK question (in `questions[]` order) that is NOT yet scored (Adam 2026-06-14).
+ * "Skip" (ask-once) is resolved UPSTREAM: an already-answered ALWAYS_ASK question is either absent
+ * from `questions[]` (buildThinPrescreenSeed resolved the skip) or already in `scores` (carried), so
+ * a `!(q in scores)` test covers both. Returns null when no ALWAYS_ASK question is pending.
+ */
+function pendingAlwaysAsk(state: PrescreenState): string | null {
+  const set = state.alwaysAsk
+  if (!set || set.length === 0) return null
+  // Preserve `questions[]` order (not the alwaysAsk[] order) so the deferred ask follows the queue.
+  return state.questions.find((q) => set.includes(q) && !(q in state.scores)) ?? null
 }
 
 /** Clamp a judge-proposed score into the valid [0,1] band. */
@@ -135,14 +163,23 @@ export function recordPrescreenScore(
   const clamped = clamp01(score.score)
   state.scores[question] = { score: clamped, evidence: score.evidence ?? "" }
 
-  const next = earliestPending(state)
+  // (3.5) ALWAYS_ASK pre-terminal guard (Adam 2026-06-14): never commit a terminal while an
+  // ALWAYS_ASK question is still pending. On the thin path the AI question is appended LAST so
+  // earliestPending() already covers it (this is a robust no-op for current configs); the explicit
+  // guard keeps "must-be-asked-before-terminal" true even if a future change introduces early
+  // termination. We surface the pending ALWAYS_ASK question as the next question instead of rolling
+  // up — the answer is non-gating (excluded from the average below) so the verdict is unchanged.
+  const pendingAlways = pendingAlwaysAsk(state)
+  const next = earliestPending(state) ?? pendingAlways
   if (!next) {
     // (4) DETERMINISTIC ROLLUP — CODE decides PASS/FAIL, not the LLM.
     // INFORMATIONAL questions (e.g. the default AI-acceleration capture) are recorded but
     // EXCLUDED from the average so they never change the verdict (non-gating). When EVERY
     // scored question is informational (shouldn't happen — a real screen always has gating
     // questions), fall back to all scores so we never divide by zero.
-    const informational = new Set(state.informational ?? [])
+    // ALWAYS_ASK qIds are non-gating too (captured, never scored into the verdict), so exclude
+    // them from the average alongside `informational` even if a config forgot to mirror them.
+    const informational = new Set([...(state.informational ?? []), ...(state.alwaysAsk ?? [])])
     const gatingEntries = Object.entries(state.scores).filter(([qId]) => !informational.has(qId))
     const vals = (gatingEntries.length > 0 ? gatingEntries : Object.entries(state.scores)).map(
       ([, s]) => s.score,

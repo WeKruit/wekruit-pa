@@ -356,6 +356,25 @@ export class PreScreenPipeline {
       log,
     })
 
+    // ── ALWAYS_ASK deferred-terminal capture ─────────────────────────────────
+    // If a verdict is STASHED (we deferred a terminal to ask this ALWAYS_ASK
+    // question), the answer is now captured. Route STRAIGHT to finalize so the
+    // stashed verdict is replayed verbatim. Skip viability/advance entirely:
+    // ALWAYS_ASK answers are non-gating (weight 0, no score change), and on a
+    // pending stash we must NOT let a PAUSE/advance recompute or override the
+    // already-decided verdict. transitionFinal either asks the NEXT pending
+    // ALWAYS_ASK question (multi-ALWAYS_ASK) or replays the stash.
+    if (state.pendingTerminal) {
+      log("prescreen.pipeline.always_ask_answer_captured", {
+        sessionId: input.sessionId,
+        qId: qState.qId,
+        s,
+        c,
+        stashedTerminal: state.pendingTerminal.terminal,
+      })
+      return await this.transitionFinal(state, input.nowIso, input.lang, log)
+    }
+
     // ── Viability Check ──────────────────────────────────────────────────────
     // Skip viability on the LAST Q — once R_max=0, "S < T·S_max" is just the
     // FAIL condition, not PAUSE. PAUSE communicates "math says PASS unreachable
@@ -473,6 +492,21 @@ export class PreScreenPipeline {
     lang: Lang,
     log: (event: string, payload: Record<string, unknown>) => void
   ): Promise<RunTurnResult> {
+    // ALWAYS_ASK deferred-terminal re-entry (Adam 2026-06-14): if a verdict was
+    // already DECIDED on an earlier turn and stashed during an ALWAYS_ASK
+    // deferral, that verdict is AUTHORITATIVE. Replay it verbatim — do NOT
+    // recompute via evalFinal (which would silently convert a stashed
+    // HARD_STOP/PAUSE into PASS/FAIL) and do NOT run the fail-probe.
+    if (state.pendingTerminal) {
+      const { terminal, reason } = state.pendingTerminal
+      log("prescreen.pipeline.always_ask_replay_stashed_terminal", {
+        sessionId: state.sessionId,
+        terminal,
+        reason,
+      })
+      return await this.transitionTerminal(state, terminal, reason, nowIso, lang, log)
+    }
+
     const final = evalFinal({
       score: state.score,
       scoreMax: state.scoreMax,
@@ -547,6 +581,16 @@ export class PreScreenPipeline {
 
   /**
    * Common terminal-write path. Persists state, emits terminal text.
+   *
+   * ALWAYS_ASK deferral (Adam 2026-06-14): this is the SINGLE choke point every
+   * terminal routes through (the 4 direct callsites + transitionFinal). Before
+   * finalizing ANY terminal, if an unanswered + not-skipped ALWAYS_ASK question
+   * still remains in qOrder, we do NOT finalize: we STASH the already-decided
+   * verdict on `state.pendingTerminal`, re-point `currentQId` at the ALWAYS_ASK
+   * question, and ADVANCE to ask it. The verdict is replayed verbatim once the
+   * ALWAYS_ASK question is answered (see runTurn's deferred-terminal re-entry +
+   * transitionFinal's stash short-circuit) — the answer is captured, never
+   * scored into the verdict.
    */
   private async transitionTerminal(
     state: PreScreenState,
@@ -556,10 +600,23 @@ export class PreScreenPipeline {
     lang: Lang,
     log: (event: string, payload: Record<string, unknown>) => void
   ): Promise<RunTurnResult> {
+    // Pre-terminal ALWAYS_ASK hook — ask any pending ALWAYS_ASK question first.
+    const deferral = await this.maybeDeferTerminalForAlwaysAsk(
+      state,
+      terminal,
+      reason,
+      nowIso,
+      lang,
+      log
+    )
+    if (deferral) return deferral
+
     const next = setTerminal(state, terminal, reason, nowIso)
     // Preserve mutations to per-Q state that happened on this turn.
     next.questions = state.questions
     next.score = state.score
+    // Clear any deferral stash — the verdict is now finalized for real.
+    delete next.pendingTerminal
     if (next.workSession) {
       next.workSession = { ...next.workSession, status: "ended", endedAt: nowIso, boundary: "terminal" }
     }
@@ -575,6 +632,63 @@ export class PreScreenPipeline {
       text: terminalText(terminal, reason, lang),
       action: { kind: "terminal", terminal, reason },
       state: next,
+    }
+  }
+
+  /**
+   * ALWAYS_ASK pre-terminal hook. If an unanswered + not-skipped ALWAYS_ASK
+   * question still remains in qOrder, STASH the already-decided terminal on
+   * `state.pendingTerminal`, re-point `currentQId` at that ALWAYS_ASK question,
+   * persist, and ADVANCE to ask it (instead of finalizing). Returns the advance
+   * RunTurnResult, or null when there is nothing to defer (no ALWAYS_ASK pending
+   * → the caller finalizes normally).
+   *
+   * The stash is set to the FIRST decided verdict and never overwritten on a
+   * later re-entry pass (a second ALWAYS_ASK question keeps the original
+   * verdict). The candidate-facing text is the ALWAYS_ASK question's own prompt —
+   * we do NOT leak terminal text here.
+   */
+  private async maybeDeferTerminalForAlwaysAsk(
+    state: PreScreenState,
+    terminal: Exclude<PreScreenTerminal, null>,
+    reason: string,
+    nowIso: string,
+    lang: Lang,
+    log: (event: string, payload: Record<string, unknown>) => void
+  ): Promise<RunTurnResult | null> {
+    const alwaysAskQId = findPendingAlwaysAskQId(state)
+    if (!alwaysAskQId) return null
+    const question = this.opts.questions[alwaysAskQId]
+    // Defensive: if the ALWAYS_ASK question has no binding we cannot ask it —
+    // fall through to finalize rather than wedge the session.
+    if (!question) {
+      log("prescreen.pipeline.always_ask_no_binding", {
+        sessionId: state.sessionId,
+        qId: alwaysAskQId,
+      })
+      return null
+    }
+
+    // Stash the FIRST decided verdict; never overwrite on a subsequent pass.
+    if (!state.pendingTerminal) {
+      state.pendingTerminal = { terminal, reason }
+    }
+    const fromQId = state.currentQId
+    state.currentQId = alwaysAskQId
+    state.updatedAt = nowIso
+    await this.opts.store.save(state)
+
+    log("prescreen.pipeline.always_ask_deferred_terminal", {
+      sessionId: state.sessionId,
+      qId: alwaysAskQId,
+      stashedTerminal: state.pendingTerminal.terminal,
+      decidedTerminalThisCall: terminal,
+    })
+
+    return {
+      text: question.prompt[lang],
+      action: { kind: "advance", fromQId: fromQId ?? alwaysAskQId, toQId: alwaysAskQId },
+      state,
     }
   }
 
@@ -673,6 +787,23 @@ function findNextUnansweredQId(state: PreScreenState, currentQId: string | null)
   for (let idx = startIdx; idx < state.qOrder.length; idx += 1) {
     const qId = state.qOrder[idx]
     if (!state.questions[qId]?.answeredAt) return qId
+  }
+  return null
+}
+
+/**
+ * First ALWAYS_ASK question in qOrder that is NOT yet answered (Adam 2026-06-14).
+ * "Skip" semantics are upstream: an already-answered (ask-once) ALWAYS_ASK
+ * question is either absent from the config (session-start resolved the skip) or
+ * carries an `answeredAt` (carried/scored), so a `!answeredAt` test covers both
+ * the in-flight and ask-once cases. Scans the WHOLE qOrder (not from currentQId)
+ * because the terminal can fire on an EARLIER gating question, leaving a trailing
+ * ALWAYS_ASK question that normal advance never reached.
+ */
+function findPendingAlwaysAskQId(state: PreScreenState): string | null {
+  for (const qId of state.qOrder) {
+    const q = state.questions[qId]
+    if (q?.type === "ALWAYS_ASK" && !q.answeredAt) return qId
   }
   return null
 }

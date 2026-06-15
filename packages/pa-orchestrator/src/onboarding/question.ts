@@ -209,7 +209,18 @@ export interface AcceptedCtx {
 // score aggregation (S = Σ s_i · W_{Q_i}).
 // ────────────────────────────────────────────────────────────────────────────
 
-export type QuestionType = "MUST_HAVE" | "PROBING" | "GOOD_TO_HAVE"
+/**
+ * ALWAYS_ASK (Adam 2026-06-14): "have to ask unless already asked". A NON-GATING
+ * (never affects the verdict — like GOOD_TO_HAVE, weight 0), ASK-ONCE (skipped if
+ * already answered) question that MUST be asked before ANY terminal is emitted.
+ * When the FSM is about to finalize (PASS/FAIL/HARD_STOP/PAUSE) and an unanswered,
+ * not-skipped ALWAYS_ASK question still remains in the queue, the pipeline asks it
+ * FIRST and STASHES the already-decided verdict; once all ALWAYS_ASK questions are
+ * answered the STASHED verdict finalizes UNCHANGED (the ALWAYS_ASK answer is
+ * captured, never scored into the verdict). Used for the default AI-usage question
+ * (q_ai_acceleration) so it is asked even when a gating question hard-stops first.
+ */
+export type QuestionType = "MUST_HAVE" | "PROBING" | "GOOD_TO_HAVE" | "ALWAYS_ASK"
 
 /**
  * Question<TAnswer> — single-Q definition. All onboarding behavior is
