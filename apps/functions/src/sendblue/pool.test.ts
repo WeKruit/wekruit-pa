@@ -9,7 +9,30 @@ import {
   normalizeSendbluePoolGroups,
   pickFromNumber,
   selectCapacityAwareFromNumber,
+  selectLeastLoadedAssignmentNumber,
 } from "./pool.js"
+
+describe("selectLeastLoadedAssignmentNumber", () => {
+  const stat = (number: string, totalAttached: number) => ({ number, totalAttached })
+
+  it("routes a new candidate to the least-loaded number (drains skew)", () => {
+    assert.equal(selectLeastLoadedAssignmentNumber([stat("+A", 545), stat("+B", 33)]), "+B")
+  })
+
+  it("keeps routing to the under-loaded number until it catches up", () => {
+    // +B was just added; everything flows to it until it reaches +A's count.
+    assert.equal(selectLeastLoadedAssignmentNumber([stat("+A", 545), stat("+B", 544)]), "+B")
+    assert.equal(selectLeastLoadedAssignmentNumber([stat("+A", 545), stat("+B", 545)]), "+A") // tie → stable by number
+  })
+
+  it("tiebreaks equal total stably by number", () => {
+    assert.equal(selectLeastLoadedAssignmentNumber([stat("+B", 100), stat("+A", 100)]), "+A")
+  })
+
+  it("empty pool → null", () => {
+    assert.equal(selectLeastLoadedAssignmentNumber([]), null)
+  })
+})
 
 describe("hashStringToUint", () => {
   it("is deterministic", () => {
