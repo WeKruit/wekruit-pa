@@ -268,6 +268,44 @@ export async function loadReviewDetail(sessionId: string): Promise<ReviewDetail>
   return { session, attempt, turns }
 }
 
+/** Candidate source material surfaced next to the checklist eval so the operator
+ *  can open the actual LinkedIn / read the résumé while reviewing. LinkedIn is a
+ *  real external URL; candidate-upload résumés keep no downloadable file — only a
+ *  fileName + parsed summary — so the résumé "link" expands that summary inline. */
+export type CandidateSources = {
+  linkedinUrl?: string
+  resume?: { fileName?: string; summary?: string }
+}
+
+export async function loadCandidateSources(userId: string): Promise<CandidateSources> {
+  const out: CandidateSources = {}
+  if (!userId) return out
+  try {
+    const userSnap = await getDoc(doc(db(), "pa-users", userId))
+    const u = userSnap.exists() ? (userSnap.data() as Record<string, unknown>) : {}
+    out.linkedinUrl = firstString(
+      u.linkedinUrl,
+      u.linkedInUrl,
+      u.linkedinURL,
+      nestedString(u.identity, "linkedinUrl"),
+      nestedString(u.contact, "linkedinUrl"),
+    )
+    const artId = firstString(u.latestResumeArtifactId)
+    if (artId) {
+      const artSnap = await getDoc(doc(db(), "pa-resume-artifacts", artId))
+      if (artSnap.exists()) {
+        const art = artSnap.data() as Record<string, unknown>
+        const fileName = firstString(art.fileName)
+        const summary = firstString(art.candidateProfileSummary)
+        if (fileName || summary) out.resume = { ...(fileName ? { fileName } : {}), ...(summary ? { summary } : {}) }
+      }
+    }
+  } catch {
+    // advisory — never block the review on a sources read
+  }
+  return out
+}
+
 export function buildLocalDraftMessage(terminal: ReviewTerminal, detail: ReviewDetail): string {
   const summary = firstEvidenceSummary(detail)
   if (terminal === "PASS") {
@@ -336,6 +374,7 @@ export function PrescreenReviewDrawer({
   onReviewed: () => void
 }) {
   const [detail, setDetail] = useState<ReviewDetail | null>(null)
+  const [sources, setSources] = useState<CandidateSources | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [selectedTerminal, setSelectedTerminal] = useState<ReviewTerminal>("PASS")
@@ -354,6 +393,11 @@ export function PrescreenReviewDrawer({
         const loaded = await loadReviewDetail(sessionId)
         if (cancelled) return
         setDetail(loaded)
+        // Candidate source material (LinkedIn + résumé) — advisory, loaded async
+        // so a slow/failed read never blocks the review surface.
+        void loadCandidateSources(loaded.session.userId).then((s) => {
+          if (!cancelled) setSources(s)
+        })
         const strictRecommendation = classifyPrescreenReviewRow(loaded.session).recommendation
         const proposed = cleanReviewTerminal(strictRecommendation) ??
           cleanReviewTerminal(loaded.attempt?.proposedOutcome?.prescreenTerminal) ??
@@ -451,6 +495,7 @@ export function PrescreenReviewDrawer({
       {detail ? (
         <div style={{ display: "grid", gap: 14 }}>
           <ReviewSummary detail={detail} />
+          <CandidateSourcesCard sources={sources} />
           <ChecklistEvalPanel evaluation={detail.session.review?.candidateChecklistEval} />
           <TranscriptPreview turns={detail.turns} />
           {detail.session.terminalActionPendingReview ? (
@@ -840,6 +885,67 @@ function pillarTone(v?: string): "ok" | "warn" | "muted" {
   return v === "strong" ? "ok" : v === "weak" ? "warn" : "muted"
 }
 
+/** Candidate sources — LinkedIn (real external link) + résumé (fileName + parsed
+ *  summary; candidate-upload résumés keep no downloadable file). Sits right above
+ *  the checklist eval so the operator can cross-check the eval against the source. */
+function CandidateSourcesCard({ sources }: { sources: CandidateSources | null }) {
+  const [showResume, setShowResume] = useState(false)
+  const linkedinUrl = sources?.linkedinUrl
+  const resume = sources?.resume
+  const hasResume = Boolean(resume?.fileName || resume?.summary)
+  // Render nothing only once we know there is genuinely nothing to show.
+  if (sources && !linkedinUrl && !hasResume) return null
+  return (
+    <div style={{ ...cardStyle, background: "#f8fafc" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: "0.95em", color: "#334155" }}>Candidate sources</strong>
+        {!sources ? <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>loading…</span> : null}
+        {linkedinUrl ? (
+          <a href={linkedinUrl} target="_blank" rel="noreferrer" style={sourceLinkStyle} title={linkedinUrl}>
+            in · LinkedIn ↗
+          </a>
+        ) : sources ? (
+          <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>no LinkedIn on file</span>
+        ) : null}
+        {hasResume ? (
+          <button
+            type="button"
+            onClick={() => setShowResume((v) => !v)}
+            style={{ ...sourceLinkStyle, cursor: "pointer", background: "#fff" }}
+            title={resume?.fileName ?? "résumé"}
+          >
+            📄 {resume?.fileName ?? "Résumé"} {showResume ? "▲" : "▼"}
+          </button>
+        ) : sources ? (
+          <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>no résumé on file</span>
+        ) : null}
+      </div>
+      {showResume ? (
+        resume?.summary ? (
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: "0.9em",
+              lineHeight: 1.55,
+              color: "#334155",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              borderTop: "1px solid rgba(0,0,0,0.08)",
+              paddingTop: 10,
+            }}
+          >
+            {resume.summary}
+          </div>
+        ) : (
+          <div style={{ marginTop: 4, fontSize: "0.85em", color: "#94a3b8", borderTop: "1px solid rgba(0,0,0,0.08)", paddingTop: 10 }}>
+            Résumé on file{resume?.fileName ? ` (${resume.fileName})` : ""}; no parsed summary stored. The checklist eval below still uses it.
+          </div>
+        )
+      ) : null}
+    </div>
+  )
+}
+
 /** Read-only structured view of the profile checklist eval (Coresignal + résumé vs the job rubric). */
 function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChecklistEval }) {
   if (!evaluation) return null
@@ -1035,5 +1141,20 @@ const subtleBtnStyle: CSSProperties = {
   border: "1px solid #cbd5e1",
   borderRadius: 6,
   fontSize: "0.85em",
+  cursor: "pointer",
+}
+
+const sourceLinkStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "0.35rem 0.7rem",
+  background: "#fff",
+  color: "#1d4ed8",
+  border: "1px solid #bfdbfe",
+  borderRadius: 999,
+  fontSize: "0.85em",
+  fontWeight: 600,
+  textDecoration: "none",
   cursor: "pointer",
 }
