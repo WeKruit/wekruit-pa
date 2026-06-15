@@ -2623,8 +2623,17 @@ export const paConversationRecoverySweep = onSchedule(
     const { runPreScreenForUser } = await import("./prescreen-session-start.js")
 
     try {
+      // ALERT-ONLY by default (Adam 2026-06-14: "let's not have [active recovery]
+      // right now... this is mainly for alert"). Active replay/start/notice
+      // actions only run when PA_RECOVERY_ACTIONS_ENABLED is truthy (no redeploy
+      // to flip back on). Off → read-only unanswered detection + alert only.
+      const recoveryActionsEnabled = (() => {
+        const raw = (process.env.PA_RECOVERY_ACTIONS_ENABLED ?? "").trim().toLowerCase()
+        return raw === "1" || raw === "true" || raw === "yes" || raw === "on"
+      })()
       const result = await paConversationRecoverySweepHandler({
         db,
+        recoveryActionsEnabled,
         log: (...args: unknown[]) => logger.info("[sendblue][recovery-agent]", ...args),
         // Unanswered-inbound alert → EMAIL + Slack via notifyOps (Adam 2026-06-14).
         // Keep the postSlackAlert seam name so the deps-injected unit tests are unchanged.

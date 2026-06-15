@@ -82,6 +82,16 @@ export type ConversationRecoveryDeps = {
    * explicit dep value wins (tests).
    */
   unansweredAfterMs?: number
+  /**
+   * Gate for the ACTIVE recovery actions (replay dropped inbound events,
+   * reconstruct missing events, auto-start prescreens, send identity-mismatch
+   * notices). 2026-06-14 (Adam: "let's not have it right now... this is mainly
+   * for alert") — production sets this FALSE so the sweep is ALERT-ONLY: it only
+   * runs the read-only unanswered-inbound detection + alert and does NO outbound
+   * or state mutation. Handler defaults TRUE (preserves the pure-logic tests);
+   * the CF passes the env-gated value (`PA_RECOVERY_ACTIONS_ENABLED`, default off).
+   */
+  recoveryActionsEnabled?: boolean
 }
 
 type ParsedWebhook = {
@@ -133,54 +143,69 @@ function emptyResult(): RecoverySweepResult {
   }
 }
 
+/** Active recovery default ON for the pure handler (tests); the CF env-gates it. */
+function resolveRecoveryActionsEnabled(deps: ConversationRecoveryDeps): boolean {
+  if (typeof deps.recoveryActionsEnabled === "boolean") return deps.recoveryActionsEnabled
+  return true
+}
+
 export async function paConversationRecoverySweepHandler(
   deps: ConversationRecoveryDeps
 ): Promise<RecoverySweepResult> {
   const log = deps.log ?? console.log
   const now = deps.now ?? (() => new Date())
   const result = emptyResult()
+  const recoveryActionsOn = resolveRecoveryActionsEnabled(deps)
 
-  result.verified = await verifyPendingRecoveryCases(deps, now())
+  // ALERT-ONLY mode (Adam 2026-06-14): when active recovery is disabled, skip the
+  // raw-webhook scan + replay/reconstruct/start/notice actions entirely and run
+  // ONLY the read-only unanswered-inbound detection + alert. No outbound, no
+  // state mutation, no 10k-doc scan — pure visibility.
+  if (recoveryActionsOn) {
+    result.verified = await verifyPendingRecoveryCases(deps, now())
 
-  const rawLimit = deps.rawLimit ?? 10_000
-  const recoveryLimit = deps.recoveryLimit ?? 50
-  let rawSnap
-  try {
-    rawSnap = await deps.db
-      .collection(RAW_COLLECTION)
-      .orderBy("receivedAt", "desc")
-      .limit(rawLimit)
-      .get()
-  } catch (err) {
-    log("[sendblue][recovery-agent] raw query failed", err instanceof Error ? err.message : String(err))
-    result.errors++
-    return result
+    const rawLimit = deps.rawLimit ?? 10_000
+    const recoveryLimit = deps.recoveryLimit ?? 50
+    let rawSnap
+    try {
+      rawSnap = await deps.db
+        .collection(RAW_COLLECTION)
+        .orderBy("receivedAt", "desc")
+        .limit(rawLimit)
+        .get()
+    } catch (err) {
+      log("[sendblue][recovery-agent] raw query failed", err instanceof Error ? err.message : String(err))
+      result.errors++
+      return result
+    }
+    result.scannedRaw = rawSnap.size ?? rawSnap.docs.length
+
+    const conversations = buildConversations(rawSnap.docs as Array<{ id: string; data: () => Record<string, unknown> }>)
+    result.conversations = conversations.size
+    const candidates = [...conversations.values()]
+      .filter((conversation) => {
+        if (!conversation.latestInbound) return false
+        if (!conversation.latestOutbound) return true
+        return conversation.latestInbound.messageAt > conversation.latestOutbound.messageAt
+      })
+      .sort((a, b) => b.latestInbound!.messageAt.localeCompare(a.latestInbound!.messageAt))
+      .slice(0, recoveryLimit)
+    result.candidates = candidates.length
+
+    for (const conversation of candidates) {
+      // eslint-disable-next-line no-await-in-loop
+      const outcome = await recoverConversation(deps, conversation, now())
+      if (outcome === "recovered") result.recovered++
+      else if (outcome === "needs_operator_review") result.needsOperatorReview++
+      else if (outcome === "skipped_existing") result.skippedExisting++
+      else result.errors++
+    }
+  } else {
+    log("[sendblue][recovery-agent] active recovery disabled — alert-only mode")
   }
-  result.scannedRaw = rawSnap.size ?? rawSnap.docs.length
 
-  const conversations = buildConversations(rawSnap.docs as Array<{ id: string; data: () => Record<string, unknown> }>)
-  result.conversations = conversations.size
-  const candidates = [...conversations.values()]
-    .filter((conversation) => {
-      if (!conversation.latestInbound) return false
-      if (!conversation.latestOutbound) return true
-      return conversation.latestInbound.messageAt > conversation.latestOutbound.messageAt
-    })
-    .sort((a, b) => b.latestInbound!.messageAt.localeCompare(a.latestInbound!.messageAt))
-    .slice(0, recoveryLimit)
-  result.candidates = candidates.length
-
-  for (const conversation of candidates) {
-    // eslint-disable-next-line no-await-in-loop
-    const outcome = await recoverConversation(deps, conversation, now())
-    if (outcome === "recovered") result.recovered++
-    else if (outcome === "needs_operator_review") result.needsOperatorReview++
-    else if (outcome === "skipped_existing") result.skippedExisting++
-    else result.errors++
-  }
-
-  // 2026-06-10 trust audit (fix 11) — unanswered-inbound ops queue. Fail-soft:
-  // an error here must never break the raw-webhook recovery above.
+  // Unanswered-inbound detection + alert. Read-only; always runs (this is the
+  // visibility/alert Adam wants). Fail-soft.
   try {
     result.unansweredQueued = await sweepUnansweredInboundForOperatorReview(deps)
   } catch (err) {

@@ -520,6 +520,33 @@ describe("sweepUnansweredInboundForOperatorReview", () => {
     assert.equal((stores.get("pa-recovery-cases") ?? new Map()).size, 0)
   })
 
+  it("alert-only mode (recoveryActionsEnabled=false): unanswered alert runs, NO active recovery / raw scan", async () => {
+    const phone = "+15550009999"
+    const handle = "h-alert-only"
+    const { db } = makeFakeDb({
+      // A raw inbound that active recovery WOULD replay — must be ignored when off.
+      "pa-sendblue-webhook-raw": Object.fromEntries([
+        rawDoc({ id: "raw-x", from: phone, to: WEKRUIT, content: "hello?", handle, dateSent: iso(2 * HOUR) }),
+      ]),
+      // An unanswered inbound (>60min default) for the alert sweep.
+      "pa-inbound-events": {
+        inb_ao: { userId: "u-ao", createdAt: iso(2 * HOUR), body: "any update on my screen?", from: phone },
+      },
+    })
+    const replayed: string[] = []
+    const result = await paConversationRecoverySweepHandler({
+      db: db as never,
+      now: () => NOW,
+      recoveryActionsEnabled: false,
+      processInboundEventById: async (id) => { replayed.push(id) },
+      log: () => {},
+    })
+    assert.equal(result.scannedRaw, 0, "raw 10k-doc scan skipped in alert-only mode")
+    assert.equal(result.recovered, 0, "no active recovery")
+    assert.deepEqual(replayed, [], "no inbound replay")
+    assert.equal(result.unansweredQueued, 1, "unanswered alert sweep still runs")
+  })
+
   it("the full sweep handler surfaces unansweredQueued and stays fail-soft", async () => {
     const { db } = makeFakeDb({
       "pa-inbound-events": {
