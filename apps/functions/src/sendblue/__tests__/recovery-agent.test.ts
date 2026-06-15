@@ -520,6 +520,56 @@ describe("sweepUnansweredInboundForOperatorReview", () => {
     assert.equal((stores.get("pa-recovery-cases") ?? new Map()).size, 0)
   })
 
+  it("auto-tapback (Adam 2026-06-14): fires once per newly-queued unanswered inbound when enabled; no ack marker", async () => {
+    const { db, stores } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_tb: {
+          userId: "u-tb",
+          createdAt: iso(2 * HOUR),
+          body: "is the role remote?",
+          from: "+15550002001",
+          rawPayload: { messageHandle: "h-tb1", toNumber: WEKRUIT },
+        },
+      },
+    })
+    const tapbacks: Array<Record<string, unknown>> = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredTapbackEnabled: true,
+      unansweredAlertEnabled: false, // tapback is independent of the email alert
+      sendTapback: async (a) => { tapbacks.push(a as Record<string, unknown>) },
+    })
+    assert.equal(queued, 1)
+    assert.equal(tapbacks.length, 1, "one tapback for the new case")
+    assert.equal(tapbacks[0].to, "+15550002001")
+    assert.equal(tapbacks[0].messageHandle, "h-tb1")
+    assert.equal(tapbacks[0].fromNumber, WEKRUIT)
+    const c = stores.get("pa-recovery-cases")!.get("unanswered_u-tb_inb_tb") as DocData
+    assert.ok(c.tapbackSentAt, "case stamped tapbackSentAt")
+    assert.equal((stores.get("pa-inbound-acks") ?? new Map()).size, 0, "NO ack marker — operator alert still owns it")
+  })
+
+  it("auto-tapback: does NOT fire when disabled (default)", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_no: { userId: "u-no", createdAt: iso(2 * HOUR), body: "hello?", from: "+15550002002", rawPayload: { messageHandle: "h-no", toNumber: WEKRUIT } },
+      },
+    })
+    const tapbacks: unknown[] = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredTapbackEnabled: false,
+      unansweredAlertEnabled: false,
+      sendTapback: async (a) => { tapbacks.push(a) },
+    })
+    assert.equal(queued, 1)
+    assert.equal(tapbacks.length, 0)
+  })
+
   it("alert-only mode (recoveryActionsEnabled=false): unanswered alert runs, NO active recovery / raw scan", async () => {
     const phone = "+15550009999"
     const handle = "h-alert-only"

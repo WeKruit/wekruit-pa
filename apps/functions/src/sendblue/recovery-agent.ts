@@ -83,6 +83,23 @@ export type ConversationRecoveryDeps = {
    */
   unansweredAfterMs?: number
   /**
+   * Auto-tapback an unanswered candidate's last inbound to acknowledge them
+   * ("we see you") — Adam 2026-06-14 approved ("if we tap back it's fine"). A
+   * tapback is a reaction to a message they JUST sent (inbound evidence present,
+   * same thread/line, not a cold open) — the least-risky candidate outbound.
+   * Gated by `PA_UNANSWERED_TAPBACK_ENABLED` (default OFF; flip on with no
+   * redeploy). Does NOT mark the turn handled — the operator alert still fires so
+   * a human/Claire gives the real answer. Explicit dep value wins (tests).
+   */
+  unansweredTapbackEnabled?: boolean
+  /** Send a tapback reaction (production = sendReaction via bound line). */
+  sendTapback?: (args: {
+    to: string
+    messageHandle: string
+    userId: string
+    fromNumber?: string
+  }) => Promise<void>
+  /**
    * Gate for the ACTIVE recovery actions (replay dropped inbound events,
    * reconstruct missing events, auto-start prescreens, send identity-mismatch
    * notices). 2026-06-14 (Adam: "let's not have it right now... this is mainly
@@ -147,6 +164,13 @@ function emptyResult(): RecoverySweepResult {
 function resolveRecoveryActionsEnabled(deps: ConversationRecoveryDeps): boolean {
   if (typeof deps.recoveryActionsEnabled === "boolean") return deps.recoveryActionsEnabled
   return true
+}
+
+/** Auto-tapback default OFF (candidate outbound — opt-in via env). Dep wins (tests). */
+function unansweredTapbackEnabled(deps: ConversationRecoveryDeps): boolean {
+  if (typeof deps.unansweredTapbackEnabled === "boolean") return deps.unansweredTapbackEnabled
+  const raw = (process.env.PA_UNANSWERED_TAPBACK_ENABLED ?? "").trim().toLowerCase()
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on"
 }
 
 export async function paConversationRecoverySweepHandler(
@@ -415,6 +439,38 @@ export async function sweepUnansweredInboundForOperatorReview(
       inboundEventId: latest.eventId,
       ageHours,
     })
+
+    // AUTO-TAPBACK (Adam 2026-06-14, gated): acknowledge the candidate's last
+    // inbound with a reaction. Per NEW case only (the existing-case check above
+    // dedupes), so a candidate is tapbacked exactly once. Best-effort + fail-soft;
+    // does NOT write a pa-inbound-acks marker, so the operator alert still fires.
+    if (deps.sendTapback && unansweredTapbackEnabled(deps)) {
+      const rp = (latest.data.rawPayload ?? {}) as Record<string, unknown>
+      const messageHandle = cleanString(rp.messageHandle, 240)
+      const ourNumber = cleanString(rp.toNumber, 120)
+      if (messageHandle && phone) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await deps.sendTapback({
+            to: phone,
+            messageHandle,
+            userId,
+            ...(ourNumber ? { fromNumber: ourNumber } : {}),
+          })
+          // eslint-disable-next-line no-await-in-loop
+          await deps.db.collection(CASE_COLLECTION).doc(caseId).set(
+            { tapbackSentAt: now().toISOString() },
+            { merge: true }
+          )
+          log("[sendblue][recovery-agent] unanswered tapback sent", { userId, inboundEventId: latest.eventId })
+        } catch (err) {
+          log("[sendblue][recovery-agent] unanswered tapback failed (non-fatal)", {
+            userId,
+            err: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+    }
   }
 
   // ── BATCHED ALERT ─────────────────────────────────────────────────────────

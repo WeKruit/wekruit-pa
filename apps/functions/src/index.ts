@@ -2641,6 +2641,31 @@ export const paConversationRecoverySweep = onSchedule(
           const r = await notifyOps(input)
           return { posted: r.anyDelivered }
         }) as never,
+        // Auto-tapback (gated by PA_UNANSWERED_TAPBACK_ENABLED) — acknowledge an
+        // unanswered candidate via a reaction on their last inbound, riding their
+        // bound Sendblue line. Adam 2026-06-14 approved.
+        sendTapback: async ({ to, messageHandle, userId, fromNumber }) => {
+          const { sendReaction } = await import("./sendblue/send-reaction.js")
+          let resolvedFrom = fromNumber
+          if (!resolvedFrom && userId) {
+            try {
+              const { resolveBoundFromNumber } = await import("./sendblue/resolve-bound-from-number.js")
+              const bound = await resolveBoundFromNumber(db, userId, {
+                log: (event, payload) => logger.info("[unanswered-tapback]", { event, ...(payload ?? {}) }),
+              })
+              resolvedFrom = bound.fromNumber
+            } catch {
+              /* fall through — sendReaction can pool-resolve via userId/db */
+            }
+          }
+          await sendReaction({
+            to,
+            messageHandle,
+            reaction: "like",
+            ...(resolvedFrom ? { fromNumber: resolvedFrom } : { userId, db }),
+            allowEnvFromNumberFallback: false,
+          })
+        },
         processInboundEventById: async (eventId) => {
           const snap = await db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId).get()
           if (!snap.exists) {
