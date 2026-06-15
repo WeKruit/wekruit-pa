@@ -30,6 +30,9 @@ import {
 import {
   applyPartialUserTags,
   validateOnboardingCanonicalTags,
+  mergeUserPrescreenSharedAnswers,
+  isRegisteredSharedKey,
+  AI_USAGE_SHARED_KEY,
   type OnboardingCanonicalTagInput,
   type PartialUserTags,
 } from "@pa/pa-orchestrator"
@@ -106,6 +109,20 @@ export type ProcessToolContext = ClaireToolContext & {
    * the correct doc. Absent (e.g. onboarding-only ctx) → no write-back (eval reuses one in-memory store).
    */
   prescreenSessionId?: string
+  /**
+   * REAL pa-jobs job id of the active prescreen. Threaded so the shared-answer sole writer
+   * (mergeUserPrescreenSharedAnswers) can stamp `sourceJobId` on the global record. Absent → the
+   * shared-answer write is skipped (the record requires a source job for provenance + carry-over).
+   */
+  prescreenJobId?: string
+  /**
+   * qId → authored `sharedKey` for the active session's questions (== buildThinPrescreenSeed's
+   * sharedKeys, from the job config + the appended AI question). When a finalized question's qId is
+   * in this map AND the key is a registered sharedKey, its answer is persisted to the GLOBAL
+   * cross-session store (pa-users.prescreenSharedAnswers) so future sessions skip + carry it. Absent
+   * → no question is shared (dormant; legacy behavior).
+   */
+  prescreenSharedKeys?: Record<string, string>
   /**
    * Per-turn latch (set on ctx, which is fresh each inbound turn). score_prescreen_answer flips it true
    * after the FIRST successful score, and rejects any further score call IN THE SAME TURN. This is the
@@ -469,23 +486,60 @@ export function buildProcessTools(
             }),
           )
       }
-      // DEFAULT AI-acceleration capture (Adam directive): when the informational AI question is
-      // answered, persist the candidate's verbatim answer GLOBALLY to pa-users.tags.aiAccelerationUsage
-      // via the D8 sole writer (applyPartialUserTags). This is the durable cross-session SKIP signal —
-      // its presence means future prescreen sessions do NOT re-append the question. NOT canonical tagging
-      // (open free text, never an enum → the no-regex-in-tagging rule does not apply). Best-effort; a
-      // write failure never blocks the verdict. `value` is the raw answer (not the judged score).
-      if (result.ok && question === AI_QUESTION_QID && ctx.db && ctx.userId) {
-        await applyPartialUserTags(
-          ctx.db,
-          ctx.userId,
-          { aiAccelerationUsage: { value: answer.trim(), updatedAt: ctx.nowIso() } } as PartialUserTags,
-          { source: "chat", nowIso: ctx.nowIso(), log: ctx.log },
-        ).catch((err: unknown) =>
-          ctx.log("prescreen.ai_usage.write_error", {
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        )
+      // CROSS-SESSION SHARED-ANSWER capture (SPEC §6 — generalizes the bespoke AI-usage MVP):
+      // when a finalized question carries an authored `sharedKey`, persist the candidate's verbatim
+      // answer + the source job's score GLOBALLY to pa-users.prescreenSharedAnswers[sharedKey] via the
+      // sole writer mergeUserPrescreenSharedAnswers. ONE authoritative store: future sessions whose
+      // config (or appended AI question) uses the same sharedKey SKIP + CARRY (re-judged) this answer.
+      // The sharedKey is resolved from ctx.prescreenSharedKeys (job config + appended AI question);
+      // the appended AI question (AI_QUESTION_QID) maps to AI_USAGE_SHARED_KEY by default. NOT canonical
+      // tagging (open free text, never an enum). Best-effort; a write failure never blocks the verdict.
+      const finalizedSharedKey =
+        result.ok
+          ? ctx.prescreenSharedKeys?.[question] ??
+            (question === AI_QUESTION_QID ? AI_USAGE_SHARED_KEY : undefined)
+          : undefined
+      if (finalizedSharedKey && isRegisteredSharedKey(finalizedSharedKey) && ctx.db && ctx.userId) {
+        const nowIso = ctx.nowIso()
+        if (ctx.prescreenJobId && ctx.prescreenSessionId) {
+          await mergeUserPrescreenSharedAnswers(
+            ctx.db,
+            ctx.userId,
+            {
+              sharedKey: finalizedSharedKey,
+              reply: answer.trim(),
+              evidenceReplies: [answer.trim()],
+              // Claire's reducer proposes a single score; finalC has no source on this path.
+              finalS: typeof (result.score ?? proposed) === "number" ? (result.score ?? proposed) : undefined,
+              ...(evidence ? { summary: evidence } : {}),
+              sourceSessionId: ctx.prescreenSessionId,
+              sourceJobId: ctx.prescreenJobId,
+              answeredAt: nowIso,
+              updatedAt: nowIso,
+            },
+            { nowIso, log: ctx.log },
+          ).catch((err: unknown) =>
+            ctx.log("prescreen.shared_answer.write_error", {
+              sharedKey: finalizedSharedKey,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          )
+        }
+        // BACK-COMPAT (migration window): keep the legacy tags.aiAccelerationUsage skip signal warm
+        // so any code/session still reading it (shouldSkipAiQuestion's legacy branch) still skips the
+        // AI question. Only for the ai_usage key. Drop after the carry-over read is fully cut over.
+        if (finalizedSharedKey === AI_USAGE_SHARED_KEY) {
+          await applyPartialUserTags(
+            ctx.db,
+            ctx.userId,
+            { aiAccelerationUsage: { value: answer.trim(), updatedAt: nowIso } } as PartialUserTags,
+            { source: "chat", nowIso, log: ctx.log },
+          ).catch((err: unknown) =>
+            ctx.log("prescreen.ai_usage.write_error", {
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          )
+        }
       }
       ctx.log("prescreen.score.recorded", {
         question,
@@ -496,7 +550,7 @@ export function buildProcessTools(
         rubricApplied: Boolean(rubric),
         resumeApplied: Boolean(resumeSnippet),
         wroteBack: Boolean(ctx.prescreenSessionId),
-        aiUsageCaptured: question === AI_QUESTION_QID,
+        sharedAnswerKey: finalizedSharedKey ?? null,
       })
       // return the REDUCER's verdict — never declare pass/fail here.
       return result

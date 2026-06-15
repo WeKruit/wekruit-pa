@@ -25,6 +25,12 @@ import {
   type PrescreenState,
 } from "./reducers/prescreen-fsm.js"
 import { AI_QUESTION_QID, aiQuestionPromptFor, aiQuestionRubric } from "./prescreen-ai-question.js"
+import {
+  AI_USAGE_SHARED_KEY,
+  isRegisteredSharedKey,
+  type PrescreenSharedAnswer,
+  type PrescreenSharedAnswers,
+} from "@pa/pa-orchestrator"
 
 /** Lang-agnostic text pick from a bilingual `{zh,en}` (or a plain string). */
 function pickText(v: unknown, lang: "en" | "zh" = "en"): string {
@@ -47,6 +53,21 @@ export interface ThinPrescreenSeed {
   prompts: Record<string, string>
   /** qId → rubric the judge scores against (keyword hints + clarify cue). Keeps probing on-rubric. */
   judgeContext: Record<string, string>
+  /**
+   * SPEC §5a — qId → authored `sharedKey` for questions that carry one (job config + the appended AI
+   * question). Threaded onto ctx.prescreenSharedKeys so the finalize seam persists the answer to the
+   * GLOBAL cross-session store under its sharedKey. Empty when no question is shared (dormant).
+   */
+  sharedKeys: Record<string, string>
+  /**
+   * SPEC §7 — qIds PRE-ANSWERED at session start from the candidate's global shared-answer store. The
+   * candidate is NOT asked these (their score is carried/re-judged into `prescreen.scores`). Claire
+   * REFERENCES them naturally rather than silent-skipping (SPEC decision 3); `carriedReferences[qId]`
+   * is a short natural-language reference hook the agent can weave in.
+   */
+  carriedQuestionIds: string[]
+  /** qId → a short "last time you mentioned …" reference the agent uses instead of re-asking. */
+  carriedReferences: Record<string, string>
 }
 
 /** Raw per-question config shape (defensive subset of PrescreenQuestionConfigSchema). */
@@ -56,6 +77,7 @@ interface RawQuestion {
   clarifyPrompt?: unknown
   matchThreshold?: unknown
   keywords?: unknown
+  sharedKey?: unknown
 }
 
 /** Build one question's judge rubric from its keyword hints + clarify cue. */
@@ -87,6 +109,28 @@ export interface AiQuestionOptions {
 }
 
 /**
+ * SPEC §7 — carry-over re-judge. For a shared question whose stored answer is being reused, optionally
+ * RE-JUDGE the stored reply against THIS job's rubric so the carried score reflects THIS job (Adam:
+ * re-judge, not blind-carry). When absent (or it returns null), carry the SOURCE job's `finalS` as-is
+ * (the simpler fallback in SPEC §7 option b). The callback is given the stored reply + this question's
+ * rubric/prompt; it returns a fresh 0..1 score. Informational questions (e.g. ai_usage) do not gate the
+ * verdict, so re-judge is a no-op on PASS/FAIL there regardless.
+ */
+export type CarryOverReJudge = (input: {
+  qId: string
+  sharedKey: string
+  reply: string
+  rubric?: string
+  prompt?: string
+}) => Promise<number | null>
+
+/** Build the short natural-language reference the agent uses instead of re-asking (SPEC decision 3). */
+function carriedReferenceFor(answer: PrescreenSharedAnswer): string {
+  const snippet = answer.reply.trim().replace(/\s+/g, " ").slice(0, 160)
+  return `The candidate already answered this in a prior session — reference it naturally instead of re-asking (e.g. "last time you mentioned ${snippet}…"), then move on.`
+}
+
+/**
  * Map a job's prescreen config (+ optional in-progress session) → the thin prescreen seed.
  *
  * @param config  the `pa-jobs/{jobId}.prescreenConfig` object (raw Firestore data).
@@ -103,11 +147,22 @@ export function buildThinPrescreenSeed(
   session?: Record<string, unknown> | null,
   lang: "en" | "zh" = "en",
   aiQuestion?: AiQuestionOptions | null,
+  carryOver?: {
+    /** The candidate's global shared-answer store (pa-users.prescreenSharedAnswers). */
+    sharedAnswers?: PrescreenSharedAnswers | null
+    /**
+     * SPEC §7 — qId → FRESH re-judged score (0..1) for a carried shared question, re-judged against
+     * THIS job's rubric by the caller (mode-selector, which has the judge). When a carried qId is
+     * absent here, fall back to the SOURCE job's stored finalS (carry-as-is, SPEC §7 option b).
+     */
+    reJudgedScores?: Record<string, number>
+  } | null,
 ): ThinPrescreenSeed {
   const rawQs = Array.isArray(config?.questions) ? (config!.questions as RawQuestion[]) : []
   const questionIds: string[] = []
   const prompts: Record<string, string> = {}
   const judgeContext: Record<string, string> = {}
+  const sharedKeys: Record<string, string> = {}
   for (const q of rawQs) {
     const qId = typeof q?.qId === "string" ? q.qId.trim() : ""
     if (!qId || questionIds.includes(qId)) continue
@@ -116,6 +171,10 @@ export function buildThinPrescreenSeed(
     if (prompt) prompts[qId] = prompt
     const jc = judgeContextForQuestion(q, lang)
     if (jc) judgeContext[qId] = jc
+    // SPEC §5a — capture the authored sharedKey (only when registered, so an unknown authored key
+    // never silently shares an answer cross-job).
+    const sk = typeof q?.sharedKey === "string" ? q.sharedKey.trim() : ""
+    if (sk && isRegisteredSharedKey(sk)) sharedKeys[qId] = sk
   }
 
   // DEFAULT AI-acceleration question (Adam directive): append a role-tailored, NON-GATING
@@ -129,6 +188,8 @@ export function buildThinPrescreenSeed(
     prompts[AI_QUESTION_QID] = aiQuestionPromptFor(aiQuestion.roleFunction)
     judgeContext[AI_QUESTION_QID] = aiQuestionRubric()
     informational.push(AI_QUESTION_QID)
+    // The appended AI question is a shared question keyed `ai_usage` (SPEC migration of the MVP).
+    sharedKeys[AI_QUESTION_QID] = AI_USAGE_SHARED_KEY
   }
 
   // Threshold: config-level wins; else the thin default (avg >= 0.6).
@@ -159,6 +220,33 @@ export function buildThinPrescreenSeed(
       }
     }
   }
+  // CROSS-SESSION CARRY-OVER (SPEC §7): a question whose authored sharedKey is already in the
+  // candidate's GLOBAL shared-answer store was answered in a PRIOR session → do NOT ask it. Seed its
+  // score (re-judged against THIS job's rubric when the caller computed it, else carry the source
+  // job's finalS) so the FSM auto-skips it (a scored question is never re-asked). Resume scores from
+  // THIS session (above) win — they're a live answer to this job. Dormant when the store is empty or
+  // no question is shared.
+  const carriedQuestionIds: string[] = []
+  const carriedReferences: Record<string, string> = {}
+  const store = carryOver?.sharedAnswers ?? null
+  if (store) {
+    for (const [qId, sharedKey] of Object.entries(sharedKeys)) {
+      if (qId in scores) continue // already answered live this session — don't override.
+      const stored = store[sharedKey]
+      if (!stored || typeof stored.reply !== "string" || !stored.reply.trim()) continue
+      const reJudged = carryOver?.reJudgedScores?.[qId]
+      const carriedScore =
+        typeof reJudged === "number" && Number.isFinite(reJudged)
+          ? Math.max(0, Math.min(1, reJudged))
+          : typeof stored.finalS === "number" && Number.isFinite(stored.finalS)
+            ? Math.max(0, Math.min(1, stored.finalS))
+            : 1 // informational/no-score-on-record → neutral non-blocking carry.
+      scores[qId] = { score: carriedScore, evidence: stored.summary ?? stored.reply.trim() }
+      carriedQuestionIds.push(qId)
+      carriedReferences[qId] = carriedReferenceFor(stored)
+    }
+  }
+
   const sessionTerminal = session?.terminal
   const terminal: "PASS" | "FAIL" | null =
     sessionTerminal === "PASS" || sessionTerminal === "FAIL" ? sessionTerminal : null
@@ -172,5 +260,5 @@ export function buildThinPrescreenSeed(
     ...(informational.length > 0 ? { informational } : {}),
   }
 
-  return { questionIds, prescreen, prompts, judgeContext }
+  return { questionIds, prescreen, prompts, judgeContext, sharedKeys, carriedQuestionIds, carriedReferences }
 }

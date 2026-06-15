@@ -11,9 +11,16 @@
  * candidate free text into an enum; we only pick a canned PROMPT from the JOB's roleFunction).
  *
  * NON-GATING: the appended question is marked `informational` so the prescreen FSM records
- * its answer (advancing the flow) but EXCLUDES it from the PASS/FAIL average. The captured
- * answer is persisted GLOBALLY to `pa-users.tags.aiAccelerationUsage` (via the existing
- * applyPartialUserTags sole writer) so it is asked once across the candidate's lifetime.
+ * its answer (advancing the flow) but EXCLUDES it from the PASS/FAIL average.
+ *
+ * MIGRATED (SPEC cross-session-prescreen-answer-reuse): this question now carries the authored
+ * sharedKey `ai_usage` (see prescreen-config.ts buildThinPrescreenSeed). The captured answer is
+ * persisted GLOBALLY to the AUTHORITATIVE store `pa-users.prescreenSharedAnswers["ai_usage"]` (via
+ * the mergeUserPrescreenSharedAnswers sole writer) so it is asked once across the candidate's
+ * lifetime AND carried forward (re-judged) into future sessions. The legacy
+ * `pa-users.tags.aiAccelerationUsage` is kept as a BACK-COMPAT skip signal during the migration
+ * window (dual-written by the finalize seam, still read by shouldSkipAiQuestion below) — drop it
+ * once every session reads the carry-over store.
  *
  * Pure + dependency-free (no Firestore, no LLM) — L1-testable.
  */

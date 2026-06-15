@@ -71,6 +71,21 @@ export const PrescreenQuestionConfigSchema = z.object({
    * Recommended override for production MUST_HAVE Qs: 0.95.
    */
   matchThreshold: z.number().min(0).max(1).optional(),
+  /**
+   * SPEC §5a — stable cross-job identity for a GENERIC question. When two jobs'
+   * configs use the same `sharedKey`, an answer to one is reused for the other
+   * (skip + carry — the stored reply is RE-JUDGED against THIS job's rubric so it
+   * still scores correctly). Omit for job-specific questions — they are NEVER
+   * deduped across jobs. Authored deliberately; keep the registry in
+   * `prescreen/shared-keys.ts` so the FSM + Claire agree on the same keys.
+   * Same token shape as qId (`^[a-z0-9_]+$`, 1..64).
+   */
+  sharedKey: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9_]+$/, "sharedKey must be lowercase + alphanumeric + underscore")
+    .optional(),
   prompt: BilingualTextSchema,
   clarifyPrompt: BilingualTextSchema,
   keywords: z.array(KeywordSpecSchema).min(1).max(20),
@@ -212,12 +227,19 @@ export function safeParsePrescreenConfig(
  */
 export function configToStateQuestions(
   cfg: PrescreenConfig
-): Array<{ qId: string; type: QuestionType; weight: number; matchThreshold?: number }> {
+): Array<{
+  qId: string
+  type: QuestionType
+  weight: number
+  matchThreshold?: number
+  sharedKey?: string
+}> {
   return cfg.questions.map((q) => ({
     qId: q.qId,
     type: q.type,
     weight: q.weight,
     ...(q.matchThreshold !== undefined ? { matchThreshold: q.matchThreshold } : {}),
+    ...(q.sharedKey !== undefined ? { sharedKey: q.sharedKey } : {}),
   }))
 }
 
