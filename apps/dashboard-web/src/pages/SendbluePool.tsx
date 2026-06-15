@@ -5,7 +5,7 @@
  * Add / remove / pause numbers. Single-number BC preserved.
  */
 import { useEffect, useState } from "react"
-import { doc, getDoc, setDoc } from "firebase/firestore"
+import { collection, doc, getCountFromServer, getDoc, query, setDoc, where } from "firebase/firestore"
 import { db } from "../lib/firebase.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 
@@ -30,6 +30,32 @@ export default function SendbluePool() {
   const [pool, setPool] = useState<PoolConfig>({ numbers: [] })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  // Live attached-user counts (pa-users.senderNumber == number), via server-side
+  // count() aggregation — no doc reads. This is the real load-balancing truth.
+  const [counts, setCounts] = useState<Record<string, number>>({})
+  const [totalAssigned, setTotalAssigned] = useState<number | null>(null)
+  const [countsLoading, setCountsLoading] = useState(false)
+
+  async function loadCounts(numbers: PoolNumber[]) {
+    setCountsLoading(true)
+    try {
+      const users = collection(db(), "pa-users")
+      const nums = [...new Set(numbers.map((n) => n.number.trim()).filter(Boolean))]
+      const entries = await Promise.all(
+        nums.map(async (num) => {
+          const snap = await getCountFromServer(query(users, where("senderNumber", "==", num)))
+          return [num, snap.data().count] as const
+        }),
+      )
+      setCounts(Object.fromEntries(entries))
+      const assignedSnap = await getCountFromServer(query(users, where("senderNumber", "!=", null)))
+      setTotalAssigned(assignedSnap.data().count)
+    } catch {
+      // advisory — the editor still works without live counts
+    } finally {
+      setCountsLoading(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -39,7 +65,9 @@ export default function SendbluePool() {
         const snap = await getDoc(doc(db(), "pa-config", "sendblue-pool"))
         if (cancelled) return
         if (snap.exists()) {
-          setPool(snap.data() as PoolConfig)
+          const cfg = snap.data() as PoolConfig
+          setPool(cfg)
+          void loadCounts(cfg.numbers ?? [])
         }
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
@@ -98,12 +126,41 @@ export default function SendbluePool() {
         description="Outbound iMessage number rotation. Candidate-facing routes use active public numbers only; admin/internal lines stay hidden from public entry points."
       />
       <Panel title={`${pool.numbers.length} number(s) · ${active} active`}>
+        <div style={{ marginBottom: 12, fontSize: "0.85em", color: "#475569", display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+          <span>
+            <strong style={{ color: "#0f172a" }}>{totalAssigned ?? "…"}</strong> users assigned across the pool
+          </span>
+          {(() => {
+            const pub = pool.numbers.filter(
+              (n) => n.status === "active" && n.adminOnly !== true && (n.audience ?? "public") === "public",
+            )
+            const cs = pub.map((n) => counts[n.number.trim()]).filter((c): c is number => typeof c === "number")
+            if (cs.length < 2) return null
+            const mn = Math.min(...cs)
+            const mx = Math.max(...cs)
+            const skewed = mx - mn > Math.max(50, mn)
+            return (
+              <span style={{ color: skewed ? "#b45309" : "#0f766e" }}>
+                load balance across {cs.length} public numbers: min {mn} · max {mx}
+                {skewed ? " · ⚠ skewed — sticky legacy users don’t rebalance onto newer numbers" : " · even"}
+              </span>
+            )
+          })()}
+          <button
+            onClick={() => void loadCounts(pool.numbers)}
+            disabled={countsLoading}
+            style={{ padding: "3px 10px", fontSize: "0.85em", border: "1px solid #cbd5e1", borderRadius: 6, background: "#fff", cursor: "pointer" }}
+          >
+            {countsLoading ? "Refreshing…" : "Refresh counts"}
+          </button>
+        </div>
         <table style={{ width: "100%", fontSize: "0.9em" }}>
           <thead>
             <tr>
               <th style={{ textAlign: "left" }}>Number (E.164)</th>
               <th style={{ textAlign: "left" }}>Status</th>
               <th style={{ textAlign: "left" }}>Audience</th>
+              <th style={{ textAlign: "left" }}>Attached (live)</th>
               <th style={{ textAlign: "left" }}>Admin only</th>
               <th style={{ textAlign: "left" }}>New-user cap</th>
               <th style={{ textAlign: "left" }}>Assigned</th>
@@ -146,6 +203,22 @@ export default function SendbluePool() {
                     <option value="internal">internal</option>
                     <option value="developer">developer</option>
                   </select>
+                </td>
+                <td>
+                  {(() => {
+                    const num = n.number.trim()
+                    const c = counts[num]
+                    if (c === undefined) return <span style={{ color: "#94a3b8" }}>{countsLoading ? "…" : "—"}</span>
+                    const cap = n.capacity
+                    const over = typeof cap === "number" && cap > 0 && c > cap
+                    return (
+                      <span style={{ fontWeight: 700, color: over ? "#b91c1c" : "#0f766e" }} title={over ? `over capacity (${cap})` : "live attached users"}>
+                        {c}
+                        {typeof cap === "number" ? <span style={{ color: "#94a3b8", fontWeight: 400 }}> / {cap}</span> : null}
+                        {over ? " ⚠" : ""}
+                      </span>
+                    )
+                  })()}
                 </td>
                 <td>
                   <input
