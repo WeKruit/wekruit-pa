@@ -596,7 +596,9 @@ function postPrescreenOnboardingPrompt(_lang: "zh" | "en", terminal?: string | n
 }
 
 function pendingReviewFollowupAckText(_lang: "zh" | "en"): string {
-  return "Got it - I added this to your role screen context. The outcome is still with the WeKruit team, so I won't guess at the final decision here. I'll follow up once review is complete."
+  // Claire IS the WeKruit recruiting team — warm, human, on-their-side. Not a
+  // detached "I won't guess at the decision" bot (Adam 2026-06-14: felt robotic).
+  return "thank you — really appreciate you taking the time on this 🙏 i've got your full screen now, and the WeKruit team is reviewing it to help pitch you to the hiring manager. i'll text you the moment there's an update — and in the meantime i'm keeping an eye out for other roles that fit you."
 }
 
 async function markUserPrescreenWorkSessionEnded(args: {
