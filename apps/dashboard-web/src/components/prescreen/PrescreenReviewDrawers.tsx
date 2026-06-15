@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from "react"
 import type { CSSProperties, ReactNode } from "react"
-import { collection, doc, getDoc, getDocs, orderBy, query } from "firebase/firestore"
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import {
   classifyCandidateProfile,
   deriveCandidateSource,
@@ -268,6 +268,75 @@ export async function loadReviewDetail(sessionId: string): Promise<ReviewDetail>
   return { session, attempt, turns }
 }
 
+/** A prior prescreen session for the same candidate, surfaced at review so the
+ *  operator sees what they answered (and the per-session summary) across jobs —
+ *  including any answer carried forward / skipped in the current session. */
+export type CrossSessionEntry = {
+  sessionId: string
+  jobId: string
+  terminal: string | null
+  createdAt: string
+  score?: number
+  scoreMax?: number
+  summary: string | null
+  turns: Array<{ qId: string; reply: string; summary?: string }>
+}
+
+function deriveSessionSummary(
+  data: { terminalReason?: string },
+  turns: Array<{ summary?: string }>,
+): string | null {
+  const tr = (data.terminalReason ?? "").replace(/^ratio=[^ ]+\s*/i, "").trim()
+  if (tr) return tr.slice(0, 220)
+  const ts = turns.find((t) => t.summary?.trim())?.summary
+  return ts ? ts.trim().slice(0, 220) : null
+}
+
+export async function loadCandidateOtherSessions(
+  userId: string,
+  currentSessionId: string,
+): Promise<CrossSessionEntry[]> {
+  if (!userId) return []
+  try {
+    // Single-field (userId) query — auto-indexed, no composite-index dependency.
+    // Sort + cap client-side so the drawer never fans out to many subcollections.
+    const snap = await getDocs(
+      query(collection(db(), "pa-prescreen-sessions"), where("userId", "==", userId), limit(30)),
+    )
+    const docs = snap.docs
+      .filter((d) => d.id !== currentSessionId)
+      .map((d) => ({ id: d.id, data: d.data() as SessionDoc }))
+      .sort((a, b) => String(b.data.createdAt ?? "").localeCompare(String(a.data.createdAt ?? "")))
+      .slice(0, 6)
+    return await Promise.all(
+      docs.map(async ({ id, data }) => {
+        const turnsSnap = await getDocs(
+          query(collection(db(), "pa-prescreen-sessions", id, "turns"), orderBy("ts", "asc")),
+        )
+        const turns = turnsSnap.docs
+          .map((t) => {
+            const td = t.data() as PrescreenTurn
+            return { qId: td.qId, reply: td.reply, summary: td.scored?.aggregate?.summary }
+          })
+          .filter((t) => typeof t.reply === "string" && t.reply.trim())
+        return {
+          sessionId: id,
+          jobId: data.jobId,
+          terminal: data.terminal ?? null,
+          createdAt: data.createdAt,
+          score: data.score,
+          scoreMax: data.scoreMax,
+          summary: deriveSessionSummary(data, turns),
+          turns,
+        }
+      }),
+    )
+  } catch {
+    // advisory — never block the review on a cross-session read
+    return []
+  }
+}
+
 /** Candidate source material surfaced next to the checklist eval so the operator
  *  can open the actual LinkedIn / read the résumé while reviewing. LinkedIn is a
  *  real external URL; candidate-upload résumés keep no downloadable file — only a
@@ -375,6 +444,7 @@ export function PrescreenReviewDrawer({
 }) {
   const [detail, setDetail] = useState<ReviewDetail | null>(null)
   const [sources, setSources] = useState<CandidateSources | null>(null)
+  const [otherSessions, setOtherSessions] = useState<CrossSessionEntry[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [selectedTerminal, setSelectedTerminal] = useState<ReviewTerminal>("PASS")
@@ -397,6 +467,11 @@ export function PrescreenReviewDrawer({
         // so a slow/failed read never blocks the review surface.
         void loadCandidateSources(loaded.session.userId).then((s) => {
           if (!cancelled) setSources(s)
+        })
+        // Cross-session history (other prescreen sessions for this candidate) —
+        // advisory, async so it never blocks the review surface.
+        void loadCandidateOtherSessions(loaded.session.userId, sessionId).then((s) => {
+          if (!cancelled) setOtherSessions(s)
         })
         const strictRecommendation = classifyPrescreenReviewRow(loaded.session).recommendation
         const proposed = cleanReviewTerminal(strictRecommendation) ??
@@ -498,6 +573,7 @@ export function PrescreenReviewDrawer({
           <CandidateSourcesCard sources={sources} />
           <ChecklistEvalPanel evaluation={detail.session.review?.candidateChecklistEval} />
           <TranscriptPreview turns={detail.turns} />
+          <OtherSessionsPanel sessions={otherSessions} />
           {detail.session.terminalActionPendingReview ? (
             <div style={{ display: "grid", gap: 8 }}>
               <label style={labelStyle}>
@@ -867,6 +943,81 @@ export function TranscriptPreview({ turns }: { turns: PrescreenTurn[] }) {
             ) : null}
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+/** Cross-session history: the candidate's OTHER prescreen sessions, so the operator
+ *  sees prior responses + per-session summaries (and any answer carried into this one). */
+function OtherSessionsPanel({ sessions }: { sessions: CrossSessionEntry[] | null }) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  if (sessions === null) {
+    return (
+      <div style={cardStyle}>
+        <h3 style={{ margin: 0, fontSize: "1em" }}>Other prescreen sessions</h3>
+        <div style={{ color: "#94a3b8", fontSize: "0.85em" }}>loading…</div>
+      </div>
+    )
+  }
+  if (sessions.length === 0) return null
+  function toggle(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  return (
+    <div style={cardStyle}>
+      <h3 style={{ margin: "0 0 2px", fontSize: "1em" }}>Other prescreen sessions ({sessions.length})</h3>
+      <div style={{ color: "#64748b", fontSize: "0.8em", marginBottom: 4 }}>
+        What this candidate answered in their other screens — including anything carried into this one.
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {sessions.map((s) => {
+          const open = expanded.has(s.sessionId)
+          return (
+            <div key={s.sessionId} style={{ borderTop: "1px solid rgba(0,0,0,0.08)", paddingTop: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <Badge tone={terminalTone(s.terminal)}>{s.terminal ?? "IN_PROGRESS"}</Badge>
+                <code style={{ fontSize: "0.82em", overflowWrap: "anywhere" }}>
+                  <AdminJobLink jobId={s.jobId} />
+                </code>
+                {typeof s.score === "number" && typeof s.scoreMax === "number" && (
+                  <span style={{ color: "#64748b", fontSize: "0.8em" }}>
+                    {s.score.toFixed(2)}/{s.scoreMax.toFixed(2)}
+                  </span>
+                )}
+                <span style={{ color: "#94a3b8", fontSize: "0.78em" }}>
+                  {s.createdAt ? new Date(s.createdAt).toLocaleDateString() : ""}
+                </span>
+                {s.turns.length > 0 && (
+                  <button type="button" onClick={() => toggle(s.sessionId)} style={subtleBtnStyle}>
+                    {open ? "Hide answers" : `Show answers (${s.turns.length})`}
+                  </button>
+                )}
+              </div>
+              {s.summary && (
+                <div style={{ color: "#334155", fontSize: "0.86em", marginTop: 4, lineHeight: 1.45 }}>{s.summary}</div>
+              )}
+              {open && (
+                <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                  {s.turns.map((t, i) => (
+                    <div key={i} style={{ borderLeft: "2px solid #e2e8f0", paddingLeft: 8 }}>
+                      <div style={{ fontSize: "0.72em", color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                        {t.qId}
+                      </div>
+                      <div style={{ fontSize: "0.86em", color: "#1e293b", overflowWrap: "anywhere", marginTop: 2 }}>{t.reply}</div>
+                      {t.summary && <div style={{ fontSize: "0.8em", color: "#64748b", marginTop: 2 }}>{t.summary}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
