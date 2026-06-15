@@ -177,6 +177,36 @@ export function pickFromNumber(
   return active[idx].number
 }
 
+// ---- New-user ASSIGNMENT routing (which number a NEW candidate first binds to) ----
+// Once assigned, the number is sticky for that candidate's whole thread (callers
+// early-return the existing senderNumber). For a NEW candidate, balance by least
+// total attached so a number added later drains the historical skew instead of
+// being stuck behind a hash split. This is purely WHO-routes-WHERE; daily SEND
+// volume limits are a separate concern (selectSendblueCapacityGroup).
+
+/** Active, candidate-facing (public) numbers eligible to receive new assignments. */
+export function activeUserAccessibleNumbers(pool: SendbluePoolConfig | null): SendbluePoolNumber[] {
+  return normalizedPoolNumbers(pool).filter((n) => isSelectablePoolNumber(n, {}))
+}
+
+export type AssignmentNumberStat = {
+  number: string
+  /** Total candidates currently attached (bound) to this number. */
+  totalAttached: number
+}
+
+/**
+ * Pick the sender number for a NEW candidate: the least-loaded active public number
+ * (tiebreak stable by number) so the pool drains toward an even split. Returns null
+ * only when there are no candidate-facing numbers.
+ */
+export function selectLeastLoadedAssignmentNumber(stats: AssignmentNumberStat[]): string | null {
+  if (stats.length === 0) return null
+  return [...stats].sort(
+    (a, b) => a.totalAttached - b.totalAttached || a.number.localeCompare(b.number),
+  )[0]!.number
+}
+
 function configuredCapacity(number: SendbluePoolNumber): number | undefined {
   return number.dailySendCap ?? number.capacity
 }
