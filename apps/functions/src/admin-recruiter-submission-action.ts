@@ -45,15 +45,23 @@ const RecruiterCandidateRejectionSchema = z.object({
   category: z.enum(RECRUITER_CANDIDATE_REJECTION_CATEGORIES),
   candidateTier: z.enum(RECRUITER_CANDIDATE_TIERS),
   reason: z.string().optional().transform((value) => (value ?? "").trim()).pipe(z.string().max(4_000)),
+  // Structured quick-reject chip ids (e.g. "weak_school", "low_gpa") the operator
+  // tapped on the board reject form. Advisory metadata alongside the free-text reason.
+  reasons: z.array(z.string().max(80)).max(24).optional(),
 })
+
+// Operator's per-item checklist assessment (AI mark + override) keyed by the
+// rubric item id/text. "save_marks" persists this without a status change.
+const ChecklistMarksSchema = z.record(z.string().max(400), z.enum(["met", "gap", "flag", "clear"]))
 
 export const AdminRecruiterSubmissionActionInputSchema = z.object({
   submissionId: z.string().transform((value) => value.trim()).pipe(z.string().min(1)),
-  action: z.enum(["advance", "reject", "reviewing", "duplicate", "request_info", "wekruit_interview", "client_review", "hired", "comment"]),
+  action: z.enum(["advance", "reject", "reviewing", "duplicate", "request_info", "wekruit_interview", "client_review", "hired", "comment", "save_marks"]),
   note: z.string().max(4_000).optional(),
   requestMessage: z.string().max(4_000).optional(),
   message: z.string().optional(),
   rejection: RecruiterCandidateRejectionSchema.optional(),
+  checklistMarks: ChecklistMarksSchema.optional(),
   adminToken: z.string().optional(),
 })
 export type AdminRecruiterSubmissionActionInput = z.infer<typeof AdminRecruiterSubmissionActionInputSchema>
@@ -134,6 +142,26 @@ export async function runAdminRecruiterSubmissionAction(
     return { ok: true, submissionId, commentId: commentRef.id }
   }
 
+  const checklistMarks = parsed.data.checklistMarks
+  if (action === "save_marks") {
+    // Pure assessment write: persist the operator's per-item checklist marks
+    // (AI-derived + overrides) with NO status / decision change.
+    if (!checklistMarks || Object.keys(checklistMarks).length === 0) {
+      throw new HttpsError("invalid-argument", "checklistMarks_required")
+    }
+    const snap = await ref.get()
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "submission_not_found")
+    }
+    const at = deps.now?.() ?? new Date().toISOString()
+    const by = cleanString(deps.actorEmail) ?? "admin_token"
+    await ref.set(
+      { adminChecklistMarks: { marks: checklistMarks, by, at }, updatedAt: at },
+      { merge: true },
+    )
+    return { ok: true, submissionId, status: cleanString((snap.data() ?? {}).status) ?? "" }
+  }
+
   const snap = await ref.get()
   if (!snap.exists) {
     throw new HttpsError("not-found", "submission_not_found")
@@ -145,19 +173,27 @@ export async function runAdminRecruiterSubmissionAction(
   const currentStatus = cleanString(data.status) ?? ""
 
   const patch: Record<string, unknown> = { updatedAt: at }
+  // Persist the operator's checklist assessment alongside any decision (e.g.
+  // override marks then reject in one go), not just the dedicated save_marks path.
+  if (checklistMarks && Object.keys(checklistMarks).length > 0) {
+    patch.adminChecklistMarks = { marks: checklistMarks, by, at }
+  }
   if (action === "reject" && rejection) {
     const feedback = recruiterFeedbackForRejection(rejection.category, rejection.candidateTier)
+    const chipReasons = (rejection.reasons ?? []).map((r) => r.trim()).filter(Boolean)
     patch.rejection = {
       category: rejection.category,
       candidateTier: rejection.candidateTier,
       reusableForOtherCompanies: reusableForCandidateTier(rejection.candidateTier),
       reason: rejection.reason,
+      ...(chipReasons.length > 0 ? { reasons: chipReasons } : {}),
       by,
       at,
     }
     patch.recruiterFeedbackNote = rejection.reason
     patch.recruiterFeedbackRating = feedback.rating
-    patch.recruiterFeedbackReasons = feedback.reasons
+    // Merge the tier-derived feedback reasons with the operator's quick-reject chips.
+    patch.recruiterFeedbackReasons = [...new Set([...feedback.reasons, ...chipReasons])]
   }
 
   if (action === "request_info") {
