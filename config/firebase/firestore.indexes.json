@@ -1,6 +1,21 @@
 {
   "indexes": [
     {
+      "_comment": "Sendblue per-number rolling send cap — count messages sent from a number within the trailing window (send-cap.ts countRecentSendsForNumber).",
+      "collectionGroup": "pa-outbound",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sentFromNumber",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "sentAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "iMessage-first QR onboarding — paQrScanAbandonedSweep finds pending reservations older than the TTL.",
       "collectionGroup": "pa-qr-scan-pending",
       "queryScope": "COLLECTION",

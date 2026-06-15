@@ -47,6 +47,12 @@ export interface SendbluePoolNumber {
   /** S6 hard cap: accepted outbound sends per group per UTC day. */
   capacity?: number
   dailySendCap?: number
+  /** Safety buffer subtracted from dailySendCap — outbound stops at (cap − buffer)
+   *  so bursts / in-flight sends never push past the hard Sendblue daily limit. */
+  sendCapBuffer?: number
+  /** Rolling send-cap window in hours (default 24). The cap counts sends in the
+   *  trailing window with real timestamps, not a calendar-day reset. */
+  sendCapWindowHours?: number
 }
 
 export interface SendbluePoolGroup {
@@ -58,6 +64,8 @@ export interface SendbluePoolGroup {
   assignedNewUsers?: number
   capacity?: number
   dailySendCap?: number
+  sendCapBuffer?: number
+  sendCapWindowHours?: number
   numbers: Array<string | SendbluePoolNumber>
 }
 
@@ -231,6 +239,8 @@ function normalizedPoolNumbers(pool: SendbluePoolConfig | null): SendbluePoolNum
             assignedNewUsers: group.assignedNewUsers,
             capacity: group.capacity,
             dailySendCap: group.dailySendCap,
+            sendCapBuffer: group.sendCapBuffer,
+            sendCapWindowHours: group.sendCapWindowHours,
           }
         }
         const number = entry.number?.trim()
@@ -246,6 +256,8 @@ function normalizedPoolNumbers(pool: SendbluePoolConfig | null): SendbluePoolNum
           assignedNewUsers: entry.assignedNewUsers ?? group.assignedNewUsers,
           capacity: entry.capacity ?? group.capacity,
           dailySendCap: entry.dailySendCap ?? group.dailySendCap,
+          sendCapBuffer: entry.sendCapBuffer ?? group.sendCapBuffer,
+          sendCapWindowHours: entry.sendCapWindowHours ?? group.sendCapWindowHours,
         }
       })
       .filter((entry): entry is SendbluePoolNumber => entry !== null)
