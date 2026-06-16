@@ -328,7 +328,7 @@ test("normalizeSimilarCandidateRows prefers high-growth builder evidence over ge
       employee({
         id: 412,
         full_name: "Builder Candidate",
-        headline: "Generative AI developer productivity engineer | Founder of Rhyme.com (Acquired)",
+        headline: "Generative AI developer productivity engineer | ICPC ranked | Founder of Rhyme.com (Acquired)",
         linkedin_url: "https://www.linkedin.com/in/builder-candidate/",
         active_experience_title: "Senior Staff Software Engineer",
         active_experience_management_level: "Senior",
@@ -365,6 +365,68 @@ test("normalizeSimilarCandidateRows prefers high-growth builder evidence over ge
   assert.ok(rows[0]?.similarityReasons.some((reason) => /^Trajectory overlap:/i.test(reason)))
   assert.ok(rows[0]?.similarityReasons.some((reason) => /^Product\/domain overlap:/i.test(reason)))
   assert.ok((rows[0]?.similarityScore ?? 0) < 1)
+})
+
+test("normalizeSimilarCandidateRows rejects founder trajectory without exact or elite overlap", () => {
+  const source = employee({
+    id: 415,
+    full_name: "Shixiang Source",
+    headline: "Sr. SWE @ Tesla | Top 0.1% National Awardee | USC Alumni | LLM applications",
+    linkedin_url: "https://www.linkedin.com/in/shixiang-source/",
+    active_experience_title: "Senior Software Engineer",
+    active_experience_management_level: "Senior",
+    location_full: "Los Angeles, California, United States",
+    inferred_skills: ["LLM Applications", "Distributed Transactions", "Message Queues", "Algorithms"],
+    historical_skills: [],
+    experience: [
+      {
+        company_name: "Tesla",
+        position_title: "Senior Software Engineer",
+        active_experience: 1,
+        management_level: "Senior",
+      },
+    ],
+    education: [{ institution_name: "USC Viterbi School of Engineering", degree: "BS Computer Science" }],
+  })
+
+  const rows = normalizeSimilarCandidateRows(
+    [
+      employee({
+        id: 416,
+        full_name: "Founder Trajectory Only",
+        headline: "Senior Software Engineer at Microsoft",
+        linkedin_url: "https://www.linkedin.com/in/founder-trajectory-only/",
+        active_experience_title: "Senior Software Engineer",
+        active_experience_management_level: "Senior",
+        location_full: "Bengaluru, Karnataka, India",
+        inferred_skills: ["Python", "User Experience", "Visual Design", "Mentoring"],
+        historical_skills: [],
+        experience: [
+          {
+            company_name: "Microsoft",
+            position_title: "Senior Software Engineer",
+            active_experience: 1,
+            management_level: "Senior",
+          },
+          {
+            company_name: "Startup",
+            position_title: "Software Engineer",
+            active_experience: 0,
+          },
+        ],
+        education: [{ institution_name: "National Institute of Technology Tiruchirappalli", degree: "MCA" }],
+        similarity_score: 98,
+      }),
+    ],
+    {
+      source,
+      sourceCanonicalLinkedInUrl: "https://linkedin.com/in/shixiang-source",
+      sourceVisibleText: "SaaS Development Web Development Database Development Business Analytics",
+      limit: 20,
+    },
+  )
+
+  assert.deepEqual(rows, [])
 })
 
 test("normalizeSimilarCandidateRows keeps senior SWE searches role-compatible", () => {
@@ -416,7 +478,7 @@ test("normalizeSimilarCandidateRows keeps senior SWE searches role-compatible", 
         linkedin_url: "https://www.linkedin.com/in/hands-on-ai-builder/",
         active_experience_title: "Senior Software Engineer, AI",
         active_experience_management_level: "Senior",
-        inferred_skills: ["Generative AI", "Developer Productivity", "Distributed Systems"],
+        inferred_skills: ["LLM Applications", "Generative AI", "Developer Productivity", "Distributed Systems"],
         historical_skills: [],
         experience: [
           {
@@ -717,6 +779,7 @@ test("normalizeSimilarCandidateRows surfaces exact overlap before broad domain r
   assert.equal(rows.length, 1)
   assert.match(rows[0]?.similarityReasons[0] ?? "", /^Company overlap:/)
   assert.equal(rows[0]?.similarityReasons.some((reason) => /communication skills/i.test(reason)), false)
+  assert.equal(rows[0]?.similarityReasons.some((reason) => /management-level/i.test(reason)), false)
 })
 
 test("runExtensionFindSimilarCandidates excludes the source profile even when CoreSignal returns it", async () => {

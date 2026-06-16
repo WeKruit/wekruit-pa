@@ -669,7 +669,7 @@ function deriveSimilarityReasons(
   const candidateLevel =
     cleanString(candidate.active_experience_management_level) ?? cleanString(candidateActive?.management_level)
   if (sourceLevel && candidateLevel && sourceLevel.toLowerCase() === candidateLevel.toLowerCase()) {
-    reasons.push(`Seniority overlap: both profiles show ${sourceLevel} management-level signals.`)
+    reasons.push(`Seniority overlap: both profiles show ${sourceLevel} seniority signals.`)
   }
 
   if (reasons.length === 0) {
@@ -721,11 +721,11 @@ function similarityEvidenceQuality(reasons: string[]): {
     }
   }
 
+  const hasConcreteWorkOverlap = domainSignals > 0 || builderSignals > 0
   const passes =
     exactStrongSignals >= 2 ||
-    (exactStrongSignals >= 1 && (domainSignals > 0 || builderSignals > 0 || trajectorySignals > 0)) ||
-    (trajectorySignals > 0 && (domainSignals > 0 || builderSignals > 0 || exactStrongSignals > 0)) ||
-    (candidateFastGrowthSignal && (domainSignals > 0 || builderSignals > 0 || exactStrongSignals > 0))
+    (exactStrongSignals >= 1 && (hasConcreteWorkOverlap || trajectorySignals > 0)) ||
+    (candidateFastGrowthSignal && hasConcreteWorkOverlap)
   const evidenceScore = Math.min(
     0.97,
     0.42 +
