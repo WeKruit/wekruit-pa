@@ -29,6 +29,7 @@ import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { callWithFallback } from "@pa/pa-resume-parser"
+import { lookupSchoolPrior, type RoleFunction } from "@wekruit/shared-tags"
 import {
   fetchEmployeeCollect,
   searchEmployeeIdByLinkedinUrl,
@@ -497,6 +498,45 @@ function renderRecruiterBackgroundFlag(submission: Record<string, unknown>): str
   return parts.length ? parts.join(" · ") : "(recruiter did not flag any background pillars)"
 }
 
+/** Pull a job's roleFunction token(s) off the job doc (array or string). [] when absent. */
+export function roleFunctionsOf(job: Record<string, unknown> | null | undefined): string[] {
+  const rf = job?.roleFunction
+  if (Array.isArray(rf)) return rf.filter((s): s is string => typeof s === "string")
+  if (typeof rf === "string" && rf.trim()) return [rf.trim()]
+  const tags = (job?.tags ?? {}) as Record<string, unknown>
+  const t = tags.targetRoleFunction ?? tags.roleFunction
+  if (Array.isArray(t)) return t.filter((s): s is string => typeof s === "string")
+  return []
+}
+
+/**
+ * Advisory school-strength note for the LLM judge, from WeKruit's role-aware target-school
+ * list ({@link lookupSchoolPrior}). A SOFT prior — never a gate, never a reject reason. Picks
+ * the STRONGEST hit across the candidate's schools, scoped to the job's roleFunction lens
+ * (falls back to the broad general US list). Returns "" when no school resolves — and the
+ * ABSENCE of a note must NEVER be read as a negative (many strong candidates are non-target).
+ */
+export function buildSchoolPriorNote(
+  schools: Array<string | undefined | null>,
+  roleFunction: string | string[] | undefined | null,
+): string {
+  const rf = (Array.isArray(roleFunction) ? roleFunction : roleFunction ? [roleFunction] : []) as RoleFunction[]
+  const rank = (s: string) => (s === "strong" ? 0 : s === "recognized" ? 1 : 2)
+  let best: ReturnType<typeof lookupSchoolPrior> | null = null
+  for (const s of schools) {
+    if (!s || !s.trim()) continue
+    const r = lookupSchoolPrior(s, rf)
+    if (r.strength === "unknown") continue
+    if (!best || rank(r.strength) < rank(best.strength)) best = r
+  }
+  if (!best) return ""
+  const where =
+    best.matchedVia === "general_fallback"
+      ? "a broadly-recognized US school"
+      : `a ${best.strength === "strong" ? "top/strong target" : "recognized"} school for this role family (lens ${best.lens}, ${best.tier})`
+  return `${best.canonical} is ${where}. Treat this as a POSITIVE prior for the \`school\` background pillar, but weigh it alongside real experience/skills and do NOT over-credit pedigree. (If no such note appears, there is simply no school prior — never read that as a negative.)`
+}
+
 function buildJudgeUserText(args: {
   jobId: string
   job: Record<string, unknown>
@@ -530,7 +570,10 @@ ${args.candidate.email ? `Email: ${args.candidate.email}\n` : ""}${args.candidat
 
 ## Independent research (Coresignal)
 ${renderResearch(args.research)}
-
+${(() => {
+  const note = buildSchoolPriorNote((args.research?.education ?? []).map((e) => e.school), roleFunctionsOf(args.job))
+  return note ? `\n## School-strength prior (ADVISORY — WeKruit role-aware target-school list; a soft signal, NEVER a gate or reject reason)\n${note}\n` : ""
+})()}
 ## Recruiter background self-flag (HINT only — verify independently)
 ${renderRecruiterBackgroundFlag(args.submission)}
 

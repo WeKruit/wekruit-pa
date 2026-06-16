@@ -19,6 +19,7 @@ export { sha256Hex } from "./sha256.js"
 
 // ─── Phase 52 canonical vocabs ────────────────────────────────────
 export * from "./canonical/role-function.js"
+export * from "./canonical/school-strength-priors.js"
 export * from "./canonical/industry-sector.js"
 export * from "./canonical/major.js"
 export * from "./canonical/visa.js"

@@ -33,8 +33,10 @@ import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
 import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
 import {
   buildResearchFromEmployee,
+  buildSchoolPriorNote,
   extractChecklistGroups,
   renderChecklist,
+  roleFunctionsOf,
   looksLikeLinkedinUrl,
   EVAL_JUDGMENT_JSON_SCHEMA,
   EvalJudgmentSchema,
@@ -137,8 +139,13 @@ function renderResearch(research: SubmissionEvalResearch | undefined): string {
  * ONLY a résumé (no LinkedIn / no live Coresignal match) still gets a profile eval, and
  * a candidate with both is judged on the merged picture. Fail-open: "" when none.
  */
-async function loadResumeEvidence(db: Firestore, user: Record<string, unknown>, candidateId: string): Promise<string> {
+async function loadResumeEvidence(
+  db: Firestore,
+  user: Record<string, unknown>,
+  candidateId: string,
+): Promise<{ text: string; schools: string[] }> {
   const lines: string[] = []
+  const schools: string[] = []
   try {
     const highlights = Array.isArray(user.experienceHighlights) ? user.experienceHighlights : []
     for (const raw of highlights.slice(0, 12)) {
@@ -173,6 +180,7 @@ async function loadResumeEvidence(db: Firestore, user: Record<string, unknown>, 
         const e = (raw ?? {}) as Record<string, unknown>
         const school = str(e.school) || str(e.institution_name) || str(e.institution)
         if (!school) continue
+        schools.push(school)
         lines.push(`- résumé education: ${school}${str(e.degree) ? ` — ${str(e.degree)}` : ""}`)
       }
       const topSkills = Array.isArray(resume.topSkills) ? resume.topSkills : []
@@ -182,7 +190,7 @@ async function loadResumeEvidence(db: Firestore, user: Record<string, unknown>, 
   } catch {
     /* ignore — fail-open */
   }
-  return lines.join("\n").slice(0, 3_000)
+  return { text: lines.join("\n").slice(0, 3_000), schools }
 }
 
 async function loadTranscript(db: Firestore, sessionId: string): Promise<string> {
@@ -293,11 +301,18 @@ export async function runPrescreenCandidateEval(
       log("prescreen_eval.no_linkedin", { sessionId, candidateId })
     }
 
-    const [transcript, resumeEvidence] = await Promise.all([
+    const [transcript, resume] = await Promise.all([
       loadTranscript(deps.db, sessionId),
       loadResumeEvidence(deps.db, user, candidateId),
     ])
+    const resumeEvidence = resume.text
     const hasProfileEvidence = Boolean(research) || resumeEvidence.length > 0
+    // Role-aware school-strength prior (advisory soft signal for the school pillar; never a
+    // gate). Schools from Coresignal research + résumé; scoped to the job's roleFunction lens.
+    const schoolPriorNote = buildSchoolPriorNote(
+      [...(research?.education ?? []).map((e) => e.school), ...resume.schools],
+      roleFunctionsOf(job),
+    )
     const recruiterBoard = (job.recruiterBoard ?? {}) as Record<string, unknown>
     const label = (recruiterBoard.label ?? {}) as Record<string, unknown>
     const roleLine = [str(label.title) || str(job.title), str(label.company) || str(job.company)].filter(Boolean).join(" @ ")
@@ -314,6 +329,10 @@ export async function runPrescreenCandidateEval(
       "Candidate résumé / merged LinkedIn+résumé profile:",
       resumeEvidence || "(no résumé / merged profile on file)",
       "",
+      schoolPriorNote
+        ? "School-strength prior (ADVISORY — WeKruit role-aware target-school list; a SOFT signal, NEVER a gate or reject reason):\n" + schoolPriorNote
+        : null,
+      schoolPriorNote ? "" : null,
       "Prescreen transcript:",
       transcript,
     ].filter((l): l is string => l !== null).join("\n")
