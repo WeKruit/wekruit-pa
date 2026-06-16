@@ -6,13 +6,46 @@ import { MockFirestore, asFirestore } from "../job-rec/__tests__/mock-firestore.
 import {
   SUBMISSION_EVAL_VERSION,
   buildResearchFromEmployee,
+  buildSchoolPriorNote,
   coresignalCacheKey,
   looksLikeLinkedinUrl,
   recruiterSubmissionToEvaluationAttempt,
+  roleFunctionsOf,
   runRecruiterSubmissionEval,
   type RecruiterSubmissionEvalDeps,
   type SubmissionAiEvaluation,
 } from "../recruiter-submission-eval.js"
+
+describe("role-aware school-strength prior wiring", () => {
+  it("roleFunctionsOf reads job.roleFunction (array or string) and tags fallback", () => {
+    assert.deepEqual(roleFunctionsOf({ roleFunction: ["software_engineering"] }), ["software_engineering"])
+    assert.deepEqual(roleFunctionsOf({ roleFunction: "sales" }), ["sales"])
+    assert.deepEqual(roleFunctionsOf({ tags: { targetRoleFunction: ["marketing"] } }), ["marketing"])
+    assert.deepEqual(roleFunctionsOf({}), [])
+    assert.deepEqual(roleFunctionsOf(null), [])
+  })
+
+  it("emits a positive note for a top-target school, scoped to the role lens", () => {
+    const note = buildSchoolPriorNote(["MIT"], "software_engineering")
+    assert.match(note, /top\/strong target/i)
+    assert.match(note, /never read that as a negative/i)
+  })
+
+  it("returns empty for a non-target school — never a negative", () => {
+    assert.equal(buildSchoolPriorNote(["Baker College"], "software_engineering"), "")
+    assert.equal(buildSchoolPriorNote([null, undefined, ""], "software_engineering"), "")
+  })
+
+  it("picks the STRONGEST school across the candidate's schools", () => {
+    const note = buildSchoolPriorNote(["Baker College", "Stanford University"], "software_engineering")
+    assert.match(note, /Stanford/)
+    assert.match(note, /top\/strong target/i)
+  })
+
+  it("role-aware: a design school is recognized for design, not via the CS list", () => {
+    assert.match(buildSchoolPriorNote(["Rhode Island School of Design"], "creatives_and_design"), /school for this role family/i)
+  })
+})
 
 const EVAL_ATTEMPTS = "pa-evaluation-attempts"
 
