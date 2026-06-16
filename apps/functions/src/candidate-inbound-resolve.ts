@@ -208,7 +208,22 @@ async function bindPhoneToCandidate(
   db: Firestore,
   candidateId: string,
   phoneE164: string,
-  opts: { releaseCompetingUsers?: boolean; reassignConflictingHandle?: boolean } = {},
+  opts: {
+    releaseCompetingUsers?: boolean
+    reassignConflictingHandle?: boolean
+    /**
+     * The candidate was resolved via a VALID, consumed single-use bind-code
+     * (minted in their own web session, pasted from their phone) → the texting
+     * phone is proven to belong to this candidate. When true, an UNVERIFIED
+     * résumé-derived phone (`phoneE164Source === "cv_parsed"`) on the profile
+     * must NOT block the real SMS phone — overwrite it. Without this, a résumé's
+     * stale/typo'd phone silently blocked the actual texter (live 2026-06-15:
+     * José +17869150039, Aniket +918971155200 — résumé phone ≠ texting phone →
+     * "can't start from this phone" → dead silence). A VERIFIED phone or a
+     * phone genuinely owned by another entity still blocks.
+     */
+    bindCodeProven?: boolean
+  } = {},
 ): Promise<BindOutcome> {
   const isoNow = new Date().toISOString()
 
@@ -245,8 +260,23 @@ async function bindPhoneToCandidate(
       userSnap.exists && typeof userSnap.data()?.phoneE164 === "string"
         ? (userSnap.data()!.phoneE164 as string)
         : null
-    if (existingPhone && existingPhone !== phoneE164 && isE164(existingPhone)) {
-      // Different phone = different entity. Never cross-bind/merge.
+    // An UNVERIFIED résumé-extracted phone (cv-ingest writes phoneE164 +
+    // phoneE164Source:"cv_parsed", with NO verified handle) is a best-effort
+    // guess, NOT a real binding. When the candidate was proven by a consumed
+    // bind-code, the real texting phone wins over that guess — otherwise a
+    // résumé's stale/typo'd number permanently locks the candidate out of SMS.
+    const existingPhoneSource =
+      userSnap.exists && typeof userSnap.data()?.phoneE164Source === "string"
+        ? (userSnap.data()!.phoneE164Source as string)
+        : null
+    const existingPhoneIsUnverifiedResumeGuess = existingPhoneSource === "cv_parsed"
+    if (
+      existingPhone &&
+      existingPhone !== phoneE164 &&
+      isE164(existingPhone) &&
+      !(opts.bindCodeProven && existingPhoneIsUnverifiedResumeGuess)
+    ) {
+      // Different VERIFIED phone = different entity. Never cross-bind/merge.
       return { bound: false, reason: "phone_mismatch_different_entity" }
     }
 
@@ -273,7 +303,9 @@ async function bindPhoneToCandidate(
   }
 
   await db.collection(PA_COLLECTIONS.users).doc(candidateId).set(
-    { phoneE164, updatedAt: isoNow },
+    // phoneE164Source flips to the real SMS bind so an earlier unverified
+    // "cv_parsed" résumé guess is no longer treated as authoritative.
+    { phoneE164, phoneE164Source: "sms_bind", updatedAt: isoNow },
     { merge: true },
   )
 
@@ -491,7 +523,9 @@ export async function resolveInboundUserId(
       // same entity (same/empty phone). Different phone → do NOT cross-bind.
       const outcome = await bindPhoneToCandidate(db, candidateId, phoneE164, isDevBypass
         ? { releaseCompetingUsers: true, reassignConflictingHandle: true }
-        : {})
+        // A consumed bind-code proves the texting phone belongs to this
+        // candidate → let the real phone override an unverified résumé guess.
+        : { bindCodeProven: Boolean(resolvedFromBindCode) })
       if (outcome.bound) return outcome.candidateId
       // bound:false → the texted phone is a DIFFERENT entity than the opener's
       // named profile. Resolve by the texted phone (its own entity), never the
