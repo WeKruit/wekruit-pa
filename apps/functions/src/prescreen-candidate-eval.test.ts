@@ -186,7 +186,8 @@ describe("prescreen-candidate-eval", () => {
     const res = await runPrescreenCandidateEval("ps-1", {
       db, now: () => NOW,
       callJudge: async () => { throw new Error("judge should not run") },
-      research: { apiKey: null, searchEmployeeIdByLinkedinUrl: async () => null, fetchEmployeeCollect: async () => null },
+      // No linkedinUrl on the user → research is never fetched; these are type-valid no-ops.
+      research: { apiKey: null, searchEmployeeIdByLinkedinUrl: async () => null, fetchEmployeeCollect: async () => employee },
     })
     assert.equal(res.status, "skipped_no_job_checklist")
   })
