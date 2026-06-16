@@ -9,7 +9,7 @@
  * Also supports a bulk "Generate research prompt for missing-info rows"
  * action that routes to `/admin/external-supply/research`.
  */
-import { useEffect, useMemo, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams, Link } from "react-router-dom"
 import {
   type CandidateCompanyJobEvaluation,
@@ -18,6 +18,7 @@ import {
 } from "@pa/core-types"
 import { AdminJobLink, AdminUserLink } from "../../components/AdminEntityLink.js"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
+import { EvalLabelForm } from "../../components/prescreen/EvalLabelForm.js"
 import { EvaluationTierBadge } from "../../components/external-supply/EvaluationTierBadge.js"
 import {
   findEvaluationAttemptByExternalEvaluationId,
@@ -47,6 +48,11 @@ export function EvaluationDetail() {
   const [actionMsg, setActionMsg] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [genBusy, setGenBusy] = useState(false)
+  // Data-labeling: the expanded row's evaluationId, plus the lazily-resolved
+  // canonical attemptId for that row (keyed by evaluationId).
+  const [labelRowId, setLabelRowId] = useState<string | null>(null)
+  const [labelAttemptIds, setLabelAttemptIds] = useState<Record<string, string | null>>({})
+  const [labelResolving, setLabelResolving] = useState(false)
 
   useEffect(() => {
     if (!runId) return
@@ -110,6 +116,26 @@ export function EvaluationDetail() {
       setActionMsg(err instanceof Error ? err.message : String(err))
     } finally {
       setBusyId(null)
+    }
+  }
+
+  // Reuse the SAME attempt resolution as overrideTier (findEvaluationAttemptByExternalEvaluationId)
+  // so the label form grades the canonical attempt the tier-override writes to.
+  async function toggleLabelRow(evaluation: CandidateCompanyJobEvaluation) {
+    if (labelRowId === evaluation.evaluationId) {
+      setLabelRowId(null)
+      return
+    }
+    setLabelRowId(evaluation.evaluationId)
+    if (labelAttemptIds[evaluation.evaluationId] !== undefined) return
+    setLabelResolving(true)
+    try {
+      const attempt = await findEvaluationAttemptByExternalEvaluationId(evaluation.evaluationId)
+      setLabelAttemptIds((prev) => ({ ...prev, [evaluation.evaluationId]: attempt?.attemptId ?? null }))
+    } catch {
+      setLabelAttemptIds((prev) => ({ ...prev, [evaluation.evaluationId]: null }))
+    } finally {
+      setLabelResolving(false)
     }
   }
 
@@ -249,11 +275,13 @@ export function EvaluationDetail() {
                 <th style={thStyle}>Risks</th>
                 <th style={thStyle}>Explanation</th>
                 <th style={thStyle}>Override</th>
+                <th style={thStyle}>Label</th>
               </tr>
             </thead>
             <tbody>
               {evaluations.map((e) => (
-                <tr key={e.evaluationId} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                <Fragment key={e.evaluationId}>
+                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
                   <td style={tdStyle}>
                     <input
                       type="checkbox"
@@ -317,7 +345,67 @@ export function EvaluationDetail() {
                       ))}
                     </select>
                   </td>
+                  <td style={tdStyle}>
+                    <button
+                      type="button"
+                      onClick={() => void toggleLabelRow(e)}
+                      style={{
+                        padding: "4px 8px",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: 6,
+                        background: labelRowId === e.evaluationId ? "#e2e8f0" : "#fff",
+                        cursor: "pointer",
+                        fontSize: "0.85em",
+                      }}
+                      aria-expanded={labelRowId === e.evaluationId}
+                    >
+                      {labelRowId === e.evaluationId ? "Hide" : "Label"}
+                    </button>
+                  </td>
                 </tr>
+                {labelRowId === e.evaluationId && (
+                  <tr>
+                    <td colSpan={11} style={{ padding: "0.6rem 0.4rem", background: "#f8fafc" }}>
+                      {(() => {
+                        const attemptId = labelAttemptIds[e.evaluationId]
+                        if (attemptId === undefined) {
+                          return <span style={{ fontSize: "0.85em", color: "#64748b" }}>{labelResolving ? "Resolving evaluation attempt…" : "Loading…"}</span>
+                        }
+                        if (attemptId === null) {
+                          return (
+                            <span style={{ fontSize: "0.85em", color: "#b45309" }}>
+                              No canonical evaluation attempt found for this row. Re-run evaluation before labeling.
+                            </span>
+                          )
+                        }
+                        return (
+                          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+                            {/* LEFT — read-only AI evaluation. */}
+                            <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff", padding: 12 }}>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                                <span style={{ fontSize: "0.75em", textTransform: "uppercase", color: "#94a3b8" }}>Proposed tier</span>
+                                <EvaluationTierBadge tier={e.proposedTier} />
+                                <span style={{ fontSize: "0.8em", color: "#64748b" }}>soft {e.softScore.toFixed(3)} · gate {e.hardGateResult}</span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: "0.85em", color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                                {e.explanation}
+                              </p>
+                              {e.risks.length > 0 && (
+                                <p style={{ margin: "8px 0 0", fontSize: "0.8em", color: "#b45309" }}>Risks: {e.risks.join("; ")}</p>
+                              )}
+                            </div>
+                            {/* RIGHT — shared label form (label-only, never messages). */}
+                            <EvalLabelForm
+                              attemptId={attemptId}
+                              aiProposedOutcomeKind={externalTierOutcomeKind(e.proposedTier)}
+                            />
+                          </div>
+                        )
+                      })()}
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

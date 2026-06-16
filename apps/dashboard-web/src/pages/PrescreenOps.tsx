@@ -491,16 +491,28 @@ export default function PrescreenOps() {
         )}
       </Panel>
 
-      {drawerSessionId ? (
-        <PrescreenReviewDrawer
-          sessionId={drawerSessionId}
-          onClose={() => setDrawerSessionId(null)}
-          onReviewed={() => {
-            setDrawerSessionId(null)
-            refreshAfterReview()
-          }}
-        />
-      ) : null}
+      {drawerSessionId ? (() => {
+        // Queue = the expanded job's pending rows, in display order, so ← / →
+        // and A=agree+next walk that job's review list.
+        const queue = expandedRows.map((r) => ({ sessionId: r.id }))
+        const queueIndex = queue.findIndex((q) => q.sessionId === drawerSessionId)
+        return (
+          <PrescreenReviewDrawer
+            sessionId={drawerSessionId}
+            queue={queue}
+            index={queueIndex}
+            onNavigate={(nextIndex) => {
+              const next = queue[nextIndex]
+              if (next) setDrawerSessionId(next.sessionId)
+            }}
+            onClose={() => setDrawerSessionId(null)}
+            onReviewed={() => {
+              setDrawerSessionId(null)
+              refreshAfterReview()
+            }}
+          />
+        )
+      })() : null}
       {bulkOpen ? (
         <BulkRejectDrawer
           rows={selectedRows.map(toDrawerRow)}
