@@ -31,11 +31,12 @@
  *   - apps/dashboard-web/src/pages/PublicJobCv.tsx (PublicJob page)
  *   - apps/functions/src/ats-inbound-webhook.ts (Handshake/ATS bind path)
  */
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { getAuth } from "firebase-admin/auth"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { getStorage } from "firebase-admin/storage"
 import {
   PA_COLLECTIONS,
   CandidateAuthMappingSchema,
@@ -221,6 +222,8 @@ export function buildCandidateUploadResumeArtifactWrites(input: {
   candidateProfileSummary?: string
   existingUserSource?: unknown
   uploadSource?: string
+  resumeFileUrl?: string
+  storageUri?: string
   now: string
 }): {
   artifact: ReturnType<typeof ResumeArtifactSchema.parse>
@@ -243,6 +246,8 @@ export function buildCandidateUploadResumeArtifactWrites(input: {
       sha256: input.sha256,
       parsedCandidateResumeId: input.parsedCandidateResumeId,
       candidateProfileSummary: input.candidateProfileSummary,
+      resumeFileUrl: input.resumeFileUrl,
+      storageUri: input.storageUri,
       createdAt: input.now,
       updatedAt: input.now,
     })
@@ -261,8 +266,53 @@ export function buildCandidateUploadResumeArtifactWrites(input: {
       latestResumeArtifactId: artifact.resumeId,
       resumeStatus: "parsed",
       profileSummary: input.candidateProfileSummary,
+      resumeFileUrl: input.resumeFileUrl,
       updatedAt: input.now,
     }),
+  }
+}
+
+/**
+ * Persist the uploaded résumé bytes to Storage so review UIs can show the actual
+ * document inline (the parse path is `inline://` — bytes were never stored). Returns a
+ * token-gated viewable https URL + the gs:// uri. FAIL-OPEN: any error returns null and
+ * the upload/parse flow continues untouched (this is a nice-to-have for review, never a
+ * gate). The token URL is unguessable and only surfaced to authenticated admins.
+ */
+async function persistCandidateResumeFile(args: {
+  candidateId: string
+  sha256: string
+  fileName?: string
+  bytes: Uint8Array
+  kind: ResumeUploadKind
+  log: (event: string, fields?: Record<string, unknown>) => void
+}): Promise<{ resumeFileUrl: string; storageUri: string } | null> {
+  try {
+    const bucket = getStorage().bucket()
+    const ext = args.kind === "docx" ? "docx" : "pdf"
+    const objectPath = `candidate-resumes/${idSafe(args.candidateId)}/${args.sha256}.${ext}`
+    const file = bucket.file(objectPath)
+    if (typeof file.save !== "function") return null
+    const token = randomUUID()
+    const safeName = (args.fileName ?? `resume.${ext}`).replace(/[^\w.-]/g, "_")
+    await file.save(Buffer.from(args.bytes), {
+      resumable: false,
+      contentType: args.kind === "docx"
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "application/pdf",
+      metadata: {
+        contentDisposition: `inline; filename="${safeName}"`,
+        metadata: { firebaseStorageDownloadTokens: token, candidateId: args.candidateId, sha256: args.sha256 },
+      },
+    })
+    const resumeFileUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${token}`
+    return { resumeFileUrl, storageUri: `gs://${bucket.name}/${objectPath}` }
+  } catch (err) {
+    args.log("public_cv_ingest.resume_file_persist_failed", {
+      candidateId: args.candidateId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
   }
 }
 
@@ -274,6 +324,8 @@ async function recordCandidateUploadResumeArtifact(args: {
   sha256?: string
   candidateProfileSummary?: string
   uploadSource?: string
+  resumeFileUrl?: string
+  storageUri?: string
 }): Promise<string> {
   const userSnap = await args.db
     .collection(PA_COLLECTIONS.users)
@@ -287,6 +339,8 @@ async function recordCandidateUploadResumeArtifact(args: {
     candidateProfileSummary: args.candidateProfileSummary,
     existingUserSource: userSnap.data()?.source,
     uploadSource: args.uploadSource,
+    resumeFileUrl: args.resumeFileUrl,
+    storageUri: args.storageUri,
     now: new Date().toISOString(),
   })
   await Promise.all([
@@ -522,6 +576,19 @@ export const paPublicCvIngest = onRequest(
         await clearEnrichmentInFlight(db, userId, new Date().toISOString())
       }
       if (result.ok) {
+        // Persist the uploaded file so the actual résumé renders inline in review UIs
+        // (parse is `inline://`, so the bytes were never stored). Fail-open + base64
+        // path only (the resumeUrl path already has a URL).
+        const persisted = injectedBytes && resumeSha256 && resumeKind
+          ? await persistCandidateResumeFile({
+              candidateId: result.userId,
+              sha256: resumeSha256,
+              fileName: body.resumeName,
+              bytes: injectedBytes,
+              kind: resumeKind,
+              log,
+            })
+          : null
         const resumeArtifactId = await recordCandidateUploadResumeArtifact({
           db,
           candidateId: result.userId,
@@ -530,6 +597,8 @@ export const paPublicCvIngest = onRequest(
           sha256: resumeSha256,
           candidateProfileSummary: result.candidateProfileSummary,
           uploadSource: body.source,
+          resumeFileUrl: persisted?.resumeFileUrl,
+          storageUri: persisted?.storageUri,
         })
         log("public_cv_ingest.ok", {
           userId,
