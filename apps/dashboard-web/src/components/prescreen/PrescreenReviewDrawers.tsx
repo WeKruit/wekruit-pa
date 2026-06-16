@@ -1439,12 +1439,23 @@ function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChe
                 {(g.kind ?? "").toUpperCase()}{g.heading ? ` · ${g.heading}` : ""}
               </div>
               {(g.items ?? []).map((it, ii) => {
-                const bad = it.status === "gap" || it.status === "flag"
-                const mark = it.status === "gap" ? "✗" : it.status === "flag" ? "⚑" : "✓"
+                // An anti item that is FLAGGED = the candidate matches a not-a-fit
+                // pattern = a DOWN signal (bad). An anti item that is CLEAR = the
+                // pattern is simply absent — neutral, NOT a positive win, so it must
+                // not render as a celebratory green ✓ inside a "not a fit" section.
+                const isFlag = it.status === "flag"
+                const isGap = it.status === "gap"
+                const isClear = it.status === "clear"
+                const bad = isGap || isFlag
+                const mark = isGap ? "✗" : isFlag ? "⚑" : isClear ? "○" : "✓"
+                const markColor = bad ? "#b91c1c" : isClear ? "#94a3b8" : "#15803d"
                 return (
                   <div key={ii} style={{ display: "flex", gap: 9, fontSize: "1.02em", lineHeight: 1.45, color: "#1e293b", alignItems: "flex-start" }}>
-                    <span style={{ color: bad ? "#b91c1c" : "#15803d", fontWeight: 700, width: 18, flexShrink: 0 }}>{mark}</span>
-                    <span style={bad ? { color: "#1e293b" } : { color: "#64748b" }}>{it.text}</span>
+                    <span style={{ color: markColor, fontWeight: 700, width: 18, flexShrink: 0 }}>{mark}</span>
+                    <span style={bad ? { color: "#1e293b" } : { color: "#94a3b8" }}>
+                      {it.text}
+                      {isFlag ? <span style={{ color: "#b91c1c", fontWeight: 600 }}> · down signal</span> : null}
+                    </span>
                   </div>
                 )
               })}
@@ -1465,10 +1476,27 @@ function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChe
           ) : null}
         </>
       )}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: "0.95em", paddingTop: 4 }}>
-        {(["school", "degree", "company", "gpa"] as const).map((k) => (
-          <Badge key={k} tone={pillarTone(evaluation.background?.[k]?.verdict)}>{k}: {evaluation.background?.[k]?.verdict ?? "—"}</Badge>
-        ))}
+      <div style={{ display: "grid", gap: 6, paddingTop: 4 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: "0.95em" }}>
+          {(["school", "degree", "company", "gpa"] as const).map((k) => {
+            const p = evaluation.background?.[k]
+            return (
+              <span key={k} title={p?.evidence ?? ""}>
+                <Badge tone={pillarTone(p?.verdict)}>{k}: {p?.verdict ?? "—"}</Badge>
+              </span>
+            )
+          })}
+        </div>
+        {/* Surface the evidence behind the school/company verdicts so the named
+            school/employer is visible (a verdict word alone hides what we read). */}
+        {(["school", "company"] as const).map((k) => {
+          const ev = evaluation.background?.[k]?.evidence
+          return ev ? (
+            <div key={k} style={{ fontSize: "0.9em", color: "#64748b", lineHeight: 1.4 }}>
+              <strong style={{ color: "#475569", textTransform: "capitalize" }}>{k}:</strong> {ev}
+            </div>
+          ) : null
+        })}
       </div>
       {evaluation.research?.companies?.length ? (
         <div style={{ fontSize: "0.95em", color: "#475569" }}>
