@@ -599,6 +599,63 @@ test("normalizeSimilarCandidateRows rejects award or creator profiles without do
   assert.deepEqual(rows, [])
 })
 
+test("normalizeSimilarCandidateRows rejects broad product-domain matches without exact or trajectory evidence", () => {
+  const source = employee({
+    id: 450,
+    full_name: "Shixiang Source",
+    headline: "Sr. SWE @ Tesla | Top 0.1% National Awardee | built LLM applications and SaaS products",
+    linkedin_url: "https://www.linkedin.com/in/shixiang-source/",
+    active_experience_title: "Senior Software Engineer",
+    active_experience_management_level: "Senior",
+    inferred_skills: ["LLM Applications", "Distributed Transactions", "Message Queues"],
+    historical_skills: [],
+    experience: [
+      {
+        company_name: "Tesla",
+        position_title: "Senior Software Engineer",
+        active_experience: 1,
+        management_level: "Senior",
+      },
+    ],
+    education: [{ institution_name: "USC Viterbi School of Engineering", degree: "BS Computer Science" }],
+  })
+
+  const rows = normalizeSimilarCandidateRows(
+    [
+      employee({
+        id: 451,
+        full_name: "Broad Product SWE",
+        headline: "Software Engineer III building AI data products and platform tools",
+        linkedin_url: "https://www.linkedin.com/in/broad-product-swe/",
+        active_experience_title: "Software Engineer III",
+        active_experience_management_level: "Senior",
+        location_full: "San Francisco, California, United States",
+        primary_professional_email: "broad@example.com",
+        professional_emails_collection: [],
+        inferred_skills: ["Artificial Intelligence", "Data Products", "Platform Tools"],
+        historical_skills: [],
+        experience: [
+          {
+            company_name: "Google",
+            position_title: "Software Engineer III",
+            active_experience: 1,
+            management_level: "Senior",
+          },
+        ],
+        education: [{ institution_name: "University of California Berkeley", degree: "BS Computer Science" }],
+      }),
+    ],
+    {
+      source,
+      sourceCanonicalLinkedInUrl: "https://linkedin.com/in/shixiang-source",
+      sourceVisibleText: "SaaS Development Web Development Database Development Business Analytics",
+      limit: 20,
+    },
+  )
+
+  assert.deepEqual(rows, [])
+})
+
 test("runExtensionFindSimilarCandidates excludes the source profile even when CoreSignal returns it", async () => {
   const db = new MockFirestore()
   await storeCoresignalEmployee({

@@ -705,11 +705,10 @@ function similarityEvidenceQuality(reasons: string[]): {
   }
 
   const passes =
-    (domainSignals > 0 && builderSignals + exactStrongSignals >= 1) ||
-    (candidateFastGrowthSignal && (domainSignals > 0 || exactStrongSignals > 0)) ||
-    (builderSignals > 0 && (domainSignals > 0 || exactStrongSignals > 0)) ||
     exactStrongSignals >= 2 ||
-    (exactStrongSignals >= 1 && (domainSignals > 0 || builderSignals > 0))
+    (exactStrongSignals >= 1 && (domainSignals > 0 || builderSignals > 0 || trajectorySignals > 0)) ||
+    (trajectorySignals > 0 && (domainSignals > 0 || builderSignals > 0 || exactStrongSignals > 0)) ||
+    (candidateFastGrowthSignal && (domainSignals > 0 || builderSignals > 0 || exactStrongSignals > 0))
   const evidenceScore = Math.min(
     0.97,
     0.42 +
