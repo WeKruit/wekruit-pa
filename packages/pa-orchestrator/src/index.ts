@@ -124,6 +124,7 @@ export {
   buildHelloWekruitOpenerBody,
   buildBindCodeOpenerBody,
   parseHelloWekruitOpener,
+  looksLikeGarbledStartToken,
   BIND_CODE_ALPHABET,
   BIND_CODE_LENGTH,
   normalizeBindCode,
