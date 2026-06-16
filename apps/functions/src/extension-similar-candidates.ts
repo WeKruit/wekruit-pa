@@ -840,10 +840,32 @@ export function buildSimilarCandidatesPrompt(args: {
   visibleText?: string | null
   limit: number
 }): string {
+  const target = similarCandidatesPromptTarget(args)
+  return [
+    "Find genuinely similar candidate LinkedIn profiles for recruiters.",
+    `Return up to ${args.limit} employees with return_data=true.`,
+    "Similarity means concrete overlap in the person's career story, not only the same generic job title.",
+    "Prioritize candidates with at least two strong evidence categories: fast-growth or elite trajectory, builder/founder/creator/product ownership, similar product/domain work, exact current/past company overlap, exact school/education overlap, or specific non-generic skill overlap.",
+    "For fast-growing hands-on software profiles, prefer people with comparable acceleration, elite awards/rankings, founder/acquired-company work, creator signals, applied AI/product-builder evidence, or similar systems/product engineering work.",
+    "Keep the role comparable to the target. For a senior software engineer target, do not return managers, mentors, consultants, technical evangelists, product managers, or advisors unless their current role is still hands-on software, AI, platform, backend, frontend, research, or architecture engineering.",
+    "Reject candidates whose only overlap is software engineer title, seniority, location, or employment at a different major technology company.",
+    "Do not infer similarity from Tesla, automotive, or EV wording by itself; only use that evidence when the candidate has concrete Tesla/autonomous/vehicle software work.",
+    "Do not over-optimize for a single company or school. Exclude the target profile itself.",
+    "Prefer candidates with valid LinkedIn profile URLs and professional work history evidence.",
+    "For every returned candidate, include concrete reasoning tied to overlapping trajectory, product/domain work, builder evidence, companies, education, skills, role/function, seniority, location, or career pattern.",
+    `Target CoreSignal employee record summary:\n${JSON.stringify(target, null, 2)}`,
+  ].join("\n\n")
+}
+
+function similarCandidatesPromptTarget(args: {
+  source: CoresignalEmployeeCollectV2
+  profileContext: SimilarCandidatesPayload["profileContext"]
+  visibleText?: string | null
+}): Record<string, unknown> {
   const source = args.source as unknown as Record<string, unknown>
   const history = companyHistory(source)
   const sourceEvidenceText = [profileEvidenceText(source), args.visibleText ?? ""].join(" ")
-  const target = {
+  return {
     fullName: fullName(source) ?? args.profileContext.fullName ?? null,
     linkedinUrl: employeeLinkedInUrl(source) ?? args.profileContext.linkedinUrl,
     headline: headline(source) ?? args.profileContext.headline ?? null,
@@ -857,18 +879,24 @@ export function buildSimilarCandidatesPrompt(args: {
     builderSignals: matchingSignalLabels(sourceEvidenceText, BUILDER_SIGNAL_PATTERNS),
     productDomainSignals: matchingSignalLabels(sourceEvidenceText, DOMAIN_SIGNAL_PATTERNS, 8),
   }
+}
+
+function buildSimilarCandidatesFastPrompt(args: {
+  source: CoresignalEmployeeCollectV2
+  profileContext: SimilarCandidatesPayload["profileContext"]
+  visibleText?: string | null
+  limit: number
+}): string {
+  const target = similarCandidatesPromptTarget(args)
+  const retryLimit = Math.min(args.limit, 5)
   return [
-    "Find genuinely similar candidate LinkedIn profiles for recruiters.",
-    `Return up to ${args.limit} employees with return_data=true.`,
-    "Similarity means concrete overlap in the person's career story, not only the same generic job title.",
-    "Prioritize candidates with at least two strong evidence categories: fast-growth or elite trajectory, builder/founder/creator/product ownership, similar product/domain work, exact current/past company overlap, exact school/education overlap, or specific non-generic skill overlap.",
-    "For fast-growing hands-on software profiles, prefer people with comparable acceleration, elite awards/rankings, founder/acquired-company work, creator signals, applied AI/product-builder evidence, or similar systems/product engineering work.",
-    "Keep the role comparable to the target. For a senior software engineer target, do not return managers, mentors, consultants, technical evangelists, product managers, or advisors unless their current role is still hands-on software, AI, platform, backend, frontend, research, or architecture engineering.",
-    "Reject candidates whose only overlap is software engineer title, seniority, location, or employment at a different major technology company.",
-    "Do not infer similarity from Tesla, automotive, or EV wording by itself; only use that evidence when the candidate has concrete Tesla/autonomous/vehicle software work.",
-    "Do not over-optimize for a single company or school. Exclude the target profile itself.",
-    "Prefer candidates with valid LinkedIn profile URLs and professional work history evidence.",
-    "For every returned candidate, include concrete reasoning tied to overlapping trajectory, product/domain work, builder evidence, companies, education, skills, role/function, seniority, location, or career pattern.",
+    "Fast retry: find only the highest-confidence similar candidate LinkedIn profiles.",
+    `Return at most ${retryLimit} employees with valid LinkedIn profile URLs and return_data=true.`,
+    "Hard filter: every returned person must be hands-on software, AI, platform, backend, frontend, research, architecture, or technical product engineering.",
+    "Hard filter: every returned person must have at least two concrete overlaps with the target: exact company, exact school, non-generic technical skill, applied AI/devtools/backend/platform/product work, founder/acquired/startup builder evidence, elite trajectory, or closely similar product-building career pattern.",
+    "Reject coaches, consultants, PMs, advisors, evangelists, creator-only profiles, and generic senior software engineers whose only evidence is title, seniority, location, or a different major-tech employer.",
+    "For fast-growth/product-builder targets, prefer comparable fast-growth engineers, product builders, founders, acquired-startup alumni, or people who worked on similar SaaS, AI, devtool, backend, platform, or data products.",
+    "Exclude the target profile itself.",
     `Target CoreSignal employee record summary:\n${JSON.stringify(target, null, 2)}`,
   ].join("\n\n")
 }
@@ -932,6 +960,13 @@ function errorBodySnippet(err: unknown): string | null {
   } catch {
     return String(body).slice(0, 700)
   }
+}
+
+function isCoresignalAgenticTimeout(err: unknown): boolean {
+  const status = coresignalStatus(err)
+  if (status !== 503 && status !== 504 && status !== 408) return false
+  const text = [errorMessage(err), errorBodySnippet(err)].filter(Boolean).join(" ")
+  return /\b(timed out|timeout)\b/i.test(text)
 }
 
 function throwCoresignalHttpsError(err: unknown): never {
@@ -1048,6 +1083,7 @@ export async function runExtensionFindSimilarCandidates(
       callCoresignalAgenticSearch({ apiKey, request }))
 
   let agenticResponse: unknown
+  let effectiveLimit = limit
   try {
     args.log?.("similar_candidates_agentic_search_started", {
       sourceLinkedInUrl: profileCanonical,
@@ -1069,7 +1105,42 @@ export async function runExtensionFindSimilarCandidates(
       error: errorMessage(err),
       body: errorBodySnippet(err),
     })
-    throwCoresignalHttpsError(err)
+    if (!isCoresignalAgenticTimeout(err)) {
+      throwCoresignalHttpsError(err)
+    }
+    effectiveLimit = Math.min(limit, 5)
+    const retryPrompt = buildSimilarCandidatesFastPrompt({
+      source: sourceEmployee,
+      profileContext: input.profileContext,
+      visibleText: input.source.visibleText ?? null,
+      limit: effectiveLimit,
+    })
+    try {
+      args.log?.("similar_candidates_agentic_search_retry_started", {
+        sourceLinkedInUrl: profileCanonical,
+        sourceEmployeeId: numericId(sourceEmployee),
+        limit: effectiveLimit,
+        originalLimit: limit,
+      })
+      agenticResponse = await agenticSearch({
+        prompt: retryPrompt,
+        returnData: true,
+        allowClarification: false,
+        limit: effectiveLimit,
+        sessionId: randomUUID(),
+      })
+    } catch (retryErr) {
+      args.log?.("similar_candidates_agentic_search_retry_failed", {
+        sourceLinkedInUrl: profileCanonical,
+        sourceEmployeeId: numericId(sourceEmployee),
+        status: coresignalStatus(retryErr),
+        error: errorMessage(retryErr),
+        body: errorBodySnippet(retryErr),
+        limit: effectiveLimit,
+        originalLimit: limit,
+      })
+      throwCoresignalHttpsError(retryErr)
+    }
   }
 
   const rows = extractAgenticRows(agenticResponse)
@@ -1077,7 +1148,8 @@ export async function runExtensionFindSimilarCandidates(
     sourceLinkedInUrl: profileCanonical,
     sourceEmployeeId: numericId(sourceEmployee),
     rawRows: rows.length,
-    limit,
+    limit: effectiveLimit,
+    originalLimit: limit,
   })
   const enrichedRows = await enrichRowsByCoresignalId({
     rows,
@@ -1092,7 +1164,7 @@ export async function runExtensionFindSimilarCandidates(
     source: sourceEmployee,
     sourceCanonicalLinkedInUrl: profileCanonical,
     sourceVisibleText: input.source.visibleText ?? null,
-    limit,
+    limit: effectiveLimit,
   })
   args.log?.("similar_candidates_normalized", {
     sourceLinkedInUrl: profileCanonical,
@@ -1100,7 +1172,8 @@ export async function runExtensionFindSimilarCandidates(
     rawRows: rows.length,
     enrichedRows: enrichedRows.length,
     resultCount: results.length,
-    limit,
+    limit: effectiveLimit,
+    originalLimit: limit,
   })
   const sourceRecord = sourceEmployee as unknown as Record<string, unknown>
   return {
@@ -1118,7 +1191,7 @@ export async function runExtensionFindSimilarCandidates(
     results,
     meta: {
       surface: SURFACE,
-      limit,
+      limit: effectiveLimit,
     },
   }
 }

@@ -633,6 +633,67 @@ test("runExtensionFindSimilarCandidates excludes the source profile even when Co
   ])
 })
 
+test("runExtensionFindSimilarCandidates retries timeout with a smaller high-confidence prompt", async () => {
+  const db = new MockFirestore()
+  await storeCoresignalEmployee({
+    db: asFirestore(db),
+    link: "https://linkedin.com/in/source-profile",
+    coresignalId: 100,
+    employee: employee(),
+    now,
+    source: "test",
+  })
+
+  const calls: Array<{ limit: number; prompt: string }> = []
+  const result = await runExtensionFindSimilarCandidates({
+    auth: { uid: "recruiter-1" },
+    data: payload({ limit: 10 }),
+    db: asFirestore(db),
+    apiKey: "test-key",
+    now,
+    agenticSearch: async (request) => {
+      calls.push({ limit: request.limit, prompt: request.prompt })
+      if (calls.length === 1) {
+        throw Object.assign(new Error("coresignal_503"), {
+          status: 503,
+          body: { detail: "Agentic search service timed out" },
+        })
+      }
+      return {
+        data: [
+          employee({
+            id: 201,
+            full_name: "Grace Kim",
+            linkedin_url: "https://linkedin.com/in/grace-kim",
+            active_experience_title: "Staff Backend Engineer",
+            inferred_skills: ["Go", "Kubernetes", "Distributed Systems"],
+            experience: [
+              {
+                company_name: "Stripe",
+                position_title: "Staff Backend Engineer",
+                active_experience: 1,
+                management_level: "Senior",
+              },
+              { company_name: "Plaid", position_title: "Backend Engineer", active_experience: 0 },
+            ],
+            education: [{ institution_name: "Stanford University", degree: "MS Computer Science" }],
+          }),
+        ],
+      }
+    },
+  })
+
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0]?.limit, 10)
+  assert.equal(calls[1]?.limit, 5)
+  assert.match(calls[1]?.prompt ?? "", /Fast retry/i)
+  assert.match(calls[1]?.prompt ?? "", /Reject coaches, consultants, PMs, advisors/i)
+  assert.equal(result.meta.limit, 5)
+  assert.deepEqual(result.results.map((row) => row.canonicalLinkedInUrl), [
+    "https://linkedin.com/in/grace-kim",
+  ])
+})
+
 test("runExtensionFindSimilarCandidates maps CoreSignal 429/5xx to retryable user errors", async () => {
   const db = new MockFirestore()
   await storeCoresignalEmployee({
