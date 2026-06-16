@@ -81,7 +81,7 @@ function makeDb(seed: Record<string, Record<string, unknown>>): { db: Firestore;
 test("operator approval requires a candidate message for prescreen review", async () => {
   const { db } = makeDb({
     [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
-    "pa-prescreen-sessions": { "ps-1": { e164: "+15555550100" } },
+    "pa-prescreen-sessions": { "ps-1": { e164: "+15555550100", terminalActionPendingReview: true } },
     [PA_COLLECTIONS.correctionEvents]: {},
   })
 
@@ -376,6 +376,111 @@ test("generateAndStorePrescreenAutoDraft is fail-open: a compose error never thr
     },
   })
   assert.equal(res.stored, false)
+})
+
+test("label-only review records the human eval label without committing or messaging the candidate", async () => {
+  const { db, store } = makeDb({
+    [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
+    "pa-prescreen-sessions": { "ps-1": { sessionId: "ps-1", e164: "+15555550100", terminalActionPendingReview: true } },
+    [PA_COLLECTIONS.correctionEvents]: {},
+  })
+  const sent: Array<Record<string, unknown>> = []
+
+  const result = await runReviewEvaluationAttempt(
+    {
+      attemptId: "attempt-1",
+      status: "approved",
+      commitAndSend: false,
+      label: { decision: "agree", qualityRating: 5 },
+    },
+    ADMIN_AUTH,
+    {
+      db,
+      now: () => NOW,
+      sendSms: async (args) => {
+        sent.push(args as unknown as Record<string, unknown>)
+        return { outboundId: "should-not-happen", created: true }
+      },
+    },
+  )
+
+  assert.equal(result.labelOnly, true)
+  assert.equal(result.prescreenOutcomeCommitted, false)
+  assert.equal(sent.length, 0, "label-only must never message the candidate")
+  const saved = store.get(PA_COLLECTIONS.evaluationAttempts)!.get("attempt-1") as EvaluationAttempt
+  // AI verdict preserved; human label is additive.
+  assert.equal(saved.proposedOutcome.prescreenTerminal, "PASS")
+  assert.equal(saved.humanReview.label?.decision, "agree")
+  assert.equal(saved.humanReview.label?.qualityRating, 5)
+  assert.equal(saved.humanReview.label?.rubricVersion, "rubric-v1") // server-filled from the attempt
+  assert.equal(saved.humanReview.label?.labeledBy, "operator-1")
+  // Pending review state untouched — nothing was committed.
+  const session = store.get("pa-prescreen-sessions")!.get("ps-1") as Record<string, unknown>
+  assert.equal(session.terminalActionPendingReview, true)
+})
+
+test("a no-longer-pending prescreen record is forced label-only — an approve can never re-text the candidate", async () => {
+  const { db, store } = makeDb({
+    [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
+    "pa-prescreen-sessions": { "ps-1": { sessionId: "ps-1", e164: "+15555550100", terminalActionPendingReview: false } },
+    [PA_COLLECTIONS.correctionEvents]: {},
+  })
+  const sent: Array<Record<string, unknown>> = []
+
+  const result = await runReviewEvaluationAttempt(
+    {
+      attemptId: "attempt-1",
+      status: "overridden",
+      finalOutcome: { prescreenTerminal: "FAIL" },
+      label: {
+        decision: "disagree",
+        correctedOutcome: { kind: "reject", prescreenTerminal: "FAIL" },
+        errorCategories: ["over_lenient"],
+        rationale: "The AI passed a candidate who clearly lacked the required ownership.",
+      },
+    },
+    ADMIN_AUTH,
+    {
+      db,
+      now: () => NOW,
+      sendSms: async (args) => {
+        sent.push(args as unknown as Record<string, unknown>)
+        return { outboundId: "should-not-happen", created: true }
+      },
+    },
+  )
+
+  assert.equal(result.commitSkippedNotPending, true)
+  assert.equal(result.prescreenOutcomeCommitted, false)
+  assert.equal(sent.length, 0, "a closed/decided record must never re-text the candidate")
+  const saved = store.get(PA_COLLECTIONS.evaluationAttempts)!.get("attempt-1") as EvaluationAttempt
+  assert.equal(saved.humanReview.label?.decision, "disagree")
+  assert.deepEqual(saved.humanReview.label?.errorCategories, ["over_lenient"])
+  // The override still writes an append-only correction event.
+  assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 1)
+})
+
+test("a disagreeing label without a rationale is rejected", async () => {
+  const { db } = makeDb({
+    [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
+    "pa-prescreen-sessions": { "ps-1": { sessionId: "ps-1", terminalActionPendingReview: false } },
+    [PA_COLLECTIONS.correctionEvents]: {},
+  })
+
+  await assert.rejects(
+    () =>
+      runReviewEvaluationAttempt(
+        {
+          attemptId: "attempt-1",
+          status: "overridden",
+          commitAndSend: false,
+          label: { decision: "disagree", errorCategories: ["over_strict"] },
+        },
+        ADMIN_AUTH,
+        { db, now: () => NOW },
+      ),
+    /rationale is required/i,
+  )
 })
 
 test("operator override writes correction event and updates external-supply projection", async () => {

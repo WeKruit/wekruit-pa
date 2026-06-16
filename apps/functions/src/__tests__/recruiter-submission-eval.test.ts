@@ -1,16 +1,20 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import type { CoresignalEmployeeCollectV2 } from "@pa/external-supply"
+import { createEvaluationAttemptId, type EvaluationAttempt, type HumanEvalLabel } from "@pa/core-types"
 import { MockFirestore, asFirestore } from "../job-rec/__tests__/mock-firestore.js"
 import {
   SUBMISSION_EVAL_VERSION,
   buildResearchFromEmployee,
   coresignalCacheKey,
   looksLikeLinkedinUrl,
+  recruiterSubmissionToEvaluationAttempt,
   runRecruiterSubmissionEval,
   type RecruiterSubmissionEvalDeps,
   type SubmissionAiEvaluation,
 } from "../recruiter-submission-eval.js"
+
+const EVAL_ATTEMPTS = "pa-evaluation-attempts"
 
 const now = "2026-06-09T12:00:00.000Z"
 const SUBMISSIONS = "pa-recruiter-submissions"
@@ -223,7 +227,7 @@ describe("runRecruiterSubmissionEval", () => {
     assert.equal(doc.status, "submitted")
     const evalWrites = mfs.writeLog.filter((w) => w.path === SUBMISSIONS && w.id === "sub-1" && w.mode === "merge")
     assert.equal(evalWrites.length, 1)
-    assert.deepEqual(Object.keys(evalWrites[0]!.data), ["aiEvaluation", "candidateId", "candidateTracking"])
+    assert.deepEqual(Object.keys(evalWrites[0]!.data), ["aiEvaluation", "candidateId", "candidateTracking", "evaluationAttemptId"])
 
     const users = mfs.store.get("pa-users")
     assert.equal(users?.size, 1)
@@ -560,6 +564,165 @@ describe("runRecruiterSubmissionEval", () => {
     assert.equal(evaluation.error, "job_not_found:job-missing")
     const doc = (await mfs.collection(SUBMISSIONS).doc("sub-1").get()).data() ?? {}
     assert.equal(doc.status, "submitted")
+  })
+})
+
+describe("recruiter eval → canonical store mirror", () => {
+  async function readAttempt(mfs: MockFirestore, attemptId: string): Promise<EvaluationAttempt> {
+    const snap = await mfs.collection(EVAL_ATTEMPTS).doc(attemptId).get()
+    assert.ok(snap.exists, `attempt ${attemptId} missing from ${EVAL_ATTEMPTS}`)
+    return (snap.data() ?? {}) as EvaluationAttempt
+  }
+
+  it("mirrors a recruiter_submission attempt with humanReview pending and stamps the submission, never touching status", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    const deps = makeDeps(mfs)
+
+    const result = await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+    assert.equal(result.status, "written")
+
+    const expectedId = createEvaluationAttemptId({
+      source: "recruiter_submission",
+      jobId: "job-1",
+      salt: "sub-1",
+    })
+    assert.equal(result.evaluationAttemptId, expectedId)
+
+    const attempt = await readAttempt(mfs, expectedId)
+    assert.equal(attempt.source, "recruiter_submission")
+    assert.equal(attempt.purpose, "candidate_job_fit")
+    assert.equal(attempt.jobId, "job-1")
+    // submissionId is preserved for traceability (no pa-users candidateId on the row).
+    assert.equal(attempt.externalEvaluationId, "sub-1")
+    assert.equal(attempt.rubricVersion, SUBMISSION_EVAL_VERSION)
+    // advance → pass; the AI verdict coexists with (an absent) human label.
+    assert.equal(attempt.proposedOutcome.kind, "pass")
+    assert.equal(attempt.humanReview.status, "pending")
+    assert.equal(attempt.humanReview.label, undefined)
+    assert.equal(attempt.evaluator.kind, "llm_judge")
+
+    // The submission carries the canonical attemptId for a clean dashboard read.
+    const subDoc = (await mfs.collection(SUBMISSIONS).doc("sub-1").get()).data() ?? {}
+    assert.equal(subDoc.evaluationAttemptId, expectedId)
+    // Operator-owned status is NEVER touched by the eval/mirror.
+    assert.equal(subDoc.status, "submitted")
+
+    // No correction event is written by a mirror (only the human labeler writes those).
+    assert.equal(mfs.store.get("pa-correction-events")?.size ?? 0, 0)
+  })
+
+  it("verdict maps reject → reject and borderline → hold", async () => {
+    const reject = recruiterSubmissionToEvaluationAttempt({
+      submissionId: "s",
+      jobId: "j",
+      nowIso: now,
+      aiEvaluation: {
+        verdict: "reject",
+        confidence: 0.3,
+        summary: "Hard gaps.",
+        reasons: ["No Kubernetes evidence"],
+        checklist: {
+          hard: { met: 0, total: 2, gaps: ["5+ years backend", "Kubernetes"] },
+          fit: { met: 0, total: 1, gaps: ["Fintech"] },
+          bonus: { met: 0, total: 1, gaps: ["OSS"] },
+          anti: { flagged: 1, total: 1, flags: ["Job hopper"] },
+        },
+        background: {
+          school: { verdict: "unknown", evidence: "" },
+          gpa: { verdict: "unknown", evidence: "" },
+          degree: { verdict: "unknown", evidence: "" },
+          company: { verdict: "weak", evidence: "no-name" },
+        },
+        evaluatedAt: now,
+        model: "gpt-5.4-nano",
+        version: SUBMISSION_EVAL_VERSION,
+      },
+    })
+    assert.equal(reject.proposedOutcome.kind, "reject")
+    // Anti-signal flags surface as risk flags; hard+fit gaps surface as missingEvidence.
+    assert.deepEqual(reject.riskFlags, ["Job hopper"])
+    assert.ok(reject.missingEvidence.includes("Kubernetes"))
+
+    const borderline = recruiterSubmissionToEvaluationAttempt({
+      submissionId: "s",
+      jobId: "j",
+      nowIso: now,
+      aiEvaluation: {
+        verdict: "borderline",
+        confidence: 0.5,
+        summary: "Thin.",
+        reasons: [],
+        checklist: {
+          hard: { met: 1, total: 2, gaps: ["Kubernetes"] },
+          fit: { met: 0, total: 1, gaps: [] },
+          bonus: { met: 0, total: 0, gaps: [] },
+          anti: { flagged: 0, total: 0, flags: [] },
+        },
+        background: {
+          school: { verdict: "unknown", evidence: "" },
+          gpa: { verdict: "unknown", evidence: "" },
+          degree: { verdict: "unknown", evidence: "" },
+          company: { verdict: "unknown", evidence: "" },
+        },
+        evaluatedAt: now,
+        model: "gpt-5.4-nano",
+        version: SUBMISSION_EVAL_VERSION,
+      },
+    })
+    assert.equal(borderline.proposedOutcome.kind, "hold")
+  })
+
+  it("is additive: re-mirroring preserves an existing human gold label and createdAt", () => {
+    const label: HumanEvalLabel = {
+      decision: "disagree",
+      errorCategories: ["over_lenient"],
+      evidenceRefs: [],
+      rationale: "Recruiter over-claimed; no real Kubernetes evidence.",
+      labeledBy: "admin1@wekruit.com",
+      labeledAt: "2026-06-15T00:00:00.000Z",
+    }
+    const existing = {
+      humanReview: { status: "overridden", label },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    } as unknown as EvaluationAttempt
+
+    const next = recruiterSubmissionToEvaluationAttempt({
+      submissionId: "sub-1",
+      jobId: "job-1",
+      nowIso: now,
+      existing,
+      aiEvaluation: {
+        verdict: "advance",
+        confidence: 0.9,
+        summary: "Re-evaluated stronger.",
+        reasons: ["x"],
+        checklist: {
+          hard: { met: 2, total: 2, gaps: [] },
+          fit: { met: 1, total: 1, gaps: [] },
+          bonus: { met: 0, total: 0, gaps: [] },
+          anti: { flagged: 0, total: 0, flags: [] },
+        },
+        background: {
+          school: { verdict: "strong", evidence: "MIT" },
+          gpa: { verdict: "unknown", evidence: "" },
+          degree: { verdict: "strong", evidence: "BS CS" },
+          company: { verdict: "strong", evidence: "Stripe" },
+        },
+        evaluatedAt: now,
+        model: "gpt-5.4-nano",
+        version: SUBMISSION_EVAL_VERSION,
+      },
+    })
+
+    // AI fields refresh...
+    assert.equal(next.proposedOutcome.kind, "pass")
+    assert.equal(next.updatedAt, now)
+    // ...but the human's gold label + original createdAt are untouched.
+    assert.equal(next.humanReview.status, "overridden")
+    assert.deepEqual(next.humanReview.label, label)
+    assert.equal(next.createdAt, "2026-01-01T00:00:00.000Z")
   })
 })
 

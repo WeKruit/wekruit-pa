@@ -445,6 +445,9 @@ export {
   paDraftPrescreenReviewMessages,
   paReviewEvaluationAttempt,
 } from "./evaluation-attempts.js"
+// P4 — AI-vs-human agreement metric + labeled-dataset JSONL export. Admin-only,
+// read-only: never mutates the AI verdict, never messages a candidate.
+export { paExportEvaluationLabels } from "./export-evaluation-labels.js"
 export { paCandidateProfileCorrection } from "./flywheel-candidate-correction.js"
 // v2.0 S9 — production hardening and launch readiness controls.
 export {

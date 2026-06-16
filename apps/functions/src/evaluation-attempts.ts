@@ -3,11 +3,16 @@ import { defineSecret } from "firebase-functions/params"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import {
+  EvaluationErrorCategorySchema,
+  EvaluationEvidenceRefSchema,
+  EvaluationLabelDecisionSchema,
   EvaluationOutcomeSchema,
+  EvaluationQualityRatingSchema,
   HumanReviewStatusSchema,
   PA_COLLECTIONS,
   type EvaluationAttempt,
   type EvaluationOutcome,
+  type HumanEvalLabel,
 } from "@pa/core-types"
 import { getEvaluationAttempt, saveHumanReview } from "@pa/pa-persistence"
 import { callWithFallback } from "@pa/pa-resume-parser"
@@ -28,6 +33,21 @@ import {
 
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 
+/**
+ * Data-labeling annotation supplied by the dashboard. Server fills `labeledBy`,
+ * `labeledAt`, `rubricVersion`; the client sends only the human judgment.
+ */
+const ReviewLabelInputSchema = z.object({
+  decision: EvaluationLabelDecisionSchema,
+  correctedOutcome: EvaluationOutcomeSchema.optional(),
+  errorCategories: z.array(EvaluationErrorCategorySchema).max(8).optional(),
+  qualityRating: EvaluationQualityRatingSchema.optional(),
+  evidenceRefs: z.array(EvaluationEvidenceRefSchema).max(20).optional(),
+  rationale: z.string().max(4_000).optional(),
+  /** Light gold-sampling flag — mark this attempt as a curated gold example. */
+  isGoldSample: z.boolean().optional(),
+})
+
 const ReviewEvaluationAttemptInputSchema = z.object({
   attemptId: z.string().min(1),
   status: HumanReviewStatusSchema,
@@ -37,6 +57,16 @@ const ReviewEvaluationAttemptInputSchema = z.object({
   recommendedActions: z.array(z.string().max(240)).max(5).optional(),
   note: z.string().max(2_000).optional(),
   correctionReason: z.string().max(2_000).optional(),
+  /** Rich eval-quality label (agree/disagree, error categories, evidence, etc.). */
+  label: ReviewLabelInputSchema.optional(),
+  /**
+   * When false, this is a LABEL-ONLY write: persist the human label + correction
+   * event but never commit the prescreen terminal and never message the candidate.
+   * Defaults to true (the existing operational approve-and-send behavior). Even
+   * when true, a prescreen session that is no longer pending review is gated to
+   * label-only — a closed/decided record can never re-text the candidate.
+   */
+  commitAndSend: z.boolean().optional(),
 })
 
 const PrescreenTerminalOutcomeInputSchema = z
@@ -63,6 +93,10 @@ export interface ReviewEvaluationAttemptResult {
   candidateOutboundId?: string
   candidateDecision?: PrescreenCandidateDecision
   externalEvaluationUpdated?: boolean
+  /** True when the write only recorded the human label (no commit, no candidate message). */
+  labelOnly?: boolean
+  /** True when a commit was requested but skipped because the prescreen session is no longer pending review. */
+  commitSkippedNotPending?: boolean
 }
 
 export interface DraftPrescreenReviewMessagesInput {
@@ -217,8 +251,61 @@ export async function runReviewEvaluationAttempt(
   const nowIso = deps.now?.() ?? new Date().toISOString()
   const attempt = await getEvaluationAttempt(deps.db, input.attemptId)
   if (!attempt) throw new HttpsError("not-found", `Evaluation attempt ${input.attemptId} not found.`)
-  const finalOutcome = resolveFinalOutcome(input, attempt)
-  const prescreenCommit = shouldCommitPrescreenOutcome(input.status, attempt)
+
+  // Build the rich eval-quality label (additive — never touches the AI verdict).
+  // A divergent label MUST carry a free-text reason: the "why" is the dataset. This
+  // validation runs BEFORE outcome resolution so the labeler's error surfaces first.
+  let label: HumanEvalLabel | undefined
+  if (input.label) {
+    if (input.label.decision !== "agree" && !cleanNonEmptyString(input.label.rationale)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "A rationale is required when the label disagrees with the AI evaluation.",
+      )
+    }
+    label = {
+      decision: input.label.decision,
+      ...(input.label.correctedOutcome ? { correctedOutcome: input.label.correctedOutcome } : {}),
+      errorCategories: input.label.errorCategories ?? [],
+      ...(input.label.qualityRating ? { qualityRating: input.label.qualityRating } : {}),
+      evidenceRefs: input.label.evidenceRefs ?? [],
+      ...(cleanNonEmptyString(input.label.rationale) ? { rationale: input.label.rationale } : {}),
+      ...(input.label.isGoldSample === true ? { isGoldSample: true } : {}),
+      rubricVersion: attempt.rubricVersion,
+      labeledBy: uid,
+      labeledAt: nowIso,
+    }
+  }
+
+  // Send-safety gate. A LABEL-ONLY write (commitAndSend === false) never commits or
+  // messages anyone. And regardless of the request, a prescreen session that is no
+  // longer pending review is forced to label-only — a closed/decided record can
+  // NEVER re-text the candidate (Adam outbound-safety rule: never restart a DONE
+  // screen, never re-send to a settled handle).
+  const labelOnlyRequested = input.commitAndSend === false
+  let prescreenPending = true
+  if (attempt.source === "prescreen" && attempt.prescreenSessionId) {
+    const sessionSnap = await deps.db
+      .collection("pa-prescreen-sessions")
+      .doc(attempt.prescreenSessionId)
+      .get()
+    prescreenPending = sessionSnap.data()?.terminalActionPendingReview === true
+  }
+  const wantsCommit =
+    !labelOnlyRequested && (input.status === "approved" || input.status === "overridden")
+  const commitSkippedNotPending =
+    wantsCommit && attempt.source === "prescreen" && attempt.purpose === "employment_prescreen" && !prescreenPending
+  const doCommit = wantsCommit && !commitSkippedNotPending
+
+  // Outcome resolution is strict (override must carry a finalOutcome) only when we
+  // will actually commit. A label-only / non-committing review falls back to the
+  // human's corrected label verdict, then the AI's proposal — never throws.
+  const finalOutcome = resolveFinalOutcome(input, attempt, {
+    strict: doCommit,
+    labelCorrected: label?.correctedOutcome,
+  })
+
+  const prescreenCommit = doCommit && shouldCommitPrescreenOutcome(input.status, attempt)
   const candidateMessageBody = prescreenCommit
     ? requirePrescreenCandidateMessage(input.candidateMessageBody, finalOutcome)
     : undefined
@@ -232,6 +319,7 @@ export async function runReviewEvaluationAttempt(
       status: input.status,
       finalOutcome,
       note: input.note,
+      ...(label ? { label } : {}),
     },
   })
 
@@ -240,7 +328,7 @@ export async function runReviewEvaluationAttempt(
   let candidateDecision: PrescreenCandidateDecision | undefined
   let externalEvaluationUpdated = false
 
-  if (input.status === "approved" || input.status === "overridden") {
+  if (doCommit && (input.status === "approved" || input.status === "overridden")) {
     if (attempt.source === "prescreen" && attempt.purpose === "employment_prescreen") {
       const committed = await commitPrescreenOutcome({
         db: deps.db,
@@ -283,6 +371,8 @@ export async function runReviewEvaluationAttempt(
     ...(candidateOutboundId ? { candidateOutboundId } : {}),
     ...(candidateDecision ? { candidateDecision } : {}),
     externalEvaluationUpdated,
+    ...(labelOnlyRequested ? { labelOnly: true } : {}),
+    ...(commitSkippedNotPending ? { commitSkippedNotPending: true } : {}),
   }
 }
 
@@ -842,14 +932,19 @@ function requirePrescreenCandidateMessage(
 function resolveFinalOutcome(
   input: ReviewEvaluationAttemptInput,
   attempt: EvaluationAttempt,
+  opts: { strict: boolean; labelCorrected?: EvaluationOutcome } = { strict: true },
 ): EvaluationOutcome | undefined {
   const inputOutcome = normalizeReviewFinalOutcome(input.finalOutcome, attempt)
   if (input.status === "approved") return inputOutcome ?? attempt.proposedOutcome
   if (input.status === "overridden") {
-    if (!inputOutcome) {
+    if (inputOutcome) return inputOutcome
+    // A committing override must spell out the operational verdict.
+    if (opts.strict) {
       throw new HttpsError("invalid-argument", "finalOutcome is required when overriding an evaluation.")
     }
-    return inputOutcome
+    // Label-only / non-committing override: use the labeler's corrected verdict if
+    // they supplied one, else keep the AI's proposal (nothing is being sent).
+    return opts.labelCorrected ?? attempt.proposedOutcome
   }
   return inputOutcome
 }

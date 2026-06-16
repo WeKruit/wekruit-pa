@@ -34,6 +34,18 @@ import {
   searchEmployeeIdByLinkedinUrl,
   type CoresignalEmployeeCollectV2,
 } from "@pa/external-supply"
+import {
+  SCREENING_EVALUATION_ALGORITHM_VERSION,
+  confidenceToScore,
+  createEvaluationAttemptId,
+  deriveReviewPriority,
+  scoreToAnchor,
+  type EvaluationAttempt,
+  type EvaluationDimensionScore,
+  type EvaluationEvidenceRef,
+  type EvaluationOutcome,
+} from "@pa/core-types"
+import { getEvaluationAttempt, saveEvaluationAttempt } from "@pa/pa-persistence"
 import { getOrFetchCoresignalByLinkedin } from "./lib/coresignal-cache.js"
 import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
 import { ensureRecruiterSubmissionCandidateTracked } from "./recruiter-candidate-tracking.js"
@@ -388,6 +400,8 @@ export type RecruiterSubmissionEvalResult = {
   status: "skipped_existing" | "written" | "error_written"
   submissionId: string
   aiEvaluation?: SubmissionAiEvaluation
+  /** The canonical pa-evaluation-attempts id mirrored on a successful write. */
+  evaluationAttemptId?: string
 }
 
 // The cache key + the unified Coresignal store live in ./lib/coresignal-cache.
@@ -630,6 +644,175 @@ export function errorEvaluation(message: string, evaluatedAt: string): Submissio
   }
 }
 
+// ---------------------------------------------------------------------------
+// Canonical eval-store mirror (P3, 2026-06-15).
+//
+// Mirror every recruiter submission's `aiEvaluation` into a
+// `pa-evaluation-attempts/{attemptId}` doc so it is labelable through the SAME
+// data-labeling surface as prescreen + external-supply (shared <EvalLabelForm>).
+// Recruiter submissions have NO pa-users candidateId, so the attempt id is
+// derived from {source:"recruiter_submission", jobId, salt:submissionId}; the
+// submissionId is preserved in `externalEvaluationId` for traceability.
+//
+// The mirror is ADDITIVE and idempotent: it NEVER clobbers an existing
+// `humanReview.label` (a human's gold label). If an attempt already carries a
+// label, only the AI fields are refreshed and the human review is preserved.
+// ---------------------------------------------------------------------------
+
+export const RECRUITER_SUBMISSION_EVAL_RUBRIC_VERSION = SUBMISSION_EVAL_VERSION
+
+/** verdict → canonical proposed-outcome kind. */
+function recruiterVerdictToOutcome(
+  verdict: SubmissionAiEvaluation["verdict"],
+): EvaluationOutcome {
+  const kind = verdict === "advance" ? "pass" : verdict === "reject" ? "reject" : "hold"
+  return { kind }
+}
+
+function tallyDimension(
+  id: string,
+  label: string,
+  weight: number,
+  tally: SubmissionEvalTally,
+): EvaluationDimensionScore {
+  // Met-ratio of the checklist group → a 0..1 confidence → a 0..4 score.
+  const ratio = tally.total > 0 ? Math.max(0, Math.min(1, tally.met / tally.total)) : 0
+  const score = confidenceToScore(ratio)
+  return {
+    dimensionId: id,
+    label,
+    criterion: label,
+    weight,
+    score,
+    anchor: scoreToAnchor(score),
+    confidence: ratio,
+    evidenceRefs: [],
+    missingEvidence: tally.gaps.slice(0, 12),
+    rationale: `${label}: ${tally.met}/${tally.total} met`,
+    riskFlags: [],
+  }
+}
+
+/**
+ * Map a recruiter `SubmissionAiEvaluation` → a canonical `EvaluationAttempt`.
+ * Pure (no IO). `existing` (when supplied) preserves a prior `humanReview` —
+ * including a labeler's gold `humanReview.label` — so the mirror is additive.
+ */
+export function recruiterSubmissionToEvaluationAttempt(input: {
+  submissionId: string
+  jobId: string
+  candidateId?: string
+  companyId?: string
+  aiEvaluation: SubmissionAiEvaluation
+  nowIso: string
+  existing?: EvaluationAttempt | null
+}): EvaluationAttempt {
+  const ai = input.aiEvaluation
+  const attemptId = createEvaluationAttemptId({
+    source: "recruiter_submission",
+    jobId: input.jobId,
+    salt: input.submissionId,
+  })
+
+  const dimensions: EvaluationDimensionScore[] = [
+    tallyDimension("hard", "Must-have requirements", 3, ai.checklist.hard),
+    tallyDimension("fit", "Strong-fit signals", 2, ai.checklist.fit),
+    tallyDimension("bonus", "Bonus signals", 1, ai.checklist.bonus),
+  ]
+
+  const proposedOutcome = recruiterVerdictToOutcome(ai.verdict)
+  const confidence = Math.max(0, Math.min(1, Number.isFinite(ai.confidence) ? ai.confidence : 0))
+  // Anti-signal flags surface as risk flags on the attempt.
+  const riskFlags = (ai.checklist.anti.flags ?? []).slice(0, 12)
+  const missingEvidence = [
+    ...ai.checklist.hard.gaps,
+    ...ai.checklist.fit.gaps,
+  ].slice(0, 20)
+
+  const evidence: EvaluationEvidenceRef[] = ai.reasons.slice(0, 12).map((reason, index) => ({
+    refId: `recruiter:${input.submissionId}:reason:${index + 1}`,
+    source: "evaluator",
+    summary: reason.slice(0, 2_000),
+  }))
+
+  const explanation = (ai.summary?.trim() || `${ai.verdict}: recruiter submission evaluation`).slice(0, 4_000)
+
+  return {
+    schemaVersion: 1,
+    attemptId,
+    source: "recruiter_submission",
+    purpose: "candidate_job_fit",
+    ...(input.candidateId ? { candidateId: input.candidateId } : {}),
+    jobId: input.jobId,
+    ...(input.companyId ? { companyId: input.companyId } : {}),
+    externalEvaluationId: input.submissionId,
+    rubricVersion: RECRUITER_SUBMISSION_EVAL_RUBRIC_VERSION,
+    algorithmVersion: SCREENING_EVALUATION_ALGORITHM_VERSION,
+    evaluator: { kind: "llm_judge", model: ai.model, promptVersion: ai.version },
+    dimensions,
+    gates: [],
+    weightedFitScore: confidence,
+    evidenceConfidence: confidence,
+    missingEvidence,
+    riskFlags,
+    proposedOutcome,
+    reviewPriority: deriveReviewPriority({
+      proposedOutcome,
+      gates: [],
+      evidenceConfidence: confidence,
+      riskFlags,
+    }),
+    explanation,
+    evidence,
+    // Preserve any prior human review (including a gold label). Only refresh the
+    // AI fields on re-mirror; never resurrect a "pending" over a real label.
+    humanReview: input.existing?.humanReview ?? { status: "pending" },
+    createdAt: input.existing?.createdAt ?? input.nowIso,
+    updatedAt: input.nowIso,
+  }
+}
+
+/**
+ * Upsert the canonical eval-store mirror for a recruiter submission. Idempotent
+ * + additive: reads any existing attempt and preserves its `humanReview`.
+ * Best-effort — a mirror failure must NEVER fail the eval write.
+ */
+async function mirrorRecruiterEvalAttempt(
+  deps: RecruiterSubmissionEvalDeps,
+  input: {
+    submissionId: string
+    jobId: string
+    candidateId?: string
+    companyId?: string
+    aiEvaluation: SubmissionAiEvaluation
+    nowIso: string
+  },
+): Promise<string | null> {
+  try {
+    const attemptId = createEvaluationAttemptId({
+      source: "recruiter_submission",
+      jobId: input.jobId,
+      salt: input.submissionId,
+    })
+    const existing = await getEvaluationAttempt(deps.db, attemptId)
+    const attempt = recruiterSubmissionToEvaluationAttempt({ ...input, existing })
+    await saveEvaluationAttempt(deps.db, attempt)
+    deps.log?.("eval_attempt_mirrored", {
+      submissionId: input.submissionId,
+      attemptId,
+      verdict: input.aiEvaluation.verdict,
+      preservedLabel: Boolean(existing?.humanReview?.label),
+    })
+    return attemptId
+  } catch (err) {
+    deps.log?.("eval_attempt_mirror_failed", {
+      submissionId: input.submissionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
+
 export async function runRecruiterSubmissionEval(
   raw: { submissionId: string; submission: Record<string, unknown> },
   deps: RecruiterSubmissionEvalDeps,
@@ -686,14 +869,38 @@ export async function runRecruiterSubmissionEval(
       model: usedModel,
       version: SUBMISSION_EVAL_VERSION,
     }
-    await ref.set({ aiEvaluation, ...trackingPatch }, { merge: true })
+
+    // Mirror into the canonical eval store so the submission is labelable
+    // through the shared dual-pane label form. Best-effort — never blocks or
+    // fails the operator-facing eval write. NEVER touches submission `status`.
+    const candidateId = tracking.status === "tracked" && tracking.candidateId ? tracking.candidateId : undefined
+    const companyId = cleanString(asRecord(submission)?.companyId) ?? cleanString(job.companyId)
+    const evaluationAttemptId = await mirrorRecruiterEvalAttempt(deps, {
+      submissionId: raw.submissionId,
+      jobId,
+      candidateId,
+      companyId,
+      aiEvaluation,
+      nowIso: evaluatedAt,
+    })
+
+    await ref.set(
+      {
+        aiEvaluation,
+        ...trackingPatch,
+        // Stamp the canonical attemptId for a clean read by the dashboard.
+        ...(evaluationAttemptId ? { evaluationAttemptId } : {}),
+      },
+      { merge: true },
+    )
     deps.log?.("evaluation_written", {
       submissionId: raw.submissionId,
       verdict: aiEvaluation.verdict,
       model: usedModel,
       hasResearch: Boolean(research),
+      evaluationAttemptId,
     })
-    return { status: "written", submissionId: raw.submissionId, aiEvaluation }
+    return { status: "written", submissionId: raw.submissionId, aiEvaluation, evaluationAttemptId: evaluationAttemptId ?? undefined }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     deps.log?.("evaluation_failed_writing_error_shape", {

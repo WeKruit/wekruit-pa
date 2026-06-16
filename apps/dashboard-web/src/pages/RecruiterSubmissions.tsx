@@ -7,7 +7,9 @@
  */
 import { Fragment, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { arrayUnion, collection, doc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
+import { createEvaluationAttemptId } from "@pa/core-types"
 import { AdminJobLink } from "../components/AdminEntityLink.js"
+import { EvalLabelForm } from "../components/prescreen/EvalLabelForm.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
@@ -47,6 +49,10 @@ interface SubmissionDoc {
   // Recruiter self-flag of the background pillars at submit time (advisory).
   candidateBackground?: { school?: string; gpa?: string; degree?: string; company?: string }
   aiEvaluation?: {
+    verdict?: "advance" | "borderline" | "reject"
+    confidence?: number
+    summary?: string
+    reasons?: string[]
     background?: {
       school?: { verdict?: string; evidence?: string }
       gpa?: { verdict?: string; evidence?: string }
@@ -54,6 +60,9 @@ interface SubmissionDoc {
       company?: { verdict?: string; evidence?: string }
     }
   }
+  // Canonical eval-store attempt id, stamped by paRecruiterSubmissionEval (P3).
+  // Lets the dashboard read the labelable attempt without recomputing the hash.
+  evaluationAttemptId?: string
   candidateConfirmation?: {
     status?: string
     candidateEmail?: string
@@ -116,6 +125,26 @@ interface SubmissionDoc {
 // ─────────────────────────────────────────────────────────────────────────────
 type SubmissionChecklistValue = "strong" | "yes" | "partial" | "no"
 type ChecklistTierKind = "hard" | "fit" | "anti" | "bonus"
+
+// Map the recruiter AI verdict → the canonical proposed-outcome kind that
+// pre-seeds <EvalLabelForm> (and that the mirror writes to the attempt). MUST
+// match recruiterVerdictToOutcome in apps/functions recruiter-submission-eval.ts.
+function recruiterVerdictToOutcomeKind(
+  verdict: "advance" | "borderline" | "reject" | undefined,
+): "pass" | "hold" | "reject" {
+  if (verdict === "advance") return "pass"
+  if (verdict === "reject") return "reject"
+  return "hold"
+}
+
+// Resolve the canonical attempt id: prefer the stamp written by the trigger;
+// fall back to recomputing the same deterministic hash for legacy rows that
+// predate the stamp (backfill will fill them in too).
+function resolveSubmissionAttemptId(row: SubmissionDoc): string | null {
+  if (row.evaluationAttemptId) return row.evaluationAttemptId
+  if (!row.jobId) return null
+  return createEvaluationAttemptId({ source: "recruiter_submission", jobId: row.jobId, salt: row.id })
+}
 
 const CHECKLIST_TIER_DISPLAY_ORDER: ChecklistTierKind[] = ["hard", "fit", "anti", "bonus"]
 
@@ -4322,6 +4351,62 @@ function RowDetailPanel({
           )}
         </div>
       </div>
+      {(() => {
+        const attemptId = resolveSubmissionAttemptId(row)
+        if (!attemptId) return null
+        const ai = row.aiEvaluation
+        const outcomeKind = recruiterVerdictToOutcomeKind(ai?.verdict)
+        const verdictLabel = ai?.verdict ?? "not evaluated"
+        const verdictTone: "strong" | "weak" | "unknown" =
+          ai?.verdict === "advance" ? "strong" : ai?.verdict === "reject" ? "weak" : "unknown"
+        const verdictBg = verdictTone === "weak" ? "#fcebeb" : verdictTone === "strong" ? "#e1f5ee" : "#f1efe8"
+        const verdictFg = verdictTone === "weak" ? "#791f1f" : verdictTone === "strong" ? "#0f6e56" : "#777"
+        return (
+          <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #eee" }}>
+            <h4 style={{ margin: "0 0 8px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+              Eval label (data labeling)
+            </h4>
+            <p style={{ margin: "0 0 10px", fontSize: 12, color: "#888", lineHeight: 1.45 }}>
+              Grade the AI evaluation itself. This is label-only — it records your gold label next to the AI verdict
+              and never messages the candidate or changes the recruiter-visible status.
+            </p>
+            <div className="sub-detail__cols">
+              {/* LEFT — read-only AI evaluation. */}
+              <div style={{ border: "1px solid #eee", borderRadius: 8, background: "#faf8f4", padding: 12, alignSelf: "start" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, textTransform: "uppercase", color: "#999" }}>AI verdict</span>
+                  <span style={{ fontSize: 12, padding: "3px 9px", borderRadius: 999, background: verdictBg, color: verdictFg }}>
+                    {verdictLabel}
+                  </span>
+                  {typeof ai?.confidence === "number" && (
+                    <span style={{ fontSize: 12, color: "#777" }}>confidence {(ai.confidence * 100).toFixed(0)}%</span>
+                  )}
+                </div>
+                {ai?.summary && (
+                  <p style={{ margin: "0 0 8px", fontSize: 13, color: "#444", lineHeight: 1.45 }}>{ai.summary}</p>
+                )}
+                {ai?.reasons?.length ? (
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "#555", lineHeight: 1.5 }}>
+                    {ai.reasons.slice(0, 8).map((reason, index) => (
+                      <li key={index}>{reason}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  !ai?.summary && (
+                    <p style={{ margin: 0, fontSize: 12.5, color: "#999" }}>
+                      No AI evaluation text on this row yet. You can still label the attempt.
+                    </p>
+                  )
+                )}
+              </div>
+              {/* RIGHT — the shared human label form (label-only, never messages). */}
+              <div style={{ alignSelf: "start" }}>
+                <EvalLabelForm attemptId={attemptId} aiProposedOutcomeKind={outcomeKind} />
+              </div>
+            </div>
+          </div>
+        )
+      })()}
       <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #eee" }}>
         <h4 style={{ margin: "0 0 8px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
           Recruiter-visible status and feedback

@@ -575,16 +575,28 @@ export default function PrescreenSessionsList() {
         ) : null}
       </Panel>
 
-      {drawerSessionId ? (
-        <PrescreenReviewDrawer
-          sessionId={drawerSessionId}
-          onClose={() => setDrawerSessionId(null)}
-          onReviewed={() => {
-            setDrawerSessionId(null)
-            refresh()
-          }}
-        />
-      ) : null}
+      {drawerSessionId ? (() => {
+        // Queue = the current filtered+sorted visible rows, in display order, so
+        // ← / → and A=agree+next walk the exact list the operator is looking at.
+        const queue = visibleRows.map((r) => ({ sessionId: r.id }))
+        const queueIndex = queue.findIndex((q) => q.sessionId === drawerSessionId)
+        return (
+          <PrescreenReviewDrawer
+            sessionId={drawerSessionId}
+            queue={queue}
+            index={queueIndex}
+            onNavigate={(nextIndex) => {
+              const next = queue[nextIndex]
+              if (next) setDrawerSessionId(next.sessionId)
+            }}
+            onClose={() => setDrawerSessionId(null)}
+            onReviewed={() => {
+              setDrawerSessionId(null)
+              refresh()
+            }}
+          />
+        )
+      })() : null}
       {bulkOpen ? (
         <BulkRejectDrawer
           rows={selectedPendingRows.map(toDrawerRow)}

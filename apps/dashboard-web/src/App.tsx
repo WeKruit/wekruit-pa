@@ -43,6 +43,7 @@ import LayoffEmployers from "./pages/LayoffEmployers.js"
 import CoresignalPlayground from "./pages/CoresignalPlayground.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
 import FlywheelEval from "./pages/FlywheelEval.js"
+import EvalLabels from "./pages/EvalLabels.js"
 import LaunchReadiness from "./pages/LaunchReadiness.js"
 // v1.7 Phase 70 (MATCHDEBUG-01..04) — admin live debugger for the V16 cascade
 // with score-weight sandbox sliders. Backed by paAdminMatchDebug callable.
@@ -211,6 +212,7 @@ export default function App() {
           <Route path="/eval/voice-review" element={<VoiceReview />} />
           <Route path="/eval/n-round-sim" element={<NRoundSim />} />
           <Route path="/admin/flywheel-eval" element={<FlywheelEval />} />
+          <Route path="/admin/eval-labels" element={<EvalLabels />} />
           {/* Phase 49 (v1.5 Stream-H D9) — operator reverse-match dashboard. Admin-only;
               CF gates on paReverseMatchEnabled flag (default OFF). */}
           <Route path="/match/candidates" element={<MatchCandidates />} />

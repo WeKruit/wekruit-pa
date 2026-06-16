@@ -142,6 +142,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/eval/voice-review", label: "Voice review" },
       { to: "/eval/n-round-sim", label: "N-round sim" },
       { to: "/admin/flywheel-eval", label: "Flywheel eval" },
+      { to: "/admin/eval-labels", label: "Eval labels" },
       { to: "/admin/qa-evaluator", label: "QA evaluator" },
       { to: "/admin/prescreen-feedback", label: "Prescreen feedback" },
       { to: "/admin/external-supply/review", label: "Review queue" },

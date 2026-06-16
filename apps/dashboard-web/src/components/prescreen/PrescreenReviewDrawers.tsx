@@ -6,7 +6,7 @@
  * - `terminalActionPendingReview=true` means no final employment-impacting
  *   action has been committed; only the neutral review-pending ack is allowed.
  */
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, ReactNode } from "react"
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import {
@@ -35,6 +35,11 @@ import {
   reviewEvaluationAttempt,
   type DraftPrescreenReviewMessage,
 } from "../../lib/external-supply-client.js"
+import {
+  EvalLabelForm,
+  type EvalLabelEvidenceOption,
+  type EvalLabelFormHandle,
+} from "./EvalLabelForm.js"
 
 export type ReviewTerminal = "PASS" | "FAIL" | "HARD_STOP"
 
@@ -438,14 +443,26 @@ export function firstEvidenceSummary(detail: ReviewDetail): string | null {
   return null
 }
 
+/** An ordered queue item the drawer can navigate. */
+export type PrescreenQueueItem = { sessionId: string }
+
 export function PrescreenReviewDrawer({
   sessionId,
   onClose,
   onReviewed,
+  queue,
+  index,
+  onNavigate,
 }: {
   sessionId: string
   onClose: () => void
   onReviewed: () => void
+  /** Optional ordered row set for queue navigation (prev/next + ←/→). */
+  queue?: PrescreenQueueItem[]
+  /** Index of the current session within `queue`. */
+  index?: number
+  /** Open the drawer for the queue row at `nextIndex`. */
+  onNavigate?: (nextIndex: number) => void
 }) {
   const [detail, setDetail] = useState<ReviewDetail | null>(null)
   const [sources, setSources] = useState<CandidateSources | null>(null)
@@ -459,9 +476,27 @@ export function PrescreenReviewDrawer({
   const [internalReviewNotes, setInternalReviewNotes] = useState("")
   const [busy, setBusy] = useState(false)
   const [draftBusy, setDraftBusy] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
+  const [flagged, setFlagged] = useState(false)
+  const labelFormRef = useRef<EvalLabelFormHandle | null>(null)
+
+  // Queue navigation — derive a stable position + neighbors.
+  const queueLength = queue?.length ?? 0
+  const queueIndex = typeof index === "number" ? index : -1
+  const hasQueue = queueLength > 0 && queueIndex >= 0 && Boolean(onNavigate)
+  const canPrev = hasQueue && queueIndex > 0
+  const canNext = hasQueue && queueIndex < queueLength - 1
+
+  const goPrev = useCallback(() => {
+    if (canPrev && onNavigate) onNavigate(queueIndex - 1)
+  }, [canPrev, onNavigate, queueIndex])
+  const goNext = useCallback(() => {
+    if (canNext && onNavigate) onNavigate(queueIndex + 1)
+  }, [canNext, onNavigate, queueIndex])
 
   useEffect(() => {
     let cancelled = false
+    setFlagged(false)
     void (async () => {
       try {
         setLoading(true)
@@ -568,18 +603,119 @@ export function PrescreenReviewDrawer({
     }
   }
 
+  // The AI's proposed prescreen terminal — drives the label form's pre-seed.
+  const aiProposedTerminal =
+    cleanReviewTerminal(detail?.attempt?.proposedOutcome?.prescreenTerminal) ??
+    cleanReviewTerminal(detail?.session.terminal)
+  const attemptId = detail?.attempt?.attemptId
+  // Selectable evidence for the label form = the candidate's transcript turns.
+  const evidenceOptions: EvalLabelEvidenceOption[] = (detail?.turns ?? [])
+    .filter((t) => typeof t.reply === "string" && t.reply.trim())
+    .map((t) => ({
+      refId: t.id,
+      source: "transcript_turn" as const,
+      summary: `${t.qId}: ${t.reply.trim().slice(0, 120)}`,
+      quote: t.reply.trim().slice(0, 2_000),
+    }))
+
+  // Keyboard-first labeling. Scoped to the drawer; ignored while the operator is
+  // typing in an input/textarea/select (so rationale typing never triggers hotkeys).
+  // Escape is owned by SideDrawer (close). ← / → navigate the queue.
+  useEffect(() => {
+    function isTyping(target: EventTarget | null): boolean {
+      const el = target as HTMLElement | null
+      if (!el) return false
+      const tag = el.tagName
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        e.preventDefault()
+        setShowHelp((v) => !v)
+        return
+      }
+      if (showHelp && e.key === "Escape") {
+        // Let SideDrawer's Escape close the help-less drawer; close help first.
+        setShowHelp(false)
+        return
+      }
+      // Navigation works even while typing (arrows don't conflict with text entry
+      // intent here) — but only when a queue is wired.
+      if (e.key === "ArrowLeft" && !isTyping(e.target)) {
+        if (canPrev) {
+          e.preventDefault()
+          goPrev()
+        }
+        return
+      }
+      if (e.key === "ArrowRight" && !isTyping(e.target)) {
+        if (canNext) {
+          e.preventDefault()
+          goNext()
+        }
+        return
+      }
+      if (isTyping(e.target)) return
+      const key = e.key.toLowerCase()
+      if (key === "a") {
+        e.preventDefault()
+        void labelFormRef.current?.agreeAndSave().then((res) => {
+          if (res) goNext()
+        })
+      } else if (key === "d") {
+        e.preventDefault()
+        labelFormRef.current?.setDecision("disagree")
+        labelFormRef.current?.focusRationale()
+      } else if (key === "s") {
+        e.preventDefault()
+        void labelFormRef.current?.save()
+      } else if (key === "f") {
+        e.preventDefault()
+        setFlagged((v) => !v)
+      } else if (key >= "1" && key <= "5") {
+        e.preventDefault()
+        labelFormRef.current?.setQuality(Number(key) as 1 | 2 | 3 | 4 | 5)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [canNext, canPrev, goNext, goPrev, showHelp])
+
   return (
-    <SideDrawer title="Prescreen quick review" subtitle={sessionId} onClose={onClose} wide>
+    <SideDrawer title="Prescreen review + label" subtitle={sessionId} onClose={onClose} wide>
+      <style>{`@media (max-width: 900px){.pa-eval-dualpane{grid-template-columns:minmax(0,1fr) !important;}}`}</style>
       {loading ? <LoadingState label="Loading review..." /> : null}
       {err ? <div className="notice notice-bad" style={{ fontSize: "0.85em" }}>{err}</div> : null}
       {detail ? (
         <div style={{ display: "grid", gap: 14 }}>
-          <ReviewSummary detail={detail} />
-          <CandidateSourcesCard sources={sources} />
-          <ChecklistEvalPanel evaluation={detail.session.review?.candidateChecklistEval} />
-          <EngagementPanel signal={detail.session.review?.engagementSignal} turns={detail.turns} />
-          <TranscriptPreview turns={detail.turns} />
-          <OtherSessionsPanel sessions={otherSessions} />
+          <QueueNavBar
+            hasQueue={hasQueue}
+            queueIndex={queueIndex}
+            queueLength={queueLength}
+            canPrev={canPrev}
+            canNext={canNext}
+            onPrev={goPrev}
+            onNext={goNext}
+            flagged={flagged}
+            onToggleFlag={() => setFlagged((v) => !v)}
+            onToggleHelp={() => setShowHelp((v) => !v)}
+          />
+          {showHelp ? <HotkeyHelp onClose={() => setShowHelp(false)} /> : null}
+          <div className="pa-eval-dualpane" style={dualPaneStyle}>
+            {/* LEFT — AI evaluation, read-only */}
+            <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
+              <div style={paneHeaderStyle}>AI evaluation · read-only</div>
+              <ReviewSummary detail={detail} />
+              <CandidateSourcesCard sources={sources} />
+              <ChecklistEvalPanel evaluation={detail.session.review?.candidateChecklistEval} />
+              <EngagementPanel signal={detail.session.review?.engagementSignal} turns={detail.turns} />
+              <TranscriptPreview turns={detail.turns} />
+              <OtherSessionsPanel sessions={otherSessions} />
+            </div>
+            {/* RIGHT — operational approve (pending only) + the data-labeling form (always) */}
+            <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
+              <div style={paneHeaderStyle}>Human review</div>
           {detail.session.terminalActionPendingReview ? (
             <div style={{ display: "grid", gap: 8 }}>
               <label style={labelStyle}>
@@ -688,10 +824,163 @@ export function PrescreenReviewDrawer({
               ) : null}
             </div>
           )}
+              {/* Data-labeling form — works on ANY record (pending or closed). It
+                  NEVER messages the candidate (commitAndSend:false). */}
+              {attemptId ? (
+                <EvalLabelForm
+                  ref={labelFormRef}
+                  attemptId={attemptId}
+                  aiProposedTerminal={aiProposedTerminal}
+                  aiProposedOutcomeKind={detail.attempt?.proposedOutcome?.kind}
+                  evidenceOptions={evidenceOptions}
+                  onSaved={onReviewed}
+                />
+              ) : (
+                <div style={{ fontSize: "0.85em", color: "#94a3b8" }}>
+                  No evaluation attempt linked to this session — nothing to label.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       ) : null}
     </SideDrawer>
   )
+}
+
+const dualPaneStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 0.9fr)",
+  gap: 18,
+  alignItems: "start",
+}
+
+const paneHeaderStyle: CSSProperties = {
+  fontSize: "0.72em",
+  fontWeight: 700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "#94a3b8",
+}
+
+/** Queue position + prev/next + flag + shortcut help toggle. */
+function QueueNavBar({
+  hasQueue,
+  queueIndex,
+  queueLength,
+  canPrev,
+  canNext,
+  onPrev,
+  onNext,
+  flagged,
+  onToggleFlag,
+  onToggleHelp,
+}: {
+  hasQueue: boolean
+  queueIndex: number
+  queueLength: number
+  canPrev: boolean
+  canNext: boolean
+  onPrev: () => void
+  onNext: () => void
+  flagged: boolean
+  onToggleFlag: () => void
+  onToggleHelp: () => void
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        flexWrap: "wrap",
+        padding: "0.5rem 0.7rem",
+        background: "#f8fafc",
+        border: "1px solid #e2e8f0",
+        borderRadius: 8,
+      }}
+    >
+      {hasQueue ? (
+        <>
+          <button type="button" onClick={onPrev} disabled={!canPrev} style={subtleBtnStyle} aria-label="Previous (←)">
+            ← Prev
+          </button>
+          <span style={{ fontSize: "0.85em", color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+            {queueIndex + 1} / {queueLength}
+          </span>
+          <button type="button" onClick={onNext} disabled={!canNext} style={subtleBtnStyle} aria-label="Next (→)">
+            Next →
+          </button>
+        </>
+      ) : (
+        <span style={{ fontSize: "0.85em", color: "#94a3b8" }}>single record</span>
+      )}
+      <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={onToggleFlag}
+          style={{ ...subtleBtnStyle, ...(flagged ? { background: "#fffbeb", borderColor: "#f59e0b", color: "#b45309" } : {}) }}
+          aria-pressed={flagged}
+          title="Flag for follow-up (F)"
+        >
+          {flagged ? "⚑ Flagged" : "⚐ Flag"}
+        </button>
+        <button type="button" onClick={onToggleHelp} style={subtleBtnStyle} title="Keyboard shortcuts (?)">
+          ? Shortcuts
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Compact keyboard-shortcut legend overlay. */
+function HotkeyHelp({ onClose }: { onClose: () => void }) {
+  const rows: Array<[string, string]> = [
+    ["A", "Agree + save label + next"],
+    ["D", "Disagree (focus rationale)"],
+    ["1–5", "Set AI-quality rating"],
+    ["S", "Save label"],
+    ["F", "Flag for follow-up"],
+    ["← / →", "Previous / next in queue"],
+    ["?", "Toggle this help"],
+    ["Esc", "Close"],
+  ]
+  return (
+    <div
+      style={{
+        border: "1px solid #c7d2fe",
+        background: "#eef2ff",
+        borderRadius: 8,
+        padding: "0.8rem 1rem",
+        display: "grid",
+        gap: 6,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <strong style={{ fontSize: "0.92em", color: "#3730a3" }}>Keyboard shortcuts</strong>
+        <button type="button" onClick={onClose} style={subtleBtnStyle}>close</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", fontSize: "0.85em" }}>
+        {rows.map(([k, d]) => (
+          <div key={k} style={{ display: "contents" }}>
+            <kbd style={kbdStyle}>{k}</kbd>
+            <span style={{ color: "#334155" }}>{d}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const kbdStyle: CSSProperties = {
+  fontFamily: "monospace",
+  fontSize: "0.85em",
+  background: "#fff",
+  border: "1px solid #c7d2fe",
+  borderRadius: 4,
+  padding: "0 6px",
+  color: "#3730a3",
+  justifySelf: "start",
 }
 
 export function BulkRejectDrawer({

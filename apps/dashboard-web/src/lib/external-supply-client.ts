@@ -41,8 +41,13 @@ import {
   type CandidateEvaluationRun,
   type CandidateSourceLink,
   type EvaluationAttempt,
+  type EvaluationErrorCategory,
+  type EvaluationLabelDecision,
   type EvaluationOutcome,
+  type EvaluationQualityRating,
+  type EvaluationSource,
   type EvaluationTier,
+  type HumanEvalLabel,
   type ExternalCandidateRecord,
   type ExternalSource,
   type ExternalSourcingBatch,
@@ -152,6 +157,15 @@ export interface RunEvaluationResult {
   tierBreakdown: Record<EvaluationTier, number>
 }
 
+/** Eval-quality label sent from the dashboard (server fills labeledBy/labeledAt/rubricVersion). */
+export type ReviewEvalLabelInput = Pick<HumanEvalLabel, "decision"> &
+  Partial<
+    Pick<
+      HumanEvalLabel,
+      "correctedOutcome" | "errorCategories" | "qualityRating" | "evidenceRefs" | "rationale" | "isGoldSample"
+    >
+  >
+
 export interface ReviewEvaluationAttemptInput {
   attemptId: string
   status: "approved" | "overridden" | "rejected" | "needs_more_info"
@@ -161,6 +175,14 @@ export interface ReviewEvaluationAttemptInput {
   recommendedActions?: string[]
   note?: string
   correctionReason?: string
+  /** Rich eval-quality annotation (agree/disagree, error categories, evidence, quality 1-5). */
+  label?: ReviewEvalLabelInput
+  /**
+   * When false, this is a LABEL-ONLY write: record the human label + correction
+   * event, never commit a prescreen terminal, never message the candidate. Defaults
+   * to the operational approve-and-send behavior when omitted.
+   */
+  commitAndSend?: boolean
 }
 
 export interface PrescreenCandidateDecision {
@@ -183,6 +205,10 @@ export interface ReviewEvaluationAttemptResult {
   candidateOutboundId?: string
   candidateDecision?: PrescreenCandidateDecision
   externalEvaluationUpdated?: boolean
+  /** True when the write only recorded the human label (no commit, no candidate message). */
+  labelOnly?: boolean
+  /** True when a commit was requested but skipped because the record is no longer pending review. */
+  commitSkippedNotPending?: boolean
 }
 
 export interface DraftPrescreenReviewMessagesInput {
@@ -898,6 +924,63 @@ export const reviewEvaluationAttempt = callable<
   ReviewEvaluationAttemptInput,
   ReviewEvaluationAttemptResult
 >("paReviewEvaluationAttempt")
+
+// ===========================================================================
+// P4 — labeled-dataset export + AI-vs-human agreement metric
+// ===========================================================================
+
+export interface ExportEvaluationLabelsInput {
+  source?: EvaluationSource
+  jobId?: string
+  /** ISO lower bound on label.labeledAt. */
+  since?: string
+  goldOnly?: boolean
+}
+
+export interface EvaluationLabelRow {
+  attemptId: string
+  source: EvaluationSource
+  jobId?: string
+  candidateId?: string
+  aiOutcome: EvaluationOutcome
+  humanLabel: {
+    decision: EvaluationLabelDecision
+    correctedOutcome?: EvaluationOutcome
+    errorCategories: EvaluationErrorCategory[]
+    qualityRating?: EvaluationQualityRating
+    rationale?: string
+    isGoldSample?: boolean
+  }
+  agreed: boolean
+  rubricVersion?: string
+  reviewer?: string
+  labeledAt?: string
+}
+
+export interface EvaluationLabelExportAggregate {
+  totalLabeled: number
+  agreeCount: number
+  agreeRate: number
+  perSource: Record<string, { total: number; agreeCount: number; agreeRate: number }>
+  qualityHistogram: Record<string, number>
+  topErrorCategories: Array<{ category: EvaluationErrorCategory; count: number }>
+  goldCount: number
+}
+
+export interface ExportEvaluationLabelsResult {
+  ok: true
+  generatedAt: string
+  filters: ExportEvaluationLabelsInput
+  aggregate: EvaluationLabelExportAggregate
+  rows: EvaluationLabelRow[]
+  jsonl: string
+  truncated: boolean
+}
+
+export const exportEvaluationLabels = callable<
+  ExportEvaluationLabelsInput,
+  ExportEvaluationLabelsResult
+>("paExportEvaluationLabels")
 
 export const draftPrescreenReviewMessages = callable<
   DraftPrescreenReviewMessagesInput,
