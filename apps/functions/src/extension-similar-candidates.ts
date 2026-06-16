@@ -920,6 +920,20 @@ function coresignalStatus(err: unknown): number | null {
   return typeof status === "number" ? status : null
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function errorBodySnippet(err: unknown): string | null {
+  const body = err instanceof CoresignalAgenticSearchError ? err.body : recordOf(err)?.body
+  if (body == null) return null
+  try {
+    return JSON.stringify(body).slice(0, 700)
+  } catch {
+    return String(body).slice(0, 700)
+  }
+}
+
 function throwCoresignalHttpsError(err: unknown): never {
   const status = coresignalStatus(err)
   if (status === 429) {
@@ -1035,6 +1049,11 @@ export async function runExtensionFindSimilarCandidates(
 
   let agenticResponse: unknown
   try {
+    args.log?.("similar_candidates_agentic_search_started", {
+      sourceLinkedInUrl: profileCanonical,
+      sourceEmployeeId: numericId(sourceEmployee),
+      limit,
+    })
     agenticResponse = await agenticSearch({
       prompt,
       returnData: true,
@@ -1043,10 +1062,23 @@ export async function runExtensionFindSimilarCandidates(
       sessionId: randomUUID(),
     })
   } catch (err) {
+    args.log?.("similar_candidates_agentic_search_failed", {
+      sourceLinkedInUrl: profileCanonical,
+      sourceEmployeeId: numericId(sourceEmployee),
+      status: coresignalStatus(err),
+      error: errorMessage(err),
+      body: errorBodySnippet(err),
+    })
     throwCoresignalHttpsError(err)
   }
 
   const rows = extractAgenticRows(agenticResponse)
+  args.log?.("similar_candidates_agentic_search_completed", {
+    sourceLinkedInUrl: profileCanonical,
+    sourceEmployeeId: numericId(sourceEmployee),
+    rawRows: rows.length,
+    limit,
+  })
   const enrichedRows = await enrichRowsByCoresignalId({
     rows,
     db: args.db,
@@ -1060,6 +1092,14 @@ export async function runExtensionFindSimilarCandidates(
     source: sourceEmployee,
     sourceCanonicalLinkedInUrl: profileCanonical,
     sourceVisibleText: input.source.visibleText ?? null,
+    limit,
+  })
+  args.log?.("similar_candidates_normalized", {
+    sourceLinkedInUrl: profileCanonical,
+    sourceEmployeeId: numericId(sourceEmployee),
+    rawRows: rows.length,
+    enrichedRows: enrichedRows.length,
+    resultCount: results.length,
     limit,
   })
   const sourceRecord = sourceEmployee as unknown as Record<string, unknown>
