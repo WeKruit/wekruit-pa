@@ -66,6 +66,32 @@ function committedTotal(committed: PrescreenOpsJobRollup["committed"]): number {
   return committed.PASS + committed.FAIL + committed.HARD_STOP
 }
 
+function countLabel(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
+function claireTerminalSummary(job: PrescreenOpsJobRollup): string {
+  const parts = [
+    countLabel(job.byTerminal.PASS, "completed"),
+    countLabel(job.byTerminal.FAIL, "Claire reject"),
+    countLabel(job.byTerminal.HARD_STOP, "hard stop"),
+  ]
+  if (job.byTerminal.PAUSE > 0) parts.push(countLabel(job.byTerminal.PAUSE, "paused"))
+  if (job.byTerminal.IN_PROGRESS > 0) parts.push(countLabel(job.byTerminal.IN_PROGRESS, "in progress"))
+  return parts.join(" · ")
+}
+
+function committedSummary(committed: PrescreenOpsJobRollup["committed"]): string {
+  const total = committedTotal(committed)
+  if (total === 0) return "0 committed"
+  const parts = [
+    committed.PASS > 0 ? countLabel(committed.PASS, "passed") : null,
+    committed.FAIL > 0 ? countLabel(committed.FAIL, "rejected") : null,
+    committed.HARD_STOP > 0 ? countLabel(committed.HARD_STOP, "hard stop") : null,
+  ].filter((part): part is string => part !== null)
+  return `${countLabel(total, "committed")} (${parts.join(" · ")})`
+}
+
 function relativeTime(iso: string): string {
   if (!iso) return "never"
   const then = Date.parse(iso)
@@ -356,10 +382,9 @@ export default function PrescreenOps() {
                       </span>
                     </div>
                     <div style={{ color: "#334155", fontSize: "0.86em" }}>
-                      {job.sessionCount} session{job.sessionCount === 1 ? "" : "s"} →{" "}
-                      {job.byTerminal.PASS} PASS · {job.byTerminal.FAIL} FAIL ·{" "}
-                      {job.byTerminal.HARD_STOP} HARD_STOP → {job.pendingReview} pending HITL ·{" "}
-                      {committedTotal(job.committed)} committed
+                      {job.realSessionCount} real session{job.realSessionCount === 1 ? "" : "s"} →{" "}
+                      Claire status: {claireTerminalSummary(job)} → {job.pendingReview} pending HITL ·{" "}
+                      {committedSummary(job.committed)}
                       {job.testSessionCount > 0 ? (
                         <span style={{ color: "#94a3b8" }}> · +{job.testSessionCount} test</span>
                       ) : null}
@@ -378,7 +403,7 @@ export default function PrescreenOps() {
                         type="button"
                         onClick={() => goToQueue({ jobId: job.jobId, terminal: "PASS", queue: "all" })}
                       >
-                        Claire PASS
+                        Claire completed
                       </button>
                       <button type="button" onClick={() => goToQueue({ jobId: job.jobId, queue: "all" })}>
                         All sessions →
