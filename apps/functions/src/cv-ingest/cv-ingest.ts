@@ -2894,39 +2894,37 @@ export async function ingestCv(
       log,
     })
 
-    // v1.9 hotfix (Adam directive 2026-05-12) — write phoneE164 from parsed CV
-    // phone to pa-users, only if not already set. Enables:
-    //   - ATS Pattern B (CV → match/runtime event) without prior inbound.
-    //   - Pattern A returning user where PII was not yet collected but CV is.
-    // Never overwrite an existing phone (PII-confirmed user-provided phone wins).
-    // Fail-open: never throws, never blocks parsedCandidateResumes write success.
+    // PHONE IDENTITY = INBOUND-PROVEN ONLY (Adam 2026-06-16: "only lock whatever
+    // phone texted us, not from the résumé — it's the real customer from the
+    // phone"). A résumé-extracted phone is an UNVERIFIED guess (often a stale or
+    // alternate number) and MUST NOT become the canonical SMS identity
+    // `phoneE164` — doing so blocked the candidate's real texting phone from
+    // binding (live 2026-06-15: José +17869150039, Aniket +918971155200 — résumé
+    // phone ≠ texting phone → "can't start from this phone" → dead silence). It
+    // is also a latent outbound-to-never-inbound hazard (RULE-1). So we store the
+    // parsed phone in an INFORMATIONAL field only (resumePhoneE164) and NEVER
+    // touch phoneE164 — that key is reserved for a phone that actually texted us
+    // (the inbound bind in candidate-inbound-resolve.ts). Fail-open.
     const parsedPhoneRaw = v2Output?.parsed.phone ?? parsed.candidateProfile.phone ?? null
     if (parsedPhoneRaw) {
       try {
         const normalized = normalizeCvPhoneToE164(parsedPhoneRaw)
         if (normalized) {
           const userRef = dbHandle.collection(PA_USERS_COLLECTION).doc(userId)
-          const userSnap = await userRef.get()
-          const existingPhone = userSnap.data()?.phoneE164
-          if (
-            !existingPhone ||
-            typeof existingPhone !== "string" ||
-            existingPhone.length === 0
-          ) {
-            await userRef.set(
-              {
-                phoneE164: normalized,
-                phoneE164Source: "cv_parsed",
-                updatedAt: nowIso(),
-              },
-              { merge: true }
-            )
-            log("pa.cv_ingest.phone_e164_written", {
-              userId: userId,
-              source: "cv_parsed",
-              raw_len: parsedPhoneRaw.length,
-            })
-          }
+          await userRef.set(
+            {
+              // Informational reference ONLY — not the SMS identity key.
+              resumePhoneE164: normalized,
+              resumePhoneE164Source: "cv_parsed",
+              updatedAt: nowIso(),
+            },
+            { merge: true }
+          )
+          log("pa.cv_ingest.resume_phone_recorded", {
+            userId: userId,
+            source: "cv_parsed",
+            raw_len: parsedPhoneRaw.length,
+          })
         } else {
           log("pa.cv_ingest.phone_e164_unparseable", {
             userId: userId,

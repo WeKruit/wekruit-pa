@@ -269,12 +269,19 @@ async function bindPhoneToCandidate(
       userSnap.exists && typeof userSnap.data()?.phoneE164Source === "string"
         ? (userSnap.data()!.phoneE164Source as string)
         : null
+    // Adam 2026-06-16: "only lock whatever phone texted us, not from the résumé."
+    // A cv_parsed phone is an unverified résumé guess and NEVER blocks the real
+    // texting phone — ANY inbound phone is the real customer and wins (not just a
+    // bind-code-proven one). cv-ingest no longer writes phoneE164 at all, so this
+    // only matters for LEGACY rows still carrying a cv_parsed phoneE164; they
+    // self-heal on the candidate's next inbound. A VERIFIED differing phone still
+    // blocks (genuine different entity).
     const existingPhoneIsUnverifiedResumeGuess = existingPhoneSource === "cv_parsed"
     if (
       existingPhone &&
       existingPhone !== phoneE164 &&
       isE164(existingPhone) &&
-      !(opts.bindCodeProven && existingPhoneIsUnverifiedResumeGuess)
+      !existingPhoneIsUnverifiedResumeGuess
     ) {
       // Different VERIFIED phone = different entity. Never cross-bind/merge.
       return { bound: false, reason: "phone_mismatch_different_entity" }

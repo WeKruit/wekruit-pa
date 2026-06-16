@@ -946,9 +946,15 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
     const ok = events.find((e) => e.event === "pa.cv_user_tags.ok")
     assert.ok(ok, "expected pa.cv_user_tags.ok log")
     assert.equal((ok!.payload as Record<string, unknown>).userId, "user_x")
-    const phoneSet = state.userSets.find((op) => "phoneE164" in op.data)
-    assert.equal(phoneSet?.data.phoneE164, "+15551234567")
-    assert.equal(typeof phoneSet?.data.updatedAt, "string")
+    // Adam 2026-06-16: the résumé phone is recorded as an INFORMATIONAL field
+    // (resumePhoneE164), NEVER the canonical SMS identity phoneE164 (which is
+    // reserved for a phone that actually texted us). Must NOT touch phoneE164.
+    const identityPhoneSet = state.userSets.find((op) => "phoneE164" in op.data)
+    assert.equal(identityPhoneSet, undefined, "cv-ingest must NOT write the identity phoneE164 from a résumé")
+    const resumePhoneSet = state.userSets.find((op) => "resumePhoneE164" in op.data)
+    assert.equal(resumePhoneSet?.data.resumePhoneE164, "+15551234567")
+    assert.equal(resumePhoneSet?.data.resumePhoneE164Source, "cv_parsed")
+    assert.equal(typeof resumePhoneSet?.data.updatedAt, "string")
   })
 
   it("skills written FULLY (not truncated to 12) — Adam directive", async () => {
