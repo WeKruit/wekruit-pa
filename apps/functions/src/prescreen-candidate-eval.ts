@@ -99,6 +99,7 @@ function buildChecklistDetail(
 const PRESCREEN_JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL prescreen candidate evaluator. A candidate COMPLETED a WeKruit prescreen interview for a specific role. Evaluate them against the job rubric using BOTH (a) their enriched profile research (Coresignal / LinkedIn / resume) and (b) the prescreen transcript. There are NO recruiter self-claims here — judge purely from the evidence in the research + transcript.
 
 Rules:
+- If NO job checklist is provided ("(no checklist)"), leave every checklist group's met/flagged and total at 0 with empty gaps/flags, and STILL assess the BACKGROUND pillars and give a holistic verdict + summary from the evidence — never skip the background assessment just because there is no checklist.
 - Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the research or transcript contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text.
 - Apply the same evidence bar to fit and bonus items; list unmet/unverifiable item texts in their gaps arrays.
 - For anti-signal items, flagged = items that plausibly apply to this candidate (from research OR transcript); list their exact item texts in checklist.anti.flags.
@@ -279,7 +280,10 @@ export async function runPrescreenCandidateEval(
     const user = (userSnap.data() ?? {}) as Record<string, unknown>
     const job = (jobSnap.data() ?? {}) as Record<string, unknown>
     const groups = extractChecklistGroups(job)
-    if (groups.length === 0) return { status: "skipped_no_job_checklist", sessionId }
+    // NOTE: a missing job checklist no longer skips the eval — the BACKGROUND pillars
+    // (school/degree/company/gpa) + the role-aware school prior don't need a checklist,
+    // and operators need that signal on every session (Adam 2026-06-15). We only skip
+    // below if there is ALSO no profile evidence at all (nothing to assess).
 
     // Enrich (cache-aware): the candidate's LinkedIn → Coresignal. Shared across this
     // candidate's other job sessions via the unified store (no re-fetch).
@@ -307,6 +311,11 @@ export async function runPrescreenCandidateEval(
     ])
     const resumeEvidence = resume.text
     const hasProfileEvidence = Boolean(research) || resumeEvidence.length > 0
+    // Run for the background pillars even with no checklist; only skip when there is
+    // genuinely nothing to assess (no checklist AND no profile evidence).
+    if (groups.length === 0 && !hasProfileEvidence) {
+      return { status: "skipped_no_job_checklist", sessionId }
+    }
     // Role-aware school-strength prior (advisory soft signal for the school pillar; never a
     // gate). Schools from Coresignal research + résumé; scoped to the job's roleFunction lens.
     const schoolPriorNote = buildSchoolPriorNote(

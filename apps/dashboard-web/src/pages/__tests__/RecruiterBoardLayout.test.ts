@@ -6,16 +6,26 @@ import { describe, it } from "node:test"
 const source = readFileSync(resolve(import.meta.dirname, "../RecruiterBoardOps.tsx"), "utf8")
 
 describe("RecruiterBoardOps selected-review layout", () => {
-  it("uses the unused right canvas for the candidate review rail", () => {
-    assert.match(source, /const selectedReviewShellStyle: CSSProperties = \{[\s\S]*width: "calc\(100vw - 240px - 64px\)"/)
-    // Review rail is the dominant column now (room for a full-size inline résumé); the
-    // board list is the secondary rail on the left.
-    assert.match(source, /gridTemplateColumns: "minmax\(360px, 0\.6fr\) minmax\(720px, 1\.5fr\)"/)
+  it("opens the candidate detail as the SAME dual-pane SideDrawer modal as prescreen", () => {
+    // The recruiter candidate detail is now the same opening modal as the prescreen
+    // review: SideDrawer (xl) + the shared .pa-eval-dualpane two-column grid + the
+    // shared dual-pane style tokens — read-only LEFT, human-review RIGHT.
+    assert.match(source, /import \{ SideDrawer \} from "\.\.\/components\/prescreen\/PrescreenReviewDrawers\.js"/)
+    assert.match(source, /import \{ DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle \} from "\.\.\/components\/prescreen\/dual-pane\.js"/)
+    assert.match(source, /<SideDrawer[\s\S]*?xl\s*\n?\s*>/)
+    assert.match(source, /className="pa-eval-dualpane" style=\{dualPaneStyle\}/)
+    assert.match(source, /<style>\{DUAL_PANE_COLLAPSE_CSS\}<\/style>/)
+    // Both pane eyebrows use the shared paneHeaderStyle (read-only LEFT / human RIGHT).
+    assert.match(source, /<div style=\{paneHeaderStyle\}>Candidate · AI evaluation — read-only<\/div>/)
+    assert.match(source, /<div style=\{paneHeaderStyle\}>Human review<\/div>/)
   })
 
-  it("shrinks board tables while a candidate is open", () => {
-    assert.match(source, /const selectedBoardTableStyle: CSSProperties = \{[\s\S]*minWidth: 360/)
-    assert.match(source, /selectedSubmission \? selectedBoardTableStyle : boardTableStyle/)
+  it("renders the board list at full width while the modal overlays", () => {
+    // The board list no longer shrinks into a side-by-side rail; the modal overlays it,
+    // so the dead shrink/shell styles are gone and the table is always full width.
+    assert.doesNotMatch(source, /selectedReviewShellStyle/)
+    assert.doesNotMatch(source, /selectedBoardTableStyle/)
+    assert.match(source, /<table style=\{boardTableStyle\}>/)
   })
 
   it("keeps the selected role context readable", () => {

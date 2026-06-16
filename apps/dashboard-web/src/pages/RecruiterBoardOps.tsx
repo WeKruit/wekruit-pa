@@ -14,6 +14,8 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
+import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
+import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "../components/prescreen/dual-pane.js"
 import { db } from "../lib/firebase.js"
 import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
@@ -556,12 +558,6 @@ const boardTableStyle: CSSProperties = {
   lineHeight: 1.25,
 }
 
-const selectedBoardTableStyle: CSSProperties = {
-  ...boardTableStyle,
-  minWidth: 360,
-  fontSize: 11,
-}
-
 const boardHeaderCellStyle: CSSProperties = {
   position: "sticky",
   top: 0,
@@ -619,37 +615,6 @@ function boardFilterButtonStyle(active: boolean): CSSProperties {
     fontWeight: 700,
     cursor: "pointer",
   }
-}
-
-const selectedReviewShellStyle: CSSProperties = {
-  width: "calc(100vw - 240px - 64px)",
-  maxWidth: "calc(100vw - 240px - 64px)",
-  display: "grid",
-  // Review is the main event — give the candidate panel the bulk of the width (room for
-  // a full-size inline résumé), keep the list a secondary rail on the left.
-  gridTemplateColumns: "minmax(360px, 0.6fr) minmax(720px, 1.5fr)",
-  gap: 16,
-  alignItems: "start",
-}
-
-const reviewLeftColumnStyle: CSSProperties = {
-  minWidth: 0,
-  display: "grid",
-  gap: 14,
-}
-
-const reviewSidePanelStyle: CSSProperties = {
-  position: "sticky",
-  top: 16,
-  minWidth: 0,
-  maxHeight: "calc(100vh - 112px)",
-  overflow: "auto",
-  border: "1px solid #e5ded2",
-  borderRadius: 12,
-  background: "#fffdf9",
-  padding: 14,
-  boxShadow: "0 14px 36px rgba(54, 38, 24, 0.12)",
-  scrollbarWidth: "thin",
 }
 
 const reviewContextStyle: CSSProperties = {
@@ -1120,6 +1085,7 @@ function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: B
 
 function CandidateReviewPanel({
   submission,
+  job,
   busy,
   blocked,
   actionError,
@@ -1143,6 +1109,7 @@ function CandidateReviewPanel({
   marksSaving,
 }: {
   submission: BoardSubmissionDoc
+  job?: BoardJobDoc
   busy: boolean
   blocked: boolean
   actionError?: string
@@ -1196,87 +1163,102 @@ function CandidateReviewPanel({
   const dim = blocked ? blockedButtonStyle : null
   const rejectDisabled = blocked
   return (
-    <aside style={reviewSidePanelStyle} aria-label="Candidate review panel">
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ color: "#8b7d6d", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
-            Candidate
+    <SideDrawer
+      title={submission.candidate?.name ?? "Candidate"}
+      subtitle={submission.jobTitleSnapshot ?? submission.jobId ?? submission.id}
+      onClose={onClose}
+      xl
+    >
+      <style>{DUAL_PANE_COLLAPSE_CSS}</style>
+      <div className="pa-eval-dualpane" style={dualPaneStyle} aria-label="Candidate review panel">
+        {/* LEFT — candidate info + AI evaluation, read-only */}
+        <div style={{ display: "grid", gap: 14, alignContent: "start", minWidth: 0 }}>
+          <div style={paneHeaderStyle}>Candidate · AI evaluation — read-only</div>
+          <div>
+            <div style={{ color: "#8b7d6d", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0 }}>
+              Candidate
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 750, color: "#2b2119", lineHeight: 1.15, overflowWrap: "anywhere" }}>
+              {submission.candidate?.name ?? "Candidate"}
+            </div>
+            {submission.candidate?.currentRole && (
+              <div style={{ color: "#73695d", fontSize: 12, marginTop: 3 }}>{submission.candidate.currentRole}</div>
+            )}
           </div>
-          <div style={{ fontSize: 20, fontWeight: 750, color: "#2b2119", lineHeight: 1.15, overflowWrap: "anywhere" }}>
-            {submission.candidate?.name ?? "Candidate"}
+
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Badge tone={status.tone}>{status.label}</Badge>
+            <Badge tone={chip.tone}>{chip.label}</Badge>
+            <span style={{ color: "#8b7d6d", fontSize: 12 }}>{formatSubmittedDate(submission.createdAtMs ?? 0)}</span>
           </div>
-          {submission.candidate?.currentRole && (
-            <div style={{ color: "#73695d", fontSize: 12, marginTop: 3 }}>{submission.candidate.currentRole}</div>
-          )}
-        </div>
-        <button type="button" onClick={onClose} style={{ ...actionButtonStyle, fontSize: 14, lineHeight: 1 }}>
-          x
-        </button>
-      </div>
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
-        <Badge tone={status.tone}>{status.label}</Badge>
-        <Badge tone={chip.tone}>{chip.label}</Badge>
-        <span style={{ color: "#8b7d6d", fontSize: 12 }}>{formatSubmittedDate(submission.createdAtMs ?? 0)}</span>
-      </div>
-
-      <div style={reviewSectionStyle}>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {href && (
-            <a href={href} target="_blank" rel="noopener noreferrer" style={actionButtonStyle}>
-              LinkedIn
-            </a>
-          )}
-          {resumeHref && (
-            <a href={resumeHref} target="_blank" rel="noopener noreferrer" style={actionButtonStyle}>
-              Resume
-            </a>
-          )}
-          {email && (
-            <a href={`mailto:${email}`} style={actionButtonStyle}>
-              Email
-            </a>
-          )}
-        </div>
-        <div style={fieldGridStyle}>
-          <ReviewField label="Email" value={submission.candidate?.email} />
-          <ReviewField label="YoE" value={submission.candidate?.yoe} />
-          <ReviewField label="Company" value={submission.candidate?.currentCompany} />
-          <ReviewField label="Location" value={submission.candidate?.location} />
-          <ReviewField label="Work auth" value={submission.candidate?.workAuthorization} />
-          <ReviewField label="Employment" value={submission.candidate?.employmentStatus} />
-          <ReviewField label="Comp" value={submission.candidate?.compensationExpectation} />
-          <ReviewField label="Notice" value={submission.candidate?.noticePeriod} />
-        </div>
-        {submission.candidate?.notes && (
-          <div style={{ color: "#4e443a", fontSize: 12, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
-            {submission.candidate.notes}
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {href && (
+                <a href={href} target="_blank" rel="noopener noreferrer" style={actionButtonStyle}>
+                  LinkedIn
+                </a>
+              )}
+              {resumeHref && (
+                <a href={resumeHref} target="_blank" rel="noopener noreferrer" style={actionButtonStyle}>
+                  Resume
+                </a>
+              )}
+              {email && (
+                <a href={`mailto:${email}`} style={actionButtonStyle}>
+                  Email
+                </a>
+              )}
+            </div>
+            <div style={fieldGridStyle}>
+              <ReviewField label="Email" value={submission.candidate?.email} />
+              <ReviewField label="YoE" value={submission.candidate?.yoe} />
+              <ReviewField label="Company" value={submission.candidate?.currentCompany} />
+              <ReviewField label="Location" value={submission.candidate?.location} />
+              <ReviewField label="Work auth" value={submission.candidate?.workAuthorization} />
+              <ReviewField label="Employment" value={submission.candidate?.employmentStatus} />
+              <ReviewField label="Comp" value={submission.candidate?.compensationExpectation} />
+              <ReviewField label="Notice" value={submission.candidate?.noticePeriod} />
+            </div>
+            {submission.candidate?.notes && (
+              <div style={{ color: "#4e443a", fontSize: 12, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>
+                {submission.candidate.notes}
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      <div style={reviewSectionStyle}>
-        <CandidateResumePreview
-          resumeUrl={submission.candidate?.resumeUrl}
-          linkedinUrl={submission.candidate?.linkedinUrl}
-          height="74vh"
-        />
-      </div>
+          <CandidateResumePreview
+            resumeUrl={submission.candidate?.resumeUrl}
+            linkedinUrl={submission.candidate?.linkedinUrl}
+            height="74vh"
+          />
 
-      <div style={reviewSectionStyle}>
-        <BoardChecklistPanel
-          groups={checklistGroups}
-          evaluation={submission.aiEvaluation}
-          marks={marks}
-          saved={savedMarks}
-          saving={marksSaving}
-          onCycle={cycleMark}
-          onSave={() => onSaveMarks(marks)}
-        />
-      </div>
+          {/* AI evaluation verdict/confidence/summary/reasons + background pillars */}
+          <div style={{ display: "grid", gap: 8 }}>
+            <ExtraFieldsDetail extraFields={submission.extraFields} />
+            <AiDetail submission={submission} />
+          </div>
 
-      <div style={reviewSectionStyle}>
-        <div style={{ fontWeight: 700, fontSize: 12, color: "#4b3a2e" }}>Decision</div>
+          {/* Role checklist (read-only role context — checklist + JD) */}
+          <JobContextPanel job={job} submission={submission} />
+        </div>
+
+        {/* RIGHT — human review: recruiter status/feedback actions + checklist assessment + conversation */}
+        <div style={{ display: "grid", gap: 16, alignContent: "start", minWidth: 0 }}>
+          <div style={paneHeaderStyle}>Human review</div>
+
+          <BoardChecklistPanel
+            groups={checklistGroups}
+            evaluation={submission.aiEvaluation}
+            marks={marks}
+            saved={savedMarks}
+            saving={marksSaving}
+            onCycle={cycleMark}
+            onSave={() => onSaveMarks(marks)}
+          />
+
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 12, color: "#4b3a2e" }}>Decision</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {stage !== "terminal" && (
             <button
@@ -1431,17 +1413,13 @@ function CandidateReviewPanel({
             </button>
           </div>
         )}
-        {actionError && <div style={{ color: "#9c3a1d", fontSize: 11 }}>Action failed: {actionError}</div>}
-      </div>
+            {actionError && <div style={{ color: "#9c3a1d", fontSize: 11 }}>Action failed: {actionError}</div>}
+          </div>
 
-      <div style={reviewSectionStyle}>
-        <ExtraFieldsDetail extraFields={submission.extraFields} />
-        <AiDetail submission={submission} />
+          <ConversationSection submission={submission} onCommentCount={onCommentCount} />
+        </div>
       </div>
-      <div style={reviewSectionStyle}>
-        <ConversationSection submission={submission} onCommentCount={onCommentCount} />
-      </div>
-    </aside>
+    </SideDrawer>
   )
 }
 
@@ -2038,7 +2016,7 @@ export default function RecruiterBoardOps() {
                 </span>
               </div>
               <div style={boardTableShellStyle}>
-                <table style={selectedSubmission ? selectedBoardTableStyle : boardTableStyle}>
+                <table style={boardTableStyle}>
                   <thead>
                     <tr>
                       <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
@@ -2161,12 +2139,10 @@ export default function RecruiterBoardOps() {
           }
         />
       ) : (
-        <div style={selectedSubmission ? selectedReviewShellStyle : { display: "grid", gap: 16 }}>
-          <div style={selectedSubmission ? reviewLeftColumnStyle : { display: "grid", gap: 16 }}>
-            {selectedSubmission && <JobContextPanel job={selectedJob} submission={selectedSubmission} />}
-            <div style={{ display: "grid", gap: 16 }}>
-              {visibleRecruiterGroups.map(renderGroup)}
-              {visibleUnclaimedGroups.length > 0 && (
+        <div style={{ display: "grid", gap: 16 }}>
+          <div style={{ display: "grid", gap: 16 }}>
+            {visibleRecruiterGroups.map(renderGroup)}
+            {visibleUnclaimedGroups.length > 0 && (
                 <Panel
                   title="Unclaimed submitters"
                   eyebrow="No matching recruiter profile"
@@ -2199,7 +2175,7 @@ export default function RecruiterBoardOps() {
                                 </span>
                               </div>
                               <div style={boardTableShellStyle}>
-                                <table style={selectedSubmission ? selectedBoardTableStyle : boardTableStyle}>
+                                <table style={boardTableStyle}>
                                   <thead>
                                     <tr>
                                       <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
@@ -2229,12 +2205,12 @@ export default function RecruiterBoardOps() {
                   </div>
                 </Panel>
               )}
-            </div>
           </div>
           {selectedSubmission && (
             <CandidateReviewPanel
               key={selectedSubmission.id}
               submission={selectedSubmission}
+              job={selectedJob}
               busy={inFlightId === selectedSubmission.id}
               blocked={inFlightId !== null}
               actionError={actionErrors[selectedSubmission.id]}

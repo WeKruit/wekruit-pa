@@ -41,6 +41,7 @@ import {
   type EvalLabelEvidenceOption,
   type EvalLabelFormHandle,
 } from "./EvalLabelForm.js"
+import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "./dual-pane.js"
 
 export type ReviewTerminal = "PASS" | "FAIL" | "HARD_STOP"
 
@@ -370,21 +371,47 @@ export async function loadCandidateSources(userId: string): Promise<CandidateSou
       nestedString(u.identity, "linkedinUrl"),
       nestedString(u.contact, "linkedinUrl"),
     )
+    // Résumé file URL can be stamped under several field names depending on the upload
+    // path (candidate flow vs cv-ingest vs employer) — try them all + the user doc, so the
+    // inline iframe shows whenever a fetchable URL exists anywhere.
+    const userResumeUrl = firstString(
+      u.resumeFileUrl,
+      u.resumeUrl,
+      u.resumeDownloadUrl,
+      nestedString(u.resume, "url"),
+      nestedString(u.resume, "fileUrl"),
+    )
     const artId = firstString(u.latestResumeArtifactId)
+    let artFileName: string | undefined
+    let artSummary: string | undefined
+    let artUrl: string | undefined
     if (artId) {
       const artSnap = await getDoc(doc(db(), "pa-resume-artifacts", artId))
       if (artSnap.exists()) {
         const art = artSnap.data() as Record<string, unknown>
-        const fileName = firstString(art.fileName)
-        const summary = firstString(art.candidateProfileSummary)
-        const url = firstString(art.resumeFileUrl)
-        if (fileName || summary || url) {
-          out.resume = {
-            ...(fileName ? { fileName } : {}),
-            ...(summary ? { summary } : {}),
-            ...(url ? { url } : {}),
-          }
-        }
+        artFileName = firstString(art.fileName, art.originalFileName, art.name)
+        artSummary = firstString(art.candidateProfileSummary, art.summary)
+        artUrl = firstString(
+          art.resumeFileUrl,
+          art.fileUrl,
+          art.url,
+          art.downloadUrl,
+          art.downloadURL,
+          art.publicUrl,
+          art.signedUrl,
+          art.storageUrl,
+          art.resumeUrl,
+        )
+      }
+    }
+    const fileName = artFileName
+    const summary = artSummary
+    const url = artUrl ?? userResumeUrl
+    if (fileName || summary || url) {
+      out.resume = {
+        ...(fileName ? { fileName } : {}),
+        ...(summary ? { summary } : {}),
+        ...(url ? { url } : {}),
       }
     }
   } catch {
@@ -692,7 +719,7 @@ export function PrescreenReviewDrawer({
 
   return (
     <SideDrawer title="Prescreen review + label" subtitle={sessionId} onClose={onClose} xl>
-      <style>{`@media (max-width: 900px){.pa-eval-dualpane{grid-template-columns:minmax(0,1fr) !important;}}`}</style>
+      <style>{DUAL_PANE_COLLAPSE_CSS}</style>
       {loading ? <LoadingState label="Loading review..." /> : null}
       {err ? <div className="notice notice-bad" style={{ fontSize: "0.85em" }}>{err}</div> : null}
       {detail ? (
@@ -854,23 +881,6 @@ export function PrescreenReviewDrawer({
       ) : null}
     </SideDrawer>
   )
-}
-
-const dualPaneStyle: CSSProperties = {
-  display: "grid",
-  // Left (résumé + transcript review surface) gets the bulk of the wider workspace;
-  // right holds the decision/label form.
-  gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 0.8fr)",
-  gap: 18,
-  alignItems: "start",
-}
-
-const paneHeaderStyle: CSSProperties = {
-  fontSize: "0.72em",
-  fontWeight: 700,
-  letterSpacing: "0.06em",
-  textTransform: "uppercase",
-  color: "#94a3b8",
 }
 
 /** Queue position + prev/next + flag + shortcut help toggle. */
