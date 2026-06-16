@@ -272,6 +272,9 @@ export { paPendingOutboundAdmin } from "./pending-outbound/admin.js"
 // Coresignal Agentic Search proxy — admin-only callable forwarding to
 // /v2/agentic_search/reasoning. Backs the /admin/coresignal-playground page.
 export { paAdminCoresignalAgenticSearch } from "./admin-coresignal-agentic-search.js"
+// Chrome recruiter extension callable — LinkedIn-profile source → similar
+// candidate profiles via Coresignal agentic search.
+export { paExtensionFindSimilarCandidates } from "./extension-similar-candidates.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
 export {
   paAdminPassedCandidateIntroDecision,
