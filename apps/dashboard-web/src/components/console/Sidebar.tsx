@@ -37,6 +37,14 @@ export type NavMode = NavSectionDef["mode"]
 export const CONSOLE_NAV: NavSectionDef[] = [
   // ───────────── OPS ─────────────
   {
+    id: "overview",
+    label: "Overview",
+    icon: "trending_up",
+    mode: "ops",
+    defaultOpen: true,
+    items: [{ to: "/admin/operations", label: "Operations overview" }],
+  },
+  {
     id: "prescreen",
     label: "Prescreen",
     icon: "list_check",

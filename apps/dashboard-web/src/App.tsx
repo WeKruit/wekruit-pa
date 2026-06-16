@@ -7,6 +7,7 @@ import { AgentBuilder } from "./pages/AgentBuilder.js"
 import Legal from "./pages/Legal.js"
 import { Login } from "./pages/Login.js"
 import { Operations } from "./pages/Operations.js"
+import OperationsOverview from "./pages/OperationsOverview.js"
 import { Overview } from "./pages/Overview.js"
 import { UserDetail } from "./pages/UserDetail.js"
 import { Users } from "./pages/Users.js"
@@ -167,6 +168,7 @@ export default function App() {
     >
         <Routes>
           <Route path="/" element={<Overview />} />
+          <Route path="/admin/operations" element={<OperationsOverview />} />
           <Route path="/conversations" element={<Users />} />
           {/* v2.0 marketplace candidate browser — replaces /conversations
               as the canonical "All candidates" surface. Reads pa-users +
