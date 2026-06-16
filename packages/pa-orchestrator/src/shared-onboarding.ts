@@ -262,6 +262,18 @@ const HELLO_WEKRUIT_OPENER_RE =
 // non-alnum to `-`), so the optional uid segment is unambiguous.
 const WEKRUIT_JOB_OPENER_RE =
   /(?:^|\s)wekruit_([a-z0-9][a-z0-9-]{1,160})(?:_([a-z0-9][a-z0-9_-]{7,127}))?_job(?:\s|$)/i
+// Brand-corruption-tolerant job opener (2026-06-16). iMessage autocorrect mangles
+// the literal "WeKruit" brand word ("WeKeuit", "WeCruit", "Wekruit"...), which
+// makes WEKRUIT_JOB_OPENER_RE miss → cold opener → duplicate empty account + dead
+// silence (live incident: "WeKeuit_..._Z8SRWFQZ_Job", +16263623119). This RE
+// tolerates ANY 4-9 char leading word in the brand slot, but is INTENTIONALLY
+// UNSAFE on its own — it MUST be gated downstream by `isBindCode(segment)` so it
+// ONLY ever resolves a structurally-valid, server-minted bind code (never a raw
+// uid / codeless token). A non-bind-code segment simply won't resolve in
+// pa-bind-codes and falls through gracefully. The 2nd capture group is the
+// trailing segment (the bind-code candidate); group 1 is the jobId.
+const WEKRUIT_JOB_OPENER_TOLERANT_RE =
+  /(?:^|\s)[a-z]{4,9}_([a-z0-9][a-z0-9-]{1,160})_([a-z0-9][a-z0-9_-]{7,127})_job(?:\s|$)/i
 
 /**
  * LinkedIn one-tap re-entry marker (2026-06-03). After the candidate connects
@@ -375,6 +387,17 @@ export function parseHelloWekruitOpener(
     if (isBindCode(seg)) return { bindCode: normalizeBindCode(seg) }
     return { candidateId: seg }
   }
+  if (!jobMatch) {
+    // Brand-corruption-tolerant pass (2026-06-16): the literal "WeKruit" got
+    // garbled by autocorrect (e.g. "WeKeuit_<job>_<code>_Job"). We ONLY accept a
+    // structurally-valid bind code here — never a raw uid / codeless token — so a
+    // corrupted brand word still resolves the web→phone identity bridge exactly
+    // like the correctly-spelled token would, while an arbitrary string falls
+    // through (won't resolve in pa-bind-codes).
+    const tol = trimmed.match(WEKRUIT_JOB_OPENER_TOLERANT_RE)
+    const seg = tol?.[2]?.trim()
+    if (seg && isBindCode(seg)) return { bindCode: normalizeBindCode(seg) }
+  }
   const match =
     trimmed.match(HI_WEKRUIT_OPENER_RE) ??
     trimmed.match(VERIFICATION_CODE_OPENER_RE) ??
@@ -402,6 +425,28 @@ export function parseHelloWekruitOpener(
  */
 export function isWekruitJobOpener(value: string): boolean {
   return WEKRUIT_JOB_OPENER_RE.test(value.trim())
+}
+
+/**
+ * True when the inbound LOOKS like a prescreen start token structurally — a
+ * `<word>_<jobId>_<segment>_Job` shape (brand word possibly corrupted by
+ * autocorrect) OR any text containing a `_Job` suffix preceded by a jobId-ish
+ * segment — but is NOT a clean, resolvable opener. Used to ask the candidate
+ * about a typo / garbled link INSTEAD of dropping them into the stranger cold
+ * opener (which would mint a duplicate empty account + dead silence). Purely
+ * structural + deterministic (no LLM, no pa-bind-codes lookup) — the caller
+ * decides "structure matches but resolution failed" and emits the typo notice.
+ */
+export function looksLikeGarbledStartToken(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  // Full tolerant structure: <word>_<jobId>_<segment>_Job
+  if (WEKRUIT_JOB_OPENER_TOLERANT_RE.test(trimmed)) return true
+  // Looser: contains a `_<jobId-ish>_Job` (covers codeless / heavily-mangled
+  // forms where even the leading-word length guard fails). jobId-ish = a hyphen
+  // or underscore-bearing slug ending in `_Job`.
+  if (/(?:^|\s|_)[a-z0-9][a-z0-9_-]{3,}_job(?:\s|$)/i.test(trimmed)) return true
+  return false
 }
 
 export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {

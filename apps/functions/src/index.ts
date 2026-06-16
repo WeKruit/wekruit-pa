@@ -1231,6 +1231,49 @@ async function processBrokerImessageEvent(
       )
       return 1
     }
+    if (triggerDecision.kind === "garbled_token") {
+      // GARBLED START TOKEN (2026-06-16): the inbound looks like a prescreen link
+      // structurally, but the bind-code did NOT resolve (corrupted brand + bad/
+      // expired/unknown code, or codeless). Ask the candidate about a typo on the
+      // SAME notice seam (runtimeSource pa_identity_notice → direct reply into the
+      // thread this inbound arrived from) INSTEAD of dropping them into the
+      // stranger cold opener — which would mint a duplicate empty account + dead
+      // silence (live incident +16263623119). Deterministic copy, no LLM, NO new
+      // account. Idempotency keyed on the inbound event id so webhook replays
+      // collapse to one notice.
+      logger.info("[prescreen][onPaInbound][trigger] garbled_token — typo-ask notice", {
+        userId: user.id,
+        eventId: claimed.id,
+      })
+      try {
+        const { enqueueOutbound } = await import("@pa/pa-broker")
+        const { BROKER_PRESCREEN_GARBLED_TOKEN_NOTICE } = await import("./broker-prescreen-trigger.js")
+        await enqueueOutbound(db, {
+          userId: user.id,
+          toE164: payload.participant,
+          body: BROKER_PRESCREEN_GARBLED_TOKEN_NOTICE,
+          idempotencyKey: `out-prescreen-garbled-token-${claimed.id}`,
+          runtimeApproved: true,
+          runtimeSource: "pa_identity_notice",
+        })
+      } catch (noticeErr) {
+        logger.warn("[prescreen][onPaInbound][trigger] garbled_token notice enqueue FAILED", {
+          userId: user.id,
+          eventId: claimed.id,
+          err: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+        })
+      }
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "prescreen_trigger_garbled_token",
+        },
+        { merge: true }
+      )
+      return 1
+    }
   } catch (err) {
     logger.warn("[prescreen][onPaInbound][trigger] check FAILED — falling through to active-session routing", {
       userId: user.id,

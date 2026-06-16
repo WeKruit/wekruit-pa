@@ -31,6 +31,7 @@ import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
 import {
+  CONNECT_LINKEDIN_LINK_BASE,
   HELLO_WEKRUIT_OPENER_PREFIX,
   HI_WEKRUIT_OPENER_PREFIX,
   LINKEDIN_DONE_OPENER_PREFIX,
@@ -685,7 +686,11 @@ export async function loadGlobalContext(db: Firestore, userId: string, toE164?: 
     // "bound", suppressed the offer, yet the opener has no known-user branch so it fell through to the
     // stranger "drop your résumé" default. Re-login RECOGNITION belongs in the OAuth callback
     // (connectLinkedinProspectViaOAuth), not in this cold-opener line.
-    if (!hasResumeOnFile && !onboardingDone && isCanaryUser(userId)) {
+    // UNGATED 2026-06-16 (Adam: "LinkedIn login is proven; make it the universal
+    // path"): the one-tap LinkedIn connect link is surfaced for ALL users (the
+    // isCanaryUser gate is removed). The !hasResumeOnFile && !onboardingDone guard
+    // stays — a LinkedIn-enriched candidate is onboardingDone so no wrong re-offer.
+    if (!hasResumeOnFile && !onboardingDone) {
       try {
         const { getOrIssueLinkedinConnectLink } = await import("../linkedin-connect/connect-token.js")
         const link = await getOrIssueLinkedinConnectLink(db, userId, toE164)
@@ -922,48 +927,36 @@ export async function runClaireTurn(
   // The deterministic offer-first short-circuit must NEVER run on the anti-silence fallback re-entry —
   // it is itself a deterministic pattern (the class the fallback exists to escape).
   if (deps.offerFirstKickoff && deps.isSuppressionFallback !== true) {
-    const connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
-    const uploadUrl = /Resume upload link[^:]*: (https:\/\/\S+)/.exec(globalContext)?.[1] ?? ""
-    // INVARIANT (Adam 2026-06-05: "no legacy target_role EVER for a thin/canary user on a cold open"):
-    // once mode-selector picks offerFirstKickoff, this turn ALWAYS sends the deterministic offer and
-    // NEVER falls through to the model's onboarding kickoff (which asks the legacy "SWE / product /
-    // data?" target_role question). Previously this block only ran when a connect/upload link surfaced
-    // in globalContext; if a stale latestResumeArtifactId lingered, loadGlobalContext suppressed BOTH
-    // links → no link here → fall-through → the model asked target_role. The fix removes the
-    // link-conditional gate: the offer fires unconditionally. When links surface we use them; when none
-    // do, we still send a plain "drop your résumé right here in the chat" offer — same intent, no link,
-    // and still NO role question. The links are only the FAST path, never a precondition for the offer.
-    //
-    // Adam 2026-06-03 (tone + ORDER): warmer, outcome-framed — "log in with LinkedIn and i'll see
-    // your experiences… or give me your résumé… then i'll pitch you to the hiring managers we have
-    // connections with." ONE atomic message: two rapid Sendblue sends (greeting then offer) were
-    // arriving OUT OF ORDER on-device (the greeting landed AFTER the offer). A single send is the
-    // only ordering guarantee — Sendblue does not preserve order for back-to-back POSTs.
-    const parts: string[] = ["hey! i'm claire, your recruiter at wekruit 👋 so glad you're here."]
-    if (connectUrl) {
-      parts.push(`quickest way to get going — log in with LinkedIn and i'll pull your experience for you 👉 ${connectUrl}`)
-      parts.push(
-        uploadUrl
-          ? `or just drop your résumé right here in the chat 📄, or upload it on the site 👉 ${uploadUrl} — whatever's easiest.`
-          : "or just drop your résumé right here in the chat 📄 — whatever's easiest.",
-      )
-    } else {
-      parts.push("quickest way to get going — just drop your résumé right here in the chat 📄")
-      if (uploadUrl) parts.push(`or upload it on the site 👉 ${uploadUrl} — whatever's easiest.`)
-    }
-    parts.push(
+    // LINKEDIN-ONLY COLD OPENER (Adam 2026-06-16: "LinkedIn login is proven; make
+    // it the universal path"). The cold opener offers ONLY the one-tap LinkedIn
+    // login link — the "drop your résumé in the chat" / "upload on the site" lines
+    // are REMOVED. The connect link is now ungated upstream (loadGlobalContext, no
+    // isCanaryUser), so it surfaces for ALL brand-new candidates.
+    let connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
+    // FALLBACK: if no per-user connect link surfaced (token issue / globalContext
+    // miss), still present a LinkedIn login so the opener is never link-less — the
+    // whole point is LinkedIn is ALWAYS present. Last-resort = the canonical
+    // candidate-domain connect surface (resolves identity on the page).
+    if (!connectUrl) connectUrl = CONNECT_LINKEDIN_LINK_BASE
+    // INVARIANT (Adam 2026-06-05: "no legacy target_role EVER on a cold open"):
+    // once mode-selector picks offerFirstKickoff, this turn ALWAYS sends the
+    // deterministic offer and NEVER falls through to the model's onboarding
+    // kickoff (the legacy target_role question). ONE atomic message: back-to-back
+    // Sendblue POSTs arrive out of order on-device, so a single send is the only
+    // ordering guarantee.
+    const parts: string[] = [
+      "hey! i'm claire, your recruiter at wekruit 👋 so glad you're here.",
+      `quickest way to get going — log in with LinkedIn and i'll pull your experience for you 👉 ${connectUrl}`,
       "then i'll get to work matching you and pitching you straight to the hiring managers we've got connections with 🙌",
-    )
-    // SMS compliance disclosure (Adam 2026-06-10 "Stop to stop"): the FIRST-contact
-    // message carries the opt-out line. Only this cold opener — not every chat reply.
-    // The deterministic keyword gate lives in claire-agent/stop-gate.ts.
-    parts.push("reply STOP anytime to opt out.")
+      // SMS compliance disclosure (Adam 2026-06-10 "Stop to stop"): the FIRST-contact
+      // message carries the opt-out line. Only this cold opener — not every chat reply.
+      // The deterministic keyword gate lives in claire-agent/stop-gate.ts.
+      "reply STOP anytime to opt out.",
+    ]
     const message = parts.join("\n\n")
     await deps.transport.sendText(message).catch((e) => log("offer_first.send_failed", { err: String(e) }))
     log("offer_first_kickoff_sent", {
-      hasConnect: Boolean(connectUrl),
-      hasUpload: Boolean(uploadUrl),
-      noLinks: !connectUrl && !uploadUrl,
+      hasConnect: true,
       bubbles: 1,
     })
     return { finalText: message, toolCalls: [], deliveredViaTool: true }
