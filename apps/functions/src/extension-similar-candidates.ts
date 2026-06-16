@@ -313,6 +313,8 @@ const GENERIC_SKILL_TERMS = new Set([
   "c++",
   "cloud",
   "cloud computing",
+  "communication",
+  "communication skills",
   "computer science",
   "core java",
   "collaboration",
@@ -330,6 +332,7 @@ const GENERIC_SKILL_TERMS = new Set([
   "java, python",
   "jquery",
   "junit",
+  "interpersonal",
   "leading",
   "leadership",
   "management",
@@ -673,7 +676,21 @@ function deriveSimilarityReasons(
     const explicit = cleanString(candidate.similarityReason) ?? cleanString(candidate.reasoning)
     if (explicit) reasons.push(explicit)
   }
-  return reasons.slice(0, 6)
+  return reasons
+    .sort((a, b) => reasonPriority(a) - reasonPriority(b))
+    .slice(0, 6)
+}
+
+function reasonPriority(reason: string): number {
+  if (/^(Company|Education|Skill) overlap:/i.test(reason)) return 0
+  if (/^Trajectory overlap:/i.test(reason)) return 1
+  if (/^Builder\/product overlap:/i.test(reason)) return 2
+  if (/^Product\/domain overlap:/i.test(reason)) return 3
+  if (/^Role\/function overlap:/i.test(reason)) return 4
+  if (/^Location overlap:/i.test(reason)) return 5
+  if (/^Seniority overlap:/i.test(reason)) return 6
+  if (/^Career pattern overlap:/i.test(reason)) return 7
+  return 8
 }
 
 function similarityEvidenceQuality(reasons: string[]): {

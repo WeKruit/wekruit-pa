@@ -656,6 +656,69 @@ test("normalizeSimilarCandidateRows rejects broad product-domain matches without
   assert.deepEqual(rows, [])
 })
 
+test("normalizeSimilarCandidateRows surfaces exact overlap before broad domain reasons", () => {
+  const source = employee({
+    id: 460,
+    full_name: "Source Builder",
+    headline: "Senior Software Engineer building LLM applications and data products",
+    linkedin_url: "https://www.linkedin.com/in/source-builder/",
+    active_experience_title: "Senior Software Engineer",
+    inferred_skills: ["LLM Applications", "Distributed Transactions"],
+    historical_skills: [],
+    experience: [
+      {
+        company_name: "University of Southern California",
+        position_title: "Research Software Engineer",
+        active_experience: 0,
+      },
+      {
+        company_name: "Tesla",
+        position_title: "Senior Software Engineer",
+        active_experience: 1,
+        management_level: "Senior",
+      },
+    ],
+  })
+
+  const rows = normalizeSimilarCandidateRows(
+    [
+      employee({
+        id: 461,
+        full_name: "USC AI Engineer",
+        headline: "Software Engineer building applied AI and data products",
+        linkedin_url: "https://www.linkedin.com/in/usc-ai-engineer/",
+        active_experience_title: "Software Engineer",
+        active_experience_management_level: "Senior",
+        inferred_skills: ["Artificial Intelligence", "Data Products"],
+        historical_skills: ["communication skills"],
+        experience: [
+          {
+            company_name: "Microsoft",
+            position_title: "Software Engineer",
+            active_experience: 1,
+            management_level: "Senior",
+          },
+          {
+            company_name: "University of Southern California",
+            position_title: "Research Assistant",
+            active_experience: 0,
+          },
+        ],
+      }),
+    ],
+    {
+      source,
+      sourceCanonicalLinkedInUrl: "https://linkedin.com/in/source-builder",
+      sourceVisibleText: "SaaS Development Web Development Database Development Business Analytics",
+      limit: 20,
+    },
+  )
+
+  assert.equal(rows.length, 1)
+  assert.match(rows[0]?.similarityReasons[0] ?? "", /^Company overlap:/)
+  assert.equal(rows[0]?.similarityReasons.some((reason) => /communication skills/i.test(reason)), false)
+})
+
 test("runExtensionFindSimilarCandidates excludes the source profile even when CoreSignal returns it", async () => {
   const db = new MockFirestore()
   await storeCoresignalEmployee({
