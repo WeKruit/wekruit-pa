@@ -105,9 +105,9 @@ Rules:
 - confidence is 0..1 — how confident you are given the evidence quality (note: if there is NO profile research and only a thin transcript, confidence should be low).
 - reasons: short concrete bullets citing the specific evidence (or its absence) that drove the verdict.
 - Also independently assess the candidate's BACKGROUND pillars from the research + transcript, and output \`background\` with one of strong / weak / unknown per pillar plus short \`evidence\`:
-  - school: "strong" for a target / strong / well-known university; "weak" for clearly non-target; "unknown" if no education info.
+  - school: "strong" for a target / well-known / brand-name university; "weak" for a real but non-target / lesser-known school. "unknown" ONLY when there is genuinely NO education info anywhere in the research/résumé/transcript. If ANY school is named, you MUST choose "strong" or "weak" (never "unknown") and name that school in \`evidence\` — an unranked or unfamiliar school is "weak", not "unknown".
   - degree: "strong" for a relevant degree/field for this role; "weak" if mismatched; "unknown" if absent.
-  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers; "unknown" if no work history.
+  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers (a named-but-unfamiliar employer is "weak", not "unknown"); "unknown" only if no work history at all.
   - gpa: ALMOST ALWAYS "unknown". Set "strong"/"weak" ONLY if the transcript/resume explicitly states a GPA. NEVER infer GPA from the school.
 - Output STRICT JSON matching the schema. Nothing else.`
 

@@ -216,9 +216,9 @@ Rules:
 - confidence is 0..1 — how confident you are in the verdict given the evidence quality.
 - reasons: short concrete bullets citing the specific evidence (or its absence) that drove the verdict.
 - Also independently assess the candidate's BACKGROUND pillars from the research + resume, and output \`background\` with one of strong / weak / unknown per pillar plus short \`evidence\`:
-  - school: "strong" for a target / strong / well-known university; "weak" for clearly non-target; "unknown" if no education info is available.
+  - school: "strong" for a target / well-known / brand-name university; "weak" for a real but non-target / lesser-known school. "unknown" ONLY when there is genuinely NO education info available. If ANY school is named, you MUST choose "strong" or "weak" (never "unknown") and name that school in \`evidence\` — an unranked or unfamiliar school is "weak", not "unknown".
   - degree: "strong" for a relevant degree/field for this role; "weak" if mismatched; "unknown" if absent.
-  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers; "unknown" if no work history is available.
+  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers (a named-but-unfamiliar employer is "weak", not "unknown"); "unknown" only if no work history is available.
   - gpa: ALMOST ALWAYS "unknown". Set "strong"/"weak" ONLY if the resume/notes explicitly state a GPA. NEVER infer GPA from the school or LinkedIn.
   The recruiter's background self-flag (shown in the prompt) is a HINT, not a fact — assess each pillar independently from the evidence.
 - Output STRICT JSON matching the schema. Nothing else.`
