@@ -738,6 +738,13 @@ function similarityEvidenceQuality(reasons: string[]): {
   return { passes, evidenceScore: Math.round(evidenceScore * 100) / 100 }
 }
 
+function hasDisplayableSimilarityEvidence(reasons: string[]): boolean {
+  const hasExact = reasons.some((reason) => /^(Company|Education|Skill) overlap:/i.test(reason))
+  const hasTrajectory = reasons.some((reason) => /^Trajectory overlap:/i.test(reason))
+  const hasDomain = reasons.some((reason) => /^Product\/domain overlap:/i.test(reason))
+  return hasExact || hasTrajectory || hasDomain
+}
+
 function numericScore(
   candidate: Record<string, unknown>,
   reasons: string[],
@@ -818,7 +825,7 @@ export function normalizeSimilarCandidateRows(
     const reasons = deriveSimilarityReasons(sourceRecord, record)
     if (reasons.length === 0) return
     const quality = similarityEvidenceQuality(reasons)
-    if (!quality.passes) return
+    if (!quality.passes && !hasDisplayableSimilarityEvidence(reasons)) return
     const emails = professionalEmails(record)
     const history = companyHistory(record)
     seen.add(canonicalLinkedInUrl)

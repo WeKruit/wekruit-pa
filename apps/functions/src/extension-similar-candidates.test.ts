@@ -367,7 +367,7 @@ test("normalizeSimilarCandidateRows prefers high-growth builder evidence over ge
   assert.ok((rows[0]?.similarityScore ?? 0) < 1)
 })
 
-test("normalizeSimilarCandidateRows rejects founder trajectory without exact or elite overlap", () => {
+test("normalizeSimilarCandidateRows keeps founder trajectory as a ranked similar profile", () => {
   const source = employee({
     id: 415,
     full_name: "Shixiang Source",
@@ -426,7 +426,9 @@ test("normalizeSimilarCandidateRows rejects founder trajectory without exact or 
     },
   )
 
-  assert.deepEqual(rows, [])
+  assert.deepEqual(rows.map((row) => row.fullName), ["Founder Trajectory Only"])
+  assert.match(rows[0]?.similarityReasons[0] ?? "", /^Trajectory overlap:/)
+  assert.ok((rows[0]?.similarityScore ?? 0) < 1)
 })
 
 test("normalizeSimilarCandidateRows keeps senior SWE searches role-compatible", () => {
@@ -661,7 +663,7 @@ test("normalizeSimilarCandidateRows rejects award or creator profiles without do
   assert.deepEqual(rows, [])
 })
 
-test("normalizeSimilarCandidateRows rejects broad product-domain matches without exact or trajectory evidence", () => {
+test("normalizeSimilarCandidateRows keeps broad product-domain matches as ranked similar profiles", () => {
   const source = employee({
     id: 450,
     full_name: "Shixiang Source",
@@ -715,7 +717,9 @@ test("normalizeSimilarCandidateRows rejects broad product-domain matches without
     },
   )
 
-  assert.deepEqual(rows, [])
+  assert.deepEqual(rows.map((row) => row.fullName), ["Broad Product SWE"])
+  assert.ok(rows[0]?.similarityReasons.some((reason) => /^Product\/domain overlap:/i.test(reason)))
+  assert.ok((rows[0]?.similarityScore ?? 0) < 1)
 })
 
 test("normalizeSimilarCandidateRows surfaces exact overlap before broad domain reasons", () => {
