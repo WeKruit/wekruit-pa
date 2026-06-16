@@ -154,7 +154,7 @@ test("runExtensionFindSimilarCandidates resolves source from CoreSignal cache wi
   assert.match(agenticPrompt, /education/i)
 })
 
-test("runExtensionFindSimilarCandidates resolves visible related profile hints through CoreSignal", async () => {
+test("runExtensionFindSimilarCandidates does not rank visible page profiles as CoreSignal-similar results", async () => {
   const db = new MockFirestore()
   await storeCoresignalEmployee({
     db: asFirestore(db),
@@ -166,21 +166,23 @@ test("runExtensionFindSimilarCandidates resolves visible related profile hints t
   })
   const searchedLinks: string[] = []
   let agenticPrompt = ""
+  const dataWithPageProfiles = {
+    ...payload(),
+    profileContext: {
+      ...payload().profileContext,
+      relatedProfiles: [
+        {
+          linkedinUrl: "https://www.linkedin.com/in/siyi-he/?miniProfileUrn=abc",
+          fullName: "Siyi He",
+          headline: "SDE @ Amazon | Stanford Alum",
+        },
+      ],
+    },
+  }
 
   const result = await runExtensionFindSimilarCandidates({
     auth: { uid: "recruiter-1" },
-    data: payload({
-      profileContext: {
-        ...payload().profileContext,
-        relatedProfiles: [
-          {
-            linkedinUrl: "https://www.linkedin.com/in/siyi-he/?miniProfileUrn=abc",
-            fullName: "Siyi He",
-            headline: "SDE @ Amazon | Stanford Alum",
-          },
-        ],
-      },
-    }),
+    data: dataWithPageProfiles,
     db: asFirestore(db),
     apiKey: "test-key",
     now,
@@ -214,11 +216,9 @@ test("runExtensionFindSimilarCandidates resolves visible related profile hints t
     },
   })
 
-  assert.deepEqual(searchedLinks, ["https://linkedin.com/in/siyi-he"])
-  assert.match(agenticPrompt, /relatedProfileHints/i)
-  assert.deepEqual(result.results.map((row) => row.fullName), ["Siyi He"])
-  assert.ok(result.results[0]?.similarityReasons.some((reason) => /^LinkedIn related profile hint:/i.test(reason)))
-  assert.ok(result.results[0]?.similarityReasons.some((reason) => /^Education overlap:/i.test(reason)))
+  assert.deepEqual(searchedLinks, [])
+  assert.doesNotMatch(agenticPrompt, /relatedProfileHints|LinkedIn page-adjacent/i)
+  assert.deepEqual(result.results, [])
 })
 
 test("normalizeSimilarCandidateRows ranks candidates and explains concrete overlap", () => {

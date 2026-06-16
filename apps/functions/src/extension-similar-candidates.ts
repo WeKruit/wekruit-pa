@@ -23,12 +23,6 @@ const CORESIGNAL_AGENTIC_SEARCH_URL =
   "https://api.coresignal.com/cdapi/v2/agentic_search/reasoning"
 const SURFACE = "chrome_extension_recruiter_similar_candidates"
 
-const RelatedProfileHintSchema = z.object({
-  linkedinUrl: z.string().min(1),
-  fullName: z.string().optional(),
-  headline: z.string().optional(),
-})
-
 const SimilarCandidatesPayloadSchema = z.object({
   source: z.object({
     activeTabUrl: z.string().min(1),
@@ -43,7 +37,6 @@ const SimilarCandidatesPayloadSchema = z.object({
     location: z.string().optional(),
     currentTitle: z.string().optional(),
     currentCompany: z.string().optional(),
-    relatedProfiles: z.array(RelatedProfileHintSchema).max(8).optional(),
   }),
   limit: z.number().int().min(1).max(30).optional(),
 })
@@ -182,34 +175,6 @@ function employeeLinkedInUrl(employee: Record<string, unknown>): string | null {
     cleanString(employee.canonicalLinkedInUrl) ??
     cleanString(employee.profile_url)
   )
-}
-
-function relatedProfileHints(
-  profileContext: SimilarCandidatesPayload["profileContext"],
-  sourceCanonicalLinkedInUrl: string,
-): Array<{
-  canonicalLinkedInUrl: string
-  fullName: string | null
-  headline: string | null
-}> {
-  const out: Array<{
-    canonicalLinkedInUrl: string
-    fullName: string | null
-    headline: string | null
-  }> = []
-  const seen = new Set<string>()
-  for (const hint of profileContext.relatedProfiles ?? []) {
-    const canonicalLinkedInUrl = canonicalizeLinkedInUrl(hint.linkedinUrl)
-    if (!canonicalLinkedInUrl || canonicalLinkedInUrl === sourceCanonicalLinkedInUrl) continue
-    if (seen.has(canonicalLinkedInUrl)) continue
-    seen.add(canonicalLinkedInUrl)
-    out.push({
-      canonicalLinkedInUrl,
-      fullName: cleanString(hint.fullName),
-      headline: cleanString(hint.headline),
-    })
-  }
-  return out
 }
 
 function fullName(employee: Record<string, unknown>): string | null {
@@ -725,8 +690,7 @@ function reasonPriority(reason: string): number {
   if (/^Role\/function overlap:/i.test(reason)) return 4
   if (/^Location overlap:/i.test(reason)) return 5
   if (/^Seniority overlap:/i.test(reason)) return 6
-  if (/^LinkedIn related profile hint:/i.test(reason)) return 7
-  if (/^Career pattern overlap:/i.test(reason)) return 8
+  if (/^Career pattern overlap:/i.test(reason)) return 7
   return 9
 }
 
@@ -739,7 +703,6 @@ function similarityEvidenceQuality(reasons: string[]): {
   let domainSignals = 0
   let exactStrongSignals = 0
   let genericSignals = 0
-  let relatedHintSignals = 0
   let candidateFastGrowthSignal = false
 
   for (const reason of reasons) {
@@ -756,8 +719,6 @@ function similarityEvidenceQuality(reasons: string[]): {
       exactStrongSignals += 1
     } else if (/^(Role\/function|Career pattern|Location|Seniority) overlap:/i.test(reason)) {
       genericSignals += 1
-    } else if (/^LinkedIn related profile hint:/i.test(reason)) {
-      relatedHintSignals += 1
     }
   }
 
@@ -765,8 +726,7 @@ function similarityEvidenceQuality(reasons: string[]): {
   const passes =
     exactStrongSignals >= 2 ||
     (exactStrongSignals >= 1 && (hasConcreteWorkOverlap || trajectorySignals > 0)) ||
-    (candidateFastGrowthSignal && hasConcreteWorkOverlap) ||
-    (relatedHintSignals > 0 && (exactStrongSignals >= 1 || hasConcreteWorkOverlap || trajectorySignals > 0))
+    (candidateFastGrowthSignal && hasConcreteWorkOverlap)
   const evidenceScore = Math.min(
     0.97,
     0.42 +
@@ -774,8 +734,7 @@ function similarityEvidenceQuality(reasons: string[]): {
       domainSignals * 0.16 +
       builderSignals * 0.1 +
       exactStrongSignals * 0.13 +
-      genericSignals * 0.035 +
-      relatedHintSignals * 0.04,
+      genericSignals * 0.035,
   )
   return { passes, evidenceScore: Math.round(evidenceScore * 100) / 100 }
 }
@@ -915,7 +874,6 @@ export function buildSimilarCandidatesPrompt(args: {
     "Keep the role comparable to the target. For a senior software engineer target, do not return managers, mentors, consultants, technical evangelists, product managers, or advisors unless their current role is still hands-on software, AI, platform, backend, frontend, research, or architecture engineering.",
     "Reject candidates whose only overlap is software engineer title, seniority, location, or employment at a different major technology company.",
     "Do not infer similarity from Tesla, automotive, or EV wording by itself; only use that evidence when the candidate has concrete Tesla/autonomous/vehicle software work.",
-    "Use LinkedIn page-adjacent related profiles as weak seed hints only when their CoreSignal records also show concrete overlap. Do not return them solely because LinkedIn recommended them.",
     "Do not over-optimize for a single company or school. Exclude the target profile itself.",
     "Prefer candidates with valid LinkedIn profile URLs and professional work history evidence.",
     "For every returned candidate, include concrete reasoning tied to overlapping trajectory, product/domain work, builder evidence, companies, education, skills, role/function, seniority, location, or career pattern.",
@@ -931,7 +889,6 @@ function similarCandidatesPromptTarget(args: {
   const source = args.source as unknown as Record<string, unknown>
   const history = companyHistory(source)
   const sourceEvidenceText = [profileEvidenceText(source), args.visibleText ?? ""].join(" ")
-  const sourceCanonical = canonicalizeLinkedInUrl(args.profileContext.linkedinUrl) ?? args.profileContext.linkedinUrl
   return {
     fullName: fullName(source) ?? args.profileContext.fullName ?? null,
     linkedinUrl: employeeLinkedInUrl(source) ?? args.profileContext.linkedinUrl,
@@ -945,7 +902,6 @@ function similarCandidatesPromptTarget(args: {
     trajectorySignals: matchingSignalLabels(sourceEvidenceText, TRAJECTORY_SIGNAL_PATTERNS),
     builderSignals: matchingSignalLabels(sourceEvidenceText, BUILDER_SIGNAL_PATTERNS),
     productDomainSignals: matchingSignalLabels(sourceEvidenceText, DOMAIN_SIGNAL_PATTERNS, 8),
-    relatedProfileHints: relatedProfileHints(args.profileContext, sourceCanonical),
   }
 }
 
@@ -964,7 +920,6 @@ function buildSimilarCandidatesFastPrompt(args: {
     "Hard filter: every returned person must have at least two concrete overlaps with the target: exact company, exact school, non-generic technical skill, applied AI/devtools/backend/platform/product work, founder/acquired/startup builder evidence, elite trajectory, or closely similar product-building career pattern.",
     "Reject coaches, consultants, PMs, advisors, evangelists, creator-only profiles, and generic senior software engineers whose only evidence is title, seniority, location, or a different major-tech employer.",
     "For fast-growth/product-builder targets, prefer comparable fast-growth engineers, product builders, founders, acquired-startup alumni, or people who worked on similar SaaS, AI, devtool, backend, platform, or data products.",
-    "Treat LinkedIn page-adjacent related profiles as weak seed hints only; concrete CoreSignal overlap is still required.",
     "Exclude the target profile itself.",
     `Target CoreSignal employee record summary:\n${JSON.stringify(target, null, 2)}`,
   ].join("\n\n")
@@ -1097,56 +1052,6 @@ async function enrichRowsByCoresignalId(args: {
   return enriched
 }
 
-async function enrichRelatedProfileHints(args: {
-  profileContext: SimilarCandidatesPayload["profileContext"]
-  sourceCanonicalLinkedInUrl: string
-  db: Firestore
-  apiKey: string
-  now: string
-  searchEmployeeIdByLinkedinUrl: (
-    canonicalLinkedInUrl: string,
-    cfg: { apiKey: string },
-  ) => Promise<number | null>
-  fetchEmployee: (id: number, cfg: { apiKey: string }) => Promise<CoresignalEmployeeCollectV2>
-  log?: Logger
-}): Promise<unknown[]> {
-  const hints = relatedProfileHints(args.profileContext, args.sourceCanonicalLinkedInUrl)
-  const rows: unknown[] = []
-  for (const hint of hints) {
-    try {
-      const collected = await getOrFetchCoresignalByLinkedin({
-        db: args.db,
-        link: hint.canonicalLinkedInUrl,
-        apiKey: args.apiKey,
-        now: args.now,
-        source: SURFACE,
-        search: args.searchEmployeeIdByLinkedinUrl,
-        fetch: args.fetchEmployee,
-        log: args.log,
-      })
-      if (!collected) continue
-      rows.push({
-        ...(collected as unknown as Record<string, unknown>),
-        similarityReason: `LinkedIn related profile hint: visible on the source profile sidebar${
-          hint.fullName ? ` as ${hint.fullName}` : ""
-        }.`,
-        __linkedinRelatedProfileHint: true,
-      })
-    } catch (err) {
-      args.log?.("similar_candidates_related_profile_hint_failed", {
-        linkedinUrl: hint.canonicalLinkedInUrl,
-        status: coresignalStatus(err),
-        error: errorMessage(err),
-      })
-    }
-  }
-  args.log?.("similar_candidates_related_profile_hints_resolved", {
-    hintCount: hints.length,
-    resolvedRows: rows.length,
-  })
-  return rows
-}
-
 export async function runExtensionFindSimilarCandidates(
   args: RunDeps,
 ): Promise<SimilarCandidatesResponse> {
@@ -1270,16 +1175,6 @@ export async function runExtensionFindSimilarCandidates(
     limit: effectiveLimit,
     originalLimit: limit,
   })
-  const relatedRows = await enrichRelatedProfileHints({
-    profileContext: input.profileContext,
-    sourceCanonicalLinkedInUrl: profileCanonical,
-    db: args.db,
-    apiKey,
-    now,
-    searchEmployeeIdByLinkedinUrl: searchByLinkedin,
-    fetchEmployee,
-    log: args.log,
-  })
   const enrichedRows = await enrichRowsByCoresignalId({
     rows,
     db: args.db,
@@ -1289,8 +1184,7 @@ export async function runExtensionFindSimilarCandidates(
     fetchEmployee,
     log: args.log,
   })
-  const combinedRows = [...relatedRows, ...enrichedRows]
-  const results = normalizeSimilarCandidateRows(combinedRows, {
+  const results = normalizeSimilarCandidateRows(enrichedRows, {
     source: sourceEmployee,
     sourceCanonicalLinkedInUrl: profileCanonical,
     sourceVisibleText: input.source.visibleText ?? null,
@@ -1300,7 +1194,6 @@ export async function runExtensionFindSimilarCandidates(
     sourceLinkedInUrl: profileCanonical,
     sourceEmployeeId: numericId(sourceEmployee),
     rawRows: rows.length,
-    relatedHintRows: relatedRows.length,
     enrichedRows: enrichedRows.length,
     resultCount: results.length,
     limit: effectiveLimit,
