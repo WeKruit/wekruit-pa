@@ -684,7 +684,7 @@ export function PrescreenReviewDrawer({
   }, [canNext, canPrev, goNext, goPrev, showHelp])
 
   return (
-    <SideDrawer title="Prescreen review + label" subtitle={sessionId} onClose={onClose} wide>
+    <SideDrawer title="Prescreen review + label" subtitle={sessionId} onClose={onClose} xl>
       <style>{`@media (max-width: 900px){.pa-eval-dualpane{grid-template-columns:minmax(0,1fr) !important;}}`}</style>
       {loading ? <LoadingState label="Loading review..." /> : null}
       {err ? <div className="notice notice-bad" style={{ fontSize: "0.85em" }}>{err}</div> : null}
@@ -851,7 +851,9 @@ export function PrescreenReviewDrawer({
 
 const dualPaneStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 0.9fr)",
+  // Left (résumé + transcript review surface) gets the bulk of the wider workspace;
+  // right holds the decision/label form.
+  gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 0.8fr)",
   gap: 18,
   alignItems: "start",
 }
@@ -1514,12 +1516,15 @@ export function SideDrawer({
   onClose,
   children,
   wide,
+  xl,
 }: {
   title: string
   subtitle: string
   onClose: () => void
   children: ReactNode
   wide?: boolean
+  /** Extra-wide workspace — for the dual-pane prescreen review (résumé + transcript left, decision right). */
+  xl?: boolean
 }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1544,7 +1549,7 @@ export function SideDrawer({
           top: 0,
           right: 0,
           height: "100vh",
-          width: wide ? "min(1180px, 94vw)" : "min(560px, 96vw)",
+          width: xl ? "min(1680px, 98vw)" : wide ? "min(1180px, 94vw)" : "min(560px, 96vw)",
           background: "var(--cream-3, #fff)",
           borderLeft: "1px solid var(--border, #e2e8f0)",
           boxShadow: "-12px 0 32px rgba(15, 23, 42, 0.18)",
