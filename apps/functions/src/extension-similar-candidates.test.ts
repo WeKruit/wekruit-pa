@@ -267,6 +267,7 @@ test("normalizeSimilarCandidateRows rejects generic major-tech title matches", (
     {
       source,
       sourceCanonicalLinkedInUrl: "https://linkedin.com/in/shixiang-source",
+      sourceVisibleText: "SaaS Development Web Development Database Development built LLM applications",
       limit: 20,
     },
   )
@@ -354,6 +355,7 @@ test("normalizeSimilarCandidateRows prefers high-growth builder evidence over ge
     {
       source,
       sourceCanonicalLinkedInUrl: "https://linkedin.com/in/shixiang-source",
+      sourceVisibleText: "SaaS Development Web Development Database Development built LLM applications",
       limit: 20,
     },
   )
@@ -452,11 +454,149 @@ test("normalizeSimilarCandidateRows keeps senior SWE searches role-compatible", 
     {
       source,
       sourceCanonicalLinkedInUrl: "https://linkedin.com/in/shixiang-source",
+      sourceVisibleText: "SaaS Development Web Development Database Development built LLM applications",
       limit: 20,
     },
   )
 
   assert.deepEqual(rows.map((row) => row.fullName), ["Hands-on AI Builder"])
+})
+
+test("normalizeSimilarCandidateRows rejects coaching-led profiles without concrete product overlap", () => {
+  const source = employee({
+    id: 430,
+    full_name: "Shixiang Source",
+    headline: "Sr. SWE @ Tesla | Top 0.1% National Awardee | built LLM applications and SaaS products",
+    linkedin_url: "https://www.linkedin.com/in/shixiang-source/",
+    active_experience_title: "Senior Software Engineer",
+    active_experience_management_level: "Senior",
+    inferred_skills: ["LLM Applications", "Distributed Transactions", "Message Queues"],
+    historical_skills: [],
+    experience: [
+      {
+        company_name: "Tesla",
+        position_title: "Senior Software Engineer",
+        active_experience: 1,
+        management_level: "Senior",
+      },
+      {
+        company_name: "aiStudy",
+        position_title: "Software Engineer",
+        active_experience: 0,
+      },
+    ],
+    education: [{ institution_name: "USC Viterbi School of Engineering", degree: "BS Computer Science" }],
+  })
+
+  const rows = normalizeSimilarCandidateRows(
+    [
+      employee({
+        id: 431,
+        full_name: "Interview Coach SWE",
+        headline: "SDE 3 at BigCo | interview coach helping people crack top tech companies",
+        linkedin_url: "https://www.linkedin.com/in/interview-coach-swe/",
+        active_experience_title: "Senior Software Engineer",
+        active_experience_management_level: "Senior",
+        inferred_skills: ["Software Engineering", "Java", "Cloud Computing"],
+        historical_skills: [],
+        experience: [
+          {
+            company_name: "BigCo",
+            position_title: "Senior Software Engineer",
+            active_experience: 1,
+            management_level: "Senior",
+          },
+        ],
+      }),
+      employee({
+        id: 432,
+        full_name: "Tesla AI Builder",
+        headline: "Senior Software Engineer building LLM developer tools and SaaS products",
+        linkedin_url: "https://www.linkedin.com/in/tesla-ai-builder/",
+        active_experience_title: "Senior Software Engineer, AI Platform",
+        active_experience_management_level: "Senior",
+        inferred_skills: ["LLM Applications", "Distributed Systems", "Developer Productivity"],
+        historical_skills: [],
+        experience: [
+          {
+            company_name: "Tesla",
+            position_title: "Senior Software Engineer, AI Platform",
+            active_experience: 0,
+            management_level: "Senior",
+          },
+          {
+            company_name: "AI SaaS Lab",
+            position_title: "Software Engineer",
+            active_experience: 1,
+            management_level: "Senior",
+          },
+        ],
+      }),
+    ],
+    {
+      source,
+      sourceCanonicalLinkedInUrl: "https://linkedin.com/in/shixiang-source",
+      limit: 20,
+    },
+  )
+
+  assert.deepEqual(rows.map((row) => row.fullName), ["Tesla AI Builder"])
+})
+
+test("normalizeSimilarCandidateRows rejects award or creator profiles without domain or exact overlap", () => {
+  const source = employee({
+    id: 440,
+    full_name: "Shixiang Source",
+    headline: "Sr. SWE @ Tesla | Top 0.1% National Awardee | built LLM applications and SaaS products",
+    linkedin_url: "https://www.linkedin.com/in/shixiang-source/",
+    active_experience_title: "Senior Software Engineer",
+    active_experience_management_level: "Senior",
+    inferred_skills: ["LLM Applications", "Distributed Transactions", "Message Queues"],
+    historical_skills: [],
+    experience: [
+      {
+        company_name: "Tesla",
+        position_title: "Senior Software Engineer",
+        active_experience: 1,
+        management_level: "Senior",
+      },
+    ],
+  })
+
+  const rows = normalizeSimilarCandidateRows(
+    [
+      employee({
+        id: 441,
+        full_name: "Awarded Brand SWE",
+        headline: "Award-winning Senior Software Engineer | content creator | developer platform enthusiast",
+        linkedin_url: "https://www.linkedin.com/in/awarded-brand-swe/",
+        active_experience_title: "Senior Software Engineer",
+        active_experience_management_level: "Senior",
+        location_full: "Bengaluru, Karnataka, India",
+        primary_professional_email: null,
+        professional_emails_collection: [],
+        inferred_skills: ["content creation", "brand management", "article writing", "sql"],
+        historical_skills: [],
+        experience: [
+          {
+            company_name: "PayPal",
+            position_title: "Senior Software Engineer",
+            active_experience: 1,
+            management_level: "Senior",
+          },
+        ],
+        education: [{ institution_name: "Samrat Ashok Technological Institute", degree: "Computer Science" }],
+      }),
+    ],
+    {
+      source,
+      sourceCanonicalLinkedInUrl: "https://linkedin.com/in/shixiang-source",
+      sourceVisibleText: "SaaS Development Web Development Database Development built LLM applications",
+      limit: 20,
+    },
+  )
+
+  assert.deepEqual(rows, [])
 })
 
 test("runExtensionFindSimilarCandidates excludes the source profile even when CoreSignal returns it", async () => {

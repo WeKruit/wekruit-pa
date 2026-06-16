@@ -309,6 +309,7 @@ const GENERIC_SKILL_TERMS = new Set([
   "algorithms",
   "api",
   "apis",
+  "banking service",
   "c++",
   "cloud",
   "cloud computing",
@@ -316,15 +317,19 @@ const GENERIC_SKILL_TERMS = new Set([
   "core java",
   "collaboration",
   "coordination",
+  "css",
   "design",
   "developer",
   "development",
   "engineer",
   "engineering",
   "feature",
+  "hosting",
   "html",
   "java",
   "java, python",
+  "jquery",
+  "junit",
   "leading",
   "leadership",
   "management",
@@ -334,8 +339,10 @@ const GENERIC_SKILL_TERMS = new Set([
   "sde",
   "software",
   "software engineering",
+  "teams",
   "testing",
   "technology",
+  "writing",
 ])
 
 function meaningfulSkills(employee: Record<string, unknown>): string[] {
@@ -448,11 +455,11 @@ function profileEvidenceText(employee: Record<string, unknown>): string {
 const TRAJECTORY_SIGNAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: "elite award or ranking", pattern: /\b(top\s*0?\.\d+%|national award|awardee|olympiad|icpc|hackathon|ranked)\b/i },
   { label: "founder or acquired-company background", pattern: /\b(co-?founder|founder|founded|acquired|startup|entrepreneur|bootstrapp(?:ed|ing)?)\b/i },
-  { label: "fast-growth career signal", pattern: /\b(high[- ]growth|fast[- ]growing|rapid growth|accelerated|early career|promot(?:ed|ion))\b/i },
+  { label: "fast-growth career signal", pattern: /\b(high[- ]growth|fast[- ]growing|rapid growth|accelerated career|early career acceleration|rapid promot(?:ed|ion)|promoted .*?(senior|staff|lead|principal))\b/i },
 ]
 
 const BUILDER_SIGNAL_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
-  { label: "built or launched product work", pattern: /\b(built|build|launched|created|shipped|owned|designed)\b/i },
+  { label: "built or launched product work", pattern: /\b(built|build|launched|shipped|owned|created|designed)\b.{0,80}\b(product|platform|system|application|app|service|tool|feature|workflow|marketplace|dashboard|saas)\b|\b(saas development|web development|database development)\b/i },
   { label: "startup or founder product work", pattern: /\b(co-?founder|founder|startup|acquired|bootstrapp(?:ed|ing)?)\b/i },
   { label: "developer tool or platform work", pattern: /\b(developer productivity|devtools?|framework|sdk|library|open source|platform)\b/i },
 ]
@@ -506,6 +513,16 @@ function isNonComparableOperatorRole(employee: Record<string, unknown>): boolean
   )
 }
 
+function hasCareerCoachingSignal(employee: Record<string, unknown>): boolean {
+  const text = [headline(employee), currentTitle(employee), profileEvidenceText(employee)]
+    .map((value) => cleanString(value))
+    .filter(Boolean)
+    .join(" ")
+  return /\b(interview coach|career coach|compensation coach|helping software engineers|crack top tech|crack faang|2x (their )?compensation|salary negotiation|linkedin top voice)\b/i.test(
+    text,
+  )
+}
+
 function isRoleCompatibleWithSource(
   source: Record<string, unknown>,
   candidate: Record<string, unknown>,
@@ -522,6 +539,37 @@ function isRoleCompatibleWithSource(
   }
   if (isNonComparableOperatorRole(candidate)) return false
   return isHandsOnSoftwareProfile(candidate)
+}
+
+function hasStrongNonGenericOverlap(
+  source: Record<string, unknown>,
+  candidate: Record<string, unknown>,
+): boolean {
+  const sourceText = profileEvidenceText(source)
+  const candidateText = profileEvidenceText(candidate)
+  const matchingDomains = intersections(
+    matchingSignalLabels(sourceText, DOMAIN_SIGNAL_PATTERNS, 8),
+    matchingSignalLabels(candidateText, DOMAIN_SIGNAL_PATTERNS, 8),
+    3,
+  )
+  if (matchingDomains.length > 0) return true
+  if (intersections(companyHistory(source).allCompanies, companyHistory(candidate).allCompanies, 1).length > 0) {
+    return true
+  }
+  if (intersections(schoolNames(education(source)), schoolNames(education(candidate)), 1).length > 0) {
+    return true
+  }
+  if (intersections(meaningfulSkills(source), meaningfulSkills(candidate), 1).length > 0) {
+    return true
+  }
+  const sourceBuilder = matchingSignalLabels(sourceText, BUILDER_SIGNAL_PATTERNS)
+  const candidateBuilder = matchingSignalLabels(candidateText, BUILDER_SIGNAL_PATTERNS)
+  const candidateTrajectory = matchingSignalLabels(candidateText, TRAJECTORY_SIGNAL_PATTERNS)
+  return (
+    sourceBuilder.length > 0 &&
+    candidateBuilder.length > 0 &&
+    candidateTrajectory.some((label) => label !== "fast-growth career signal")
+  )
 }
 
 function deriveSimilarityReasons(
@@ -657,11 +705,11 @@ function similarityEvidenceQuality(reasons: string[]): {
   }
 
   const passes =
-    (domainSignals > 0 && builderSignals + exactStrongSignals + genericSignals >= 1) ||
-    (candidateFastGrowthSignal && builderSignals + exactStrongSignals + genericSignals >= 1) ||
+    (domainSignals > 0 && builderSignals + exactStrongSignals >= 1) ||
+    (candidateFastGrowthSignal && (domainSignals > 0 || exactStrongSignals > 0)) ||
     (builderSignals > 0 && (domainSignals > 0 || exactStrongSignals > 0)) ||
     exactStrongSignals >= 2 ||
-    (exactStrongSignals >= 1 && genericSignals >= 1)
+    (exactStrongSignals >= 1 && (domainSignals > 0 || builderSignals > 0))
   const evidenceScore = Math.min(
     0.97,
     0.42 +
@@ -750,6 +798,7 @@ export function normalizeSimilarCandidateRows(
     const name = fullName(record)
     if (!name) return
     if (!isRoleCompatibleWithSource(sourceRecord, record)) return
+    if (hasCareerCoachingSignal(record) && !hasStrongNonGenericOverlap(sourceRecord, record)) return
     const reasons = deriveSimilarityReasons(sourceRecord, record)
     if (reasons.length === 0) return
     const quality = similarityEvidenceQuality(reasons)
