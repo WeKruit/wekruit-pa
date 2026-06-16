@@ -354,7 +354,7 @@ export async function loadCandidateOtherSessions(
  *  fileName + parsed summary — so the résumé "link" expands that summary inline. */
 export type CandidateSources = {
   linkedinUrl?: string
-  resume?: { fileName?: string; summary?: string }
+  resume?: { fileName?: string; summary?: string; url?: string }
 }
 
 export async function loadCandidateSources(userId: string): Promise<CandidateSources> {
@@ -377,7 +377,14 @@ export async function loadCandidateSources(userId: string): Promise<CandidateSou
         const art = artSnap.data() as Record<string, unknown>
         const fileName = firstString(art.fileName)
         const summary = firstString(art.candidateProfileSummary)
-        if (fileName || summary) out.resume = { ...(fileName ? { fileName } : {}), ...(summary ? { summary } : {}) }
+        const url = firstString(art.resumeFileUrl)
+        if (fileName || summary || url) {
+          out.resume = {
+            ...(fileName ? { fileName } : {}),
+            ...(summary ? { summary } : {}),
+            ...(url ? { url } : {}),
+          }
+        }
       }
     }
   } catch {
@@ -1338,9 +1345,10 @@ function pillarTone(v?: string): "ok" | "warn" | "muted" {
   return v === "strong" ? "ok" : v === "weak" ? "warn" : "muted"
 }
 
-/** Candidate sources — LinkedIn (real external link) + résumé (fileName + parsed
- *  summary; candidate-upload résumés keep no downloadable file). Sits right above
- *  the checklist eval so the operator can cross-check the eval against the source. */
+/** Candidate sources — LinkedIn (real external link) + résumé. Résumés uploaded after
+ *  the persist-at-ingest change carry a viewable `resumeFileUrl` → inline iframe; older
+ *  uploads have only the parsed summary. Sits right above the checklist eval so the
+ *  operator can cross-check the eval against the source. */
 function CandidateSourcesCard({ sources }: { sources: CandidateSources | null }) {
   if (sources === null) {
     return (
@@ -1349,12 +1357,12 @@ function CandidateSourcesCard({ sources }: { sources: CandidateSources | null })
       </div>
     )
   }
-  // Shared résumé/candidate UI with the recruiter submission review. Prescreen uploads
-  // keep no downloadable résumé URL, so the shared preview shows LinkedIn + the parsed
-  // summary (no iframe); recruiter submissions, which carry a real URL, get the inline
-  // résumé. Same component, one source of truth.
+  // Shared résumé/candidate UI with the recruiter submission review — same component,
+  // one source of truth. With a résumé URL it shows the inline document; without one
+  // (older candidate uploads) it falls back to LinkedIn + the parsed summary.
   return (
     <CandidateResumePreview
+      resumeUrl={sources.resume?.url}
       linkedinUrl={sources.linkedinUrl}
       fileName={sources.resume?.fileName}
       parsedSummary={sources.resume?.summary}
