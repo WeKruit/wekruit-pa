@@ -357,9 +357,45 @@ export async function loadCandidateOtherSessions(
  *  can open the actual LinkedIn / read the résumé while reviewing. LinkedIn is a
  *  real external URL; candidate-upload résumés keep no downloadable file — only a
  *  fileName + parsed summary — so the résumé "link" expands that summary inline. */
+export type ParsedResumeView = {
+  profile?: string
+  experiences?: Array<{ title?: string; company?: string; startDate?: string; endDate?: string; location?: string; description?: string }>
+  education?: Array<{ school?: string; degree?: string; field?: string }>
+  skills?: string[]
+}
+
 export type CandidateSources = {
   linkedinUrl?: string
-  resume?: { fileName?: string; summary?: string; url?: string }
+  resume?: { fileName?: string; summary?: string; url?: string; parsed?: ParsedResumeView }
+}
+
+function asArray(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object") : []
+}
+
+/** Project a parsedCandidateResumes doc into the lightweight view the drawer renders
+ *  when there is no PDF on file (backlog candidates uploaded before file-persist). */
+function buildParsedResumeView(data: Record<string, unknown>): ParsedResumeView | undefined {
+  const expSrc = asArray(data.experiences).length > 0 ? asArray(data.experiences) : asArray(data.workHistory)
+  const experiences = expSrc.slice(0, 12).map((e) => ({
+    title: firstString(e.title, e.role),
+    company: firstString(e.company, e.employer),
+    startDate: firstString(e.startDate),
+    endDate: firstString(e.endDate),
+    location: firstString(e.location),
+    description: firstString(e.description, e.summary),
+  }))
+  const education = asArray(data.education).slice(0, 6).map((e) => ({
+    school: firstString(e.school, e.institution),
+    degree: firstString(e.degree),
+    field: firstString(e.field, e.major),
+  }))
+  const skills = Array.isArray(data.topSkills)
+    ? (data.topSkills as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 24)
+    : []
+  const profile = firstString(data.candidateProfile, data.candidateProfileSummary)
+  if (!profile && experiences.length === 0 && education.length === 0 && skills.length === 0) return undefined
+  return { ...(profile ? { profile } : {}), experiences, education, skills }
 }
 
 export async function loadCandidateSources(userId: string): Promise<CandidateSources> {
@@ -389,12 +425,14 @@ export async function loadCandidateSources(userId: string): Promise<CandidateSou
     let artFileName: string | undefined
     let artSummary: string | undefined
     let artUrl: string | undefined
+    let parsedId: string | undefined
     if (artId) {
       const artSnap = await getDoc(doc(db(), "pa-resume-artifacts", artId))
       if (artSnap.exists()) {
         const art = artSnap.data() as Record<string, unknown>
         artFileName = firstString(art.fileName, art.originalFileName, art.name)
         artSummary = firstString(art.candidateProfileSummary, art.summary)
+        parsedId = firstString(art.parsedCandidateResumeId)
         artUrl = firstString(
           art.resumeFileUrl,
           art.fileUrl,
@@ -411,11 +449,19 @@ export async function loadCandidateSources(userId: string): Promise<CandidateSou
     const fileName = artFileName
     const summary = artSummary
     const url = artUrl ?? userResumeUrl
-    if (fileName || summary || url) {
+    // No PDF on file (backlog uploaded before file-persist) → load the FULL parsed
+    // résumé so the drawer still shows a readable résumé, not just the 1-liner.
+    let parsed: ParsedResumeView | undefined
+    if (!url && parsedId) {
+      const parsedSnap = await getDoc(doc(db(), "parsedCandidateResumes", parsedId))
+      if (parsedSnap.exists()) parsed = buildParsedResumeView(parsedSnap.data() as Record<string, unknown>)
+    }
+    if (fileName || summary || url || parsed) {
       out.resume = {
         ...(fileName ? { fileName } : {}),
         ...(summary ? { summary } : {}),
         ...(url ? { url } : {}),
+        ...(parsed ? { parsed } : {}),
       }
     }
   } catch {
@@ -1427,6 +1473,7 @@ function CandidateSourcesCard({ sources }: { sources: CandidateSources | null })
       linkedinUrl={sources.linkedinUrl}
       fileName={sources.resume?.fileName}
       parsedSummary={sources.resume?.summary}
+      parsed={sources.resume?.parsed}
     />
   )
 }
