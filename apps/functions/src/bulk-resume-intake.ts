@@ -783,7 +783,7 @@ export async function runBulkResumeSubmitRecruiterBatch(
       continue
     }
 
-    const candidate: Record<string, string> = stripUndefined({
+    const candidate = stripUndefined({
       name: cleanString(profile.name, 200) ?? fallbackNameFromFile(item.fileName),
       email,
       link,
@@ -792,7 +792,7 @@ export async function runBulkResumeSubmitRecruiterBatch(
       currentRole: firstExperienceValue(resume, "title"),
       currentCompany: firstExperienceValue(resume, "company"),
       notes: await readResumeArtifactSummary(deps.db, item.resumeArtifactId),
-    })
+    }) as Record<string, string>
     const submissionId = `bulk_${sha256Text(`${jobId}|${item.itemId}`).slice(0, 32)}`
     await deps.db.collection(RECRUITER_SUBMISSIONS_COLLECTION).doc(submissionId).set(stripUndefined({
       submissionId,
