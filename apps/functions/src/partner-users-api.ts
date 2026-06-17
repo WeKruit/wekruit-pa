@@ -9,7 +9,7 @@
  * Spec: docs/superpowers/specs/2026-05-27-partner-users-api-design.md
  */
 import { getApps, initializeApp } from "firebase-admin/app"
-import { Timestamp, getFirestore, type Firestore, type Query } from "firebase-admin/firestore"
+import { Timestamp, getFirestore, type Firestore } from "firebase-admin/firestore"
 import { defineSecret } from "firebase-functions/params"
 import { onRequest } from "firebase-functions/v2/https"
 import { createHash } from "node:crypto"
@@ -130,12 +130,28 @@ export interface PartnerUsersJobRow {
   wekruitJobUrl: string
 }
 
+/** How a user matched the partner: durable top-level source, the entry-time
+ * source captured on their first/last signup entry, or both. */
+export type AttributedVia = "top_level" | "entry" | "both"
+
 export interface PartnerUsersUserRow {
   email: string
   name?: string
   wekruitUserId: string
   registeredAt: string
   lifecycleState?: string
+  /** Durable, first-write-sticky `pa-users.source`. May differ from the partner
+   * (e.g. an earlier generic `candidate` touch locked it) — that's exactly why
+   * `entrySource` exists. */
+  source?: string
+  /** Source captured on the signup ENTRY (first/last). This is what proves the
+   * candidate actually arrived through the partner's tagged link even when the
+   * durable `source` was already locked to something else. */
+  entrySource?: string
+  /** The job page the candidate entered through, if any. */
+  entryJobId?: string
+  /** Which field(s) attributed this user to the partner. */
+  attributedVia: AttributedVia
   jobs: PartnerUsersJobRow[]
   summary: {
     totalJobs: number
@@ -194,6 +210,15 @@ function toIsoString(value: unknown, fallback: string): string {
   return fallback
 }
 
+/** Safely read {source, jobId} off a signup-entry map of unknown shape. */
+function entryOf(raw: unknown): { source?: string; jobId?: string } {
+  const o = raw && typeof raw === "object" ? (raw as { source?: unknown; jobId?: unknown }) : null
+  return {
+    source: typeof o?.source === "string" ? o.source : undefined,
+    jobId: typeof o?.jobId === "string" ? o.jobId : undefined,
+  }
+}
+
 function activePrescreenStates(): ReadonlySet<CandidateJobState> {
   return new Set<CandidateJobState>([
     "prescreen_started",
@@ -209,24 +234,60 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
   const safeLimit = Math.max(1, Math.min(MAX_LIMIT, limit))
   const sinceMs = args.since ? Date.parse(args.since) : undefined
 
-  // Users page (limit + 1 to detect hasMore).
-  let usersQ: Query = db
-    .collection(PA_COLLECTIONS.users)
-    .where("source", "==", partnerSource)
-    .orderBy("createdAt", "desc")
-    .orderBy("__name__", "desc")
+  // A partner owns a user if EITHER the durable top-level `source` OR the
+  // entry-time source (first/last signup entry) is theirs. `pa-users.source` is
+  // first-write-sticky, so a candidate who first touched generically and later
+  // arrived through the partner's tagged link has source="candidate" but
+  // firstSignupEntry.source=<partner>. Querying only the top-level field
+  // silently dropped those real referrals — union the three so neither is
+  // missed. Partner data sets are small (per-partner referrals), so we fetch
+  // all matches and paginate in memory rather than streaming one cursor query.
+  const FETCH_CAP = 3000
+  const [bySource, byFirstEntry, byLastEntry] = await Promise.all([
+    db.collection(PA_COLLECTIONS.users).where("source", "==", partnerSource).limit(FETCH_CAP).get(),
+    db.collection(PA_COLLECTIONS.users).where("firstSignupEntry.source", "==", partnerSource).limit(FETCH_CAP).get(),
+    db.collection(PA_COLLECTIONS.users).where("lastSignupEntry.source", "==", partnerSource).limit(FETCH_CAP).get(),
+  ])
+  const mergedById = new Map<string, (typeof bySource.docs)[number]>()
+  for (const snap of [bySource, byFirstEntry, byLastEntry]) {
+    for (const d of snap.docs) mergedById.set(d.id, d)
+  }
+  const sortedDocs = [...mergedById.values()].sort((a, b) => {
+    const ac = toIsoString(a.data().createdAt, "")
+    const bc = toIsoString(b.data().createdAt, "")
+    if (ac !== bc) return ac < bc ? 1 : -1 // createdAt desc
+    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0 // docId desc tiebreak
+  })
+
+  // In-memory cursor: continue after the cursor's doc id in the stable sort.
   const cursor = args.cursorOpaque ? decodeCursor(args.cursorOpaque) : null
-  if (cursor) usersQ = usersQ.startAfter(cursor.createdAt, cursor.docId)
-  usersQ = usersQ.limit(safeLimit + 1)
-  const usersSnap = await usersQ.get()
-  const usersDocs = usersSnap.docs.slice(0, safeLimit)
-  const hasMore = usersSnap.docs.length > safeLimit
+  let windowDocs = sortedDocs
+  if (cursor) {
+    const idx = sortedDocs.findIndex((d) => d.id === cursor.docId)
+    windowDocs = idx >= 0 ? sortedDocs.slice(idx + 1) : sortedDocs
+  }
+  const usersDocs = windowDocs.slice(0, safeLimit)
+  const hasMore = windowDocs.length > safeLimit
 
   // Per-user job states + job-doc hydration + prescreen session join.
   const rows = await Promise.all(
     usersDocs.map(async (userDoc) => {
       const userData = userDoc.data() ?? {}
       const candidateId = userDoc.id
+
+      // Attribution: durable top-level source vs entry-time source(s).
+      const topSource = typeof userData.source === "string" ? userData.source : undefined
+      const fe = entryOf(userData.firstSignupEntry)
+      const le = entryOf(userData.lastSignupEntry)
+      const topMatch = topSource === partnerSource
+      const entryMatch = fe.source === partnerSource || le.source === partnerSource
+      const entrySource = entryMatch ? partnerSource : (fe.source ?? le.source)
+      const entryJobId =
+        (fe.source === partnerSource ? fe.jobId : undefined) ??
+        (le.source === partnerSource ? le.jobId : undefined) ??
+        fe.jobId ??
+        le.jobId
+      const attributedVia: AttributedVia = topMatch && entryMatch ? "both" : topMatch ? "top_level" : "entry"
 
       // No orderBy here: `stateUpdatedAt` is an ISO string and an equality+orderBy
       // on it would need a dedicated (candidateId, stateUpdatedAt) composite index.
@@ -315,6 +376,10 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
         wekruitUserId: candidateId,
         registeredAt: toIsoString(userData.createdAt, new Date(0).toISOString()),
         lifecycleState: (userData.lifecycleState as string | undefined) ?? undefined,
+        source: topSource,
+        entrySource,
+        entryJobId,
+        attributedVia,
         jobs,
         summary,
       } as PartnerUsersUserRow
