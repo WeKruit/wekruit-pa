@@ -712,10 +712,15 @@ export function PrescreenReviewDrawer({
         : rawChecklistVerdict === "reject"
           ? ("reject" as const)
           : undefined
+  const bgPillars = detail?.session.review?.candidateChecklistEval?.background as
+    | { school?: { verdict?: string }; company?: { verdict?: string } }
+    | undefined
+  const strongBackground = bgPillars?.school?.verdict === "strong" || bgPillars?.company?.verdict === "strong"
   const aiSuggestedTier = suggestTierFromPrescreen({
     terminal: selectedTerminal,
     weightedFitScore: detail?.attempt?.weightedFitScore,
     checklistVerdict: mappedChecklistVerdict,
+    strongBackground,
   })
   const effectiveTier: CandidateTier | null = tierOverride ?? aiSuggestedTier
   const attemptId = detail?.attempt?.attemptId

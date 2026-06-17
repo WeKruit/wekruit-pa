@@ -387,9 +387,11 @@ export async function runPrescreenCandidateEval(
           typeof session.score === "number" && typeof session.scoreMax === "number" && session.scoreMax > 0
             ? session.score / session.scoreMax
             : undefined
-        const cv = parsed.verdict
-        const checklistVerdict = cv === "advance" ? "pass" : cv === "borderline" ? "uncertain" : cv === "reject" ? "reject" : undefined
-        const tier = suggestTierFromPrescreen({ terminal, weightedFitScore: fit, checklistVerdict })
+        // strong school OR strong company (role-aware judge in the eval) → the
+        // non-top-5% reusable signal that drives tier_2 (else tier_3).
+        const bg = (evaluation as { background?: Record<string, { verdict?: string }> }).background
+        const strongBackground = bg?.school?.verdict === "strong" || bg?.company?.verdict === "strong"
+        const tier = suggestTierFromPrescreen({ terminal, weightedFitScore: fit, strongBackground })
         if (tier) {
           await applyGlobalCandidateTier(
             {

@@ -86,35 +86,36 @@ export interface PrescreenTierSignal {
   checklistVerdict?: ChecklistVerdict
   /** Count of failed MUST-HAVE checklist items, if known. */
   hardGaps?: number | null
+  /** Strong school OR strong company (role-aware). Drives tier_2 for non-top-5%. */
+  strongBackground?: boolean
 }
 
 /**
- * Suggest a tier for a PRESCREEN rejection from existing signals. Returns null
- * for non-rejection terminals (PASS / PAUSE / null) — nothing to tier.
+ * Adam-locked tiering (2026-06-17): tier_1 is RARE — only the top ~5% by
+ * prescreen fit (a near-pass FAIL). Everyone else is tier_2 ONLY if they have a
+ * strong school or company (reusable for other roles); otherwise tier_3.
  *
- * Thresholds (advisory): overall fit drives it because the global tier is about
- * "how strong is this person", independent of this role's must-haves.
- *  - HARD_STOP → tier_3 (explicit hard mismatch) unless fit is genuinely high.
- *  - FAIL: fit ≥ 0.50 → tier_1 · 0.30–0.50 → tier_2 · < 0.30 → tier_3.
- *  - An "uncertain" checklist verdict softens a tier_3 to tier_2 (not a hard no).
+ *  - PASS / PAUSE / null → null (not a rejection).
+ *  - FAIL with fit ≥ {@link PRESCREEN_TIER_1_FIT_CUTOFF} → tier_1 (near-pass).
+ *  - HARD_STOP → never tier_1 (explicit hard mismatch).
+ *  - else: strongBackground → tier_2, otherwise tier_3.
+ *
+ * `weightedFitScore` is the 0–1 fit RATIO (score/scoreMax). A real population
+ * percentile is computed at backfill time; this fixed cutoff approximates the
+ * top-5% for the live per-candidate path.
  */
+export const PRESCREEN_TIER_1_FIT_CUTOFF = 0.9
+
 export function suggestTierFromPrescreen(signal: PrescreenTierSignal): CandidateTier | null {
   const { terminal } = signal
   if (terminal === "PASS" || terminal === "PAUSE" || terminal == null) return null
   const fit = typeof signal.weightedFitScore === "number" ? signal.weightedFitScore : null
 
-  let tier: CandidateTier
-  if (terminal === "HARD_STOP") {
-    tier = fit != null && fit >= 0.6 ? "tier_2" : "tier_3"
-  } else if (fit != null) {
-    tier = fit >= 0.5 ? "tier_1" : fit >= 0.3 ? "tier_2" : "tier_3"
-  } else {
-    // No fit score — fall back to the checklist verdict (uncertain ≠ hard no).
-    tier = signal.checklistVerdict === "uncertain" ? "tier_2" : "tier_3"
-  }
-
-  if (tier === "tier_3" && signal.checklistVerdict === "uncertain") tier = "tier_2"
-  return tier
+  // tier_1 ONLY for a near-pass FAIL (top ~5%). HARD_STOP can never be tier_1.
+  if (terminal === "FAIL" && fit != null && fit >= PRESCREEN_TIER_1_FIT_CUTOFF) return "tier_1"
+  // Not top-5%: reusable for other roles only with a strong school/company.
+  if (signal.strongBackground) return "tier_2"
+  return "tier_3"
 }
 
 // ---------------------------------------------------------------------------

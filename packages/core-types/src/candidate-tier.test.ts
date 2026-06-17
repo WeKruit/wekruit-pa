@@ -54,30 +54,28 @@ describe("suggestTierFromRecruiterAi", () => {
   })
 })
 
-describe("suggestTierFromPrescreen", () => {
+describe("suggestTierFromPrescreen (top-5% tier_1, strong-bg tier_2)", () => {
   it("returns null for non-rejection terminals", () => {
     assert.equal(suggestTierFromPrescreen({ terminal: "PASS" }), null)
     assert.equal(suggestTierFromPrescreen({ terminal: "PAUSE" }), null)
     assert.equal(suggestTierFromPrescreen({ terminal: null }), null)
   })
-  it("FAIL maps by fit score", () => {
-    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.7 }), "tier_1")
-    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.4 }), "tier_2")
-    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.1 }), "tier_3")
+  it("tier_1 ONLY for a near-pass FAIL (fit ≥ 0.90)", () => {
+    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.95 }), "tier_1")
+    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.9 }), "tier_1")
+    // below the cutoff is NOT tier_1 anymore (this was the over-tiering bug)
+    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.85 }), "tier_3")
+    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.5 }), "tier_3")
   })
-  it("HARD_STOP → tier_3 unless fit is high", () => {
-    assert.equal(suggestTierFromPrescreen({ terminal: "HARD_STOP", weightedFitScore: 0.2 }), "tier_3")
-    assert.equal(suggestTierFromPrescreen({ terminal: "HARD_STOP", weightedFitScore: 0.7 }), "tier_2")
+  it("HARD_STOP can never be tier_1, even at high fit", () => {
+    assert.equal(suggestTierFromPrescreen({ terminal: "HARD_STOP", weightedFitScore: 0.99 }), "tier_3")
+    assert.equal(suggestTierFromPrescreen({ terminal: "HARD_STOP", weightedFitScore: 0.99, strongBackground: true }), "tier_2")
   })
-  it("uncertain checklist softens a tier_3 to tier_2", () => {
-    assert.equal(
-      suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.1, checklistVerdict: "uncertain" }),
-      "tier_2",
-    )
-  })
-  it("no fit score falls back to checklist verdict", () => {
-    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", checklistVerdict: "uncertain" }), "tier_2")
-    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", checklistVerdict: "reject" }), "tier_3")
+  it("non-top-5% → tier_2 only with a strong school/company, else tier_3", () => {
+    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.5, strongBackground: true }), "tier_2")
+    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", weightedFitScore: 0.5, strongBackground: false }), "tier_3")
+    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL", strongBackground: true }), "tier_2")
+    assert.equal(suggestTierFromPrescreen({ terminal: "FAIL" }), "tier_3")
   })
 })
 
