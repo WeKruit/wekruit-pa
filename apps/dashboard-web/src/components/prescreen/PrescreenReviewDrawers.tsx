@@ -655,10 +655,21 @@ export function PrescreenReviewDrawer({
   // Rejection tier — the AI suggests one from overall fit + checklist; the
   // operator confirms/overrides. Only shown/sent for FAIL / HARD_STOP.
   const isRejectionTerminal = selectedTerminal === "FAIL" || selectedTerminal === "HARD_STOP"
+  // candidateChecklistEval.verdict is advance/borderline/reject — map to the
+  // pass/reject/uncertain shape suggestTierFromPrescreen expects.
+  const rawChecklistVerdict = detail?.session.review?.candidateChecklistEval?.verdict
+  const mappedChecklistVerdict =
+    rawChecklistVerdict === "advance"
+      ? ("pass" as const)
+      : rawChecklistVerdict === "borderline"
+        ? ("uncertain" as const)
+        : rawChecklistVerdict === "reject"
+          ? ("reject" as const)
+          : undefined
   const aiSuggestedTier = suggestTierFromPrescreen({
     terminal: selectedTerminal,
     weightedFitScore: detail?.attempt?.weightedFitScore,
-    checklistVerdict: detail?.session.review?.candidateChecklistEval?.verdict,
+    checklistVerdict: mappedChecklistVerdict,
   })
   const effectiveTier: CandidateTier | null = tierOverride ?? aiSuggestedTier
   const attemptId = detail?.attempt?.attemptId
