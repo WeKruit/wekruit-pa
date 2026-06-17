@@ -392,6 +392,47 @@ function nonEmptyTrimmed(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined
 }
 
+function extractFirstResumeEmail(text: string): string | null {
+  const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
+  return match?.[0]?.toLowerCase() ?? null
+}
+
+function extractFirstLinkedInUrl(text: string): string | null {
+  const match = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/[^\s)>,;"'|]+/i)
+  if (!match?.[0]) return null
+  const raw = match[0].replace(/[.,;]+$/g, "")
+  return raw.startsWith("http://") || raw.startsWith("https://")
+    ? raw
+    : `https://${raw}`
+}
+
+function applyDeterministicContactFallback(
+  parsed: StructuredCv,
+  text: string
+): { parsed: StructuredCv; emailFallback: string | null; linkedInFallback: string | null } {
+  const emailFallback = nonEmptyTrimmed(parsed.candidateProfile.email)
+    ? null
+    : extractFirstResumeEmail(text)
+  const linkedInFallback = nonEmptyTrimmed(parsed.candidateProfile.linkedIn)
+    ? null
+    : extractFirstLinkedInUrl(text)
+  if (!emailFallback && !linkedInFallback) {
+    return { parsed, emailFallback: null, linkedInFallback: null }
+  }
+  return {
+    parsed: {
+      ...parsed,
+      candidateProfile: {
+        ...parsed.candidateProfile,
+        email: emailFallback ?? parsed.candidateProfile.email,
+        linkedIn: linkedInFallback ?? parsed.candidateProfile.linkedIn,
+      },
+    },
+    emailFallback,
+    linkedInFallback,
+  }
+}
+
 /**
  * v1.9 hotfix (Adam directive 2026-05-12) — normalize parsed CV phone to E.164.
  *
@@ -2358,6 +2399,16 @@ export async function ingestCv(
       parserV2: parserV2On,
     })
     return { ok: false, reason: "llm_parse_failed" }
+  }
+
+  const contactFallback = applyDeterministicContactFallback(parsed, text)
+  parsed = contactFallback.parsed
+  if (contactFallback.emailFallback || contactFallback.linkedInFallback) {
+    log("pa.cv_ingest.contact_fallback_applied", {
+      userId: args.userId,
+      email: Boolean(contactFallback.emailFallback),
+      linkedIn: Boolean(contactFallback.linkedInFallback),
+    })
   }
 
   const extractedEmail = nonEmptyTrimmed(parsed.candidateProfile.email)

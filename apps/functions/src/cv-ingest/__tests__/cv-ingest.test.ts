@@ -255,6 +255,57 @@ describe("ingestCv", () => {
     assert.ok(Array.isArray(w.data.education))
   })
 
+  it("fills missing email and LinkedIn from extracted resume text", async () => {
+    const { db, state } = makeFakeDb()
+    const { events, log } = captureLog()
+    const parsed = happyParsed()
+    parsed.candidateProfile.email = null
+    parsed.candidateProfile.linkedIn = null
+    const { deps } = makeStubbedDeps({ db, log, parsed })
+    deps.parsePdf = async () => ({
+      text: [
+        "Karthik Mannem",
+        "mannemkarthik01@gmail.com",
+        "linkedin.com/in/karthik-mannem-2008b4225",
+      ].join("\n"),
+      numPages: 1,
+    })
+
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/path/cv.pdf", requireExtractedEmail: true },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    const cp = state.resumes[0]!.data.candidateProfile as Record<string, unknown>
+    assert.equal(cp.email, "mannemkarthik01@gmail.com")
+    assert.equal(cp.linkedIn, "https://linkedin.com/in/karthik-mannem-2008b4225")
+    assert.ok(events.some((entry) => entry.event === "pa.cv_ingest.contact_fallback_applied"))
+  })
+
+  it("does not override parser-provided email or LinkedIn", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const parsed = happyParsed()
+    parsed.candidateProfile.email = "parser@example.com"
+    parsed.candidateProfile.linkedIn = "https://linkedin.com/in/parser"
+    const { deps } = makeStubbedDeps({ db, log, parsed })
+    deps.parsePdf = async () => ({
+      text: "Resume text has alternate@example.com and linkedin.com/in/alternate",
+      numPages: 1,
+    })
+
+    const res = await ingestCv(
+      { userId: "user_x", mediaUrl: "https://example.com/path/cv.pdf" },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    const cp = state.resumes[0]!.data.candidateProfile as Record<string, unknown>
+    assert.equal(cp.email, "parser@example.com")
+    assert.equal(cp.linkedIn, "https://linkedin.com/in/parser")
+  })
+
   it("download fail → returns ok:false reason:download_failed and writes nothing", async () => {
     const { db, state } = makeFakeDb()
     const res = await ingestCv(
