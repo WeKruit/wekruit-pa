@@ -6,12 +6,12 @@
  * paAdminRecruiterSubmissionAction.
  *
  * Client-side join of two small collections: pa-recruiter-users
- * (name/email/status) + pa-recruiter-submissions. Submitter
- * emails with no matching recruiter profile land in an "Unclaimed
- * submitters" group.
+ * (name/email/status) + pa-recruiter-submissions (latest 100 per recruiter).
+ * Submitter emails with no matching recruiter profile land in an "Unclaimed
+ * submitters" group from a small recent fallback.
  */
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
-import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore"
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
@@ -205,12 +205,15 @@ interface BoardRecruiterGroup {
 }
 
 const PENDING_STATUSES = ["submitted", "new", "reviewing"]
-const BOARD_SUBMISSION_LOAD_LIMIT = 5_000
+const BOARD_SUBMISSIONS_PER_RECRUITER_LIMIT = 100
+const BOARD_UNCLAIMED_SUBMISSION_LIMIT = 100
 const BOARD_SUBMISSION_PAGE_SIZE = 100
+const BOARD_RECRUITER_SUBMISSION_IDENTITY_FIELDS = ["recruiterId", "recruiterEmail", "submitter.email"] as const
 const DEFAULT_REQUEST_MESSAGE = "Please add the candidate's resume link and LinkedIn profile."
 const DEFAULT_REJECTION_CATEGORY: RecruiterCandidateRejectionCategory = "quality"
 const DEFAULT_REJECTION_TIER: RecruiterCandidateTier = "tier_3"
 export type BoardSubmissionFilter = "pending" | "all"
+type BoardRecruiterSubmissionIdentityField = typeof BOARD_RECRUITER_SUBMISSION_IDENTITY_FIELDS[number]
 
 export function defaultRecruiterSubmissionRejection(): RecruiterSubmissionRejectionInput {
   return {
@@ -417,6 +420,64 @@ function recruiterMatches(submission: BoardSubmissionDoc, recruiter: BoardRecrui
     submission.recruiterEmail?.trim().toLowerCase() === email ||
     submission.submitter?.email?.trim().toLowerCase() === email
   )
+}
+
+function recruiterSubmissionLookupKeys(recruiter: BoardRecruiterDoc): Array<{ field: BoardRecruiterSubmissionIdentityField; value: string }> {
+  const keys: Array<{ field: BoardRecruiterSubmissionIdentityField; value: string }> = []
+  const seen = new Set<string>()
+  const add = (field: BoardRecruiterSubmissionIdentityField, raw?: string | null) => {
+    const value = raw?.trim()
+    if (!value) return
+    const key = `${field}:${value}`
+    if (seen.has(key)) return
+    seen.add(key)
+    keys.push({ field, value })
+  }
+
+  add("recruiterId", recruiter.id)
+  add("recruiterEmail", recruiter.email)
+  add("submitter.email", recruiter.email)
+  const normalizedEmail = recruiter.email?.trim().toLowerCase()
+  if (normalizedEmail && normalizedEmail !== recruiter.email?.trim()) {
+    add("recruiterEmail", normalizedEmail)
+    add("submitter.email", normalizedEmail)
+  }
+  return keys
+}
+
+function sortSubmissionsByRecency(submissions: BoardSubmissionDoc[]): BoardSubmissionDoc[] {
+  return [...submissions].sort((a, b) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0))
+}
+
+function uniqueBoardSubmissions(submissions: BoardSubmissionDoc[]): BoardSubmissionDoc[] {
+  const byId = new Map<string, BoardSubmissionDoc>()
+  for (const submission of sortSubmissionsByRecency(submissions)) {
+    if (!byId.has(submission.id)) byId.set(submission.id, submission)
+  }
+  return [...byId.values()]
+}
+
+function capBoardSubmissionsPerRecruiter(
+  recruiters: BoardRecruiterDoc[],
+  submissions: BoardSubmissionDoc[],
+  perRecruiterLimit: number,
+): BoardSubmissionDoc[] {
+  const sorted = uniqueBoardSubmissions(submissions)
+  const includedIds = new Set<string>()
+  const matchedRecruiterIds = new Set<string>()
+
+  for (const recruiter of recruiters) {
+    let count = 0
+    for (const submission of sorted) {
+      if (!recruiterMatches(submission, recruiter)) continue
+      matchedRecruiterIds.add(submission.id)
+      if (count >= perRecruiterLimit) continue
+      includedIds.add(submission.id)
+      count += 1
+    }
+  }
+
+  return sorted.filter((submission) => includedIds.has(submission.id) || !matchedRecruiterIds.has(submission.id))
 }
 
 function submissionJobKey(submission: BoardSubmissionDoc): string {
@@ -1639,15 +1700,32 @@ export default function RecruiterBoardOps() {
       try {
         setLoading(true)
         setErr(null)
-        const [submissionSnap, recruiterSnap] = await Promise.all([
-          getDocs(query(collection(db(), "pa-recruiter-submissions"), orderBy("createdAt", "desc"), limit(BOARD_SUBMISSION_LOAD_LIMIT))),
-          getDocs(collection(db(), "pa-recruiter-users")),
-        ])
+        const recruiterSnap = await getDocs(collection(db(), "pa-recruiter-users"))
         if (cancelled) return
-        const loadedSubmissions = submissionSnap.docs.map((d) => {
+        const loadedRecruiters = recruiterSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardRecruiterDoc, "id">) }))
+        const submissionQueries = [
+          getDocs(query(
+            collection(db(), "pa-recruiter-submissions"),
+            orderBy("createdAt", "desc"),
+            limit(BOARD_UNCLAIMED_SUBMISSION_LIMIT),
+          )),
+          ...loadedRecruiters.flatMap((recruiter) =>
+            recruiterSubmissionLookupKeys(recruiter).map(({ field, value }) =>
+              getDocs(query(
+                collection(db(), "pa-recruiter-submissions"),
+                where(field, "==", value),
+                orderBy("createdAt", "desc"),
+                limit(BOARD_SUBMISSIONS_PER_RECRUITER_LIMIT),
+              )),
+            ),
+          ),
+        ]
+        const submissionSnaps = await Promise.all(submissionQueries)
+        if (cancelled) return
+        const loadedSubmissions = capBoardSubmissionsPerRecruiter(loadedRecruiters, submissionSnaps.flatMap((snap) => snap.docs).map((d) => {
           const data = d.data() as Omit<BoardSubmissionDoc, "id">
           return { id: d.id, ...data, createdAtMs: timestampToMs(data.createdAt) }
-        })
+        }), BOARD_SUBMISSIONS_PER_RECRUITER_LIMIT)
         const jobIds = [...new Set(loadedSubmissions.flatMap(jobLookupKeys))]
         const loadedJobs = await Promise.all(
           jobIds.map(async (jobId) => {
@@ -1657,7 +1735,7 @@ export default function RecruiterBoardOps() {
         )
         if (cancelled) return
         setSubmissions(loadedSubmissions)
-        setRecruiters(recruiterSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardRecruiterDoc, "id">) })))
+        setRecruiters(loadedRecruiters)
         setJobDocs(Object.fromEntries(loadedJobs.filter((entry): entry is readonly [string, BoardJobDoc] => entry !== null)))
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))

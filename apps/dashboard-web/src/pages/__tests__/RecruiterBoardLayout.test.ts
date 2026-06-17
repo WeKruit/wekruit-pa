@@ -64,15 +64,21 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.match(source, /visibleRecruiterGroups\.map\(renderGroup\)/)
   })
 
-  it("loads enough recruiter submissions for admin-heavy days but renders each job page at 100 rows", () => {
-    assert.match(source, /const BOARD_SUBMISSION_LOAD_LIMIT = 5_000/)
+  it("renders each job page at 100 rows", () => {
     assert.match(source, /const BOARD_SUBMISSION_PAGE_SIZE = 100/)
-    assert.match(source, /limit\(BOARD_SUBMISSION_LOAD_LIMIT\)/)
     assert.match(source, /const \[jobPageByKey, setJobPageByKey\] = useState<Record<string, number>>\(\{\}\)/)
     assert.match(source, /const pageRows = job\.submissions\.slice\(start, start \+ BOARD_SUBMISSION_PAGE_SIZE\)/)
     assert.match(source, /<tbody>\{pageRows\.map\(renderSubmissionRow\)\}<\/tbody>/)
     assert.match(source, /Showing \{first\}-\{last\} of \{job\.submissions\.length\}/)
     assert.match(source, /Page \{pageIndex \+ 1\} \/ \{totalPages\}/)
     assert.match(source, /setBulkSelectionForSubmissions\(pageRows, e\.target\.checked\)/)
+  })
+
+  it("loads board submissions with a per-recruiter cap instead of a global 500-row cap", () => {
+    assert.match(source, /const BOARD_SUBMISSIONS_PER_RECRUITER_LIMIT = 100/)
+    assert.match(source, /function recruiterSubmissionLookupKeys\(recruiter: BoardRecruiterDoc\)/)
+    assert.match(source, /function capBoardSubmissionsPerRecruiter\(/)
+    assert.match(source, /where\(field, "==", value\),[\s\S]*orderBy\("createdAt", "desc"\),[\s\S]*limit\(BOARD_SUBMISSIONS_PER_RECRUITER_LIMIT\)/)
+    assert.doesNotMatch(source, /pa-recruiter-submissions"\), orderBy\("createdAt", "desc"\), limit\(500\)/)
   })
 })

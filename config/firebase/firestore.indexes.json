@@ -745,6 +745,33 @@
         { "fieldPath": "layoffContext.function", "order": "ASCENDING" },
         { "fieldPath": "lastLaidOffAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "_comment": "Recruiter board admin — load newest submissions per recruiter profile by id.",
+      "collectionGroup": "pa-recruiter-submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recruiterId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Recruiter board admin — load newest submissions per recruiter profile by stamped recruiter email.",
+      "collectionGroup": "pa-recruiter-submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recruiterEmail", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "_comment": "Recruiter board admin — load newest submissions per recruiter profile by legacy submitter email.",
+      "collectionGroup": "pa-recruiter-submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "submitter.email", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
