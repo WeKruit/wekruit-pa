@@ -1137,7 +1137,7 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
         interests: [],
         awards: [],
         volunteerWork: [],
-        websites: [],
+        websites: ["www.linkedin.com/in/riley-candidate", "https://riley.example.com"],
         totalYearsExperience: 7,
         workAuthorization: "H1B",
         parseConfidence: 0.95,
@@ -1157,6 +1157,8 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
     )
 
     assert.equal(res.ok, true)
+    const resumeProfile = state.resumes[0]!.data.candidateProfile as Record<string, unknown>
+    assert.equal(resumeProfile.linkedIn, "https://linkedin.com/in/riley-candidate")
     const tagSet = state.userSets.find((op) => "tags" in op.data)
     assert.ok(tagSet, "expected pa-users.tags write")
     const tags = tagSet!.data.tags as Record<string, unknown>

@@ -1734,12 +1734,45 @@ type ParserV2Output = {
   usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
 }
 
+function canonicalLinkedInFromResumeWebsite(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) return null
+  let candidate = trimmed
+  if (/^\/\//.test(candidate)) {
+    candidate = `https:${candidate}`
+  } else if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`
+  }
+  let url: URL
+  try {
+    url = new URL(candidate)
+  } catch {
+    return null
+  }
+  if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return null
+  let path = url.pathname
+  const localeMatch = /^\/[a-z]{2,3}\/in\//i.exec(path)
+  if (localeMatch) path = path.slice(localeMatch[0].length - "/in/".length)
+  const match = /^\/in\/([A-Za-z0-9\-_%]+)\/?$/i.exec(path)
+  return match ? `https://linkedin.com/in/${match[1]!.toLowerCase()}` : null
+}
+
+function linkedInFromParserV2Websites(websites: string[]): string | null {
+  for (const website of websites) {
+    const linkedIn = canonicalLinkedInFromResumeWebsite(website)
+    if (linkedIn) return linkedIn
+  }
+  return null
+}
+
 function adaptV2ToStructuredCv(v2: ParserV2Output["parsed"]): StructuredCv {
   const candidateProfile: CandidateProfile = {
     name: v2.fullName,
     email: v2.email,
     phone: v2.phone,
-    linkedIn: null,
+    linkedIn: linkedInFromParserV2Websites(v2.websites),
     location: v2.location ?? "",
     skills: v2.skills,
   }
