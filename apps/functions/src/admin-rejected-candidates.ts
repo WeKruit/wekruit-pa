@@ -26,11 +26,13 @@ const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 const SCAN_CAP = 4_000
 
 export const AdminRejectedCandidatesInputSchema = z.object({
-  tier: CandidateTierSchema.optional(),
-  reusableOnly: z.boolean().optional().default(false),
-  includeTest: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(1_000).optional().default(200),
-  adminToken: z.string().optional(),
+  // `.nullish()` — the Firebase callable client serializes omitted optional
+  // fields as `null`, so accept null + undefined (treated as "no filter").
+  tier: CandidateTierSchema.nullish(),
+  reusableOnly: z.boolean().nullish().transform((v) => v ?? false),
+  includeTest: z.boolean().nullish().transform((v) => v ?? false),
+  limit: z.number().int().min(1).max(1_000).nullish().transform((v) => v ?? 200),
+  adminToken: z.string().nullish(),
 })
 export type AdminRejectedCandidatesInput = z.infer<typeof AdminRejectedCandidatesInputSchema>
 

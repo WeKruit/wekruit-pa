@@ -22,10 +22,11 @@ const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 export const AdminReevaluateCandidateTierInputSchema = z.object({
   candidateId: z.string().min(1),
   /** When true, set the global tier to `tier` (or the suggestion) with operator authority. */
-  apply: z.boolean().optional().default(false),
-  /** Operator-chosen tier when applying; falls back to the AI suggestion. */
-  tier: CandidateTierSchema.optional(),
-  adminToken: z.string().optional(),
+  apply: z.boolean().nullish().transform((v) => v ?? false),
+  /** Operator-chosen tier when applying; falls back to the AI suggestion.
+   *  `.nullish()` — the callable client serializes omitted optionals as null. */
+  tier: CandidateTierSchema.nullish(),
+  adminToken: z.string().nullish(),
 })
 export type AdminReevaluateCandidateTierInput = z.infer<typeof AdminReevaluateCandidateTierInputSchema>
 
