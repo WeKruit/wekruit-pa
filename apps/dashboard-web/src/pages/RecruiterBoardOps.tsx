@@ -6,7 +6,7 @@
  * paAdminRecruiterSubmissionAction.
  *
  * Client-side join of two small collections: pa-recruiter-users
- * (name/email/status) + pa-recruiter-submissions (latest 500). Submitter
+ * (name/email/status) + pa-recruiter-submissions. Submitter
  * emails with no matching recruiter profile land in an "Unclaimed
  * submitters" group.
  */
@@ -205,6 +205,8 @@ interface BoardRecruiterGroup {
 }
 
 const PENDING_STATUSES = ["submitted", "new", "reviewing"]
+const BOARD_SUBMISSION_LOAD_LIMIT = 5_000
+const BOARD_SUBMISSION_PAGE_SIZE = 100
 const DEFAULT_REQUEST_MESSAGE = "Please add the candidate's resume link and LinkedIn profile."
 const DEFAULT_REJECTION_CATEGORY: RecruiterCandidateRejectionCategory = "quality"
 const DEFAULT_REJECTION_TIER: RecruiterCandidateTier = "tier_3"
@@ -551,6 +553,29 @@ const boardTableShellStyle: CSSProperties = {
   scrollbarWidth: "thin",
 }
 
+const boardPaginationBarStyle: CSSProperties = {
+  position: "sticky",
+  top: 0,
+  zIndex: 2,
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 8,
+  padding: "6px 8px",
+  borderBottom: "1px solid #eee5d8",
+  background: "#fffdf9",
+  color: "#777",
+  fontSize: 11,
+  fontWeight: 600,
+}
+
+function boardPaginationButtonStyle(disabled: boolean): CSSProperties {
+  return {
+    ...actionButtonStyle,
+    ...(disabled ? blockedButtonStyle : null),
+  }
+}
+
 const boardTableStyle: CSSProperties = {
   minWidth: 760,
   border: 0,
@@ -560,7 +585,7 @@ const boardTableStyle: CSSProperties = {
 
 const boardHeaderCellStyle: CSSProperties = {
   position: "sticky",
-  top: 0,
+  top: 32,
   zIndex: 1,
   padding: "6px 6px",
   background: "#fff",
@@ -1602,6 +1627,7 @@ export default function RecruiterBoardOps() {
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [reloadKey, setReloadKey] = useState(0)
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
+  const [jobPageByKey, setJobPageByKey] = useState<Record<string, number>>({})
 
   function handleCommentCount(submissionId: string, count: number) {
     setCommentCounts((prev) => (prev[submissionId] === count ? prev : { ...prev, [submissionId]: count }))
@@ -1614,7 +1640,7 @@ export default function RecruiterBoardOps() {
         setLoading(true)
         setErr(null)
         const [submissionSnap, recruiterSnap] = await Promise.all([
-          getDocs(query(collection(db(), "pa-recruiter-submissions"), orderBy("createdAt", "desc"), limit(500))),
+          getDocs(query(collection(db(), "pa-recruiter-submissions"), orderBy("createdAt", "desc"), limit(BOARD_SUBMISSION_LOAD_LIMIT))),
           getDocs(collection(db(), "pa-recruiter-users")),
         ])
         if (cancelled) return
@@ -1672,6 +1698,31 @@ export default function RecruiterBoardOps() {
         .filter((group) => group.jobs.length > 0),
     [unclaimedGroups, submissionFilter],
   )
+  const boardJobPageKey = (groupKey: string, jobKey: string) => `${submissionFilter}:${groupKey}:${jobKey}`
+
+  useEffect(() => {
+    const maxPageByKey = new Map<string, number>()
+    for (const group of [...visibleRecruiterGroups, ...visibleUnclaimedGroups]) {
+      for (const job of group.jobs) {
+        maxPageByKey.set(
+          boardJobPageKey(group.key, job.key),
+          Math.max(0, Math.ceil(job.submissions.length / BOARD_SUBMISSION_PAGE_SIZE) - 1),
+        )
+      }
+    }
+    setJobPageByKey((prev) => {
+      let changed = false
+      const next: Record<string, number> = {}
+      for (const [key, maxPage] of maxPageByKey.entries()) {
+        const page = Math.min(Math.max(0, prev[key] ?? 0), maxPage)
+        next[key] = page
+        if (prev[key] !== page) changed = true
+      }
+      if (Object.keys(prev).length !== Object.keys(next).length) changed = true
+      return changed ? next : prev
+    })
+  }, [visibleRecruiterGroups, visibleUnclaimedGroups, submissionFilter])
+
   const pendingTotal = submissions.filter(isPending).length
   const selectedBulkCount = bulkSelectedIds.size
   const selectedSubmission = useMemo(
@@ -1986,6 +2037,79 @@ export default function RecruiterBoardOps() {
     )
   }
 
+  const renderSubmissionTable = (groupKey: string, job: BoardJobGroup) => {
+    const pageKey = boardJobPageKey(groupKey, job.key)
+    const totalPages = Math.max(1, Math.ceil(job.submissions.length / BOARD_SUBMISSION_PAGE_SIZE))
+    const pageIndex = Math.min(Math.max(0, jobPageByKey[pageKey] ?? 0), totalPages - 1)
+    const start = pageIndex * BOARD_SUBMISSION_PAGE_SIZE
+    const pageRows = job.submissions.slice(start, start + BOARD_SUBMISSION_PAGE_SIZE)
+    const first = job.submissions.length === 0 ? 0 : start + 1
+    const last = Math.min(start + pageRows.length, job.submissions.length)
+    const rejectablePageRows = pageRows.filter(isBulkRejectSelectable)
+    const pageHasRejectable = rejectablePageRows.length > 0
+    const pageAllSelected = pageHasRejectable && rejectablePageRows.every((s) => bulkSelectedIds.has(s.id))
+    const setPage = (nextPage: number) => {
+      setJobPageByKey((prev) => ({
+        ...prev,
+        [pageKey]: Math.min(Math.max(0, nextPage), totalPages - 1),
+      }))
+    }
+
+    return (
+      <div style={boardTableShellStyle}>
+        <div style={boardPaginationBarStyle}>
+          <span>
+            Showing {first}-{last} of {job.submissions.length}
+          </span>
+          {totalPages > 1 && (
+            <div style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <button
+                type="button"
+                disabled={pageIndex === 0}
+                aria-disabled={pageIndex === 0}
+                onClick={() => setPage(pageIndex - 1)}
+                style={boardPaginationButtonStyle(pageIndex === 0)}
+              >
+                Prev
+              </button>
+              <span>Page {pageIndex + 1} / {totalPages}</span>
+              <button
+                type="button"
+                disabled={pageIndex >= totalPages - 1}
+                aria-disabled={pageIndex >= totalPages - 1}
+                onClick={() => setPage(pageIndex + 1)}
+                style={boardPaginationButtonStyle(pageIndex >= totalPages - 1)}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
+        <table style={boardTableStyle}>
+          <thead>
+            <tr>
+              <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
+                <input
+                  type="checkbox"
+                  aria-label={`Select visible rejectable submissions for ${job.title}`}
+                  checked={pageAllSelected}
+                  disabled={!pageHasRejectable || bulkRejecting}
+                  onChange={(e) => setBulkSelectionForSubmissions(pageRows, e.target.checked)}
+                />
+              </th>
+              <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
+              <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
+              <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
+              <th style={{ ...boardHeaderCellStyle, width: "28%" }}>Review</th>
+              <th style={{ ...boardHeaderCellStyle, width: "10%" }}>Open</th>
+            </tr>
+          </thead>
+          <tbody>{pageRows.map(renderSubmissionRow)}</tbody>
+        </table>
+      </div>
+    )
+  }
+
   const renderGroup = (group: BoardRecruiterGroup) => (
     <Panel
       key={group.key}
@@ -2015,29 +2139,7 @@ export default function RecruiterBoardOps() {
                   {job.pendingCount} pending · {job.totalCount} total
                 </span>
               </div>
-              <div style={boardTableShellStyle}>
-                <table style={boardTableStyle}>
-                  <thead>
-                    <tr>
-                      <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select all rejectable submissions for ${job.title}`}
-                          checked={job.submissions.some(isBulkRejectSelectable) && job.submissions.filter(isBulkRejectSelectable).every((s) => bulkSelectedIds.has(s.id))}
-                          disabled={!job.submissions.some(isBulkRejectSelectable) || bulkRejecting}
-                          onChange={(e) => setBulkSelectionForSubmissions(job.submissions, e.target.checked)}
-                        />
-                      </th>
-                      <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "28%" }}>Review</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "10%" }}>Open</th>
-                    </tr>
-                  </thead>
-                  <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
-                </table>
-              </div>
+              {renderSubmissionTable(group.key, job)}
             </div>
           ))}
         </div>
@@ -2174,29 +2276,7 @@ export default function RecruiterBoardOps() {
                                   {job.pendingCount} pending · {job.totalCount} total
                                 </span>
                               </div>
-                              <div style={boardTableShellStyle}>
-                                <table style={boardTableStyle}>
-                                  <thead>
-                                    <tr>
-                                      <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
-                                        <input
-                                          type="checkbox"
-                                          aria-label={`Select all rejectable submissions for ${job.title}`}
-                                          checked={job.submissions.some(isBulkRejectSelectable) && job.submissions.filter(isBulkRejectSelectable).every((s) => bulkSelectedIds.has(s.id))}
-                                          disabled={!job.submissions.some(isBulkRejectSelectable) || bulkRejecting}
-                                          onChange={(e) => setBulkSelectionForSubmissions(job.submissions, e.target.checked)}
-                                        />
-                                      </th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "28%" }}>Review</th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "10%" }}>Open</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
-                                </table>
-                              </div>
+                              {renderSubmissionTable(group.key, job)}
                             </div>
                           ))}
                         </div>
