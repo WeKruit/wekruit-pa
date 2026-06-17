@@ -489,6 +489,9 @@ ETag: "v1-a4f8c12e7b6d3f4a8e9c1234"`}</pre>
             <h2 className="apidoc-h2">Users API</h2>
             <Endpoint url="https://wekruit.com/api/v1/partner/users" />
             <p className="apidoc-p">Returns the candidates attributed to your referral source — registration info plus per-job interview progress. You only ever see your own candidates.</p>
+            <div className="apidoc-note-blue">
+              A candidate counts as yours if <strong>either</strong> their durable account <code>source</code> <strong>or</strong> their entry-time <code>entrySource</code> is you. So a candidate who reached WeKruit another way first, then later clicked your tagged link, still shows up — matched on <code>entrySource</code>, with <code>attributedVia: "entry"</code>.
+            </div>
 
             <h3 className="apidoc-h3">Query parameters</h3>
             <table className="apidoc-table">
@@ -513,6 +516,10 @@ ETag: "v1-a4f8c12e7b6d3f4a8e9c1234"`}</pre>
       "wekruitUserId": "GR17ggfRiyEdE5a2JWaf",
       "registeredAt": "2026-05-27T22:09:17.000Z",
       "lifecycleState": "claimed",
+      "source": "candidate",
+      "entrySource": "layoffhedge",
+      "entryJobId": "hs-10996795-invoko-product-manager",
+      "attributedVia": "entry",
       "jobs": [
         {
           "jobId": "hs-10996795-invoko-product-manager",
@@ -549,6 +556,10 @@ ETag: "v1-a4f8c12e7b6d3f4a8e9c1234"`}</pre>
                 <tr><td><code>wekruitUserId</code></td><td>string</td><td>Stable internal id — join key across calls.</td></tr>
                 <tr><td><code>registeredAt</code></td><td>ISO 8601</td><td>First registration with WeKruit.</td></tr>
                 <tr><td><code>lifecycleState</code></td><td>string | absent</td><td>Global lifecycle state, e.g. <code>claimed</code>, <code>profile_ready</code>. Informational.</td></tr>
+                <tr><td><code>source</code></td><td>string | absent</td><td>The candidate's durable account source. May <em>not</em> be you if they first reached WeKruit another way before clicking your link — that's what <code>entrySource</code> is for.</td></tr>
+                <tr><td><code>entrySource</code></td><td>string | absent</td><td>The source captured when the candidate <strong>entered through a tagged link</strong>. When this is you, the referral is yours even if <code>source</code> shows something else.</td></tr>
+                <tr><td><code>entryJobId</code></td><td>string | absent</td><td>The job page the candidate entered through.</td></tr>
+                <tr><td><code>attributedVia</code></td><td>string</td><td>How they matched you: <code>top_level</code> (durable source), <code>entry</code> (entry link only), or <code>both</code>.</td></tr>
                 <tr><td><code>jobs[]</code></td><td>array</td><td>Per-job progress (below).</td></tr>
                 <tr><td><code>summary</code></td><td>object</td><td><code>totalJobs</code>, <code>passedJobs</code>, <code>notPassedJobs</code>, <code>activePrescreens</code>, <code>employerVisibleJobs</code>.</td></tr>
               </tbody>
