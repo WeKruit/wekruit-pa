@@ -108,7 +108,15 @@ export function stickSourceFromLoginNext(raw: string | null | undefined): void {
   const params = new URLSearchParams(q >= 0 ? raw.slice(q + 1) : "")
   const explicitSource = sourceFromQueryValue(params.get("source"))
   if (/^\/j\/[^/]+(?:\/cv)?$/.test(pathname)) {
-    writeCookie(explicitSource ?? "candidate")
+    // Only stick an EXPLICIT source carried by this next-path. Defaulting to
+    // "candidate" here clobbered the wko_source cookie that resolveSource()
+    // had just set from the live ?source= param (PublicJob runs resolveSource()
+    // then stickSourceFromLoginNext(`/j/${id}`) with NO query), silently
+    // downgrading every /j/:jobId?source=<partner> arrival to candidate and
+    // breaking partner referral attribution. Mirror the /onboarding branch
+    // below: write only when an explicit source is present, else leave the
+    // already-resolved sticky cookie intact.
+    if (explicitSource) writeCookie(explicitSource)
     return
   }
   if (pathname !== "/onboarding") return
