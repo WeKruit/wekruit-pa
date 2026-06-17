@@ -44,6 +44,8 @@ import {
   type SubmissionEvalResearch,
 } from "./recruiter-submission-eval.js"
 import { generateAndStorePrescreenAutoDraft } from "./evaluation-attempts.js"
+import { applyGlobalCandidateTier } from "./candidate-tier.js"
+import { suggestTierFromPrescreen } from "@pa/core-types"
 import { runPrescreenEngagementSignal } from "./prescreen-engagement-signal.js"
 
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
@@ -375,6 +377,38 @@ export async function runPrescreenCandidateEval(
     // Fold the profile checklist eval into the rejection/next-step draft so the
     // operator-only notes combine the TRANSCRIPT eval + the PROFILE checklist eval.
     const terminal = str(review.proposedTerminal) || str(session.terminal)
+    // Auto-stamp the candidate's global tier on a prescreen rejection (incl.
+    // Claire auto-FAILs, which never reach an operator commit) so they surface
+    // in the Rejected-by-tier browse. AI-suggested (humanConfirmed:false) —
+    // operator can confirm/override via Re-evaluate. Best-wins, fail-open.
+    if (terminal === "FAIL" || terminal === "HARD_STOP") {
+      try {
+        const fit =
+          typeof session.score === "number" && typeof session.scoreMax === "number" && session.scoreMax > 0
+            ? session.score / session.scoreMax
+            : undefined
+        const cv = parsed.verdict
+        const checklistVerdict = cv === "advance" ? "pass" : cv === "borderline" ? "uncertain" : cv === "reject" ? "reject" : undefined
+        const tier = suggestTierFromPrescreen({ terminal, weightedFitScore: fit, checklistVerdict })
+        if (tier) {
+          await applyGlobalCandidateTier(
+            {
+              candidateId,
+              tier,
+              source: "prescreen",
+              jobId,
+              reason: str(session.terminalReason) || undefined,
+              aiSuggestedTier: tier,
+              humanConfirmed: false,
+              actor: "system",
+            },
+            { db: deps.db, now: () => now },
+          )
+        }
+      } catch {
+        // fail-open — tiering must never block the prescreen eval
+      }
+    }
     if (terminal === "PASS" || terminal === "FAIL" || terminal === "HARD_STOP") {
       await (deps.regenerateDraft ?? generateAndStorePrescreenAutoDraft)({
         db: deps.db,
