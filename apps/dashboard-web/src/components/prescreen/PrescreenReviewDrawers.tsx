@@ -14,7 +14,11 @@ import {
   computePrescreenEngagement,
   deriveCandidateSource,
   engagementTone,
+  suggestTierFromPrescreen,
+  CANDIDATE_TIER_LABELS,
+  CANDIDATE_TIERS,
   type CandidateListUserDoc,
+  type CandidateTier,
   type EvaluationAttempt,
   type PrescreenEngagementSignal,
 } from "@pa/core-types"
@@ -505,6 +509,8 @@ export function PrescreenReviewDrawer({
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [selectedTerminal, setSelectedTerminal] = useState<ReviewTerminal>("PASS")
+  // Operator-confirmed rejection tier (null = use the AI suggestion on commit).
+  const [tierOverride, setTierOverride] = useState<CandidateTier | null>(null)
   const [candidateMessageBody, setCandidateMessageBody] = useState("")
   const [decisionReason, setDecisionReason] = useState("")
   const [recommendedActionsText, setRecommendedActionsText] = useState("")
@@ -629,6 +635,9 @@ export function PrescreenReviewDrawer({
         decisionReason: reason,
         recommendedActions,
         ...(status === "overridden" ? { correctionReason: "operator_changed_prescreen_terminal" } : {}),
+        ...(isRejectionTerminal && effectiveTier
+          ? { tier: effectiveTier, ...(aiSuggestedTier ? { tierAiSuggested: aiSuggestedTier } : {}) }
+          : {}),
       })
       onReviewed()
     } catch (e) {
@@ -642,6 +651,16 @@ export function PrescreenReviewDrawer({
   const aiProposedTerminal =
     cleanReviewTerminal(detail?.attempt?.proposedOutcome?.prescreenTerminal) ??
     cleanReviewTerminal(detail?.session.terminal)
+
+  // Rejection tier — the AI suggests one from overall fit + checklist; the
+  // operator confirms/overrides. Only shown/sent for FAIL / HARD_STOP.
+  const isRejectionTerminal = selectedTerminal === "FAIL" || selectedTerminal === "HARD_STOP"
+  const aiSuggestedTier = suggestTierFromPrescreen({
+    terminal: selectedTerminal,
+    weightedFitScore: detail?.attempt?.weightedFitScore,
+    checklistVerdict: detail?.session.review?.candidateChecklistEval?.verdict,
+  })
+  const effectiveTier: CandidateTier | null = tierOverride ?? aiSuggestedTier
   const attemptId = detail?.attempt?.attemptId
   // Selectable evidence for the label form = the candidate's transcript turns.
   const evidenceOptions: EvalLabelEvidenceOption[] = (detail?.turns ?? [])
@@ -765,6 +784,27 @@ export function PrescreenReviewDrawer({
                   <option value="HARD_STOP">HARD_STOP</option>
                 </select>
               </label>
+              {isRejectionTerminal ? (
+                <label style={labelStyle}>
+                  Candidate tier{" "}
+                  <span style={{ fontWeight: 400, color: "#64748b", fontSize: "0.85em" }}>
+                    — re-review pool · tier 1 strong → tier 3 hard no
+                    {aiSuggestedTier ? ` · AI suggests ${aiSuggestedTier.replace("tier_", "Tier ")}` : ""}
+                  </span>
+                  <select
+                    value={effectiveTier ?? ""}
+                    onChange={(e) => setTierOverride((e.target.value || null) as CandidateTier | null)}
+                    style={inputStyle}
+                  >
+                    {CANDIDATE_TIERS.map((t) => (
+                      <option key={t} value={t}>
+                        {CANDIDATE_TIER_LABELS[t]}
+                        {aiSuggestedTier === t ? " (AI)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label style={labelStyle}>
                 Final candidate message
                 <textarea
