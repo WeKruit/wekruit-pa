@@ -13,8 +13,10 @@
  * - With no URL (candidate-upload résumés keep only a parsed summary), it falls back to
  *   the parsed summary text. With neither, it renders nothing.
  */
-import { type CSSProperties } from "react"
-import { toResumeEmbedUrl } from "./resume-embed.js"
+import { useEffect, useState, type CSSProperties } from "react"
+import { getBlob, ref } from "firebase/storage"
+import { storage } from "../lib/firebase.js"
+import { isFirebaseStorageUri, toFirebaseStorageBrowserUrl, toResumeEmbedUrl } from "./resume-embed.js"
 
 export { toResumeEmbedUrl } from "./resume-embed.js"
 
@@ -37,7 +39,53 @@ export function CandidateResumePreview({
   const trimmedUrl = resumeUrl?.trim() || undefined
   const trimmedLinkedin = linkedinUrl?.trim() || undefined
   const summary = parsedSummary?.trim() || undefined
-  const { embedUrl } = toResumeEmbedUrl(trimmedUrl)
+  const [storagePreview, setStoragePreview] = useState<{
+    source?: string
+    objectUrl?: string
+    contentType?: string
+    error?: string
+    loading: boolean
+  }>({ loading: false })
+  const storageUri = isFirebaseStorageUri(trimmedUrl) ? trimmedUrl : undefined
+  const browserStorageUrl = toFirebaseStorageBrowserUrl(storageUri)
+
+  useEffect(() => {
+    if (!storageUri) {
+      setStoragePreview({ loading: false })
+      return
+    }
+    let cancelled = false
+    let objectUrl: string | undefined
+    setStoragePreview({ source: storageUri, loading: true })
+    getBlob(ref(storage(), storageUri))
+      .then((blob) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setStoragePreview({
+          source: storageUri,
+          objectUrl,
+          contentType: blob.type,
+          loading: false,
+        })
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setStoragePreview({
+          source: storageUri,
+          error: error instanceof Error ? error.message : String(error),
+          loading: false,
+        })
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [storageUri])
+
+  const resolvedResumeUrl = storageUri ? storagePreview.objectUrl : trimmedUrl
+  const openUrl = storageUri ? storagePreview.objectUrl ?? browserStorageUrl : trimmedUrl
+  const canInlineStorageBlob = !storageUri || storagePreview.contentType === "application/pdf" || /\.pdf($|\?|#)/i.test(trimmedUrl ?? "")
+  const { embedUrl } = toResumeEmbedUrl(canInlineStorageBlob ? resolvedResumeUrl : undefined)
 
   // Nothing to show at all → render nothing (keeps panels clean).
   if (!trimmedUrl && !trimmedLinkedin && !summary) return null
@@ -55,14 +103,16 @@ export function CandidateResumePreview({
             in · LinkedIn ↗
           </a>
         ) : null}
-        {trimmedUrl ? (
-          <a href={trimmedUrl} target="_blank" rel="noreferrer" style={linkStyle} title={trimmedUrl}>
+        {openUrl ? (
+          <a href={openUrl} target="_blank" rel="noreferrer" style={linkStyle} title={trimmedUrl}>
             Open résumé ↗
           </a>
         ) : null}
       </div>
 
-      {trimmedUrl && embedUrl ? (
+      {storagePreview.loading ? (
+        <div style={fallbackStyle}>Loading résumé preview…</div>
+      ) : trimmedUrl && embedUrl ? (
         <>
           <iframe
             src={embedUrl}
@@ -82,7 +132,9 @@ export function CandidateResumePreview({
         </>
       ) : trimmedUrl ? (
         <div style={fallbackStyle}>
-          This résumé link can’t be previewed inline. <a href={trimmedUrl} target="_blank" rel="noreferrer">Open it ↗</a>
+          This résumé link can’t be previewed inline.{" "}
+          {openUrl ? <a href={openUrl} target="_blank" rel="noreferrer">Open it ↗</a> : null}
+          {storagePreview.error ? <span style={{ color: "#9f1239" }}> Storage read failed.</span> : null}
         </div>
       ) : summary ? (
         <div style={summaryStyle}>{summary}</div>

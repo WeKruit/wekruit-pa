@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { toResumeEmbedUrl } from "../resume-embed.js"
+import { isFirebaseStorageUri, toFirebaseStorageBrowserUrl, toResumeEmbedUrl } from "../resume-embed.js"
 
 describe("toResumeEmbedUrl", () => {
   it("empty / invalid → none", () => {
@@ -33,6 +33,21 @@ describe("toResumeEmbedUrl", () => {
     const r = toResumeEmbedUrl(url)
     assert.equal(r.kind, "pdf")
     assert.equal(r.embedUrl, url)
+  })
+
+  it("gs:// storage refs are not treated as iframe URLs", () => {
+    const raw = "gs://wekruit-5f89b.firebasestorage.app/pa-bulk-resumes/batch/resume one.pdf"
+    assert.equal(isFirebaseStorageUri(raw), true)
+    assert.deepEqual(toResumeEmbedUrl(raw), { embedUrl: null, kind: "none" })
+    assert.equal(
+      toFirebaseStorageBrowserUrl(raw),
+      "https://storage.cloud.google.com/wekruit-5f89b.firebasestorage.app/pa-bulk-resumes/batch/resume%20one.pdf"
+    )
+  })
+
+  it("blob preview URLs embed directly after authenticated storage fetch", () => {
+    const url = "blob:https://wekruit-pa.web.app/123"
+    assert.deepEqual(toResumeEmbedUrl(url), { embedUrl: url, kind: "blob" })
   })
 
   it("non-PDF (e.g. .docx / arbitrary host) → Google viewer", () => {
