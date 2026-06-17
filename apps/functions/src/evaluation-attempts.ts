@@ -10,10 +10,13 @@ import {
   EvaluationQualityRatingSchema,
   HumanReviewStatusSchema,
   PA_COLLECTIONS,
+  CandidateTierSchema,
+  suggestTierFromPrescreen,
   type EvaluationAttempt,
   type EvaluationOutcome,
   type HumanEvalLabel,
 } from "@pa/core-types"
+import { applyGlobalCandidateTier } from "./candidate-tier.js"
 import { getEvaluationAttempt, saveHumanReview } from "@pa/pa-persistence"
 import { callWithFallback } from "@pa/pa-resume-parser"
 import { requireExternalSupplyAdmin } from "./external-supply/resolve-identity.js"
@@ -59,6 +62,11 @@ const ReviewEvaluationAttemptInputSchema = z.object({
   correctionReason: z.string().max(2_000).optional(),
   /** Rich eval-quality label (agree/disagree, error categories, evidence, etc.). */
   label: ReviewLabelInputSchema.optional(),
+  /** Operator-confirmed candidate tier for a prescreen rejection (FAIL/HARD_STOP).
+   *  When omitted we fall back to the AI-suggested tier. tier_1 = strong/re-review. */
+  tier: CandidateTierSchema.optional(),
+  /** The AI's suggested tier shown to the operator (for the override audit). */
+  tierAiSuggested: CandidateTierSchema.optional(),
   /**
    * When false, this is a LABEL-ONLY write: persist the human label + correction
    * event but never commit the prescreen terminal and never message the candidate.
@@ -347,6 +355,38 @@ export async function runReviewEvaluationAttempt(
       prescreenOutcomeCommitted = committed.committed
       candidateOutboundId = committed.outboundId
       candidateDecision = committed.candidateDecision
+
+      // Stamp the unified global candidate tier on a committed prescreen
+      // rejection (best-wins) so the candidate surfaces in the Rejected-by-tier
+      // browse for re-review on new roles. Fail-open — never block the review.
+      const rejTerminal = candidateDecision?.finalTerminal
+      const tieredCandidateId = cleanNonEmptyString(saved.attempt.candidateId)
+      if (prescreenOutcomeCommitted && tieredCandidateId && (rejTerminal === "FAIL" || rejTerminal === "HARD_STOP")) {
+        const aiSuggested =
+          input.tierAiSuggested ??
+          suggestTierFromPrescreen({ terminal: rejTerminal, weightedFitScore: saved.attempt.weightedFitScore }) ??
+          undefined
+        const chosenTier = input.tier ?? aiSuggested
+        if (chosenTier) {
+          try {
+            await applyGlobalCandidateTier(
+              {
+                candidateId: tieredCandidateId,
+                tier: chosenTier,
+                source: "prescreen",
+                ...(saved.attempt.jobId ? { jobId: saved.attempt.jobId } : {}),
+                ...(input.decisionReason ? { reason: input.decisionReason } : {}),
+                aiSuggestedTier: aiSuggested ?? null,
+                humanConfirmed: Boolean(input.tier),
+                actor: uid,
+              },
+              { db: deps.db, now: () => nowIso },
+            )
+          } catch {
+            // fail-open — tiering must never block the prescreen review commit
+          }
+        }
+      }
     }
     if (attempt.source === "external_supply") {
       externalEvaluationUpdated = await commitExternalSupplyProjection({

@@ -287,6 +287,10 @@ export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
 // Operations Overview dashboard — daily time-series of new users (by channel),
 // interviews conducted, and candidates moved to client. Admin /admin/operations.
 export { paAdminOpsMetrics } from "./admin-ops-metrics.js"
+// Rejected-candidates-by-tier browse + AI re-evaluate-for-new-roles action.
+// Tier is stamped at rejection (prescreen + recruiter) via applyGlobalCandidateTier.
+export { paAdminRejectedCandidatesSnapshot } from "./admin-rejected-candidates.js"
+export { paAdminReevaluateCandidateTier } from "./admin-candidate-tier-actions.js"
 // Identity-conflict resolve/dismiss + true counts — client Firestore writes
 // to pa-candidate-identity-conflicts are rules-denied, so the dashboard
 // /admin/identity-conflicts page goes through this callable.

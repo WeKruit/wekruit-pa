@@ -8,6 +8,7 @@ import Legal from "./pages/Legal.js"
 import { Login } from "./pages/Login.js"
 import { Operations } from "./pages/Operations.js"
 import OperationsOverview from "./pages/OperationsOverview.js"
+import RejectedCandidates from "./pages/RejectedCandidates.js"
 import { Overview } from "./pages/Overview.js"
 import { UserDetail } from "./pages/UserDetail.js"
 import { Users } from "./pages/Users.js"
@@ -233,6 +234,7 @@ export default function App() {
           <Route path="/admin/voice-test-dial" element={<VoiceTestDial />} />
           <Route path="/admin/voice-profiles" element={<VoiceProfiles />} />
           <Route path="/admin/passed-candidates" element={<PassedCandidates />} />
+          <Route path="/admin/rejected-candidates" element={<RejectedCandidates />} />
           {/* v1.8 Phase 78 — Job pre-screen config editor. */}
           <Route path="/admin/jobs/:jobId/prescreen" element={<JobPrescreen />} />
           <Route path="/admin/job-prescreen" element={<JobPrescreen />} />
