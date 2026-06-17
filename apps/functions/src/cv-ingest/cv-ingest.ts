@@ -29,7 +29,9 @@
  * failure CANNOT taint the parsedCandidateResumes write.
  */
 
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
+import { getStorage } from "firebase-admin/storage"
+import { detectResumeUploadKind } from "../resume-upload-parser.js"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   INDUSTRY_TAGS,
@@ -753,6 +755,60 @@ function deriveOriginalFileName(mediaUrl: string): string {
   } catch {
     const tail = mediaUrl.split("/").pop() ?? ""
     return tail || "resume.pdf"
+  }
+}
+
+/**
+ * BULLETPROOF résumé-file persistence. The single chokepoint EVERY ingest path
+ * passes through (wekruit.com onboarding, public job page, iMessage attachment,
+ * ATS inbound) — store the actual file to Storage + stamp
+ * `pa-users.resumeFileUrl` on the CANONICAL candidate so review UIs render the
+ * PDF inline. Content-addressed by sha256 (idempotent). Fail-open: a storage
+ * error logs loudly but never blocks résumé ingestion.
+ */
+export async function persistResumeFileForUser(
+  db: Firestore,
+  userId: string,
+  bytes: Uint8Array,
+  sha256: string,
+  mediaUrl: string,
+  log: (event: string, payload?: Record<string, unknown>) => void,
+): Promise<string | null> {
+  try {
+    if (!userId || !sha256 || bytes.length === 0) return null
+    const fileName = deriveOriginalFileName(mediaUrl)
+    const kind = detectResumeUploadKind(bytes, fileName) ?? "pdf"
+    const ext = kind === "docx" ? "docx" : "pdf"
+    const bucket = getStorage().bucket()
+    const objectPath = `candidate-resumes/${userId.replace(/[^\w.-]/g, "_")}/${sha256}.${ext}`
+    const file = bucket.file(objectPath)
+    if (typeof file.save !== "function") return null
+    const token = randomUUID()
+    const safeName = fileName.replace(/[^\w.-]/g, "_")
+    await file.save(Buffer.from(bytes), {
+      resumable: false,
+      contentType:
+        kind === "docx"
+          ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          : "application/pdf",
+      metadata: {
+        contentDisposition: `inline; filename="${safeName}"`,
+        metadata: { firebaseStorageDownloadTokens: token, candidateId: userId, sha256 },
+      },
+    })
+    const resumeFileUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${token}`
+    await db
+      .collection(PA_USERS_COLLECTION)
+      .doc(userId)
+      .set({ resumeFileUrl, resumeStorageUri: `gs://${bucket.name}/${objectPath}` }, { merge: true })
+    log("pa.cv_ingest.resume_file_persisted", { userId, objectPath })
+    return resumeFileUrl
+  } catch (err) {
+    log("pa.cv_ingest.resume_file_persist_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
   }
 }
 
@@ -2394,6 +2450,10 @@ export async function ingestCv(
         outcome: resolution.outcome,
         source,
       })
+      // BULLETPROOF: store the actual résumé file on the canonical candidate so
+      // every upload path (website onboarding included) renders the PDF inline.
+      // Fail-open inside the helper — never blocks ingestion.
+      await persistResumeFileForUser(dbHandle, userId, bytes, pdfSha256, args.mediaUrl, log)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       log("pa.cv_ingest.identity_error", {
