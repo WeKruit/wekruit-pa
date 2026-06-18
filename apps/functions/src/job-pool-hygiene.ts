@@ -342,7 +342,7 @@ export function evaluateHygiene(
     return { flip: true, reason: "stale_firstseenat" }
   }
   const ats = typeof doc.atsApplyUrl === "string" ? doc.atsApplyUrl : ""
-  if (ats.length === 0 || /jobright\.ai/i.test(ats)) {
+  if (ats.length === 0 || /jobright/i.test(ats)) {
     return { flip: true, reason: "missing_or_placeholder_ats" }
   }
   void nowMs

@@ -256,7 +256,7 @@ export function scoreCandidateForJob(
   if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
     blockedSignals.push("job_stale")
   }
-  if (!job.atsApplyUrl || /jobright\.ai/i.test(job.atsApplyUrl)) {
+  if (!job.atsApplyUrl || /jobright/i.test(job.atsApplyUrl)) {
     blockedSignals.push("ats_apply_url_missing")
   }
   if (job.dead === true) {
