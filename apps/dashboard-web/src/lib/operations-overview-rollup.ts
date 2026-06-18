@@ -15,6 +15,7 @@ export interface OpsMetricsDayBucket {
   newUsersRecruiterSubmitted: number
   newUsersDirect: number
   interviewsConducted: number
+  prescreensConducted: number
   movedToClient: number
 }
 
@@ -24,6 +25,7 @@ export interface OpsMetricsTotals {
   newUsersRecruiterSubmitted: number
   newUsersDirect: number
   interviewsConducted: number
+  prescreensConducted: number
   movedToClient: number
 }
 
@@ -90,6 +92,7 @@ function emptyTotals(): OpsMetricsTotals {
     newUsersRecruiterSubmitted: 0,
     newUsersDirect: 0,
     interviewsConducted: 0,
+    prescreensConducted: 0,
     movedToClient: 0,
   }
 }
@@ -100,6 +103,7 @@ function addInto(acc: OpsMetricsTotals, day: OpsMetricsDayBucket): void {
   acc.newUsersRecruiterSubmitted += day.newUsersRecruiterSubmitted
   acc.newUsersDirect += day.newUsersDirect
   acc.interviewsConducted += day.interviewsConducted
+  acc.prescreensConducted += day.prescreensConducted
   acc.movedToClient += day.movedToClient
 }
 
@@ -110,6 +114,7 @@ function stripDate(d: OpsMetricsDayBucket): OpsMetricsTotals {
     newUsersRecruiterSubmitted: d.newUsersRecruiterSubmitted,
     newUsersDirect: d.newUsersDirect,
     interviewsConducted: d.interviewsConducted,
+    prescreensConducted: d.prescreensConducted,
     movedToClient: d.movedToClient,
   }
 }

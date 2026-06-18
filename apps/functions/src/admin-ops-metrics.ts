@@ -76,6 +76,8 @@ const EXCLUDED_OPERATOR_EMAILS = new Set(["admin1@wekruit.com"])
 // ops dashboard.
 const OPS_METRICS_CACHE_COLLECTION = "pa-ops-metrics-cache"
 const OPS_METRICS_CACHE_TTL_MS = 30 * 60_000
+// Bump when the computation changes so stale cached results aren't served.
+const OPS_METRICS_CACHE_VERSION = "v4"
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -99,6 +101,7 @@ export interface OpsMetricsDayBucket {
   newUsersRecruiterSubmitted: number
   newUsersDirect: number
   interviewsConducted: number
+  prescreensConducted: number
   movedToClient: number
 }
 
@@ -108,6 +111,7 @@ export interface OpsMetricsTotals {
   newUsersRecruiterSubmitted: number
   newUsersDirect: number
   interviewsConducted: number
+  prescreensConducted: number
   movedToClient: number
 }
 
@@ -231,6 +235,7 @@ export async function runAdminOpsMetrics(
     { auth: number; recruiter: number; direct: number }
   >()
   const conducted = new Map<string, Set<string>>()
+  const prescreens = new Map<string, Set<string>>()
   const movedToClient = new Map<string, Set<string>>()
 
   const ensureUserDay = (key: string) => {
@@ -249,6 +254,14 @@ export async function runAdminOpsMetrics(
     }
     s.add(candidateId)
   }
+  const addPrescreen = (key: string, candidateId: string) => {
+    let s = prescreens.get(key)
+    if (!s) {
+      s = new Set()
+      prescreens.set(key, s)
+    }
+    s.add(candidateId)
+  }
   const addClient = (key: string, candidateId: string) => {
     let s = movedToClient.get(key)
     if (!s) {
@@ -263,6 +276,7 @@ export async function runAdminOpsMetrics(
     scanOrdered(deps.db, PA_COLLECTIONS.users, "createdAt", [
       "createdAt",
       "source",
+      "signupSource",
       "recruiterSubmissionTracking",
       "testMode",
       "phoneE164",
@@ -332,6 +346,9 @@ export async function runAdminOpsMetrics(
     if (!input.includeTest) {
       const source = typeof data.source === "string" ? data.source : undefined
       if (source && TEST_USER_SOURCES.has(source)) continue
+      // Admin-created candidates (bulk adds via the admin identity path) are
+      // not organic signups — drop them. Adam 2026-06-17 (the "Direct" flood).
+      if (data.signupSource === "identity:admin") continue
       // `isSyntheticTestProfile` reads `doc.id` — ensure it's set from the doc
       // key when the stored data omits it, so the call can't throw.
       if (isSyntheticTestProfile({ ...data, id } as unknown as CandidateListUserDoc)) continue
@@ -362,7 +379,9 @@ export async function runAdminOpsMetrics(
     }
   }
 
-  // --- Interviews conducted (prescreen sessions, unified) -----------------
+  // --- Prescreens conducted (SEPARATE from interviews) --------------------
+  // Adam 2026-06-17: prescreen is NOT an interview, but we track it as its own
+  // count (Claire AI screens that actually ran), deduped by candidate per day.
   for (const { data } of prescreenScan.docs) {
     if (!input.includeTest && (isTruthyFlag(data.testMode) || isTruthyFlag(data.isDemo))) continue
     const userId = typeof data.userId === "string" ? data.userId : undefined
@@ -376,7 +395,7 @@ export async function runAdminOpsMetrics(
     if (!ran) continue
     const tsMs = toMs(startedAt ?? data.createdAt)
     if (!tsMs || !inWindow(tsMs)) continue
-    addConducted(utcDayKey(tsMs), userId)
+    addPrescreen(utcDayKey(tsMs), userId)
   }
 
   // --- Moved to client (marketplace candidate-job-states) -----------------
@@ -398,6 +417,7 @@ export async function runAdminOpsMetrics(
     newUsersRecruiterSubmitted: 0,
     newUsersDirect: 0,
     interviewsConducted: 0,
+    prescreensConducted: 0,
     movedToClient: 0,
   }
   const firstDayMs = rangeStartMs
@@ -410,6 +430,7 @@ export async function runAdminOpsMetrics(
     const direct = nu?.direct ?? 0
     const total = auth + recruiter + direct
     const interviews = conducted.get(key)?.size ?? 0
+    const prescreensCount = prescreens.get(key)?.size ?? 0
     const client = movedToClient.get(key)?.size ?? 0
     days.push({
       date: key,
@@ -418,6 +439,7 @@ export async function runAdminOpsMetrics(
       newUsersRecruiterSubmitted: recruiter,
       newUsersDirect: direct,
       interviewsConducted: interviews,
+      prescreensConducted: prescreensCount,
       movedToClient: client,
     })
     totals.newUsersTotal += total
@@ -425,6 +447,7 @@ export async function runAdminOpsMetrics(
     totals.newUsersRecruiterSubmitted += recruiter
     totals.newUsersDirect += direct
     totals.interviewsConducted += interviews
+    totals.prescreensConducted += prescreensCount
     totals.movedToClient += client
   }
 
@@ -469,7 +492,7 @@ export const paAdminOpsMetrics = onCall(
     const input = parsed.data
     const cacheRef = db
       .collection(OPS_METRICS_CACHE_COLLECTION)
-      .doc(`r${input.rangeDays}_t${input.includeTest ? 1 : 0}`)
+      .doc(`${OPS_METRICS_CACHE_VERSION}_r${input.rangeDays}_t${input.includeTest ? 1 : 0}`)
     // Serve a fresh cached result (the 5-collection scan is heavy) — repeat
     // loads are a single doc read. Recompute past the TTL.
     try {

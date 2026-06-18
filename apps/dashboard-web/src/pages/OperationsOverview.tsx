@@ -26,6 +26,7 @@ const COLORS = {
   recruiterSubmitted: "#7c3aed",
   direct: "#0d9488",
   conducted: "#2563eb",
+  prescreens: "#0891b2",
   movedToClient: "#d97706",
 }
 
@@ -139,7 +140,8 @@ export default function OperationsOverview({ loadMetrics = getOpsMetrics }: { lo
             <StatCard label="· Authenticated" value={data.totals.newUsersAuthenticated} color={COLORS.authenticated} />
             <StatCard label="· Recruiter-submitted" value={data.totals.newUsersRecruiterSubmitted} color={COLORS.recruiterSubmitted} />
             <StatCard label="· Direct" value={data.totals.newUsersDirect} color={COLORS.direct} />
-            <StatCard label="Interviews conducted" value={data.totals.interviewsConducted} color={COLORS.conducted} />
+            <StatCard label="WeKruit interviews" value={data.totals.interviewsConducted} color={COLORS.conducted} />
+            <StatCard label="Prescreens conducted" value={data.totals.prescreensConducted} color={COLORS.prescreens} />
             <StatCard label="Moved to client" value={data.totals.movedToClient} color={COLORS.movedToClient} />
           </div>
 
@@ -160,7 +162,7 @@ export default function OperationsOverview({ loadMetrics = getOpsMetrics }: { lo
             </div>
           </Panel>
 
-          <Panel title="Interviews" eyebrow="WeKruit interviews conducted vs candidates moved to client">
+          <Panel title="Interviews" eyebrow="Prescreens · WeKruit interviews · candidates moved to client">
             <div style={{ width: "100%", height: 320 }}>
               <ResponsiveContainer>
                 <LineChart data={rolled} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
@@ -169,7 +171,8 @@ export default function OperationsOverview({ loadMetrics = getOpsMetrics }: { lo
                   <YAxis tick={axisTick} allowDecimals={false} width={36} />
                   <Tooltip />
                   <Legend />
-                  <Line type="monotone" dataKey="interviewsConducted" name="Interviews conducted" stroke={COLORS.conducted} strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="prescreensConducted" name="Prescreens conducted" stroke={COLORS.prescreens} strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="interviewsConducted" name="WeKruit interviews" stroke={COLORS.conducted} strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="movedToClient" name="Moved to client" stroke={COLORS.movedToClient} strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>

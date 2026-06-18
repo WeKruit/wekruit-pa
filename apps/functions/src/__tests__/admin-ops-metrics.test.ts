@@ -149,24 +149,27 @@ describe("runAdminOpsMetrics — interviews", () => {
 
     const today = result.days.find((d) => d.date === TODAY_KEY)
     assert.ok(today)
-    // conducted distinct: cand1, cand2
-    assert.equal(today.interviewsConducted, 2)
+    // conducted = recruiter wekruit_interview ONLY (cand1). Prescreen is NOT an interview.
+    assert.equal(today.interviewsConducted, 1)
     // client distinct: cand1 (recruiter), cand3 (marketplace)
     assert.equal(today.movedToClient, 2)
-    assert.equal(result.totals.interviewsConducted, 2)
+    assert.equal(result.totals.interviewsConducted, 1)
+    // prescreens are a SEPARATE count: cand1 (started) + cand2 (PASS)
+    assert.equal(result.totals.prescreensConducted, 2)
     assert.equal(result.totals.movedToClient, 2)
   })
 
-  it("excludes test-mode prescreen + recruiter events", async () => {
+  it("counts prescreens separately, NOT as interviews", async () => {
     const mfs = new MockFirestore()
+    // a real, non-test prescreen that ran — counts as a prescreen, NOT an interview
     await mfs.collection("pa-prescreen-sessions").doc("ps-1").set({
       userId: "cand2",
       createdAt: TODAY_TS,
       terminal: "PASS",
-      testMode: true,
     })
     const result = await runAdminOpsMetrics({ rangeDays: 30, includeTest: false }, { db: asFirestore(mfs), now: () => NOW })
     assert.equal(result.totals.interviewsConducted, 0)
+    assert.equal(result.totals.prescreensConducted, 1)
   })
 })
 
