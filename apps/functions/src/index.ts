@@ -435,6 +435,7 @@ export {
   paBulkResumeCreateBatch,
   paBulkResumeAddItems,
   paBulkResumeProcessBatch,
+  paBulkResumeSubmitRecruiterBatch,
   paBulkResumeRetryItem,
 } from "./bulk-resume-intake.js"
 // v2.0 S4 — admin/operator-only job enrichment draft review and approval.

@@ -496,7 +496,7 @@ function roleEvidenceText(employee: Record<string, unknown>): string {
 }
 
 function isHandsOnSoftwareText(text: string): boolean {
-  return /\b(swe|software engineer|software engineering|staff engineer|principal engineer|backend engineer|frontend engineer|full[- ]stack engineer|platform engineer|ml engineer|ai engineer|research engineer|ai researcher|machine learning engineer|developer|architect|technical lead|tech lead)\b/i.test(
+  return /\b(swe|sde|software engineer|software development engineer|software engineering|staff engineer|principal engineer|backend engineer|frontend engineer|full[- ]stack engineer|platform engineer|ml engineer|ai engineer|research engineer|ai researcher|machine learning engineer|developer|architect|technical lead|tech lead)\b/i.test(
     text,
   )
 }
@@ -672,10 +672,11 @@ function deriveSimilarityReasons(
     reasons.push(`Seniority overlap: both profiles show ${sourceLevel} seniority signals.`)
   }
 
-  if (reasons.length === 0) {
-    const explicit = cleanString(candidate.similarityReason) ?? cleanString(candidate.reasoning)
-    if (explicit) reasons.push(explicit)
+  const explicit = cleanString(candidate.similarityReason) ?? cleanString(candidate.reasoning)
+  if (explicit && !reasons.some((reason) => reason.toLowerCase() === explicit.toLowerCase())) {
+    reasons.push(explicit)
   }
+
   return reasons
     .sort((a, b) => reasonPriority(a) - reasonPriority(b))
     .slice(0, 6)
@@ -690,7 +691,7 @@ function reasonPriority(reason: string): number {
   if (/^Location overlap:/i.test(reason)) return 5
   if (/^Seniority overlap:/i.test(reason)) return 6
   if (/^Career pattern overlap:/i.test(reason)) return 7
-  return 8
+  return 9
 }
 
 function similarityEvidenceQuality(reasons: string[]): {

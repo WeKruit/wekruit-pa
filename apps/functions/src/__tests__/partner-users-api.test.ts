@@ -99,10 +99,18 @@ function makeFakeDb(store: FakeStore): unknown {
       return 0
     }
 
+    // Resolve a possibly-dotted field path ("firstSignupEntry.source") against
+    // a doc's data, mirroring Firestore nested-field equality queries.
+    const readPath = (data: Record<string, unknown>, field: string): unknown =>
+      field.split(".").reduce<unknown>((acc, key) => {
+        if (acc && typeof acc === "object") return (acc as Record<string, unknown>)[key]
+        return undefined
+      }, data)
+
     const obj: any = {
       where(field: string, op: string, value: unknown) {
-        if (op === "==") filters.push((d) => d.data[field] === value)
-        else if (op === ">") filters.push((d) => (d.data[field] as number) > (value as number))
+        if (op === "==") filters.push((d) => readPath(d.data, field) === value)
+        else if (op === ">") filters.push((d) => (readPath(d.data, field) as number) > (value as number))
         else throw new Error(`unsupported op ${op}`)
         return obj
       },
@@ -299,6 +307,38 @@ test("fetchPartnerUsers cross-partner isolation: layoffhedge key cannot see cand
     limit: 50,
   })
   assert.equal(res.users.length, 0)
+})
+
+test("fetchPartnerUsers surfaces a sticky-locked user via entry source (regression)", async () => {
+  // Real bug: candidate arrived through ?source=layoffhedge but an earlier
+  // generic touch had locked top-level source=candidate. The partner must still
+  // see them — matched on firstSignupEntry.source — with both sources exposed.
+  const store: FakeStore = {
+    "pa-users": [
+      { id: "uTop", data: { source: "layoffhedge", email: "top@x.com", displayName: "Top", createdAt: "2026-06-16T12:00:00Z" } },
+      { id: "uEntry", data: { source: "candidate", email: "entry@x.com", displayName: "Entry", createdAt: "2026-06-16T11:00:00Z",
+        firstSignupEntry: { jobId: "wekruit-swe-new-grad", source: "layoffhedge" },
+        lastSignupEntry: { jobId: "wekruit-swe-new-grad", source: "layoffhedge" } } },
+      { id: "uOther", data: { source: "candidate", email: "other@x.com", displayName: "Other", createdAt: "2026-06-16T10:00:00Z" } },
+    ],
+    "pa-candidate-job-states": [],
+    "pa-jobs": [],
+    "pa-prescreen-sessions": [],
+  }
+  const db = makeFakeDb(store) as Firestore
+  const res = await __test_fetchPartnerUsers({ db, partnerSource: "layoffhedge", limit: 50 })
+  const ids = res.users.map((u) => u.wekruitUserId).sort()
+  assert.deepEqual(ids, ["uEntry", "uTop"]) // uOther (pure candidate) excluded
+
+  const top = res.users.find((u) => u.wekruitUserId === "uTop")!
+  assert.equal(top.source, "layoffhedge")
+  assert.equal(top.attributedVia, "top_level")
+
+  const entry = res.users.find((u) => u.wekruitUserId === "uEntry")!
+  assert.equal(entry.source, "candidate")          // durable field untouched
+  assert.equal(entry.entrySource, "layoffhedge")   // but entry attribution surfaced
+  assert.equal(entry.entryJobId, "wekruit-swe-new-grad")
+  assert.equal(entry.attributedVia, "entry")
 })
 
 import { __test_parseHandlerQuery } from "../partner-users-api.js"

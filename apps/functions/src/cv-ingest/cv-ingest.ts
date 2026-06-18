@@ -394,6 +394,47 @@ function nonEmptyTrimmed(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined
 }
 
+function extractFirstResumeEmail(text: string): string | null {
+  const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
+  return match?.[0]?.toLowerCase() ?? null
+}
+
+function extractFirstLinkedInUrl(text: string): string | null {
+  const match = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/[^\s)>,;"'|]+/i)
+  if (!match?.[0]) return null
+  const raw = match[0].replace(/[.,;]+$/g, "")
+  return raw.startsWith("http://") || raw.startsWith("https://")
+    ? raw
+    : `https://${raw}`
+}
+
+function applyDeterministicContactFallback(
+  parsed: StructuredCv,
+  text: string
+): { parsed: StructuredCv; emailFallback: string | null; linkedInFallback: string | null } {
+  const emailFallback = nonEmptyTrimmed(parsed.candidateProfile.email)
+    ? null
+    : extractFirstResumeEmail(text)
+  const linkedInFallback = nonEmptyTrimmed(parsed.candidateProfile.linkedIn)
+    ? null
+    : extractFirstLinkedInUrl(text)
+  if (!emailFallback && !linkedInFallback) {
+    return { parsed, emailFallback: null, linkedInFallback: null }
+  }
+  return {
+    parsed: {
+      ...parsed,
+      candidateProfile: {
+        ...parsed.candidateProfile,
+        email: emailFallback ?? parsed.candidateProfile.email,
+        linkedIn: linkedInFallback ?? parsed.candidateProfile.linkedIn,
+      },
+    },
+    emailFallback,
+    linkedInFallback,
+  }
+}
+
 /**
  * v1.9 hotfix (Adam directive 2026-05-12) — normalize parsed CV phone to E.164.
  *
@@ -1790,12 +1831,45 @@ type ParserV2Output = {
   usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
 }
 
+function canonicalLinkedInFromResumeWebsite(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) return null
+  let candidate = trimmed
+  if (/^\/\//.test(candidate)) {
+    candidate = `https:${candidate}`
+  } else if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`
+  }
+  let url: URL
+  try {
+    url = new URL(candidate)
+  } catch {
+    return null
+  }
+  if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return null
+  let path = url.pathname
+  const localeMatch = /^\/[a-z]{2,3}\/in\//i.exec(path)
+  if (localeMatch) path = path.slice(localeMatch[0].length - "/in/".length)
+  const match = /^\/in\/([A-Za-z0-9\-_%]+)\/?$/i.exec(path)
+  return match ? `https://linkedin.com/in/${match[1]!.toLowerCase()}` : null
+}
+
+function linkedInFromParserV2Websites(websites: string[]): string | null {
+  for (const website of websites) {
+    const linkedIn = canonicalLinkedInFromResumeWebsite(website)
+    if (linkedIn) return linkedIn
+  }
+  return null
+}
+
 function adaptV2ToStructuredCv(v2: ParserV2Output["parsed"]): StructuredCv {
   const candidateProfile: CandidateProfile = {
     name: v2.fullName,
     email: v2.email,
     phone: v2.phone,
-    linkedIn: null,
+    linkedIn: linkedInFromParserV2Websites(v2.websites),
     location: v2.location ?? "",
     skills: v2.skills,
   }
@@ -2381,6 +2455,16 @@ export async function ingestCv(
       parserV2: parserV2On,
     })
     return { ok: false, reason: "llm_parse_failed" }
+  }
+
+  const contactFallback = applyDeterministicContactFallback(parsed, text)
+  parsed = contactFallback.parsed
+  if (contactFallback.emailFallback || contactFallback.linkedInFallback) {
+    log("pa.cv_ingest.contact_fallback_applied", {
+      userId: args.userId,
+      email: Boolean(contactFallback.emailFallback),
+      linkedIn: Boolean(contactFallback.linkedInFallback),
+    })
   }
 
   const extractedEmail = nonEmptyTrimmed(parsed.candidateProfile.email)

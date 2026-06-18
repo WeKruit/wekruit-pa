@@ -89,6 +89,29 @@ test("stickSourceFromLoginNext preserves layoffhedge on public job next", async 
   })
 })
 
+test("stickSourceFromLoginNext does NOT clobber a resolved source when job next lacks ?source (regression)", async () => {
+  // PublicJob calls stickSourceFromLoginNext(`/j/${jobId}`) with NO query —
+  // right after resolveSource() set wko_source=layoffhedge from the live URL.
+  // The /j/ branch must not downgrade that to candidate.
+  const mod = await import("./source.js?case=stickyJobNextNoSourceRegression")
+  let store = "wko_source=layoffhedge"
+  let lastWrite = ""
+  withBrowser("https://candidate.wekruit.com/j/abc", "", () => {
+    Object.defineProperty((globalThis as any).document, "cookie", {
+      configurable: true,
+      get: () => store,
+      set: (v: string) => {
+        lastWrite = v
+        const m = v.match(/^wko_source=([^;]+)/)
+        if (m && !/Max-Age=0/.test(v)) store = `wko_source=${m[1]}`
+      },
+    })
+    mod.stickSourceFromLoginNext("/j/abc") // no ?source
+    assert.doesNotMatch(lastWrite, /wko_source=candidate/)
+    assert.match(store, /wko_source=layoffhedge/)
+  })
+})
+
 test("peekSource returns layoffhedge from cookie without writing back", async () => {
   const mod = await import("./source.js?case=peekLayoffhedge")
   withBrowser("https://candidate.wekruit.com/me", "wko_source=layoffhedge", () => {

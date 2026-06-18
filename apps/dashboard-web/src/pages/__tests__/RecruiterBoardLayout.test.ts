@@ -63,4 +63,16 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.match(source, /All \{submissions\.length\}/)
     assert.match(source, /visibleRecruiterGroups\.map\(renderGroup\)/)
   })
+
+  it("loads enough recruiter submissions for admin-heavy days but renders each job page at 100 rows", () => {
+    assert.match(source, /const BOARD_SUBMISSION_LOAD_LIMIT = 5_000/)
+    assert.match(source, /const BOARD_SUBMISSION_PAGE_SIZE = 100/)
+    assert.match(source, /limit\(BOARD_SUBMISSION_LOAD_LIMIT\)/)
+    assert.match(source, /const \[jobPageByKey, setJobPageByKey\] = useState<Record<string, number>>\(\{\}\)/)
+    assert.match(source, /const pageRows = job\.submissions\.slice\(start, start \+ BOARD_SUBMISSION_PAGE_SIZE\)/)
+    assert.match(source, /<tbody>\{pageRows\.map\(renderSubmissionRow\)\}<\/tbody>/)
+    assert.match(source, /Showing \{first\}-\{last\} of \{job\.submissions\.length\}/)
+    assert.match(source, /Page \{pageIndex \+ 1\} \/ \{totalPages\}/)
+    assert.match(source, /setBulkSelectionForSubmissions\(pageRows, e\.target\.checked\)/)
+  })
 })

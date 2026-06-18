@@ -154,6 +154,73 @@ test("runExtensionFindSimilarCandidates resolves source from CoreSignal cache wi
   assert.match(agenticPrompt, /education/i)
 })
 
+test("runExtensionFindSimilarCandidates does not rank visible page profiles as CoreSignal-similar results", async () => {
+  const db = new MockFirestore()
+  await storeCoresignalEmployee({
+    db: asFirestore(db),
+    link: "https://linkedin.com/in/source-profile",
+    coresignalId: 100,
+    employee: employee(),
+    now,
+    source: "test",
+  })
+  const searchedLinks: string[] = []
+  let agenticPrompt = ""
+  const dataWithPageProfiles = {
+    ...payload(),
+    profileContext: {
+      ...payload().profileContext,
+      relatedProfiles: [
+        {
+          linkedinUrl: "https://www.linkedin.com/in/siyi-he/?miniProfileUrn=abc",
+          fullName: "Siyi He",
+          headline: "SDE @ Amazon | Stanford Alum",
+        },
+      ],
+    },
+  }
+
+  const result = await runExtensionFindSimilarCandidates({
+    auth: { uid: "recruiter-1" },
+    data: dataWithPageProfiles,
+    db: asFirestore(db),
+    apiKey: "test-key",
+    now,
+    searchEmployeeIdByLinkedinUrl: async (canonicalLinkedInUrl) => {
+      searchedLinks.push(canonicalLinkedInUrl)
+      return canonicalLinkedInUrl === "https://linkedin.com/in/siyi-he" ? 501 : null
+    },
+    fetchEmployeeCollect: async (id) =>
+      employee({
+        id,
+        full_name: "Siyi He",
+        linkedin_url: "https://www.linkedin.com/in/siyi-he/",
+        headline: "Software Development Engineer at Amazon | Stanford Alum",
+        active_experience_title: "Software Development Engineer",
+        active_experience_management_level: "Senior",
+        location_full: "Seattle, Washington, United States",
+        inferred_skills: ["Distributed Systems", "Kubernetes", "Recommendation Systems"],
+        experience: [
+          {
+            company_name: "Amazon",
+            position_title: "Software Development Engineer",
+            active_experience: 1,
+            management_level: "Senior",
+          },
+        ],
+        education: [{ institution_name: "Stanford University", degree: "MS Computer Science" }],
+      }),
+    agenticSearch: async (request) => {
+      agenticPrompt = request.prompt
+      return { data: [] }
+    },
+  })
+
+  assert.deepEqual(searchedLinks, [])
+  assert.doesNotMatch(agenticPrompt, /relatedProfileHints|LinkedIn page-adjacent/i)
+  assert.deepEqual(result.results, [])
+})
+
 test("normalizeSimilarCandidateRows ranks candidates and explains concrete overlap", () => {
   const source = employee()
   const rows = normalizeSimilarCandidateRows(

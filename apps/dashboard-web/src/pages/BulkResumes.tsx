@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react"
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
-import { FileText, Play, Plus, RefreshCw, Upload } from "lucide-react"
+import { FileText, Play, Plus, RefreshCw, Send, Upload } from "lucide-react"
 import { AdminJobLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   Badge,
@@ -21,11 +21,11 @@ import {
   canRetryBulkResumeItem,
   fileToResumeUploadPayload,
   maskEmailForDisplay,
-  sanitizePdfFileName,
+  sanitizeResumeFileName,
   summarizeItems,
   summarizeProcessResults,
   timestampToIso,
-  validatePdfFile,
+  validateResumeFile,
   type ResumeUploadPayload,
 } from "./BulkResumes.helpers.js"
 
@@ -73,7 +73,7 @@ type PendingFile = {
   employerEmailHint: string
 }
 
-type ActionKey = "create" | "upload" | "process" | `retry:${string}`
+type ActionKey = "create" | "upload" | "process" | "submitRecruiter" | `retry:${string}`
 
 type CreateBatchInput = { label: string; jobId?: string }
 type CreateBatchResult = { ok: true; batch: BulkResumeBatch }
@@ -81,6 +81,8 @@ type AddItemsInput = { batchId: string; items: ResumeUploadPayload[] }
 type AddItemsResult = { ok: true; items: BulkResumeItem[]; batch: BulkResumeBatch }
 type ProcessBatchInput = { batchId: string; limit?: number }
 type ProcessBatchResult = { ok: true; results: { status?: string | null; ok?: boolean | null }[]; batch: BulkResumeBatch }
+type SubmitRecruiterBatchInput = { batchId: string; jobId: string; submitter: { name: string; email: string } }
+type SubmitRecruiterBatchResult = { ok: true; jobId: string; created: number; skipped: number }
 type RetryItemInput = { batchId: string; itemId: string }
 type RetryItemResult = { ok: true; item: BulkResumeItem; batch: BulkResumeBatch }
 
@@ -92,6 +94,9 @@ export default function BulkResumes() {
   const [selectedBatchId, setSelectedBatchId] = useState("")
   const [label, setLabel] = useState("")
   const [jobId, setJobId] = useState("")
+  const [recruiterJobId, setRecruiterJobId] = useState("")
+  const [submitterName, setSubmitterName] = useState("WeKruit Admin")
+  const [submitterEmail, setSubmitterEmail] = useState("admin1@wekruit.com")
   const [processLimit, setProcessLimit] = useState("25")
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const [loadingBatches, setLoadingBatches] = useState(true)
@@ -153,6 +158,13 @@ export default function BulkResumes() {
   )
   const visibleSummary = useMemo(() => summarizeItems(items), [items])
   const invalidPendingCount = pendingFiles.filter((row) => row.validationError).length
+  const parsedItemCount = selectedBatch ? batchCount(selectedBatch, "parsed", visibleSummary.parsed) : visibleSummary.parsed
+  const reviewItemCount = selectedBatch ? batchCount(selectedBatch, "review", visibleSummary.review) : visibleSummary.review
+  const failedItemCount = selectedBatch ? batchCount(selectedBatch, "failed", visibleSummary.failed) : visibleSummary.failed
+
+  useEffect(() => {
+    if (selectedBatch?.jobId && !recruiterJobId.trim()) setRecruiterJobId(selectedBatch.jobId)
+  }, [recruiterJobId, selectedBatch?.jobId])
 
   async function createBatch(): Promise<void> {
     const trimmedLabel = label.trim()
@@ -181,9 +193,9 @@ export default function BulkResumes() {
     const next = Array.from(files ?? []).map((file, index) => ({
       id: `${file.name}:${file.size}:${file.lastModified}:${index}`,
       file,
-      fileName: sanitizePdfFileName(file.name),
+      fileName: sanitizeResumeFileName(file.name),
       fileSizeBytes: file.size,
-      validationError: validatePdfFile(file),
+      validationError: validateResumeFile(file),
       employerEmailHint: "",
     }))
     setPendingFiles(next)
@@ -227,6 +239,32 @@ export default function BulkResumes() {
         ...(Number.isFinite(parsedLimit) && parsedLimit > 0 ? { limit: parsedLimit } : {}),
       })
       setNotice(summarizeProcessResults(res.data.results))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function submitRecruiterBatch(): Promise<void> {
+    if (!selectedBatchId || !recruiterJobId.trim() || !submitterName.trim() || !submitterEmail.trim()) return
+    setBusy("submitRecruiter")
+    setError(null)
+    setNotice(null)
+    try {
+      const fn = httpsCallable<SubmitRecruiterBatchInput, SubmitRecruiterBatchResult>(
+        functions(),
+        "paBulkResumeSubmitRecruiterBatch"
+      )
+      const res = await fn({
+        batchId: selectedBatchId,
+        jobId: recruiterJobId.trim(),
+        submitter: {
+          name: submitterName.trim(),
+          email: submitterEmail.trim().toLowerCase(),
+        },
+      })
+      setNotice(`Submitted ${res.data.created} candidate(s) to ${res.data.jobId}; skipped ${res.data.skipped}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -333,12 +371,59 @@ export default function BulkResumes() {
         </Panel>
       </div>
 
+      <Panel title="Recruiter Pipeline" eyebrow={selectedBatchId || "select batch"}>
+        <div className="toolbar" style={{ marginBottom: "0.75rem" }}>
+          <input
+            value={recruiterJobId}
+            onChange={(e) => setRecruiterJobId(e.target.value)}
+            placeholder="role jobId or public URL id"
+            disabled={busy !== null || !selectedBatchId}
+            style={{ minWidth: "18rem" }}
+          />
+          <input
+            value={submitterName}
+            onChange={(e) => setSubmitterName(e.target.value)}
+            placeholder="submitter name"
+            disabled={busy !== null || !selectedBatchId}
+            style={{ minWidth: "12rem" }}
+          />
+          <input
+            type="email"
+            value={submitterEmail}
+            onChange={(e) => setSubmitterEmail(e.target.value)}
+            placeholder="submitter email"
+            disabled={busy !== null || !selectedBatchId}
+            style={{ minWidth: "15rem" }}
+          />
+          <button
+            type="button"
+            onClick={() => void submitRecruiterBatch()}
+            disabled={
+              busy !== null ||
+              !selectedBatchId ||
+              !recruiterJobId.trim() ||
+              !submitterName.trim() ||
+              !submitterEmail.trim() ||
+              parsedItemCount <= 0
+            }
+          >
+            <Send style={iconStyle} />
+            {busy === "submitRecruiter" ? "Submitting..." : `Submit parsed ${parsedItemCount}`}
+          </button>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+          <CountBadge label="parsed ready" value={parsedItemCount} tone="ok" />
+          <CountBadge label="review" value={reviewItemCount} tone="warn" />
+          <CountBadge label="failed" value={failedItemCount} tone="warn" />
+        </div>
+      </Panel>
+
       <Panel title="Upload" eyebrow={selectedBatchId || "select batch"}>
         <div className="toolbar" style={{ marginBottom: "0.75rem" }}>
           <input
             ref={fileInputRef}
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx"
             multiple
             onChange={(e) => selectFiles(e.currentTarget.files)}
             disabled={busy !== null || !selectedBatchId}
@@ -361,7 +446,7 @@ export default function BulkResumes() {
         ) : (
           <DataTable<BulkResumeItem>
             rows={items}
-            empty={<EmptyState title="No items" body="No PDFs uploaded for this batch." />}
+            empty={<EmptyState title="No items" body="No resumes uploaded for this batch." />}
             columns={itemColumns(busy, retryItem)}
           />
         )}
@@ -464,7 +549,7 @@ function PendingFilesTable({
   rows: PendingFile[]
   setRows: Dispatch<SetStateAction<PendingFile[]>>
 }) {
-  if (rows.length === 0) return <EmptyState title="No pending files" body="Choose one or more PDFs." />
+  if (rows.length === 0) return <EmptyState title="No pending files" body="Choose one or more PDF or DOCX resumes." />
   return (
     <div className="table-shell">
       <table>

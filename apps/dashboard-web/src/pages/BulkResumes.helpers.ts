@@ -7,7 +7,8 @@ import type {
 
 export const BULK_RESUME_BATCHES_COLLECTION = "pa-bulk-upload-batches"
 export const BULK_RESUME_ITEMS_SUBCOLLECTION = "items"
-export const MAX_RESUME_PDF_BYTES = 6 * 1024 * 1024
+export const MAX_RESUME_BYTES = 6 * 1024 * 1024
+export const MAX_RESUME_PDF_BYTES = MAX_RESUME_BYTES
 
 export type StatusTone = "ok" | "warn" | "info" | "muted"
 
@@ -49,7 +50,7 @@ export const BULK_RESUME_RETRYABLE_STATUSES: BulkResumeItemStatus[] = [
   "failed",
 ]
 
-export function sanitizePdfFileName(name: string): string {
+export function sanitizeResumeFileName(name: string): string {
   const leaf = name.split(/[\\/]/).pop() ?? "resume.pdf"
   const cleaned = leaf
     .replace(/[\u0000-\u001f\u007f]/g, "")
@@ -58,34 +59,58 @@ export function sanitizePdfFileName(name: string): string {
   return cleaned.slice(0, 160) || "resume.pdf"
 }
 
-export function validatePdfFile(file: Pick<File, "name" | "size" | "type">): string | null {
-  const fileName = sanitizePdfFileName(file.name)
-  if (!fileName.toLowerCase().endsWith(".pdf")) return "PDF only"
-  if (file.size <= 0) return "Empty file"
-  if (file.size > MAX_RESUME_PDF_BYTES) {
-    return `Max ${(MAX_RESUME_PDF_BYTES / 1024 / 1024).toFixed(0)}MB`
-  }
-  if (file.type && file.type !== "application/pdf") return "PDF MIME required"
+export function sanitizePdfFileName(name: string): string {
+  return sanitizeResumeFileName(name)
+}
+
+function resumeExtension(fileName: string): "pdf" | "docx" | null {
+  const lower = fileName.toLowerCase()
+  if (lower.endsWith(".pdf")) return "pdf"
+  if (lower.endsWith(".docx")) return "docx"
   return null
+}
+
+export function validateResumeFile(file: Pick<File, "name" | "size" | "type">): string | null {
+  const fileName = sanitizeResumeFileName(file.name)
+  const ext = resumeExtension(fileName)
+  if (!ext) return "PDF or DOCX only"
+  if (file.size <= 0) return "Empty file"
+  if (file.size > MAX_RESUME_BYTES) {
+    return `Max ${(MAX_RESUME_BYTES / 1024 / 1024).toFixed(0)}MB`
+  }
+  if (ext === "pdf" && file.type && file.type !== "application/pdf") return "PDF MIME required"
+  if (
+    ext === "docx" &&
+    file.type &&
+    file.type !== "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+    file.type !== "application/octet-stream"
+  ) {
+    return "DOCX MIME required"
+  }
+  return null
+}
+
+export function validatePdfFile(file: Pick<File, "name" | "size" | "type">): string | null {
+  return validateResumeFile(file)
 }
 
 export function validatePdfFiles(files: readonly Pick<File, "name" | "size" | "type">[]): string | null {
   const invalid = files
-    .map((file) => ({ file, error: validatePdfFile(file) }))
+    .map((file) => ({ file, error: validateResumeFile(file) }))
     .find((result) => result.error)
-  return invalid ? `${sanitizePdfFileName(invalid.file.name)}: ${invalid.error}` : null
+  return invalid ? `${sanitizeResumeFileName(invalid.file.name)}: ${invalid.error}` : null
 }
 
 export async function fileToResumeUploadPayload(
   file: File,
   employerEmailHint?: string
 ): Promise<ResumeUploadPayload> {
-  const validationError = validatePdfFile(file)
-  if (validationError) throw new Error(`${sanitizePdfFileName(file.name)}: ${validationError}`)
+  const validationError = validateResumeFile(file)
+  if (validationError) throw new Error(`${sanitizeResumeFileName(file.name)}: ${validationError}`)
   const resumeBase64 = arrayBufferToBase64(await file.arrayBuffer())
   const trimmedHint = employerEmailHint?.trim()
   return {
-    fileName: sanitizePdfFileName(file.name),
+    fileName: sanitizeResumeFileName(file.name),
     resumeBase64,
     ...(trimmedHint ? { employerEmailHint: trimmedHint } : {}),
   }
@@ -95,12 +120,16 @@ export async function buildAddItemPayload(
   file: File,
   employerEmailHint?: string
 ): Promise<AddBulkResumeItemPayload> {
-  const validationError = validatePdfFile(file)
-  if (validationError) throw new Error(`${sanitizePdfFileName(file.name)}: ${validationError}`)
+  const validationError = validateResumeFile(file)
+  if (validationError) throw new Error(`${sanitizeResumeFileName(file.name)}: ${validationError}`)
   const trimmedHint = employerEmailHint?.trim()
+  const fileName = sanitizeResumeFileName(file.name)
+  const ext = resumeExtension(fileName)
   return {
-    fileName: sanitizePdfFileName(file.name),
-    mimeType: file.type || "application/pdf",
+    fileName,
+    mimeType: file.type || (ext === "docx"
+      ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      : "application/pdf"),
     fileSizeBytes: file.size,
     resumeBase64: arrayBufferToBase64(await file.arrayBuffer()),
     ...(trimmedHint ? { employerEmailHint: trimmedHint } : {}),

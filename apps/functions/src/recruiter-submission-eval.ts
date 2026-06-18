@@ -916,7 +916,9 @@ export async function runRecruiterSubmissionEval(
     // Mirror into the canonical eval store so the submission is labelable
     // through the shared dual-pane label form. Best-effort — never blocks or
     // fails the operator-facing eval write. NEVER touches submission `status`.
-    const candidateId = tracking.status === "tracked" && tracking.candidateId ? tracking.candidateId : undefined
+    const candidateId = tracking.status === "tracked" && tracking.candidateId
+      ? tracking.candidateId
+      : cleanString(submission.candidateId)
     const companyId = cleanString(asRecord(submission)?.companyId) ?? cleanString(job.companyId)
     const evaluationAttemptId = await mirrorRecruiterEvalAttempt(deps, {
       submissionId: raw.submissionId,
