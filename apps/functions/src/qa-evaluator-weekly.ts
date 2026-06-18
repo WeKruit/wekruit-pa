@@ -983,7 +983,7 @@ export function makeFirestoreStore(db: Firestore = getFirestore()): QaEvaluatorS
         const data = doc.data() as DocumentData
         if (data.dead === true) continue
         const url = typeof data.atsApplyUrl === "string" ? data.atsApplyUrl : ""
-        if (!url || /jobright\.ai/i.test(url)) continue
+        if (!url || /jobright/i.test(url)) continue
         const fsMs = timestampToMsLocal(data.firstSeenAt)
         if (fsMs > 0 && fsMs < cutoffMs) continue
         out.push(projectJobDoc(doc.id, data))
