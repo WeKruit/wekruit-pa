@@ -28,6 +28,8 @@ const FLAGS = "pa-feature-flags"
 const USERS = "pa-users"
 const MESSAGES = "pa-messages"
 const OUTBOUND = "pa-outbound"
+const VOICE_OFFERS = "pa-voice-call-offers"
+const OUTBOUND_BOOKINGS = "outbound-bookings"
 const THIN_FLAG = "paThinClaireEnabled"
 const CANARY_UID = "8fEwIduUrzxZsblHHsNz" // Adam dev phone — in CANARY_UIDS (entry-UX cohort)
 
@@ -511,4 +513,100 @@ test("phone-prescreen bare 'sure' after role choice sends clarification, not mat
   assert.equal(outboundRows.length, 1, "clarifier is the only outbound row; find_match did not run")
   assert.match(String(outboundRows[0]![1].body ?? ""), /not as a request for new jobs/)
   assert.match(String(outboundRows[0]![1].body ?? ""), /Sekai AI Agent Engineer/)
+})
+
+test("explicit phone prescreen request resolves the named role and sends ONLY the call offer", async () => {
+  const eventId = "evt_voice_prescreen_named_role"
+  const sessionId = "ses_voice_named_role"
+  const { db, docs } = makeQueryableDb({
+    [`${FLAGS}/${THIN_FLAG}`]: thinFlagFor(CANARY_UID),
+    [`${USERS}/${CANARY_UID}`]: {
+      phoneE164: "+14243201960",
+      lastCollabRoles: [
+        { jobId: "job-sekai-agent", company: "Sekai", title: "AI Agent Engineer (Coding Agent)" },
+        { jobId: "job-sekai-lead", company: "Sekai", title: "Technical Lead" },
+      ],
+    },
+    [`${INBOUND}/${eventId}`]: {
+      userId: CANARY_UID,
+      sessionId,
+      body: "I want to prescreen Sekai AI Agent Engineer on phone call",
+      fromNumber: "+14243201960",
+      rawMeta: { source: "sendblue_webhook" },
+    },
+  })
+  const { events, log } = spyLog()
+
+  const handled = await maybeRunThinClaire(db, eventId, { log })
+
+  assert.equal(handled, true)
+  assert.ok(events.includes("thin_claire.voice_prescreen.offer_sent"))
+  const inbound = docs.get(`${INBOUND}/${eventId}`)! as {
+    handledBy?: string
+    voicePrescreenRequest?: { jobId?: string; offerOk?: boolean }
+  }
+  assert.equal(inbound.handledBy, "thin_claire_voice_prescreen_offer")
+  assert.equal(inbound.voicePrescreenRequest?.jobId, "job-sekai-agent")
+  assert.equal(inbound.voicePrescreenRequest?.offerOk, true)
+
+  const outboundRows = [...docs.entries()].filter(([path]) => path.startsWith(`${OUTBOUND}/`))
+  assert.equal(outboundRows.length, 1, "only the confirmation ask is sent")
+  const body = String(outboundRows[0]![1].body ?? "")
+  assert.match(body, /Want to do the prescreen as a quick call now/)
+  assert.match(body, /ending in 1960/)
+  assert.doesNotMatch(body, /starting|pull roles|jobId|matched set/i)
+
+  const offers = [...docs.entries()].filter(([path]) => path.startsWith(`${VOICE_OFFERS}/`))
+  assert.equal(offers.length, 1, "one pending offer is created")
+  const offer = offers[0]![1] as { status?: string; purpose?: string; paJobId?: string; matchedRoleValidatedAt?: string }
+  assert.equal(offer.status, "pending")
+  assert.equal(offer.purpose, "prescreen")
+  assert.equal(offer.paJobId, "job-sekai-agent")
+  assert.equal(typeof offer.matchedRoleValidatedAt, "string")
+
+  const bookings = [...docs.entries()].filter(([path]) => path.startsWith(`${OUTBOUND_BOOKINGS}/`))
+  assert.equal(bookings.length, 0, "no call is dialed until a later explicit yes")
+})
+
+test("ambiguous explicit phone prescreen request asks which role and creates no call offer", async () => {
+  const eventId = "evt_voice_prescreen_ambiguous"
+  const sessionId = "ses_voice_ambiguous"
+  const { db, docs } = makeQueryableDb({
+    [`${FLAGS}/${THIN_FLAG}`]: thinFlagFor(CANARY_UID),
+    [`${USERS}/${CANARY_UID}`]: {
+      phoneE164: "+14243201960",
+      lastCollabRoles: [
+        { jobId: "job-sekai-agent", company: "Sekai", title: "AI Agent Engineer (Coding Agent)" },
+        { jobId: "job-sekai-lead", company: "Sekai", title: "Technical Lead" },
+      ],
+    },
+    [`${INBOUND}/${eventId}`]: {
+      userId: CANARY_UID,
+      sessionId,
+      body: "I want to do a phone prescreen with Sekai",
+      fromNumber: "+14243201960",
+      rawMeta: { source: "sendblue_webhook" },
+    },
+  })
+  const { events, log } = spyLog()
+
+  const handled = await maybeRunThinClaire(db, eventId, { log })
+
+  assert.equal(handled, true)
+  assert.ok(events.includes("thin_claire.voice_prescreen.role_clarifier_sent"))
+  const inbound = docs.get(`${INBOUND}/${eventId}`)! as { handledBy?: string }
+  assert.equal(inbound.handledBy, "thin_claire_voice_prescreen_role_clarifier")
+
+  const outboundRows = [...docs.entries()].filter(([path]) => path.startsWith(`${OUTBOUND}/`))
+  assert.equal(outboundRows.length, 1)
+  const body = String(outboundRows[0]![1].body ?? "")
+  assert.match(body, /Which role should I call you about/)
+  assert.match(body, /AI Agent Engineer \(Coding Agent\) @ Sekai/)
+  assert.match(body, /Technical Lead @ Sekai/)
+  assert.doesNotMatch(body, /pull roles|jobId|matched set/i)
+
+  const offers = [...docs.entries()].filter(([path]) => path.startsWith(`${VOICE_OFFERS}/`))
+  assert.equal(offers.length, 0)
+  const bookings = [...docs.entries()].filter(([path]) => path.startsWith(`${OUTBOUND_BOOKINGS}/`))
+  assert.equal(bookings.length, 0)
 })

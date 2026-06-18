@@ -272,6 +272,76 @@ async function createBookingForOffer(ctx: ClaireToolContext, offer: PendingOffer
   return { ok: true, bookingId }
 }
 
+export async function offerVoiceCallNow(
+  ctx: ClaireToolContext,
+  input: { purpose: VoiceCallPurpose; jobId?: string | null },
+): Promise<
+  | { ok: true; delivered: true; offerId: string; expiresAt: string }
+  | {
+      ok: false
+      delivered: boolean
+      reason:
+        | "missing_jobId"
+        | "missing_phoneE164"
+        | "voice_call_not_enabled"
+        | "role_needs_clarification"
+        | "role_already_completed"
+      roles?: Array<{ jobId: string; company: string; title: string; status: CollabRole["status"] | null }>
+    }
+> {
+  const { purpose, jobId } = input
+  const paJobId = purpose === "prescreen" ? (jobId ?? ctx.jobId ?? "").trim() : undefined
+  if (purpose === "prescreen" && !paJobId) {
+    return { ok: false as const, delivered: false as const, reason: "missing_jobId" as const }
+  }
+  const phoneE164 = await resolvePhoneE164(ctx)
+  if (!phoneE164) {
+    return { ok: false as const, delivered: false as const, reason: "missing_phoneE164" as const }
+  }
+  if (!isClaireVoiceDevPhone(phoneE164)) {
+    ctx.log("pa.claire.voice.dev_phone_gate", { userId: ctx.userId, purpose })
+    return { ok: false as const, delivered: false as const, reason: "voice_call_not_enabled" as const }
+  }
+
+  const nowIso = ctx.nowIso()
+  const offerId = randomUUID()
+  const createdMs = Date.parse(nowIso)
+  const expiresAt = new Date((Number.isFinite(createdMs) ? createdMs : Date.now()) + VOICE_CALL_OFFER_TTL_MS).toISOString()
+  const validation = purpose === "prescreen" ? await validatePrescreenRoleForCall(ctx, paJobId ?? "") : null
+  if (validation && !validation.ok) {
+    await sendPrescreenRoleClarification(ctx, validation.roles)
+    ctx.log("pa.claire.voice.offer_role_not_startable", {
+      userId: ctx.userId,
+      purpose,
+      paJobId,
+      reason: validation.reason ?? "role_needs_clarification",
+    })
+    return {
+      ok: false as const,
+      delivered: true as const,
+      reason: validation.reason ?? "role_needs_clarification" as const,
+      roles: validation.roles.map((r) => ({ jobId: r.jobId, company: r.company, title: r.title, status: r.status ?? null })),
+    }
+  }
+  const offer = stripUndefined({
+    userId: ctx.userId,
+    sessionId: ctx.sessionId,
+    purpose,
+    paJobId,
+    phoneE164,
+    status: "pending" as const,
+    createdAt: nowIso,
+    expiresAt,
+    updatedAt: nowIso,
+    matchedRoleValidatedAt: purpose === "prescreen" ? nowIso : undefined,
+  })
+  await ctx.db.collection(VOICE_CALL_OFFERS_COLLECTION).doc(offerId).set(offer)
+  const text = offerText({ purpose, phoneE164 })
+  await ctx.transport.sendText(text)
+  ctx.log("pa.claire.voice.offer_created", { userId: ctx.userId, offerId, purpose, paJobId: paJobId ?? null })
+  return { ok: true as const, delivered: true as const, offerId, expiresAt }
+}
+
 export function buildVoiceCallTools(ctx: ClaireToolContext) {
   // Voice calls are dev-phone-only while this is being validated. If the
   // current turn does not carry a known dev phone, do not expose the tools.
@@ -289,56 +359,7 @@ export function buildVoiceCallTools(ctx: ClaireToolContext) {
       jobId: z.string().nullable(),
     }),
     async execute({ purpose, jobId }) {
-      const paJobId = purpose === "prescreen" ? (jobId ?? ctx.jobId ?? "").trim() : undefined
-      if (purpose === "prescreen" && !paJobId) {
-        return { ok: false as const, delivered: false as const, reason: "missing_jobId" as const }
-      }
-      const phoneE164 = await resolvePhoneE164(ctx)
-      if (!phoneE164) {
-        return { ok: false as const, delivered: false as const, reason: "missing_phoneE164" as const }
-      }
-      if (!isClaireVoiceDevPhone(phoneE164)) {
-        ctx.log("pa.claire.voice.dev_phone_gate", { userId: ctx.userId, purpose })
-        return { ok: false as const, delivered: false as const, reason: "voice_call_not_enabled" as const }
-      }
-
-      const nowIso = ctx.nowIso()
-      const offerId = randomUUID()
-      const createdMs = Date.parse(nowIso)
-      const expiresAt = new Date((Number.isFinite(createdMs) ? createdMs : Date.now()) + VOICE_CALL_OFFER_TTL_MS).toISOString()
-      const validation = purpose === "prescreen" ? await validatePrescreenRoleForCall(ctx, paJobId ?? "") : null
-      if (validation && !validation.ok) {
-        await sendPrescreenRoleClarification(ctx, validation.roles)
-        ctx.log("pa.claire.voice.offer_role_not_startable", {
-          userId: ctx.userId,
-          purpose,
-          paJobId,
-          reason: validation.reason ?? "role_needs_clarification",
-        })
-        return {
-          ok: false as const,
-          delivered: true as const,
-          reason: validation.reason ?? "role_needs_clarification" as const,
-          roles: validation.roles.map((r) => ({ jobId: r.jobId, company: r.company, title: r.title, status: r.status ?? null })),
-        }
-      }
-      const offer = stripUndefined({
-        userId: ctx.userId,
-        sessionId: ctx.sessionId,
-        purpose,
-        paJobId,
-        phoneE164,
-        status: "pending" as const,
-        createdAt: nowIso,
-        expiresAt,
-        updatedAt: nowIso,
-        matchedRoleValidatedAt: purpose === "prescreen" ? nowIso : undefined,
-      })
-      await ctx.db.collection(VOICE_CALL_OFFERS_COLLECTION).doc(offerId).set(offer)
-      const text = offerText({ purpose, phoneE164 })
-      await ctx.transport.sendText(text)
-      ctx.log("pa.claire.voice.offer_created", { userId: ctx.userId, offerId, purpose, paJobId: paJobId ?? null })
-      return { ok: true as const, delivered: true as const, offerId, expiresAt }
+      return offerVoiceCallNow(ctx, { purpose, jobId })
     },
   })
 

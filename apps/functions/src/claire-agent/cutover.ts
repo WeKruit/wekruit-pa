@@ -24,6 +24,7 @@ import { isThinClaireEnabled } from "./flags.js"
 import { isCanaryUser, isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
+import { isClaireVoiceDevPhone } from "../voice/dev-phone-gate.js"
 import {
   setEnrichmentInFlight,
   clearEnrichmentInFlight,
@@ -37,6 +38,11 @@ import {
   shouldHoldVoiceCallAckFromMatching,
 } from "./voice-call-ack-guard.js"
 import {
+  isExplicitVoicePrescreenRequest,
+  resolveVoicePrescreenRole,
+  voicePrescreenRoleClarificationText,
+} from "./voice-prescreen-request-router.js"
+import {
   hasPriorParsedResume,
   readOpenMergePending,
   stageMergePending,
@@ -49,7 +55,7 @@ import {
   type MergeConfirmClassifier,
 } from "./merge-resume-confirm.js"
 import { buildDecisionTrace } from "./decision-trace.js"
-import type { ClaireLang } from "./types.js"
+import type { ClaireLang, ClaireToolContext } from "./types.js"
 import {
   resumePendingProfileReadinessPrescreenStart,
   runPreScreenForUser,
@@ -1113,6 +1119,110 @@ export async function maybeRunThinClaire(
       }
     } catch (err) {
       log("thin_claire.text_pitch.error", {
+        eventId,
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // ── EXPLICIT PHONE PRESCREEN REQUEST ─────────────────────────────────────────────────────────────
+  // A message like "I want to prescreen Sekai AI Agent Engineer on phone call" is NOT a matching
+  // request and must NOT enter begin_collab_prescreen directly. The required call contract is:
+  // resolve the exact matched role -> send the "can I call you now?" offer -> wait for a later yes.
+  // Handle this before the LLM can send a premature "starting..." status or pass a guessed jobId into
+  // the text-prescreen starter. Dev-phone-only while the voice lane is under validation.
+  if (
+    toE164 &&
+    hasRealUserText(text) &&
+    !inboundMediaUrl &&
+    rawMeta.runtimeEvent !== true &&
+    isClaireVoiceDevPhone(String(toE164)) &&
+    isExplicitVoicePrescreenRequest(text)
+  ) {
+    try {
+      const { loadCandidateRoles } = await import("./tools/matching-tools.js")
+      const { offerVoiceCallNow } = await import("./tools/voice-call-tools.js")
+      const transport = createSendblueTransport({
+        db,
+        toE164: String(toE164),
+        inboundMessageHandle,
+        userId,
+        sessionId,
+        inboundEventId: eventId,
+        log,
+        ...(deps.dryRun ? { dryRun: true } : {}),
+      })
+      const roles = await loadCandidateRoles(db, userId, log)
+      const resolution = resolveVoicePrescreenRole(text, roles)
+      if (resolution.kind !== "one") {
+        await transport.sendText(voicePrescreenRoleClarificationText(resolution), { seq: 0 })
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set(
+            {
+              status: "completed",
+              handledBy: "thin_claire_voice_prescreen_role_clarifier",
+              voicePrescreenRequest: { resolution: resolution.kind },
+            },
+            { merge: true },
+          )
+        log("thin_claire.voice_prescreen.role_clarifier_sent", {
+          eventId,
+          userId,
+          resolution: resolution.kind,
+          roleCount: resolution.roles.length,
+        })
+        return true
+      }
+
+      const ctx: ClaireToolContext = {
+        db,
+        userId,
+        sessionId,
+        lang,
+        transport,
+        judgeModel: "gpt-5.4-mini",
+        toE164: String(toE164),
+        log,
+        nowIso: () => new Date().toISOString(),
+      }
+      const offered = await offerVoiceCallNow(ctx, { purpose: "prescreen", jobId: resolution.role.jobId })
+      if (offered.delivered) {
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set(
+            {
+              status: "completed",
+              handledBy: "thin_claire_voice_prescreen_offer",
+              voicePrescreenRequest: {
+                resolution: "one",
+                jobId: resolution.role.jobId,
+                offerOk: offered.ok,
+                reason: offered.ok ? null : offered.reason,
+              },
+            },
+            { merge: true },
+          )
+        log("thin_claire.voice_prescreen.offer_sent", {
+          eventId,
+          userId,
+          jobId: resolution.role.jobId,
+          ok: offered.ok,
+          reason: offered.ok ? null : offered.reason,
+        })
+        return true
+      }
+      log("thin_claire.voice_prescreen.offer_not_delivered", {
+        eventId,
+        userId,
+        jobId: resolution.role.jobId,
+        reason: offered.reason,
+      })
+    } catch (err) {
+      log("thin_claire.voice_prescreen.router_error", {
         eventId,
         userId,
         err: err instanceof Error ? err.message : String(err),
