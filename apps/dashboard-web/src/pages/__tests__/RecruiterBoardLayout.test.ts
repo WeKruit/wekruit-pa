@@ -71,8 +71,25 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.match(source, /const \[jobPageByKey, setJobPageByKey\] = useState<Record<string, number>>\(\{\}\)/)
     assert.match(source, /const pageRows = job\.submissions\.slice\(start, start \+ BOARD_SUBMISSION_PAGE_SIZE\)/)
     assert.match(source, /<tbody>\{pageRows\.map\(renderSubmissionRow\)\}<\/tbody>/)
-    assert.match(source, /Showing \{first\}-\{last\} of \{job\.submissions\.length\}/)
+    assert.match(source, /Showing \{first\}-\{last\} of \{job\.submissions\.length\} · Best first/)
     assert.match(source, /Page \{pageIndex \+ 1\} \/ \{totalPages\}/)
     assert.match(source, /setBulkSelectionForSubmissions\(pageRows, e\.target\.checked\)/)
+  })
+
+  it("sorts each role page by AI fit quality before paginating", () => {
+    assert.match(source, /function boardSubmissionQualityScore\(submission: BoardSubmissionDoc\): number/)
+    assert.match(source, /function sortSubmissions\(submissions: BoardSubmissionDoc\[\]\): BoardSubmissionDoc\[\] \{[\s\S]*boardSubmissionQualityScore\(b\) - boardSubmissionQualityScore\(a\)/)
+    assert.match(source, /if \(Math\.abs\(qualityDelta\) > 0\.000001\) return qualityDelta/)
+    assert.match(source, /function buildJobGroups\(submissions: BoardSubmissionDoc\[\]\): BoardJobGroup\[\] \{[\s\S]*const sorted = sortSubmissions\(list\)/)
+    assert.match(source, /submissions: sorted,\n\s+pendingCount: sorted\.filter\(isPending\)\.length,/)
+    assert.match(source, /const pageRows = job\.submissions\.slice\(start, start \+ BOARD_SUBMISSION_PAGE_SIZE\)/)
+  })
+
+  it("does not clip later role tables inside the recruiter card", () => {
+    const boardGroupBodyStyle = source.match(/const boardGroupBodyStyle: CSSProperties = \{[\s\S]*?\n\}/)
+    assert.ok(boardGroupBodyStyle)
+    assert.doesNotMatch(boardGroupBodyStyle[0], /maxHeight/)
+    assert.doesNotMatch(boardGroupBodyStyle[0], /overflow/)
+    assert.doesNotMatch(boardGroupBodyStyle[0], /scrollbarWidth/)
   })
 })
