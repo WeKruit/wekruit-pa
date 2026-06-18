@@ -11,12 +11,12 @@
  * submitters" group.
  */
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
-import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore"
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, updateDoc } from "firebase/firestore"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
 import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "../components/prescreen/dual-pane.js"
-import { db } from "../lib/firebase.js"
+import { auth, db } from "../lib/firebase.js"
 import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
   runRecruiterSubmissionAction,
@@ -144,6 +144,10 @@ interface BoardSubmissionDoc {
   requestedInfo?: SubmissionRequestedInfoEntry[]
   /** Operator's saved per-item checklist assessment (AI mark + override). */
   adminChecklistMarks?: { marks?: Record<string, ChecklistMark>; by?: string; at?: string }
+  adminViewedAt?: { seconds?: number } | string | null
+  adminViewedByEmail?: string | null
+  adminCommentCount?: number | null
+  adminLastCommentAt?: { seconds?: number } | string | null
   createdAt?: { seconds?: number } | string | null
   createdAtMs?: number
 }
@@ -220,7 +224,7 @@ export function defaultRecruiterSubmissionRejection(): RecruiterSubmissionReject
   }
 }
 
-function timestampToMs(raw: BoardSubmissionDoc["createdAt"]): number {
+function timestampToMs(raw: BoardSubmissionDoc["createdAt"] | BoardSubmissionDoc["adminViewedAt"] | BoardSubmissionDoc["adminLastCommentAt"]): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
   if (typeof raw.seconds === "number") return raw.seconds * 1000
@@ -460,6 +464,27 @@ function formatMessageTime(at: string | undefined): string {
   const ms = at ? Date.parse(at) : Number.NaN
   if (!Number.isFinite(ms)) return ""
   return new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
+function normalizedCommentCount(submission: BoardSubmissionDoc): number {
+  return Math.max(0, Math.trunc(Number(submission.adminCommentCount ?? 0)) || 0)
+}
+
+function latestCommentAt(comments: SubmissionCommentDoc[]): string | null {
+  let latestMs = 0
+  let latestAt: string | null = null
+  for (const comment of comments) {
+    const ms = comment.at ? Date.parse(comment.at) : 0
+    if (ms > latestMs) {
+      latestMs = ms
+      latestAt = comment.at ?? null
+    }
+  }
+  return latestAt
+}
+
+function hasAdminViewed(submission: BoardSubmissionDoc): boolean {
+  return timestampToMs(submission.adminViewedAt) > 0
 }
 
 function recruiterMatches(submission: BoardSubmissionDoc, recruiter: BoardRecruiterDoc): boolean {
@@ -1504,7 +1529,7 @@ function ConversationSection({
   onCommentCount,
 }: {
   submission: BoardSubmissionDoc
-  onCommentCount: (submissionId: string, count: number) => void
+  onCommentCount: (submissionId: string, count: number, lastCommentAt?: string | null) => void
 }) {
   const [comments, setComments] = useState<SubmissionCommentDoc[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -1528,7 +1553,7 @@ function ConversationSection({
         if (cancelled) return
         setComments(rows)
         setLoadError(null)
-        onCommentCount(submission.id, rows.length)
+        onCommentCount(submission.id, rows.length, latestCommentAt(rows))
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
       }
@@ -1555,7 +1580,7 @@ function ConversationSection({
       await sendRecruiterSubmissionComment({ submissionId: submission.id, message })
       const rows = await fetchComments()
       setComments(rows)
-      onCommentCount(submission.id, rows.length)
+      onCommentCount(submission.id, rows.length, latestCommentAt(rows))
       setPendingComment(null)
     } catch (e) {
       setPendingComment(null)
@@ -1680,8 +1705,52 @@ export default function RecruiterBoardOps() {
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
   const [jobPageByKey, setJobPageByKey] = useState<Record<string, number>>({})
 
-  function handleCommentCount(submissionId: string, count: number) {
-    setCommentCounts((prev) => (prev[submissionId] === count ? prev : { ...prev, [submissionId]: count }))
+  function handleCommentCount(submissionId: string, count: number, lastCommentAt?: string | null) {
+    const parsedCount = Math.trunc(Number(count))
+    const safeCount = Number.isFinite(parsedCount) ? Math.max(0, parsedCount) : 0
+    setCommentCounts((prev) => (prev[submissionId] === safeCount ? prev : { ...prev, [submissionId]: safeCount }))
+    setSubmissions((prev) =>
+      prev.map((submission) =>
+        submission.id === submissionId
+          ? { ...submission, adminCommentCount: safeCount, adminLastCommentAt: lastCommentAt ?? null }
+          : submission,
+      ),
+    )
+    const submission = submissions.find((row) => row.id === submissionId)
+    const existingCount = submission ? normalizedCommentCount(submission) : 0
+    const existingLastMs = timestampToMs(submission?.adminLastCommentAt ?? null)
+    const nextLastMs = lastCommentAt ? Date.parse(lastCommentAt) || 0 : 0
+    if (existingCount === safeCount && existingLastMs === nextLastMs) return
+    void updateDoc(doc(db(), "pa-recruiter-submissions", submissionId), {
+      adminCommentCount: safeCount,
+      adminLastCommentAt: lastCommentAt ?? null,
+    }).catch((error) => {
+      setActionErrors((prev) => ({ ...prev, [submissionId]: error instanceof Error ? error.message : String(error) }))
+    })
+  }
+
+  function markSubmissionViewed(submission: BoardSubmissionDoc) {
+    if (hasAdminViewed(submission)) return
+    const viewedAt = new Date().toISOString()
+    const viewedBy = auth().currentUser?.email ?? "operator"
+    setSubmissions((prev) =>
+      prev.map((row) =>
+        row.id === submission.id
+          ? { ...row, adminViewedAt: viewedAt, adminViewedByEmail: viewedBy }
+          : row,
+      ),
+    )
+    void updateDoc(doc(db(), "pa-recruiter-submissions", submission.id), {
+      adminViewedAt: viewedAt,
+      adminViewedByEmail: viewedBy,
+    }).catch((error) => {
+      setActionErrors((prev) => ({ ...prev, [submission.id]: error instanceof Error ? error.message : String(error) }))
+    })
+  }
+
+  function openSubmission(submission: BoardSubmissionDoc) {
+    markSubmissionViewed(submission)
+    setSelectedId(submission.id)
   }
 
   useEffect(() => {
@@ -1699,6 +1768,11 @@ export default function RecruiterBoardOps() {
           const data = d.data() as Omit<BoardSubmissionDoc, "id">
           return { id: d.id, ...data, createdAtMs: timestampToMs(data.createdAt) }
         })
+        const loadedCommentCounts = Object.fromEntries(
+          loadedSubmissions
+            .map((submission) => [submission.id, normalizedCommentCount(submission)] as const)
+            .filter(([, count]) => count > 0),
+        )
         const jobIds = [...new Set(loadedSubmissions.flatMap(jobLookupKeys))]
         const loadedJobs = await Promise.all(
           jobIds.map(async (jobId) => {
@@ -1708,6 +1782,7 @@ export default function RecruiterBoardOps() {
         )
         if (cancelled) return
         setSubmissions(loadedSubmissions)
+        setCommentCounts(loadedCommentCounts)
         setRecruiters(recruiterSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardRecruiterDoc, "id">) })))
         setJobDocs(Object.fromEntries(loadedJobs.filter((entry): entry is readonly [string, BoardJobDoc] => entry !== null)))
       } catch (e) {
@@ -2006,13 +2081,15 @@ export default function RecruiterBoardOps() {
     const bulkSelectable = isBulkRejectSelectable(submission)
     const actionError = actionErrors[submission.id]
     const status = statusDisplay(submission.status)
+    const viewed = hasAdminViewed(submission)
+    const commentCount = commentCounts[submission.id] ?? normalizedCommentCount(submission)
     const othersBlocked = (inFlightId !== null || bulkRejecting) && !busy
     const blocked = busy || othersBlocked
     const dim = othersBlocked ? blockedButtonStyle : null
     return (
       <tr
         key={submission.id}
-        onClick={() => setSelectedId(selected ? null : submission.id)}
+        onClick={() => (selected ? setSelectedId(null) : openSubmission(submission))}
         style={{ borderBottom: "1px solid #f1f1f1", cursor: "pointer", background: selected ? "#faf4ea" : undefined }}
       >
         <td style={boardSelectCellStyle} onClick={(e) => e.stopPropagation()}>
@@ -2031,7 +2108,10 @@ export default function RecruiterBoardOps() {
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  markSubmissionViewed(submission)
+                }}
                 style={{ color: "#2a5fb8" }}
               >
                 {submission.candidate?.name ?? "Candidate"}
@@ -2052,9 +2132,10 @@ export default function RecruiterBoardOps() {
           <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
             <Badge tone={chip.tone}>{chip.label}</Badge>
             <Badge tone={status.tone}>{status.label}</Badge>
-            {(commentCounts[submission.id] ?? 0) > 0 && (
+            {viewed && <Badge tone="muted">Viewed</Badge>}
+            {commentCount > 0 && (
               <span
-                title={`${commentCounts[submission.id]} comment${commentCounts[submission.id] === 1 ? "" : "s"}`}
+                title={`${commentCount} comment${commentCount === 1 ? "" : "s"}`}
                 style={{
                   fontSize: 11,
                   color: "#555",
@@ -2065,7 +2146,7 @@ export default function RecruiterBoardOps() {
                   whiteSpace: "nowrap",
                 }}
               >
-                {commentCounts[submission.id]} msg
+                {commentCount} msg
               </span>
             )}
           </div>
@@ -2075,7 +2156,10 @@ export default function RecruiterBoardOps() {
             type="button"
             disabled={blocked}
             aria-disabled={blocked}
-            onClick={() => setSelectedId(submission.id)}
+            onClick={(e) => {
+              e.stopPropagation()
+              openSubmission(submission)
+            }}
             style={{ ...actionButtonStyle, ...dim }}
           >
             {busy ? "Working..." : selected ? "Open" : "Review"}
