@@ -170,9 +170,14 @@ async function scanOrdered(
   db: Firestore,
   collection: string,
   tsField: string,
+  fields: readonly string[],
   cap: number = SCAN_CAP,
 ): Promise<{ docs: ScannedDoc[]; truncated: boolean }> {
-  const snap = await db.collection(collection).orderBy(tsField, "desc").limit(cap).get()
+  // `.select(...)` only the fields we read — full docs (esp. recruiter
+  // statusHistory) blow the function memory budget once the pool grows.
+  let q = db.collection(collection).orderBy(tsField, "desc").limit(cap)
+  if (fields.length > 0) q = q.select(...fields)
+  const snap = await q.get()
   const docs = snap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
   return { docs, truncated: docs.length >= cap }
 }
@@ -247,11 +252,36 @@ export async function runAdminOpsMetrics(
 
   // --- Load all sources (parallel) ---------------------------------------
   const [usersScan, authScan, submissionsScan, prescreenScan, statesScan] = await Promise.all([
-    scanOrdered(deps.db, PA_COLLECTIONS.users, "createdAt"),
-    scanOrdered(deps.db, PA_COLLECTIONS.candidateAuth, "createdAt"),
-    scanOrdered(deps.db, RECRUITER_SUBMISSIONS_COLLECTION, "updatedAt"),
-    scanOrdered(deps.db, PRESCREEN_SESSIONS_COLLECTION, "createdAt"),
-    scanOrdered(deps.db, PA_COLLECTIONS.candidateJobStates, "stateUpdatedAt"),
+    scanOrdered(deps.db, PA_COLLECTIONS.users, "createdAt", [
+      "createdAt",
+      "source",
+      "recruiterSubmissionTracking",
+      "testMode",
+      "phoneE164",
+      "email",
+    ]),
+    scanOrdered(deps.db, PA_COLLECTIONS.candidateAuth, "createdAt", ["createdAt", "candidateId"]),
+    scanOrdered(deps.db, RECRUITER_SUBMISSIONS_COLLECTION, "updatedAt", [
+      "updatedAt",
+      "statusHistory",
+      "candidateId",
+      "candidateUserId",
+      "testMode",
+      "isDemo",
+    ]),
+    scanOrdered(deps.db, PRESCREEN_SESSIONS_COLLECTION, "createdAt", [
+      "createdAt",
+      "userId",
+      "terminal",
+      "workSession",
+      "testMode",
+      "isDemo",
+    ]),
+    scanOrdered(deps.db, PA_COLLECTIONS.candidateJobStates, "stateUpdatedAt", [
+      "stateUpdatedAt",
+      "state",
+      "candidateId",
+    ]),
   ])
 
   // authSet — every candidateId that has a Firebase Auth mapping (any time).
@@ -388,7 +418,9 @@ export async function runAdminOpsMetrics(
 export const paAdminOpsMetrics = onCall(
   {
     region: "us-central1",
-    memory: "512MiB",
+    // Scans 5 collections (pool grows) — 512MiB OOM'd at ~2.6k recruiter
+    // submissions. .select() trims the footprint; 1GiB gives ample headroom.
+    memory: "1GiB",
     timeoutSeconds: 120,
     secrets: [PA_ADMIN_TOKEN],
   },
