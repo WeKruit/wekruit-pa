@@ -28,6 +28,25 @@ class FakeDocRef {
     const prev = this.db.docs.get(this.path) ?? {}
     this.db.docs.set(this.path, opts?.merge ? { ...prev, ...data } : { ...data })
   }
+
+  async update(data: Doc) {
+    const prev = this.db.docs.get(this.path)
+    if (!prev) throw new Error(`not-found:${this.path}`)
+    this.db.docs.set(this.path, { ...prev, ...data })
+  }
+
+  async create(data: Doc) {
+    if (this.db.docs.has(this.path)) {
+      const err = new Error(`already-exists:${this.path}`) as Error & { code?: number }
+      err.code = 6
+      throw err
+    }
+    this.db.docs.set(this.path, { ...data })
+  }
+
+  async delete() {
+    this.db.docs.delete(this.path)
+  }
 }
 
 class FakeQuery {
@@ -89,6 +108,45 @@ class FakeDb {
   collection(name: string) {
     return new FakeCollection(this, name)
   }
+  async runTransaction<T>(fn: (tx: {
+    get: (ref: FakeDocRef) => Promise<{ exists?: boolean; data?: () => Doc | undefined }>
+    set: (ref: FakeDocRef, data: Doc, opts?: { merge?: boolean }) => void
+  }) => Promise<T>): Promise<T> {
+    return fn({
+      get: (ref) => ref.get(),
+      set: (ref, data, opts) => {
+        const prev = this.docs.get(ref.path) ?? {}
+        this.docs.set(ref.path, opts?.merge ? { ...prev, ...data } : { ...data })
+      },
+    })
+  }
+}
+
+const PRESCREEN_CONFIG = {
+  version: 1,
+  jobTitle: "AI Agent Engineer",
+  company: "Sekai",
+  threshold: 0.65,
+  confidenceThreshold: 0.7,
+  maxClarifyRounds: 2,
+  voiceMode: "professional_prescreen",
+  questions: [
+    {
+      qId: "role_fit",
+      type: "MUST_HAVE",
+      weight: 1,
+      matchThreshold: 0.85,
+      prompt: {
+        en: "What recent work best matches this AI agent engineering role?",
+        zh: "What recent work best matches this AI agent engineering role?",
+      },
+      clarifyPrompt: {
+        en: "Share the closest AI agent project.",
+        zh: "Share the closest AI agent project.",
+      },
+      keywords: [{ keyword: "ai_agent", weight: 1, hint: "AI agent work" }],
+    },
+  ],
 }
 
 function makeCtx(db: FakeDb, overrides: Partial<ClaireToolContext> = {}): ClaireToolContext & { sent: string[] } {
@@ -167,6 +225,46 @@ test("offer_voice_call creates a prescreen offer only after the role is in the c
   assert.equal(data.paJobId, "sekai-agent")
   assert.equal(data.matchedRoleValidatedAt, "2026-06-18T12:00:00.000Z")
   assert.match(ctx.sent[0]!, /Reply yes and I'll call now/)
+})
+
+test("E2E: validated prescreen call offer -> yes starts prescreen and creates one dialing booking", async () => {
+  const db = new FakeDb()
+  db.docs.set("pa-users/u1", {
+    phoneE164: DEV_PHONE,
+    lastCollabRoles: [
+      { jobId: "sekai-agent", company: "Sekai", title: "AI Agent Engineer" },
+    ],
+  })
+  db.docs.set("pa-jobs/sekai-agent", { prescreenConfig: PRESCREEN_CONFIG })
+  const ctx = makeCtx(db)
+  const [offer, resolve] = buildVoiceCallTools(ctx)
+
+  const offered = await invoke(offer, { purpose: "prescreen", jobId: "sekai-agent" })
+  const resolved = await invoke(resolve, { confirmed: true })
+
+  assert.equal(offered.ok, true)
+  assert.equal(resolved.ok, true)
+  assert.equal(resolved.voiceState, "dialing")
+  const offerRows = Array.from(db.docs.entries()).filter(([path]) => path.startsWith(`${VOICE_CALL_OFFERS_COLLECTION}/`))
+  assert.equal(offerRows.length, 1)
+  assert.equal(offerRows[0]![1].status, "confirmed")
+  assert.equal(typeof offerRows[0]![1].prescreenSessionId, "string")
+  const sessionId = String(offerRows[0]![1].prescreenSessionId)
+  const prescreen = db.docs.get(`pa-prescreen-sessions/${sessionId}`)
+  assert.equal(prescreen?.userId, "u1")
+  assert.equal(prescreen?.jobId, "sekai-agent")
+  assert.equal(prescreen?.firstQuestionSent, false)
+  assert.equal(prescreen?.firstQuestionSuppressedByInitialReply, true)
+  const bookingRows = Array.from(db.docs.entries()).filter(([path]) => path.startsWith(`${OUTBOUND_BOOKINGS_COLLECTION}/`))
+  assert.equal(bookingRows.length, 1)
+  assert.equal(bookingRows[0]![1].purpose, "prescreen")
+  assert.equal(bookingRows[0]![1].paJobId, "sekai-agent")
+  assert.equal(bookingRows[0]![1].prescreenSessionId, sessionId)
+  assert.equal(bookingRows[0]![1].voiceState, "dialing")
+  assert.deepEqual(ctx.sent, [
+    "Want to do the prescreen as a quick call now? I can call you at the number ending in 1960. Reply yes and I'll call now, or no and we'll keep it over text.",
+    "Calling you now.",
+  ])
 })
 
 test("offer_voice_call asks which role instead of asking for call consent when prescreen jobId is not startable", async () => {
