@@ -14,7 +14,11 @@ import {
   computePrescreenEngagement,
   deriveCandidateSource,
   engagementTone,
+  suggestTierFromPrescreen,
+  CANDIDATE_TIER_LABELS,
+  CANDIDATE_TIERS,
   type CandidateListUserDoc,
+  type CandidateTier,
   type EvaluationAttempt,
   type PrescreenEngagementSignal,
 } from "@pa/core-types"
@@ -353,9 +357,45 @@ export async function loadCandidateOtherSessions(
  *  can open the actual LinkedIn / read the résumé while reviewing. LinkedIn is a
  *  real external URL; candidate-upload résumés keep no downloadable file — only a
  *  fileName + parsed summary — so the résumé "link" expands that summary inline. */
+export type ParsedResumeView = {
+  profile?: string
+  experiences?: Array<{ title?: string; company?: string; startDate?: string; endDate?: string; location?: string; description?: string }>
+  education?: Array<{ school?: string; degree?: string; field?: string }>
+  skills?: string[]
+}
+
 export type CandidateSources = {
   linkedinUrl?: string
-  resume?: { fileName?: string; summary?: string; url?: string }
+  resume?: { fileName?: string; summary?: string; url?: string; parsed?: ParsedResumeView }
+}
+
+function asArray(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object") : []
+}
+
+/** Project a parsedCandidateResumes doc into the lightweight view the drawer renders
+ *  when there is no PDF on file (backlog candidates uploaded before file-persist). */
+function buildParsedResumeView(data: Record<string, unknown>): ParsedResumeView | undefined {
+  const expSrc = asArray(data.experiences).length > 0 ? asArray(data.experiences) : asArray(data.workHistory)
+  const experiences = expSrc.slice(0, 12).map((e) => ({
+    title: firstString(e.title, e.role),
+    company: firstString(e.company, e.employer),
+    startDate: firstString(e.startDate),
+    endDate: firstString(e.endDate),
+    location: firstString(e.location),
+    description: firstString(e.description, e.summary),
+  }))
+  const education = asArray(data.education).slice(0, 6).map((e) => ({
+    school: firstString(e.school, e.institution),
+    degree: firstString(e.degree),
+    field: firstString(e.field, e.major),
+  }))
+  const skills = Array.isArray(data.topSkills)
+    ? (data.topSkills as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 24)
+    : []
+  const profile = firstString(data.candidateProfile, data.candidateProfileSummary)
+  if (!profile && experiences.length === 0 && education.length === 0 && skills.length === 0) return undefined
+  return { ...(profile ? { profile } : {}), experiences, education, skills }
 }
 
 export async function loadCandidateSources(userId: string): Promise<CandidateSources> {
@@ -385,12 +425,14 @@ export async function loadCandidateSources(userId: string): Promise<CandidateSou
     let artFileName: string | undefined
     let artSummary: string | undefined
     let artUrl: string | undefined
+    let parsedId: string | undefined
     if (artId) {
       const artSnap = await getDoc(doc(db(), "pa-resume-artifacts", artId))
       if (artSnap.exists()) {
         const art = artSnap.data() as Record<string, unknown>
         artFileName = firstString(art.fileName, art.originalFileName, art.name)
         artSummary = firstString(art.candidateProfileSummary, art.summary)
+        parsedId = firstString(art.parsedCandidateResumeId)
         artUrl = firstString(
           art.resumeFileUrl,
           art.fileUrl,
@@ -407,11 +449,19 @@ export async function loadCandidateSources(userId: string): Promise<CandidateSou
     const fileName = artFileName
     const summary = artSummary
     const url = artUrl ?? userResumeUrl
-    if (fileName || summary || url) {
+    // No PDF on file (backlog uploaded before file-persist) → load the FULL parsed
+    // résumé so the drawer still shows a readable résumé, not just the 1-liner.
+    let parsed: ParsedResumeView | undefined
+    if (!url && parsedId) {
+      const parsedSnap = await getDoc(doc(db(), "parsedCandidateResumes", parsedId))
+      if (parsedSnap.exists()) parsed = buildParsedResumeView(parsedSnap.data() as Record<string, unknown>)
+    }
+    if (fileName || summary || url || parsed) {
       out.resume = {
         ...(fileName ? { fileName } : {}),
         ...(summary ? { summary } : {}),
         ...(url ? { url } : {}),
+        ...(parsed ? { parsed } : {}),
       }
     }
   } catch {
@@ -505,6 +555,8 @@ export function PrescreenReviewDrawer({
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [selectedTerminal, setSelectedTerminal] = useState<ReviewTerminal>("PASS")
+  // Operator-confirmed rejection tier (null = use the AI suggestion on commit).
+  const [tierOverride, setTierOverride] = useState<CandidateTier | null>(null)
   const [candidateMessageBody, setCandidateMessageBody] = useState("")
   const [decisionReason, setDecisionReason] = useState("")
   const [recommendedActionsText, setRecommendedActionsText] = useState("")
@@ -629,6 +681,9 @@ export function PrescreenReviewDrawer({
         decisionReason: reason,
         recommendedActions,
         ...(status === "overridden" ? { correctionReason: "operator_changed_prescreen_terminal" } : {}),
+        ...(isRejectionTerminal && effectiveTier
+          ? { tier: effectiveTier, ...(aiSuggestedTier ? { tierAiSuggested: aiSuggestedTier } : {}) }
+          : {}),
       })
       onReviewed()
     } catch (e) {
@@ -642,6 +697,32 @@ export function PrescreenReviewDrawer({
   const aiProposedTerminal =
     cleanReviewTerminal(detail?.attempt?.proposedOutcome?.prescreenTerminal) ??
     cleanReviewTerminal(detail?.session.terminal)
+
+  // Rejection tier — the AI suggests one from overall fit + checklist; the
+  // operator confirms/overrides. Only shown/sent for FAIL / HARD_STOP.
+  const isRejectionTerminal = selectedTerminal === "FAIL" || selectedTerminal === "HARD_STOP"
+  // candidateChecklistEval.verdict is advance/borderline/reject — map to the
+  // pass/reject/uncertain shape suggestTierFromPrescreen expects.
+  const rawChecklistVerdict = detail?.session.review?.candidateChecklistEval?.verdict
+  const mappedChecklistVerdict =
+    rawChecklistVerdict === "advance"
+      ? ("pass" as const)
+      : rawChecklistVerdict === "borderline"
+        ? ("uncertain" as const)
+        : rawChecklistVerdict === "reject"
+          ? ("reject" as const)
+          : undefined
+  const bgPillars = detail?.session.review?.candidateChecklistEval?.background as
+    | { school?: { verdict?: string }; company?: { verdict?: string } }
+    | undefined
+  const strongBackground = bgPillars?.school?.verdict === "strong" || bgPillars?.company?.verdict === "strong"
+  const aiSuggestedTier = suggestTierFromPrescreen({
+    terminal: selectedTerminal,
+    weightedFitScore: detail?.attempt?.weightedFitScore,
+    checklistVerdict: mappedChecklistVerdict,
+    strongBackground,
+  })
+  const effectiveTier: CandidateTier | null = tierOverride ?? aiSuggestedTier
   const attemptId = detail?.attempt?.attemptId
   // Selectable evidence for the label form = the candidate's transcript turns.
   const evidenceOptions: EvalLabelEvidenceOption[] = (detail?.turns ?? [])
@@ -765,6 +846,27 @@ export function PrescreenReviewDrawer({
                   <option value="HARD_STOP">HARD_STOP</option>
                 </select>
               </label>
+              {isRejectionTerminal ? (
+                <label style={labelStyle}>
+                  Candidate tier{" "}
+                  <span style={{ fontWeight: 400, color: "#64748b", fontSize: "0.85em" }}>
+                    — re-review pool · tier 1 strong → tier 3 hard no
+                    {aiSuggestedTier ? ` · AI suggests ${aiSuggestedTier.replace("tier_", "Tier ")}` : ""}
+                  </span>
+                  <select
+                    value={effectiveTier ?? ""}
+                    onChange={(e) => setTierOverride((e.target.value || null) as CandidateTier | null)}
+                    style={inputStyle}
+                  >
+                    {CANDIDATE_TIERS.map((t) => (
+                      <option key={t} value={t}>
+                        {CANDIDATE_TIER_LABELS[t]}
+                        {aiSuggestedTier === t ? " (AI)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label style={labelStyle}>
                 Final candidate message
                 <textarea
@@ -1376,6 +1478,7 @@ function CandidateSourcesCard({ sources }: { sources: CandidateSources | null })
       linkedinUrl={sources.linkedinUrl}
       fileName={sources.resume?.fileName}
       parsedSummary={sources.resume?.summary}
+      parsed={sources.resume?.parsed}
     />
   )
 }

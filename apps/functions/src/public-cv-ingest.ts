@@ -316,6 +316,32 @@ async function persistCandidateResumeFile(args: {
   }
 }
 
+/**
+ * Fetch the résumé bytes from a (possibly short-lived) source URL — the
+ * iMessage/SMS path hands cv-ingest a mediaUrl that expires, so we re-fetch the
+ * file in-request to persist it durably. Bounded + fail-open (returns null).
+ */
+async function fetchResumeBytesForPersist(
+  url: string,
+  fileName: string | undefined,
+  log: (event: string, fields?: Record<string, unknown>) => void,
+): Promise<{ bytes: Uint8Array; sha256: string; kind: ResumeUploadKind } | null> {
+  try {
+    const resp = await fetch(url)
+    if (!resp.ok) return null
+    const buf = new Uint8Array(await resp.arrayBuffer())
+    if (buf.length === 0 || buf.length > 8 * 1024 * 1024) return null
+    const kind = detectResumeUploadKind(buf, fileName)
+    if (!kind) return null
+    return { bytes: buf, sha256: createHash("sha256").update(buf).digest("hex"), kind }
+  } catch (err) {
+    log("public_cv_ingest.resume_fetch_for_persist_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
+
 async function recordCandidateUploadResumeArtifact(args: {
   db: ReturnType<typeof getFirestore>
   candidateId: string
@@ -576,16 +602,30 @@ export const paPublicCvIngest = onRequest(
         await clearEnrichmentInFlight(db, userId, new Date().toISOString())
       }
       if (result.ok) {
-        // Persist the uploaded file so the actual résumé renders inline in review UIs
-        // (parse is `inline://`, so the bytes were never stored). Fail-open + base64
-        // path only (the resumeUrl path already has a URL).
-        const persisted = injectedBytes && resumeSha256 && resumeKind
+        // Persist the uploaded file so the actual résumé renders inline in review
+        // UIs (parse is `inline://`, so the bytes were never stored). Base64 path
+        // already has the bytes; the resumeUrl path (iMessage mediaUrl etc.) had its
+        // file fetched only by the parser — re-fetch + store it so it's durable (the
+        // source media URL expires). Fail-open. THIS is why ~81% of résumés had no
+        // inline preview: only the web base64 path was persisting.
+        let persistBytes = injectedBytes
+        let persistSha = resumeSha256
+        let persistKind = resumeKind
+        if (!persistBytes && body.resumeUrl) {
+          const fetched = await fetchResumeBytesForPersist(body.resumeUrl, body.resumeName, log)
+          if (fetched) {
+            persistBytes = fetched.bytes
+            persistSha = fetched.sha256
+            persistKind = fetched.kind
+          }
+        }
+        const persisted = persistBytes && persistSha && persistKind
           ? await persistCandidateResumeFile({
               candidateId: result.userId,
-              sha256: resumeSha256,
+              sha256: persistSha,
               fileName: body.resumeName,
-              bytes: injectedBytes,
-              kind: resumeKind,
+              bytes: persistBytes,
+              kind: persistKind,
               log,
             })
           : null

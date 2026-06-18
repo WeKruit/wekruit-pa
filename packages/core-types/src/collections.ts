@@ -76,6 +76,9 @@ export const PA_COLLECTIONS = {
   feedbackEvents: "pa-feedback-events",
   /** v2.0 S1 — append-only HITL correction events. */
   correctionEvents: "pa-correction-events",
+  /** Per-role candidate tier ledger (prescreen + recruiter rejections) — the
+   *  unified history behind the global best-wins tier + the Rejected-candidates browse. */
+  candidateTierEvents: "pa-candidate-tier-events",
   /** v2.0 S8 — redacted eval/regression artifacts generated from flywheel events. */
   evalArtifacts: "pa-eval-artifacts",
   /** Canonical screening-eval artifacts for prescreen/practice/external-supply HITL review. */
