@@ -20,6 +20,17 @@ const LOW_INFO_AFFIRMATIVE = new Set([
   "all right",
 ])
 
+const LOW_INFO_DECLINE = new Set([
+  "no",
+  "nope",
+  "nah",
+  "not now",
+  "no thanks",
+  "keep it over text",
+  "lets keep it over text",
+  "let's keep it over text",
+])
+
 function normalizeAck(text: string): string {
   return (text ?? "")
     .trim()
@@ -36,6 +47,13 @@ function normalizeSearch(text: string): string {
 
 export function isLowInfoAffirmative(text: string): boolean {
   return LOW_INFO_AFFIRMATIVE.has(normalizeAck(text))
+}
+
+export function parseLowInfoCallConfirmation(text: string): boolean | null {
+  const normalized = normalizeAck(text)
+  if (LOW_INFO_AFFIRMATIVE.has(normalized)) return true
+  if (LOW_INFO_DECLINE.has(normalized)) return false
+  return null
 }
 
 function isActualCallOffer(text: string): boolean {

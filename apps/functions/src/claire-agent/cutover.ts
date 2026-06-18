@@ -35,6 +35,7 @@ import { withProgressHeartbeat, PROGRESS_HEARTBEAT_COPY } from "./progress-heart
 import { getRecentSentMessages } from "./delivery.js"
 import {
   buildVoiceCallAckClarifier,
+  parseLowInfoCallConfirmation,
   shouldHoldVoiceCallAckFromMatching,
 } from "./voice-call-ack-guard.js"
 import {
@@ -1227,6 +1228,106 @@ export async function maybeRunThinClaire(
         userId,
         err: err instanceof Error ? err.message : String(err),
       })
+    }
+  }
+
+  const voiceCallConfirmation = parseLowInfoCallConfirmation(text)
+  if (
+    toE164 &&
+    hasRealUserText(text) &&
+    !inboundMediaUrl &&
+    rawMeta.runtimeEvent !== true &&
+    isClaireVoiceDevPhone(String(toE164)) &&
+    voiceCallConfirmation !== null
+  ) {
+    let attemptedVoiceOfferResolve = false
+    let voiceOfferTransport: { sendText: (body: string, opts?: { seq?: number }) => Promise<unknown> } | null = null
+    try {
+      const {
+        hasPendingVoiceCallOffer,
+        resolveVoiceCallOfferNow,
+      } = await import("./tools/voice-call-tools.js")
+      const transport = createSendblueTransport({
+        db,
+        toE164: String(toE164),
+        inboundMessageHandle,
+        userId,
+        sessionId,
+        inboundEventId: eventId,
+        log,
+        ...(deps.dryRun ? { dryRun: true } : {}),
+      })
+      voiceOfferTransport = transport
+      const ctx: ClaireToolContext = {
+        db,
+        userId,
+        sessionId,
+        lang,
+        transport,
+        judgeModel: "gpt-5.4-mini",
+        toE164: String(toE164),
+        log,
+        nowIso: () => new Date().toISOString(),
+      }
+      if (await hasPendingVoiceCallOffer(ctx)) {
+        attemptedVoiceOfferResolve = true
+        const resolved = await resolveVoiceCallOfferNow(ctx, { confirmed: voiceCallConfirmation })
+        if (!resolved.delivered) {
+          await transport.sendText("I couldn't start that call from this reply. We can keep it over text for now.")
+        }
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set(
+            {
+              status: "completed",
+              handledBy: "thin_claire_voice_call_offer_resolved",
+              voiceCallOfferResolution: {
+                confirmed: voiceCallConfirmation,
+                ok: resolved.ok,
+                reason: "reason" in resolved ? resolved.reason : null,
+                offerId: "offerId" in resolved ? resolved.offerId : null,
+                bookingId: "bookingId" in resolved ? resolved.bookingId : null,
+              },
+            },
+            { merge: true },
+          )
+        log("thin_claire.voice_call_offer.resolved", {
+          eventId,
+          userId,
+          confirmed: voiceCallConfirmation,
+          ok: resolved.ok,
+          reason: "reason" in resolved ? resolved.reason : null,
+        })
+        return true
+      }
+    } catch (err) {
+      log("thin_claire.voice_call_offer.resolve_error", {
+        eventId,
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+      if (attemptedVoiceOfferResolve) {
+        if (voiceOfferTransport) {
+          await voiceOfferTransport.sendText("I couldn't start that call from this reply. We can keep it over text for now.")
+        }
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set(
+            {
+              status: "completed",
+              handledBy: "thin_claire_voice_call_offer_resolve_error",
+              voiceCallOfferResolution: {
+                confirmed: voiceCallConfirmation,
+                ok: false,
+                reason: "resolve_error",
+              },
+            },
+            { merge: true },
+          )
+        return true
+      }
     }
   }
 

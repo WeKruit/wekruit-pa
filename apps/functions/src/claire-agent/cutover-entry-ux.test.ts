@@ -568,6 +568,72 @@ test("explicit phone prescreen request resolves the named role and sends ONLY th
   assert.equal(bookings.length, 0, "no call is dialed until a later explicit yes")
 })
 
+test("bare yes after pending phone call offer resolves the offer and never pulls roles", async () => {
+  const eventId = "evt_voice_offer_yes"
+  const sessionId = "ses_voice_offer_yes"
+  const { db, docs } = makeQueryableDb({
+    [`${FLAGS}/${THIN_FLAG}`]: thinFlagFor(CANARY_UID),
+    [`${USERS}/${CANARY_UID}`]: { phoneE164: "+14243201960" },
+    "pa-jobs/job-sekai-agent": {
+      title: "AI Agent Engineer",
+      prescreenConfig: SF_PRESCREEN_CONFIG,
+    },
+    [`${VOICE_OFFERS}/offer-1`]: {
+      userId: CANARY_UID,
+      sessionId,
+      purpose: "prescreen",
+      paJobId: "job-sekai-agent",
+      phoneE164: "+14243201960",
+      status: "pending",
+      createdAt: "2026-06-18T23:20:00.000Z",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      updatedAt: "2026-06-18T23:20:00.000Z",
+      matchedRoleValidatedAt: "2026-06-18T23:20:00.000Z",
+    },
+    [`${MESSAGES}/m_voice_offer_prev`]: {
+      sessionId,
+      userId: CANARY_UID,
+      role: "assistant",
+      body: "Want to do the prescreen as a quick call now? I can call you at the number ending in 1960. Reply yes and I'll call now, or no and we'll keep it over text.",
+      createdAt: "2026-06-18T23:20:00.000Z",
+      rawMeta: { source: "pa-outbound" },
+    },
+    [`${INBOUND}/${eventId}`]: {
+      userId: CANARY_UID,
+      sessionId,
+      body: "Yes",
+      fromNumber: "+14243201960",
+      rawMeta: { source: "sendblue_webhook" },
+    },
+  })
+  const { events, log } = spyLog()
+
+  const handled = await maybeRunThinClaire(db, eventId, { log })
+
+  assert.equal(handled, true)
+  assert.ok(events.includes("thin_claire.voice_call_offer.resolved"))
+  const inbound = docs.get(`${INBOUND}/${eventId}`)! as { status?: string; handledBy?: string }
+  assert.equal(inbound.status, "completed")
+  assert.equal(inbound.handledBy, "thin_claire_voice_call_offer_resolved")
+
+  const offer = docs.get(`${VOICE_OFFERS}/offer-1`)! as { status?: string; outboundBookingId?: string; prescreenSessionId?: string }
+  assert.equal(offer.status, "confirmed")
+  assert.equal(offer.outboundBookingId, "voice-offer-1")
+  assert.equal(typeof offer.prescreenSessionId, "string")
+
+  const bookings = [...docs.entries()].filter(([path]) => path.startsWith(`${OUTBOUND_BOOKINGS}/`))
+  assert.equal(bookings.length, 1, "yes creates exactly one outbound booking")
+  assert.equal(bookings[0]![1].voiceState, "dialing")
+  assert.equal(bookings[0]![1].purpose, "prescreen")
+  assert.equal(bookings[0]![1].paJobId, "job-sekai-agent")
+
+  const outboundRows = [...docs.entries()].filter(([path]) => path.startsWith(`${OUTBOUND}/`))
+  assert.equal(outboundRows.length, 1, "only the call-now ack is sent")
+  const body = String(outboundRows[0]![1].body ?? "")
+  assert.equal(body, "Calling you now.")
+  assert.doesNotMatch(body, /pulling|roles|jobs|matches/i)
+})
+
 test("ambiguous explicit phone prescreen request asks which role and creates no call offer", async () => {
   const eventId = "evt_voice_prescreen_ambiguous"
   const sessionId = "ses_voice_ambiguous"

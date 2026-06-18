@@ -158,6 +158,10 @@ async function findLatestPendingOffer(ctx: ClaireToolContext): Promise<PendingOf
   return offers[0] ?? null
 }
 
+export async function hasPendingVoiceCallOffer(ctx: ClaireToolContext): Promise<boolean> {
+  return (await findLatestPendingOffer(ctx)) !== null
+}
+
 function isExpired(offer: VoiceCallOfferDoc, nowMs: number): boolean {
   const expiresMs = Date.parse(offer.expiresAt)
   return Number.isFinite(expiresMs) && expiresMs <= nowMs
@@ -342,6 +346,108 @@ export async function offerVoiceCallNow(
   return { ok: true as const, delivered: true as const, offerId, expiresAt }
 }
 
+export async function resolveVoiceCallOfferNow(
+  ctx: ClaireToolContext,
+  input: { confirmed: boolean },
+) {
+  const { confirmed } = input
+  const nowIso = ctx.nowIso()
+  const offer = await findLatestPendingOffer(ctx)
+  if (!offer) {
+    await ctx.transport.sendText("I don't have an active call offer right now. Want me to ask again before calling?")
+    return { ok: false as const, delivered: true as const, reason: "no_active_offer" as const }
+  }
+  if (!isClaireVoiceDevPhone(offer.data.phoneE164)) {
+    await offer.ref.set({ status: "declined", declinedAt: nowIso, updatedAt: nowIso, declineReason: "voice_call_not_enabled" }, { merge: true })
+    ctx.log("pa.claire.voice.resolve_dev_phone_gate", { userId: ctx.userId, offerId: offer.id, purpose: offer.data.purpose })
+    return { ok: false as const, delivered: false as const, reason: "voice_call_not_enabled" as const, offerId: offer.id }
+  }
+  const nowMs = Date.parse(nowIso)
+  if (isExpired(offer.data, Number.isFinite(nowMs) ? nowMs : Date.now())) {
+    await offer.ref.set({ status: "expired", expiredAt: nowIso, updatedAt: nowIso }, { merge: true })
+    await ctx.transport.sendText("That call offer expired, so I won't call from that yes. Want me to ask again before calling?")
+    return { ok: false as const, delivered: true as const, reason: "offer_expired" as const, offerId: offer.id }
+  }
+  if (!confirmed) {
+    await offer.ref.set({ status: "declined", declinedAt: nowIso, updatedAt: nowIso }, { merge: true })
+    await ctx.transport.sendText("No worries — we'll keep it over text.")
+    return { ok: true as const, delivered: true as const, offerId: offer.id, status: "declined" as const }
+  }
+
+  if (offer.data.purpose === "prescreen" && !offer.data.matchedRoleValidatedAt) {
+    const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
+    await offer.ref.set(
+      {
+        status: "expired",
+        expiredAt: nowIso,
+        updatedAt: nowIso,
+        expireReason: "unvalidated_prescreen_role",
+      },
+      { merge: true },
+    )
+    await sendPrescreenRoleClarification(ctx, roles)
+    return {
+      ok: false as const,
+      delivered: true as const,
+      reason: "role_needs_clarification" as const,
+      offerId: offer.id,
+    }
+  }
+
+  const prescreen = await ensurePrescreenSessionForOffer(ctx, offer)
+  if (!prescreen.ok) {
+    if (offer.data.purpose === "prescreen" && (prescreen.reason === "not_matched" || prescreen.reason === "missing_jobId")) {
+      const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
+      await offer.ref.set(
+        {
+          status: "expired",
+          expiredAt: nowIso,
+          updatedAt: nowIso,
+          expireReason: prescreen.reason,
+        },
+        { merge: true },
+      )
+      await sendPrescreenRoleClarification(ctx, roles)
+      return {
+        ok: false as const,
+        delivered: true as const,
+        reason: prescreen.reason ?? "prescreen_start_failed",
+        offerId: offer.id,
+      }
+    }
+    await ctx.transport.sendText("I can't start that phone screen yet, so I won't call from this yes. We can keep it over text for now.")
+    return {
+      ok: false as const,
+      delivered: true as const,
+      reason: prescreen.reason ?? "prescreen_start_failed",
+      offerId: offer.id,
+    }
+  }
+  const result = await createBookingForOffer(ctx, offer, nowIso, { prescreenSessionId: prescreen.sessionId })
+  if (!result.ok) {
+    const reason = result.reason ?? "booking_not_created"
+    if (reason === "offer_expired") {
+      await ctx.transport.sendText("That call offer expired, so I won't call from that yes. Want me to ask again before calling?")
+      return { ok: false as const, delivered: true as const, reason, offerId: offer.id }
+    }
+    return { ok: false as const, delivered: false as const, reason, offerId: offer.id }
+  }
+  await ctx.transport.sendText("Calling you now.")
+  ctx.log("pa.claire.voice.booking_created", {
+    userId: ctx.userId,
+    offerId: offer.id,
+    bookingId: result.bookingId,
+    purpose: offer.data.purpose,
+  })
+  return {
+    ok: true as const,
+    delivered: true as const,
+    offerId: offer.id,
+    bookingId: result.bookingId,
+    voiceState: "dialing" as const,
+  }
+}
+
 export function buildVoiceCallTools(ctx: ClaireToolContext) {
   // Voice calls are dev-phone-only while this is being validated. If the
   // current turn does not carry a known dev phone, do not expose the tools.
@@ -374,101 +480,7 @@ export function buildVoiceCallTools(ctx: ClaireToolContext) {
       confirmed: z.boolean(),
     }),
     async execute({ confirmed }) {
-      const nowIso = ctx.nowIso()
-      const offer = await findLatestPendingOffer(ctx)
-      if (!offer) {
-        await ctx.transport.sendText("I don't have an active call offer right now. Want me to ask again before calling?")
-        return { ok: false as const, delivered: true as const, reason: "no_active_offer" as const }
-      }
-      if (!isClaireVoiceDevPhone(offer.data.phoneE164)) {
-        await offer.ref.set({ status: "declined", declinedAt: nowIso, updatedAt: nowIso, declineReason: "voice_call_not_enabled" }, { merge: true })
-        ctx.log("pa.claire.voice.resolve_dev_phone_gate", { userId: ctx.userId, offerId: offer.id, purpose: offer.data.purpose })
-        return { ok: false as const, delivered: false as const, reason: "voice_call_not_enabled" as const, offerId: offer.id }
-      }
-      const nowMs = Date.parse(nowIso)
-      if (isExpired(offer.data, Number.isFinite(nowMs) ? nowMs : Date.now())) {
-        await offer.ref.set({ status: "expired", expiredAt: nowIso, updatedAt: nowIso }, { merge: true })
-        await ctx.transport.sendText("That call offer expired, so I won't call from that yes. Want me to ask again before calling?")
-        return { ok: false as const, delivered: true as const, reason: "offer_expired" as const, offerId: offer.id }
-      }
-      if (!confirmed) {
-        await offer.ref.set({ status: "declined", declinedAt: nowIso, updatedAt: nowIso }, { merge: true })
-        await ctx.transport.sendText("No worries — we'll keep it over text.")
-        return { ok: true as const, delivered: true as const, offerId: offer.id, status: "declined" as const }
-      }
-
-      if (offer.data.purpose === "prescreen" && !offer.data.matchedRoleValidatedAt) {
-        const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
-        await offer.ref.set(
-          {
-            status: "expired",
-            expiredAt: nowIso,
-            updatedAt: nowIso,
-            expireReason: "unvalidated_prescreen_role",
-          },
-          { merge: true },
-        )
-        await sendPrescreenRoleClarification(ctx, roles)
-        return {
-          ok: false as const,
-          delivered: true as const,
-          reason: "role_needs_clarification" as const,
-          offerId: offer.id,
-        }
-      }
-
-      const prescreen = await ensurePrescreenSessionForOffer(ctx, offer)
-      if (!prescreen.ok) {
-        if (offer.data.purpose === "prescreen" && (prescreen.reason === "not_matched" || prescreen.reason === "missing_jobId")) {
-          const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
-          await offer.ref.set(
-            {
-              status: "expired",
-              expiredAt: nowIso,
-              updatedAt: nowIso,
-              expireReason: prescreen.reason,
-            },
-            { merge: true },
-          )
-          await sendPrescreenRoleClarification(ctx, roles)
-          return {
-            ok: false as const,
-            delivered: true as const,
-            reason: prescreen.reason ?? "prescreen_start_failed",
-            offerId: offer.id,
-          }
-        }
-        await ctx.transport.sendText("I can't start that phone screen yet, so I won't call from this yes. We can keep it over text for now.")
-        return {
-          ok: false as const,
-          delivered: true as const,
-          reason: prescreen.reason ?? "prescreen_start_failed",
-          offerId: offer.id,
-        }
-      }
-      const result = await createBookingForOffer(ctx, offer, nowIso, { prescreenSessionId: prescreen.sessionId })
-      if (!result.ok) {
-        const reason = result.reason ?? "booking_not_created"
-        if (reason === "offer_expired") {
-          await ctx.transport.sendText("That call offer expired, so I won't call from that yes. Want me to ask again before calling?")
-          return { ok: false as const, delivered: true as const, reason, offerId: offer.id }
-        }
-        return { ok: false as const, delivered: false as const, reason, offerId: offer.id }
-      }
-      await ctx.transport.sendText("Calling you now.")
-      ctx.log("pa.claire.voice.booking_created", {
-        userId: ctx.userId,
-        offerId: offer.id,
-        bookingId: result.bookingId,
-        purpose: offer.data.purpose,
-      })
-      return {
-        ok: true as const,
-        delivered: true as const,
-        offerId: offer.id,
-        bookingId: result.bookingId,
-        voiceState: "dialing" as const,
-      }
+      return resolveVoiceCallOfferNow(ctx, { confirmed })
     },
   })
 
