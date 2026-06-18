@@ -3,11 +3,12 @@
  * callable (apps/functions/src/admin-prescreen-ops.ts). Wire types live in
  * `@pa/core-types` (prescreen-ops-types.ts) so client and CF stay in sync.
  *
- * Sessions-mode gotcha: `queue:"committed"`, `bucket`, and the default
- * test-session exclusion are applied in-memory inside each server page, so a
- * page can legitimately return fewer than `limit` rows (even 0) while still
- * having a `nextCursor`. `collectPrescreenSessions` walks pages until it has
- * `target` rows or the cursor runs out.
+ * Sessions-mode gotcha: except for `sort:"score_desc"`, `queue:"committed"`,
+ * `bucket`, and the default test-session exclusion are applied in-memory
+ * inside each server page, so a page can legitimately return fewer than
+ * `limit` rows (even 0) while still having a `nextCursor`.
+ * `collectPrescreenSessions` walks pages until it has `target` rows or the
+ * cursor runs out.
  */
 import { httpsCallable } from "firebase/functions"
 import type {
@@ -17,6 +18,7 @@ import type {
   PrescreenOpsSnapshotInput,
   PrescreenOpsSnapshotOpsResponse,
   PrescreenOpsSnapshotSessionsResponse,
+  StrictReviewSort,
 } from "@pa/core-types"
 import { functions } from "./firebase.js"
 
@@ -28,6 +30,7 @@ export type PrescreenOpsSessionsPageInput = {
   queue?: PrescreenOpsQueueFilter
   bucket?: string
   includeTest?: boolean
+  sort?: StrictReviewSort
   limit?: number
   cursor?: PrescreenOpsSessionCursor
 }

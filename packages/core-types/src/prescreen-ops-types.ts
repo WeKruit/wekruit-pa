@@ -1,6 +1,7 @@
 import type {
   PrescreenReviewQuestion,
   StrictReviewBucket,
+  StrictReviewSort,
 } from "./prescreen-review-classification.js"
 import type { PrescreenEngagementSignal } from "./prescreen-engagement.js"
 
@@ -13,6 +14,7 @@ import type { PrescreenEngagementSignal } from "./prescreen-engagement.js"
 export type PrescreenOpsSessionCursor = {
   createdAt: string
   docId: string
+  offset?: number
 }
 
 export type PrescreenOpsQueueFilter = "pending" | "committed" | "all"
@@ -25,6 +27,7 @@ export type PrescreenOpsSnapshotInput =
     queue?: PrescreenOpsQueueFilter
     bucket?: string
     includeTest?: boolean
+    sort?: StrictReviewSort
     limit?: number
     cursor?: PrescreenOpsSessionCursor
   }

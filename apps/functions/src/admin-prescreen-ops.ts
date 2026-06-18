@@ -64,7 +64,10 @@ const SESSION_FIELD_MASK = [
 const SessionCursorSchema = z.object({
   createdAt: z.string().min(1),
   docId: z.string().min(1),
+  offset: z.number().int().nonnegative().optional(),
 })
+
+const SessionSortSchema = z.enum(["strict_priority", "score_desc", "oldest", "newest"])
 
 export const AdminPrescreenOpsSnapshotInputSchema = z.discriminatedUnion("mode", [
   z.object({
@@ -78,6 +81,7 @@ export const AdminPrescreenOpsSnapshotInputSchema = z.discriminatedUnion("mode",
     queue: z.enum(["pending", "committed", "all"]).optional(),
     bucket: z.string().optional(),
     includeTest: z.boolean().optional(),
+    sort: SessionSortSchema.optional(),
     limit: z.number().int().optional(),
     cursor: SessionCursorSchema.optional(),
     adminToken: z.string().optional(),
@@ -465,11 +469,100 @@ function buildSessionRow(
   }
 }
 
+function prescreenScoreRatio(session: Pick<SessionScanRecord, "score" | "scoreMax">): number {
+  const max = finiteNumber(session.scoreMax)
+  if (max <= 0) return 0
+  return finiteNumber(session.score) / max
+}
+
+function compareScoreDesc(
+  a: Pick<SessionScanRecord, "id" | "score" | "scoreMax" | "createdAt">,
+  b: Pick<SessionScanRecord, "id" | "score" | "scoreMax" | "createdAt">,
+): number {
+  const ratioDelta = prescreenScoreRatio(b) - prescreenScoreRatio(a)
+  if (ratioDelta !== 0) return ratioDelta
+  const scoreDelta = finiteNumber(b.score) - finiteNumber(a.score)
+  if (scoreDelta !== 0) return scoreDelta
+  const timeDelta = b.createdAt.localeCompare(a.createdAt)
+  if (timeDelta !== 0) return timeDelta
+  return b.id.localeCompare(a.id)
+}
+
+async function scanSessionRecordsForPage(
+  db: Firestore,
+  input: Extract<AdminPrescreenOpsSnapshotInput, { mode: "sessions" }>,
+): Promise<SessionScanRecord[]> {
+  const records: SessionScanRecord[] = []
+  let cursor: PrescreenOpsSessionCursor | undefined
+  for (;;) {
+    let query: Query = db.collection(PRESCREEN_SESSIONS)
+    const jobId = cleanString(input.jobId)
+    if (jobId) query = query.where("jobId", "==", jobId)
+    if (input.queue === "pending") query = query.where("terminalActionPendingReview", "==", true)
+    query = query.orderBy("createdAt", "desc").orderBy("__name__", "desc")
+    if (cursor) query = query.startAfter(cursor.createdAt, cursor.docId)
+    query = query.select(...SESSION_FIELD_MASK).limit(SCAN_BATCH_SIZE)
+
+    const snap = await query.get()
+    if (snap.docs.length === 0) break
+    const batch = snap.docs.map((doc) => toSessionRecord(doc.id, (doc.data() ?? {}) as Record<string, unknown>))
+    records.push(...batch)
+    if (snap.docs.length < SCAN_BATCH_SIZE || records.length >= SCAN_CAP) break
+    const last = batch[batch.length - 1]
+    if (!last?.createdAt) break
+    cursor = { createdAt: last.createdAt, docId: last.id }
+  }
+  return records.slice(0, SCAN_CAP)
+}
+
+async function runScoreSortedSessionsMode(
+  deps: { db: Firestore; now?: () => string },
+  input: Extract<AdminPrescreenOpsSnapshotInput, { mode: "sessions" }>,
+  pageLimit: number,
+): Promise<PrescreenOpsSnapshotSessionsResponse> {
+  const records = await scanSessionRecordsForPage(deps.db, input)
+  const userDocs = await loadDocsById(deps.db, PA_COLLECTIONS.users, records.map((record) => record.userId))
+  const bucket = cleanString(input.bucket)
+  const candidates = records.flatMap((record) => {
+    const candidateClass = classifySessionCandidate(record, userDocs)
+    if (input.includeTest !== true && candidateClass !== "candidate_account") return []
+    if (input.queue === "committed" && !hasCommittedReview(record)) return []
+    const classification = classifyPrescreenReviewRow(record)
+    if (bucket && classification.bucket !== bucket) return []
+    return [{ record, candidateClass }]
+  })
+
+  candidates.sort((a, b) => compareScoreDesc(a.record, b.record))
+
+  const offset = input.cursor?.offset ?? 0
+  const page = candidates.slice(offset, offset + pageLimit)
+  const nextOffset = offset + page.length
+  const lastInPage = page[page.length - 1]?.record
+  const nextCursor: PrescreenOpsSessionCursor | undefined =
+    nextOffset < candidates.length && lastInPage
+      ? { createdAt: lastInPage.createdAt, docId: lastInPage.id, offset: nextOffset }
+      : undefined
+
+  const jobDocs = await loadDocsById(
+    deps.db,
+    PA_COLLECTIONS.jobs,
+    page.map((item) => item.record.jobId).filter((jobId) => jobId.length > 0),
+  )
+  return {
+    rows: page.map((item) => buildSessionRow(item.record, item.candidateClass, jobDocs.get(item.record.jobId) ?? {})),
+    ...(nextCursor ? { nextCursor } : {}),
+  }
+}
+
 async function runSessionsMode(
   deps: { db: Firestore; now?: () => string },
   input: Extract<AdminPrescreenOpsSnapshotInput, { mode: "sessions" }>,
 ): Promise<PrescreenOpsSnapshotSessionsResponse> {
   const pageLimit = Math.max(1, Math.min(SESSIONS_MAX_LIMIT, input.limit ?? SESSIONS_DEFAULT_LIMIT))
+  if (input.sort === "score_desc") {
+    return runScoreSortedSessionsMode(deps, input, pageLimit)
+  }
+
   let query: Query = deps.db.collection(PRESCREEN_SESSIONS)
   const jobId = cleanString(input.jobId)
   if (jobId) query = query.where("jobId", "==", jobId)

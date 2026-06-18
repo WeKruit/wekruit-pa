@@ -314,6 +314,64 @@ describe("runAdminPrescreenOpsSnapshot", () => {
     assert.ok(result.rows[0]!.questions)
   })
 
+  it("sessions mode score sort orders the full scoped result by score ratio before pagination", async () => {
+    const mfs = new MockFirestore()
+    await mfs.collection(PA_COLLECTIONS.users).doc("cand-score").set({
+      phoneE164: "+14155550120",
+      piiConsentAt: now,
+    })
+    await mfs.collection(PA_COLLECTIONS.jobs).doc("job-score").set({
+      title: "Growth Lead",
+      company: "Rain",
+      status: "active",
+    })
+    await mfs.collection(PRESCREEN_SESSIONS).doc("s-raw-high-ratio-mid").set({
+      userId: "cand-score",
+      jobId: "job-score",
+      terminal: "PASS",
+      score: 2.7,
+      scoreMax: 3,
+      createdAt: "2026-06-08T06:00:00.000Z",
+    })
+    await mfs.collection(PRESCREEN_SESSIONS).doc("s-ratio-high").set({
+      userId: "cand-score",
+      jobId: "job-score",
+      terminal: "PASS",
+      score: 2,
+      scoreMax: 2,
+      createdAt: "2026-06-08T05:00:00.000Z",
+    })
+    await mfs.collection(PRESCREEN_SESSIONS).doc("s-ratio-low").set({
+      userId: "cand-score",
+      jobId: "job-score",
+      terminal: "FAIL",
+      score: 1,
+      scoreMax: 2,
+      createdAt: "2026-06-08T04:00:00.000Z",
+    })
+
+    const first = await runSessions(mfs, {
+      mode: "sessions",
+      jobId: "job-score",
+      sort: "score_desc",
+      limit: 2,
+    })
+
+    assert.deepEqual(first.rows.map((row) => row.id), ["s-ratio-high", "s-raw-high-ratio-mid"])
+    assert.equal(first.nextCursor?.offset, 2)
+
+    const second = await runSessions(mfs, {
+      mode: "sessions",
+      jobId: "job-score",
+      sort: "score_desc",
+      limit: 2,
+      cursor: first.nextCursor,
+    })
+
+    assert.deepEqual(second.rows.map((row) => row.id), ["s-ratio-low"])
+    assert.equal(second.nextCursor, undefined)
+  })
+
   it("sessions mode pagination cursor walks every session exactly once", async () => {
     const mfs = new MockFirestore()
     await seedFixtures(mfs)
