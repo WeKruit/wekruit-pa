@@ -68,6 +68,14 @@ const CLIENT_STATUSES = new Set(["client_review"])
 const CLIENT_JOB_STATES = new Set(["employer_visible", "intro_accepted"])
 // pa-users `source` values that mark non-real (test/synthetic) accounts.
 const TEST_USER_SOURCES = new Set(["dev_test", "e2e_run", "qa_run"])
+// Operators whose own recruiter submissions are seed/test data — the candidates
+// they added are excluded from the counts (unless includeTest).
+const EXCLUDED_OPERATOR_EMAILS = new Set(["admin1@wekruit.com"])
+// Server-side result cache — the 5-collection scan is heavy, so repeat loads
+// read one cached doc instead of re-scanning. 30-min freshness is fine for an
+// ops dashboard.
+const OPS_METRICS_CACHE_COLLECTION = "pa-ops-metrics-cache"
+const OPS_METRICS_CACHE_TTL_MS = 30 * 60_000
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -268,6 +276,8 @@ export async function runAdminOpsMetrics(
       "candidateUserId",
       "testMode",
       "isDemo",
+      "recruiterEmail",
+      "submitter",
     ]),
     scanOrdered(deps.db, PRESCREEN_SESSIONS_COLLECTION, "createdAt", [
       "createdAt",
@@ -291,8 +301,32 @@ export async function runAdminOpsMetrics(
     if (cid) authSet.add(cid)
   }
 
+  // Candidates ADDED BY an excluded operator (admin1's own recruiter submissions
+  // are test/seed data) — dropped from every metric unless includeTest. Adam
+  // 2026-06-17: "don't count candidates added by admin1@wekruit.com".
+  const excludedCandidateIds = new Set<string>()
+  if (!input.includeTest) {
+    for (const { data } of submissionsScan.docs) {
+      const sub =
+        data.submitter && typeof data.submitter === "object" ? (data.submitter as { email?: unknown }) : undefined
+      const rawEmail =
+        typeof data.recruiterEmail === "string"
+          ? data.recruiterEmail
+          : typeof sub?.email === "string"
+            ? sub.email
+            : ""
+      if (!EXCLUDED_OPERATOR_EMAILS.has(rawEmail.toLowerCase())) continue
+      const cid =
+        (typeof data.candidateId === "string" && data.candidateId) ||
+        (typeof data.candidateUserId === "string" && data.candidateUserId) ||
+        ""
+      if (cid) excludedCandidateIds.add(cid)
+    }
+  }
+
   // --- New users (channel attribution, dedup by person) -------------------
   for (const { id, data } of usersScan.docs) {
+    if (excludedCandidateIds.has(id)) continue
     const createdMs = toMs(data.createdAt)
     if (!createdMs || !inWindow(createdMs)) continue
     if (!input.includeTest) {
@@ -316,6 +350,7 @@ export async function runAdminOpsMetrics(
       (typeof data.candidateId === "string" && data.candidateId) ||
       (typeof data.candidateUserId === "string" && data.candidateUserId) ||
       `submission:${id}`
+    if (excludedCandidateIds.has(candidateId)) continue
     for (const entry of statusHistoryOf(data)) {
       const status = typeof entry.status === "string" ? entry.status : ""
       if (!status) continue
@@ -331,7 +366,7 @@ export async function runAdminOpsMetrics(
   for (const { data } of prescreenScan.docs) {
     if (!input.includeTest && (isTruthyFlag(data.testMode) || isTruthyFlag(data.isDemo))) continue
     const userId = typeof data.userId === "string" ? data.userId : undefined
-    if (!userId) continue
+    if (!userId || excludedCandidateIds.has(userId)) continue
     const workSession =
       data.workSession && typeof data.workSession === "object"
         ? (data.workSession as Record<string, unknown>)
@@ -349,7 +384,7 @@ export async function runAdminOpsMetrics(
     const state = typeof data.state === "string" ? data.state : ""
     if (!CLIENT_JOB_STATES.has(state)) continue
     const candidateId = typeof data.candidateId === "string" ? data.candidateId : undefined
-    if (!candidateId) continue
+    if (!candidateId || excludedCandidateIds.has(candidateId)) continue
     const atMs = toMs(data.stateUpdatedAt)
     if (!atMs || !inWindow(atMs)) continue
     addClient(utcDayKey(atMs), candidateId)
@@ -431,8 +466,25 @@ export const paAdminOpsMetrics = onCall(
       throw new HttpsError("invalid-argument", parsed.error.message)
     }
     const db = getFirestore()
+    const input = parsed.data
+    const cacheRef = db
+      .collection(OPS_METRICS_CACHE_COLLECTION)
+      .doc(`r${input.rangeDays}_t${input.includeTest ? 1 : 0}`)
+    // Serve a fresh cached result (the 5-collection scan is heavy) — repeat
+    // loads are a single doc read. Recompute past the TTL.
     try {
-      return await runAdminOpsMetrics(parsed.data, { db })
+      const snap = await cacheRef.get()
+      const cached = snap.exists ? (snap.data() as { cachedAtMs?: number; result?: AdminOpsMetricsResult }) : undefined
+      if (cached?.result && typeof cached.cachedAtMs === "number" && Date.now() - cached.cachedAtMs < OPS_METRICS_CACHE_TTL_MS) {
+        return cached.result
+      }
+    } catch {
+      /* cache read failure → recompute */
+    }
+    try {
+      const result = await runAdminOpsMetrics(input, { db })
+      void cacheRef.set({ cachedAtMs: Date.now(), result }).catch(() => {})
+      return result
     } catch (err) {
       logger.error("[admin-ops-metrics] failed", err)
       throw new HttpsError("internal", "ops metrics aggregation failed")
