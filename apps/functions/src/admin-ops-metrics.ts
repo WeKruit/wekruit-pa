@@ -77,7 +77,7 @@ const EXCLUDED_OPERATOR_EMAILS = new Set(["admin1@wekruit.com"])
 const OPS_METRICS_CACHE_COLLECTION = "pa-ops-metrics-cache"
 const OPS_METRICS_CACHE_TTL_MS = 30 * 60_000
 // Bump when the computation changes so stale cached results aren't served.
-const OPS_METRICS_CACHE_VERSION = "v3"
+const OPS_METRICS_CACHE_VERSION = "v4"
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -101,6 +101,7 @@ export interface OpsMetricsDayBucket {
   newUsersRecruiterSubmitted: number
   newUsersDirect: number
   interviewsConducted: number
+  prescreensConducted: number
   movedToClient: number
 }
 
@@ -110,6 +111,7 @@ export interface OpsMetricsTotals {
   newUsersRecruiterSubmitted: number
   newUsersDirect: number
   interviewsConducted: number
+  prescreensConducted: number
   movedToClient: number
 }
 
@@ -233,6 +235,7 @@ export async function runAdminOpsMetrics(
     { auth: number; recruiter: number; direct: number }
   >()
   const conducted = new Map<string, Set<string>>()
+  const prescreens = new Map<string, Set<string>>()
   const movedToClient = new Map<string, Set<string>>()
 
   const ensureUserDay = (key: string) => {
@@ -248,6 +251,14 @@ export async function runAdminOpsMetrics(
     if (!s) {
       s = new Set()
       conducted.set(key, s)
+    }
+    s.add(candidateId)
+  }
+  const addPrescreen = (key: string, candidateId: string) => {
+    let s = prescreens.get(key)
+    if (!s) {
+      s = new Set()
+      prescreens.set(key, s)
     }
     s.add(candidateId)
   }
@@ -368,9 +379,24 @@ export async function runAdminOpsMetrics(
     }
   }
 
-  // NOTE: prescreen sessions are NOT counted as interviews. Adam 2026-06-17:
-  // "we are not counting prescreen as interview." Only a real WeKruit interview
-  // (recruiter `wekruit_interview` stage, handled above) counts as conducted.
+  // --- Prescreens conducted (SEPARATE from interviews) --------------------
+  // Adam 2026-06-17: prescreen is NOT an interview, but we track it as its own
+  // count (Claire AI screens that actually ran), deduped by candidate per day.
+  for (const { data } of prescreenScan.docs) {
+    if (!input.includeTest && (isTruthyFlag(data.testMode) || isTruthyFlag(data.isDemo))) continue
+    const userId = typeof data.userId === "string" ? data.userId : undefined
+    if (!userId || excludedCandidateIds.has(userId)) continue
+    const workSession =
+      data.workSession && typeof data.workSession === "object"
+        ? (data.workSession as Record<string, unknown>)
+        : undefined
+    const startedAt = workSession?.startedAt
+    const ran = data.terminal != null || startedAt != null
+    if (!ran) continue
+    const tsMs = toMs(startedAt ?? data.createdAt)
+    if (!tsMs || !inWindow(tsMs)) continue
+    addPrescreen(utcDayKey(tsMs), userId)
+  }
 
   // --- Moved to client (marketplace candidate-job-states) -----------------
   for (const { data } of statesScan.docs) {
@@ -391,6 +417,7 @@ export async function runAdminOpsMetrics(
     newUsersRecruiterSubmitted: 0,
     newUsersDirect: 0,
     interviewsConducted: 0,
+    prescreensConducted: 0,
     movedToClient: 0,
   }
   const firstDayMs = rangeStartMs
@@ -403,6 +430,7 @@ export async function runAdminOpsMetrics(
     const direct = nu?.direct ?? 0
     const total = auth + recruiter + direct
     const interviews = conducted.get(key)?.size ?? 0
+    const prescreensCount = prescreens.get(key)?.size ?? 0
     const client = movedToClient.get(key)?.size ?? 0
     days.push({
       date: key,
@@ -411,6 +439,7 @@ export async function runAdminOpsMetrics(
       newUsersRecruiterSubmitted: recruiter,
       newUsersDirect: direct,
       interviewsConducted: interviews,
+      prescreensConducted: prescreensCount,
       movedToClient: client,
     })
     totals.newUsersTotal += total
@@ -418,6 +447,7 @@ export async function runAdminOpsMetrics(
     totals.newUsersRecruiterSubmitted += recruiter
     totals.newUsersDirect += direct
     totals.interviewsConducted += interviews
+    totals.prescreensConducted += prescreensCount
     totals.movedToClient += client
   }
 

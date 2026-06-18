@@ -154,12 +154,14 @@ describe("runAdminOpsMetrics — interviews", () => {
     // client distinct: cand1 (recruiter), cand3 (marketplace)
     assert.equal(today.movedToClient, 2)
     assert.equal(result.totals.interviewsConducted, 1)
+    // prescreens are a SEPARATE count: cand1 (started) + cand2 (PASS)
+    assert.equal(result.totals.prescreensConducted, 2)
     assert.equal(result.totals.movedToClient, 2)
   })
 
-  it("does NOT count prescreen sessions as interviews", async () => {
+  it("counts prescreens separately, NOT as interviews", async () => {
     const mfs = new MockFirestore()
-    // a real, non-test prescreen that ran — must NOT add to interviewsConducted
+    // a real, non-test prescreen that ran — counts as a prescreen, NOT an interview
     await mfs.collection("pa-prescreen-sessions").doc("ps-1").set({
       userId: "cand2",
       createdAt: TODAY_TS,
@@ -167,6 +169,7 @@ describe("runAdminOpsMetrics — interviews", () => {
     })
     const result = await runAdminOpsMetrics({ rangeDays: 30, includeTest: false }, { db: asFirestore(mfs), now: () => NOW })
     assert.equal(result.totals.interviewsConducted, 0)
+    assert.equal(result.totals.prescreensConducted, 1)
   })
 })
 

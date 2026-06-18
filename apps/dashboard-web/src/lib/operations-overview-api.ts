@@ -19,7 +19,7 @@ const CLIENT_CACHE_TTL_MS = 5 * 60_000
 /** Loads the ops metrics. Client-side sessionStorage cache (5-min TTL) so
  *  re-opening the page is instant; the callable also caches server-side. */
 export async function getOpsMetrics(input: AdminOpsMetricsInput): Promise<AdminOpsMetricsResult> {
-  const cacheKey = `ops-metrics:v3:r${input.rangeDays ?? 90}:t${input.includeTest ? 1 : 0}`
+  const cacheKey = `ops-metrics:v4:r${input.rangeDays ?? 90}:t${input.includeTest ? 1 : 0}`
   try {
     const raw = sessionStorage.getItem(cacheKey)
     if (raw) {
