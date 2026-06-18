@@ -11,6 +11,7 @@ import { tool, z } from "../sdk.js"
 import type { ClaireToolContext } from "../types.js"
 import { runPreScreenForUser } from "../../prescreen-session-start.js"
 import { isClaireVoiceDevPhone } from "../../voice/dev-phone-gate.js"
+import { loadCandidateRoles, type CollabRole } from "./matching-tools.js"
 
 export type VoiceCallPurpose = "prescreen" | "onboarding"
 export type VoiceCallOfferStatus = "pending" | "confirmed" | "declined" | "expired"
@@ -31,6 +32,7 @@ type VoiceCallOfferDoc = {
   updatedAt: string
   outboundBookingId?: string
   prescreenSessionId?: string
+  matchedRoleValidatedAt?: string
 }
 
 type PendingOffer = {
@@ -97,8 +99,45 @@ function parseOfferDoc(id: string, raw: Record<string, unknown>, ref: PendingOff
       updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : raw.createdAt,
       outboundBookingId: typeof raw.outboundBookingId === "string" ? raw.outboundBookingId : undefined,
       prescreenSessionId: typeof raw.prescreenSessionId === "string" ? raw.prescreenSessionId : undefined,
+      matchedRoleValidatedAt: typeof raw.matchedRoleValidatedAt === "string" ? raw.matchedRoleValidatedAt : undefined,
     }),
   }
+}
+
+function roleLabel(role: CollabRole): string {
+  const title = role.title.trim() || "this role"
+  const company = role.company.trim()
+  return company ? `${title} @ ${company}` : title
+}
+
+function isStartablePrescreenRole(role: CollabRole): boolean {
+  return role.status !== "passed" && role.status !== "not_passed" && role.status !== "under_review"
+}
+
+function roleClarificationText(roles: CollabRole[]): string {
+  const startable = roles.filter(isStartablePrescreenRole)
+  if (startable.length === 0) {
+    return "I need to anchor the phone screen to the exact role first. Which role should I call you about?"
+  }
+  const choices = startable.slice(0, 5).map(roleLabel).join(", ")
+  return `I need to anchor the phone screen to the exact matched role first. Which role should I call you about: ${choices}?`
+}
+
+async function validatePrescreenRoleForCall(ctx: ClaireToolContext, paJobId: string): Promise<{
+  ok: boolean
+  role?: CollabRole
+  roles: CollabRole[]
+  reason?: "role_needs_clarification" | "role_already_completed"
+}> {
+  const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
+  const role = roles.find((r) => r.jobId === paJobId)
+  if (!role) return { ok: false, roles, reason: "role_needs_clarification" }
+  if (!isStartablePrescreenRole(role)) return { ok: false, role, roles, reason: "role_already_completed" }
+  return { ok: true, role, roles }
+}
+
+async function sendPrescreenRoleClarification(ctx: ClaireToolContext, roles: CollabRole[]): Promise<void> {
+  await ctx.transport.sendText(roleClarificationText(roles))
 }
 
 async function findLatestPendingOffer(ctx: ClaireToolContext): Promise<PendingOffer | null> {
@@ -140,6 +179,7 @@ async function ensurePrescreenSessionForOffer(ctx: ClaireToolContext, offer: Pen
     toE164: offer.data.phoneE164,
     suppressFirstQuestion: true,
     skipProfileReadinessHold: true,
+    ...(offer.data.matchedRoleValidatedAt ? { allowMatchedBypass: true } : {}),
     sendSms: async () => undefined,
     log: ctx.log,
   })
@@ -266,6 +306,22 @@ export function buildVoiceCallTools(ctx: ClaireToolContext) {
       const offerId = randomUUID()
       const createdMs = Date.parse(nowIso)
       const expiresAt = new Date((Number.isFinite(createdMs) ? createdMs : Date.now()) + VOICE_CALL_OFFER_TTL_MS).toISOString()
+      const validation = purpose === "prescreen" ? await validatePrescreenRoleForCall(ctx, paJobId ?? "") : null
+      if (validation && !validation.ok) {
+        await sendPrescreenRoleClarification(ctx, validation.roles)
+        ctx.log("pa.claire.voice.offer_role_not_startable", {
+          userId: ctx.userId,
+          purpose,
+          paJobId,
+          reason: validation.reason ?? "role_needs_clarification",
+        })
+        return {
+          ok: false as const,
+          delivered: true as const,
+          reason: validation.reason ?? "role_needs_clarification" as const,
+          roles: validation.roles.map((r) => ({ jobId: r.jobId, company: r.company, title: r.title, status: r.status ?? null })),
+        }
+      }
       const offer = stripUndefined({
         userId: ctx.userId,
         sessionId: ctx.sessionId,
@@ -276,6 +332,7 @@ export function buildVoiceCallTools(ctx: ClaireToolContext) {
         createdAt: nowIso,
         expiresAt,
         updatedAt: nowIso,
+        matchedRoleValidatedAt: purpose === "prescreen" ? nowIso : undefined,
       })
       await ctx.db.collection(VOICE_CALL_OFFERS_COLLECTION).doc(offerId).set(offer)
       const text = offerText({ purpose, phoneE164 })
@@ -319,8 +376,47 @@ export function buildVoiceCallTools(ctx: ClaireToolContext) {
         return { ok: true as const, delivered: true as const, offerId: offer.id, status: "declined" as const }
       }
 
+      if (offer.data.purpose === "prescreen" && !offer.data.matchedRoleValidatedAt) {
+        const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
+        await offer.ref.set(
+          {
+            status: "expired",
+            expiredAt: nowIso,
+            updatedAt: nowIso,
+            expireReason: "unvalidated_prescreen_role",
+          },
+          { merge: true },
+        )
+        await sendPrescreenRoleClarification(ctx, roles)
+        return {
+          ok: false as const,
+          delivered: true as const,
+          reason: "role_needs_clarification" as const,
+          offerId: offer.id,
+        }
+      }
+
       const prescreen = await ensurePrescreenSessionForOffer(ctx, offer)
       if (!prescreen.ok) {
+        if (offer.data.purpose === "prescreen" && (prescreen.reason === "not_matched" || prescreen.reason === "missing_jobId")) {
+          const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
+          await offer.ref.set(
+            {
+              status: "expired",
+              expiredAt: nowIso,
+              updatedAt: nowIso,
+              expireReason: prescreen.reason,
+            },
+            { merge: true },
+          )
+          await sendPrescreenRoleClarification(ctx, roles)
+          return {
+            ok: false as const,
+            delivered: true as const,
+            reason: prescreen.reason ?? "prescreen_start_failed",
+            offerId: offer.id,
+          }
+        }
         await ctx.transport.sendText("I can't start that phone screen yet, so I won't call from this yes. We can keep it over text for now.")
         return {
           ok: false as const,

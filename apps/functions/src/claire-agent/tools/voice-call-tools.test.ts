@@ -148,6 +148,51 @@ test("offer_voice_call creates pending onboarding offer and asks for explicit co
   assert.equal(Array.from(db.docs.keys()).some((path) => path.startsWith(`${OUTBOUND_BOOKINGS_COLLECTION}/`)), false)
 })
 
+test("offer_voice_call creates a prescreen offer only after the role is in the candidate's matched roles", async () => {
+  const db = new FakeDb()
+  db.docs.set("pa-users/u1", {
+    lastCollabRoles: [
+      { jobId: "sekai-agent", company: "Sekai", title: "AI Agent Engineer" },
+    ],
+  })
+  const ctx = makeCtx(db)
+  const [offer] = buildVoiceCallTools(ctx)
+
+  const out = await invoke(offer, { purpose: "prescreen", jobId: "sekai-agent" })
+
+  assert.equal(out.ok, true)
+  assert.equal(out.delivered, true)
+  const [, data] = getOnlyOffer(db)
+  assert.equal(data.purpose, "prescreen")
+  assert.equal(data.paJobId, "sekai-agent")
+  assert.equal(data.matchedRoleValidatedAt, "2026-06-18T12:00:00.000Z")
+  assert.match(ctx.sent[0]!, /Reply yes and I'll call now/)
+})
+
+test("offer_voice_call asks which role instead of asking for call consent when prescreen jobId is not startable", async () => {
+  const db = new FakeDb()
+  db.docs.set("pa-users/u1", {
+    lastCollabRoles: [
+      { jobId: "sekai-agent", company: "Sekai", title: "AI Agent Engineer" },
+      { jobId: "maximor-staff", company: "Maximor", title: "Staff SWE" },
+    ],
+  })
+  const ctx = makeCtx(db)
+  const [offer] = buildVoiceCallTools(ctx)
+
+  const out = await invoke(offer, { purpose: "prescreen", jobId: "guessed-sekai-role" })
+
+  assert.equal(out.ok, false)
+  assert.equal(out.delivered, true)
+  assert.equal(out.reason, "role_needs_clarification")
+  assert.equal(Array.from(db.docs.keys()).some((path) => path.startsWith(`${VOICE_CALL_OFFERS_COLLECTION}/`)), false)
+  assert.equal(ctx.sent.length, 1)
+  assert.match(ctx.sent[0]!, /which role should i call you about/i)
+  assert.match(ctx.sent[0]!, /AI Agent Engineer @ Sekai/)
+  assert.match(ctx.sent[0]!, /Staff SWE @ Maximor/)
+  assert.doesNotMatch(ctx.sent[0]!, /Reply yes and I'll call now/)
+})
+
 test("buildVoiceCallTools hides tools for a known non-dev phone", () => {
   const db = new FakeDb()
   const ctx = makeCtx(db, { toE164: NON_DEV_PHONE })
@@ -200,6 +245,40 @@ test("resolve_voice_call_offer declined or expired never dials", async () => {
   assert.equal(out.reason, "offer_expired")
   assert.equal(getOnlyOffer(db2)[1].status, "expired")
   assert.equal(Array.from(db2.docs.keys()).some((p) => p.startsWith(`${OUTBOUND_BOOKINGS_COLLECTION}/`)), false)
+})
+
+test("resolve_voice_call_offer invalidates an unvalidated prescreen offer that cannot start and asks for the role", async () => {
+  const db = new FakeDb()
+  db.docs.set("pa-users/u1", {
+    lastCollabRoles: [
+      { jobId: "sekai-agent", company: "Sekai", title: "AI Agent Engineer" },
+      { jobId: "maximor-staff", company: "Maximor", title: "Staff SWE" },
+    ],
+  })
+  db.docs.set(`${VOICE_CALL_OFFERS_COLLECTION}/bad-offer`, {
+    userId: "u1",
+    sessionId: "chat1",
+    purpose: "prescreen",
+    paJobId: "guessed-sekai-role",
+    phoneE164: DEV_PHONE,
+    status: "pending",
+    createdAt: "2026-06-18T11:59:00.000Z",
+    expiresAt: "2026-06-18T12:09:00.000Z",
+    updatedAt: "2026-06-18T11:59:00.000Z",
+  })
+  const ctx = makeCtx(db)
+  const [, resolve] = buildVoiceCallTools(ctx)
+
+  const out = await invoke(resolve, { confirmed: true })
+
+  assert.equal(out.ok, false)
+  assert.equal(out.delivered, true)
+  assert.equal(out.reason, "role_needs_clarification")
+  assert.equal(db.docs.get(`${VOICE_CALL_OFFERS_COLLECTION}/bad-offer`)?.status, "expired")
+  assert.equal(Array.from(db.docs.keys()).some((path) => path.startsWith(`${OUTBOUND_BOOKINGS_COLLECTION}/`)), false)
+  assert.match(ctx.sent[0]!, /which role should i call you about/i)
+  assert.match(ctx.sent[0]!, /AI Agent Engineer @ Sekai/)
+  assert.doesNotMatch(ctx.sent[0]!, /I can't start that phone screen yet/)
 })
 
 test("resolve_voice_call_offer refuses a stale non-dev offer before dialing", async () => {
