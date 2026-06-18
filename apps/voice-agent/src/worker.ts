@@ -43,7 +43,7 @@ import {
 import { buildConsentPrompt } from "./consent-prompt.js"
 import { emitConsentSpokenAudit } from "./consent-audit.js"
 import { startRecordingEgress } from "./egress.js"
-import type { VoiceCallContext } from "./voice-context-types.js"
+import type { VoiceCallContext, VoicePrescreenCallContext } from "./voice-context-types.js"
 import { WekruitLLM } from "./wekruit-llm.js"
 
 /**
@@ -73,7 +73,7 @@ export interface StartWorkerOpts {
   /** Test seam — supply pre-loaded context (skips Firestore reads). */
   loadContext?: (bookingId: string) => Promise<VoiceCallContext>
   /** Test seam — pipeline factory. */
-  buildPipeline?: () => Promise<VoicePipelineLite>
+  buildPipeline?: (context: VoiceCallContext) => Promise<VoicePipelineLite>
   /** Test seam — LLM factory. Defaults to `buildDefaultLLM` (WekruitLLM). */
   buildLLM?: () => WekruitLLM
   /** Optional logger. */
@@ -183,7 +183,7 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       }
 
       const callContext = await loadContext(bookingId)
-      if (callContext.jobBrief.dead === true) {
+      if (callContext.purpose === "prescreen" && callContext.jobBrief.dead === true) {
         log("voice.worker.dead_job_abort", {
           bookingId,
           jobId: callContext.jobBrief.jobId,
@@ -192,8 +192,8 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       }
 
       const pipeline = opts.buildPipeline
-        ? await opts.buildPipeline()
-        : await defaultBuildPipeline()
+        ? await opts.buildPipeline(callContext)
+        : await defaultBuildPipeline(callContext)
 
       const turnLoop = createTurnLoop({
         pipeline,
@@ -254,6 +254,21 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           if (out.speakText.length > 0) {
             await session.say(out.speakText)
           }
+          if (out.action.kind === "terminal" || out.action.kind === "complete") {
+            log("voice.worker.terminal_turn_closing", {
+              bookingId,
+              purpose: callContext.purpose,
+              action: out.action.kind,
+            })
+            try {
+              await session.aclose?.()
+            } catch (err) {
+              log("voice.worker.terminal_close_failed", {
+                bookingId,
+                error: err instanceof Error ? err.message : String(err),
+              })
+            }
+          }
         },
         onConversationItemAdded(p) {
           log("voice.conversation_item_added", { role: p.role, len: p.textContent.length })
@@ -300,7 +315,9 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         const { voice } = livekitMod
         conversationalAgent = new voice.Agent({
           instructions:
-            "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
+            callContext.purpose === "onboarding"
+              ? "You are Claire, WeKruit's voice onboarding agent. Your job is to ask the short onboarding questions needed to understand the candidate. Speak warmly and concisely. Stay on the onboarding flow and do not recommend jobs during this call."
+              : "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
           // "WeKruit" → "We-Cruit" (we + cruit as in re-cruit). Without the
           // remap, Deepgram aura pronounces the brand as a single mushed
           // syllable. Map applies before TTS synthesis to every variant.
@@ -405,15 +422,27 @@ export async function defaultLoadContext(bookingId: string): Promise<VoiceCallCo
   }
   const data = (await res.json()) as {
     bookingId: string
+    purpose?: "prescreen" | "onboarding"
     userProfile: VoiceCallContext["userProfile"]
-    jobBrief: VoiceCallContext["jobBrief"]
-    prescreenConfig: VoiceCallContext["prescreenConfig"]
+    prescreenSessionId?: string
+    jobBrief?: unknown
+    prescreenConfig?: unknown
+  }
+  const purpose = data.purpose === "onboarding" ? "onboarding" : "prescreen"
+  if (purpose === "onboarding") {
+    return {
+      bookingId: data.bookingId,
+      purpose,
+      userProfile: data.userProfile,
+    }
   }
   return {
     bookingId: data.bookingId,
+    purpose,
+    prescreenSessionId: data.prescreenSessionId ?? data.bookingId,
     userProfile: data.userProfile,
-    jobBrief: data.jobBrief,
-    prescreenConfig: data.prescreenConfig,
+    jobBrief: data.jobBrief as VoicePrescreenCallContext["jobBrief"],
+    prescreenConfig: data.prescreenConfig as VoicePrescreenCallContext["prescreenConfig"],
   }
 }
 
@@ -424,10 +453,18 @@ export async function defaultLoadContext(bookingId: string): Promise<VoiceCallCo
  * judge + clarify composer) runs server-side and returns text + action
  * over HTTPS.
  */
-export async function defaultBuildPipeline(): Promise<VoicePipelineLite> {
-  const baseUrl = process.env.WEKRUIT_VOICE_PRESCREEN_TURN_URL
+export async function defaultBuildPipeline(context: VoiceCallContext): Promise<VoicePipelineLite> {
+  const envName =
+    context.purpose === "onboarding"
+      ? "WEKRUIT_VOICE_ONBOARDING_TURN_URL"
+      : "WEKRUIT_VOICE_PRESCREEN_TURN_URL"
+  const callableName =
+    context.purpose === "onboarding"
+      ? "paVoiceOnboardingTurn"
+      : "paVoicePrescreenTurn"
+  const baseUrl = process.env[envName]
   if (!baseUrl) {
-    throw new Error("voice-agent: WEKRUIT_VOICE_PRESCREEN_TURN_URL not set")
+    throw new Error(`voice-agent: ${envName} not set`)
   }
   return {
     async runTurn(input) {
@@ -440,6 +477,7 @@ export async function defaultBuildPipeline(): Promise<VoicePipelineLite> {
             : {}),
         },
         body: JSON.stringify({
+          bookingId: context.bookingId,
           sessionId: input.sessionId,
           userId: input.judgeCtx.userId,
           reply: input.reply,
@@ -449,7 +487,7 @@ export async function defaultBuildPipeline(): Promise<VoicePipelineLite> {
       })
       if (!res.ok) {
         throw new Error(
-          `voice-agent: paVoicePrescreenTurn ${res.status}: ${await res.text().catch(() => "?")}`,
+          `voice-agent: ${callableName} ${res.status}: ${await res.text().catch(() => "?")}`,
         )
       }
       const data = (await res.json()) as {

@@ -351,6 +351,7 @@ export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 //   LiveKit room webhooks. Idempotent reconciliation against the
 //   `outbound-bookings/{id}` state machine (Locks L9 + L10).
 export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
+export { paVoicePostCallFollowup } from "./voice/post-call-followup.js"
 
 // v2.2 — Voice-side HTTP callable CFs (shared-brain prescreen).
 //   `paVoiceCallContext`   — assembles VoiceCallContext from S1B loaders.
@@ -360,6 +361,7 @@ export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
 // Auth: bearer header `X-Wekruit-Voice-CF-Secret` = PA_VOICE_CF_SECRET.
 export {
   paVoiceCallContext,
+  paVoiceOnboardingTurn,
   paVoicePrescreenTurn,
 } from "./voice/voice-prescreen-callable.js"
 

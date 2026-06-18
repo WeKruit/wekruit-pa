@@ -293,17 +293,21 @@ export interface BuildClaireAgentOptions {
   locationSalaryAsk?: boolean
 }
 
-// The agent's terminal output when find_match already delivered the recs: an EMPTY bubble array
+// The agent's terminal output when a tool already delivered the candidate-facing text: an EMPTY bubble array
 // (ClaireReplySchema = { messages: string[] }, no min). Parsed by agent.processFinalOutput →
 // ClaireReplySchema.parse → { messages: [] } → extractBubbles → nothing for deliverBubbles to send.
-const FIND_MATCH_DELIVERED_FINAL_OUTPUT = JSON.stringify({ messages: [] })
+const TOOL_DELIVERED_FINAL_OUTPUT = JSON.stringify({ messages: [] })
+const FINALIZING_DELIVERY_TOOLS = new Set([
+  "find_match",
+  "offer_voice_call",
+  "resolve_voice_call_offer",
+])
 
 /**
  * SDK-native turn finalization (the Agents SDK `toolUseBehavior` ToolToFinalOutputFunction).
  *
- * find_match SENDS the role bubbles + the collab prescreen offer ITSELF (deterministic delivery the
- * LLM kept dropping), then returns `delivered:true`. At that point the recs have ALREADY reached the
- * candidate, so the turn is COMPLETE — we tell the SDK "this is the final output" and the agent loop
+ * Some tools send their candidate-facing message themselves, then return `delivered:true`. At that point
+ * the text has ALREADY reached the candidate, so the turn is COMPLETE — we tell the SDK "this is the final output" and the agent loop
  * STOPS WITHOUT RUNNING THE LLM AGAIN (turnResolution.checkForFinalOutputFromTools → next_step_final_
  * output). That removes the generation step in which the model was talking OVER the recs — the live
  * `Senior Software Engineer @ [company] — … (US)` cards (no company data to fill the placeholder) and
@@ -311,7 +315,7 @@ const FIND_MATCH_DELIVERED_FINAL_OUTPUT = JSON.stringify({ messages: [] })
  * built from the candidate's OWN experience. This is the SDK's own tools-to-final-output mechanism,
  * NOT a deterministic clamp bolted onto the delivery layer.
  *
- * When find_match did NOT deliver (no match / matcher error → `delivered:false`), or no find_match ran
+ * When a delivery tool did NOT deliver (no match / matcher error → `delivered:false`), or no such tool ran
  * this turn, we return NOT-final so the LLM runs again and composes the grounded no-match clarifier —
  * exactly the behavior the find_match tool description promises ("Only when delivered:false do you
  * speak"). Now ENFORCED by the runtime instead of pleaded for in the prompt.
@@ -328,7 +332,9 @@ export function claireToolUseBehavior(
   | { isFinalOutput: true; isInterrupted: undefined; finalOutput: string }
   | { isFinalOutput: false; isInterrupted: undefined } {
   for (const r of toolResults ?? []) {
-    if (r?.type !== "function_output" || r?.tool?.name !== "find_match") continue
+    if (r?.type !== "function_output") continue
+    const toolName = r?.tool?.name ?? ""
+    if (!FINALIZING_DELIVERY_TOOLS.has(toolName)) continue
     // r.output is the tool's return value — an object at runtime, but be defensive vs a stringified
     // form (some adapters JSON-encode the output before handing it to the behavior fn).
     let out: { delivered?: boolean } | null = null
@@ -344,7 +350,7 @@ export function claireToolUseBehavior(
       return {
         isFinalOutput: true,
         isInterrupted: undefined,
-        finalOutput: FIND_MATCH_DELIVERED_FINAL_OUTPUT,
+        finalOutput: TOOL_DELIVERED_FINAL_OUTPUT,
       }
     }
   }

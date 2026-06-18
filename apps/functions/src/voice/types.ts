@@ -15,6 +15,7 @@ import type { VoiceState } from "./state-machine.js"
 export interface OutboundBookingRow {
   paUserId?: string | null
   paJobId?: string | null
+  purpose?: "prescreen" | "onboarding" | null
   phoneE164?: string | null
   voiceState?: VoiceState
   voiceCallSid?: string | null
@@ -24,6 +25,7 @@ export interface OutboundBookingRow {
   voiceOutcome?: string | null
   voiceLastError?: string | null
   voiceCallerId?: string | null
+  postCallFollowupStatus?: "processing" | "sent" | "skipped" | "failed" | string | null
   // Allow extra fields without losing typing on the ones we touch.
   [k: string]: unknown
 }

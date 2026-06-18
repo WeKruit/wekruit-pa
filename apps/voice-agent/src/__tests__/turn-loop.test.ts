@@ -7,6 +7,8 @@ import type { VoiceCallContext } from "../voice-context-types.js"
 function makeContext(piiConsent?: string): VoiceCallContext {
   return {
     bookingId: "bk-test-1",
+    purpose: "prescreen",
+    prescreenSessionId: "ps-test-1",
     userProfile: {
       userId: "u-1",
       preferredLang: "en",
@@ -45,7 +47,7 @@ test("turn-loop: invokes pipeline.runTurn once per onUserCommit", async () => {
   const pipeline: VoicePipelineLite = {
     async runTurn(input) {
       calls++
-      assert.equal(input.sessionId, "bk-test-1")
+      assert.equal(input.sessionId, "ps-test-1")
       assert.equal(input.reply, "I lead a frontend team.")
       assert.equal(input.lang, "en")
       return {
