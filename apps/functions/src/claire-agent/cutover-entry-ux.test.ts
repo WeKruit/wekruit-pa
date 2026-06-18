@@ -26,6 +26,8 @@ import { maybeRunThinClaire } from "./cutover.js"
 const INBOUND = "pa-inbound-events"
 const FLAGS = "pa-feature-flags"
 const USERS = "pa-users"
+const MESSAGES = "pa-messages"
+const OUTBOUND = "pa-outbound"
 const THIN_FLAG = "paThinClaireEnabled"
 const CANARY_UID = "8fEwIduUrzxZsblHHsNz" // Adam dev phone — in CANARY_UIDS (entry-UX cohort)
 
@@ -469,4 +471,44 @@ test("RESUME-DON'T-RESTART: role-entry completion while a screen for the SAME jo
   // and the original active session is untouched
   const live = docs.get("pa-prescreen-sessions/ps_live")! as { terminal?: unknown }
   assert.equal(live.terminal, null)
+})
+
+test("phone-prescreen bare 'sure' after role choice sends clarification, not matching", async () => {
+  const eventId = "evt_voice_ack_sure"
+  const sessionId = "ses_voice_ack"
+  const assistantBody =
+    "got you - that's the Martini Agent Engineer screen. looks like that one's already completed, so we can't restart it, but i can help you pick another matched engineering role to run next. which one do you want: Sekai AI Agent Engineer (Coding Agent), Maximor Staff SWE, or Sekai Technical Lead?"
+  const { db, docs } = makeQueryableDb({
+    [`${FLAGS}/${THIN_FLAG}`]: thinFlagFor(CANARY_UID),
+    [`${USERS}/${CANARY_UID}`]: { phoneE164: "+14243201960" },
+    [`${MESSAGES}/m_voice_ack_prev`]: {
+      sessionId,
+      userId: CANARY_UID,
+      role: "assistant",
+      body: assistantBody,
+      createdAt: "2026-06-18T20:03:00.000Z",
+      rawMeta: { source: "pa-outbound" },
+    },
+    [`${INBOUND}/${eventId}`]: {
+      userId: CANARY_UID,
+      sessionId,
+      body: "Sure",
+      fromNumber: "+14243201960",
+      rawMeta: { source: "sendblue_webhook" },
+    },
+  })
+  const { events, log } = spyLog()
+
+  const handled = await maybeRunThinClaire(db, eventId, { log })
+
+  assert.equal(handled, true)
+  const inbound = docs.get(`${INBOUND}/${eventId}`)! as { status?: string; handledBy?: string }
+  assert.equal(inbound.status, "completed")
+  assert.equal(inbound.handledBy, "thin_claire_voice_ack_clarifier")
+  assert.ok(events.includes("thin_claire.voice_ack_clarifier.sent"))
+
+  const outboundRows = [...docs.entries()].filter(([path]) => path.startsWith(`${OUTBOUND}/`))
+  assert.equal(outboundRows.length, 1, "clarifier is the only outbound row; find_match did not run")
+  assert.match(String(outboundRows[0]![1].body ?? ""), /not as a request for new jobs/)
+  assert.match(String(outboundRows[0]![1].body ?? ""), /Sekai AI Agent Engineer/)
 })

@@ -31,6 +31,11 @@ import {
   ENRICHMENT_HOLD_NOTICE_COPY,
 } from "./enrichment-inflight.js"
 import { withProgressHeartbeat, PROGRESS_HEARTBEAT_COPY } from "./progress-heartbeat.js"
+import { getRecentSentMessages } from "./delivery.js"
+import {
+  buildVoiceCallAckClarifier,
+  shouldHoldVoiceCallAckFromMatching,
+} from "./voice-call-ack-guard.js"
 import {
   hasPriorParsedResume,
   readOpenMergePending,
@@ -1108,6 +1113,41 @@ export async function maybeRunThinClaire(
       }
     } catch (err) {
       log("thin_claire.text_pitch.error", {
+        eventId,
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  if (toE164 && hasRealUserText(text)) {
+    try {
+      const recentAssistantMessages = await getRecentSentMessages(
+        { db, userId, sessionId },
+        3,
+      )
+      if (shouldHoldVoiceCallAckFromMatching(text, recentAssistantMessages)) {
+        const transport = createSendblueTransport({
+          db,
+          toE164: String(toE164),
+          inboundMessageHandle,
+          userId,
+          sessionId,
+          inboundEventId: eventId,
+          log,
+          ...(deps.dryRun ? { dryRun: true } : {}),
+        })
+        const reply = buildVoiceCallAckClarifier(recentAssistantMessages)
+        await transport.sendText(reply)
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set({ status: "completed", handledBy: "thin_claire_voice_ack_clarifier" }, { merge: true })
+        log("thin_claire.voice_ack_clarifier.sent", { eventId, userId })
+        return true
+      }
+    } catch (err) {
+      log("thin_claire.voice_ack_clarifier.error", {
         eventId,
         userId,
         err: err instanceof Error ? err.message : String(err),
