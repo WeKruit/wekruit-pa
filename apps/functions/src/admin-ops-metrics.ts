@@ -76,6 +76,8 @@ const EXCLUDED_OPERATOR_EMAILS = new Set(["admin1@wekruit.com"])
 // ops dashboard.
 const OPS_METRICS_CACHE_COLLECTION = "pa-ops-metrics-cache"
 const OPS_METRICS_CACHE_TTL_MS = 30 * 60_000
+// Bump when the computation changes so stale cached results aren't served.
+const OPS_METRICS_CACHE_VERSION = "v3"
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -263,6 +265,7 @@ export async function runAdminOpsMetrics(
     scanOrdered(deps.db, PA_COLLECTIONS.users, "createdAt", [
       "createdAt",
       "source",
+      "signupSource",
       "recruiterSubmissionTracking",
       "testMode",
       "phoneE164",
@@ -332,6 +335,9 @@ export async function runAdminOpsMetrics(
     if (!input.includeTest) {
       const source = typeof data.source === "string" ? data.source : undefined
       if (source && TEST_USER_SOURCES.has(source)) continue
+      // Admin-created candidates (bulk adds via the admin identity path) are
+      // not organic signups — drop them. Adam 2026-06-17 (the "Direct" flood).
+      if (data.signupSource === "identity:admin") continue
       // `isSyntheticTestProfile` reads `doc.id` — ensure it's set from the doc
       // key when the stored data omits it, so the call can't throw.
       if (isSyntheticTestProfile({ ...data, id } as unknown as CandidateListUserDoc)) continue
@@ -362,22 +368,9 @@ export async function runAdminOpsMetrics(
     }
   }
 
-  // --- Interviews conducted (prescreen sessions, unified) -----------------
-  for (const { data } of prescreenScan.docs) {
-    if (!input.includeTest && (isTruthyFlag(data.testMode) || isTruthyFlag(data.isDemo))) continue
-    const userId = typeof data.userId === "string" ? data.userId : undefined
-    if (!userId || excludedCandidateIds.has(userId)) continue
-    const workSession =
-      data.workSession && typeof data.workSession === "object"
-        ? (data.workSession as Record<string, unknown>)
-        : undefined
-    const startedAt = workSession?.startedAt
-    const ran = data.terminal != null || startedAt != null
-    if (!ran) continue
-    const tsMs = toMs(startedAt ?? data.createdAt)
-    if (!tsMs || !inWindow(tsMs)) continue
-    addConducted(utcDayKey(tsMs), userId)
-  }
+  // NOTE: prescreen sessions are NOT counted as interviews. Adam 2026-06-17:
+  // "we are not counting prescreen as interview." Only a real WeKruit interview
+  // (recruiter `wekruit_interview` stage, handled above) counts as conducted.
 
   // --- Moved to client (marketplace candidate-job-states) -----------------
   for (const { data } of statesScan.docs) {
@@ -469,7 +462,7 @@ export const paAdminOpsMetrics = onCall(
     const input = parsed.data
     const cacheRef = db
       .collection(OPS_METRICS_CACHE_COLLECTION)
-      .doc(`r${input.rangeDays}_t${input.includeTest ? 1 : 0}`)
+      .doc(`${OPS_METRICS_CACHE_VERSION}_r${input.rangeDays}_t${input.includeTest ? 1 : 0}`)
     // Serve a fresh cached result (the 5-collection scan is heavy) — repeat
     // loads are a single doc read. Recompute past the TTL.
     try {
