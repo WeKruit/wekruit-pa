@@ -92,4 +92,22 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.doesNotMatch(boardGroupBodyStyle[0], /overflow/)
     assert.doesNotMatch(boardGroupBodyStyle[0], /scrollbarWidth/)
   })
+
+  it("marks submissions viewed when opened and shows a persisted viewed badge", () => {
+    assert.match(source, /adminViewedAt\?: \{ seconds\?: number \} \| string \| null/)
+    assert.match(source, /function hasAdminViewed\(submission: BoardSubmissionDoc\): boolean/)
+    assert.match(source, /function markSubmissionViewed\(submission: BoardSubmissionDoc\)/)
+    assert.match(source, /updateDoc\(doc\(db\(\), "pa-recruiter-submissions", submission\.id\), \{[\s\S]*adminViewedAt: viewedAt,[\s\S]*adminViewedByEmail: viewedBy/)
+    assert.match(source, /onClick=\{\(\) => \(selected \? setSelectedId\(null\) : openSubmission\(submission\)\)\}/)
+    assert.match(source, /\{viewed && <Badge tone="muted">Viewed<\/Badge>\}/)
+  })
+
+  it("keeps message badges after reload by persisting parent comment metadata", () => {
+    assert.match(source, /adminCommentCount\?: number \| null/)
+    assert.match(source, /function normalizedCommentCount\(submission: BoardSubmissionDoc\): number/)
+    assert.match(source, /const loadedCommentCounts = Object\.fromEntries\(/)
+    assert.match(source, /setCommentCounts\(loadedCommentCounts\)/)
+    assert.match(source, /updateDoc\(doc\(db\(\), "pa-recruiter-submissions", submissionId\), \{[\s\S]*adminCommentCount: safeCount,[\s\S]*adminLastCommentAt: lastCommentAt \?\? null/)
+    assert.match(source, /const commentCount = commentCounts\[submission\.id\] \?\? normalizedCommentCount\(submission\)/)
+  })
 })
