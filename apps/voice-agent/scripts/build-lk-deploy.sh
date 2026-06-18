@@ -57,7 +57,7 @@ cat > "$OUT_DIR/Dockerfile" <<'EOF'
 # W4 slim image. The bundle (dist/cli.bundle.js) carries all workspace code
 # (@pa/agent-runtime, @pa/core-types, @wekruit/shared-tags) inlined; the
 # Docker layer only npm-installs the external LK SDK + openai + zod + plugins.
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 FROM node:${NODE_VERSION}-slim
 
 ENV NODE_ENV=production
