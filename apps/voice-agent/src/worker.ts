@@ -84,6 +84,7 @@ interface AgentRuntimeCtx {
   room: {
     name?: string
     metadata?: string
+    remoteParticipants?: Map<string, RemoteParticipantLike>
     on: (event: string, listener: (...args: unknown[]) => void) => unknown
     off?: (event: string, listener: (...args: unknown[]) => void) => unknown
   }
@@ -102,6 +103,10 @@ interface AgentRuntimeCtx {
    * session's room operations fail with WS 400 ("Unexpected server
    * response: 400") and no audio reaches the SIP leg. */
   connect?: () => Promise<void>
+}
+
+interface RemoteParticipantLike {
+  identity?: string
 }
 
 /**
@@ -329,7 +334,12 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           },
         })
       }
-      await session.start?.({ agent: conversationalAgent, room: ctx.room })
+      const candidateParticipantIdentity = `candidate-${callContext.userProfile.userId}`
+      await session.start?.({
+        agent: conversationalAgent,
+        room: ctx.room,
+        inputOptions: { participantIdentity: candidateParticipantIdentity },
+      })
 
       // ── S6 recording archive — kick off LiveKit Egress → GCS ─────────────
       // Fires-and-forgets behind WEKRUIT_VOICE_RECORDINGS_BUCKET env. Any
@@ -347,13 +357,43 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       }
 
       // ── L8 recording consent — first utterance ──────────────────────────
+      const readyParticipant = await waitForRemoteParticipant(ctx.room, {
+        identity: candidateParticipantIdentity,
+        timeoutMs: 15_000,
+      })
+      if (readyParticipant) {
+        log("voice.worker.remote_participant_ready", {
+          bookingId,
+          identity: readyParticipant.identity ?? "",
+        })
+      } else {
+        log("voice.worker.remote_participant_wait_timeout", {
+          bookingId,
+          identity: candidateParticipantIdentity,
+        })
+      }
       const consentLine = buildConsentPrompt(callContext)
-      await session.say?.(consentLine)
-      log("voice.consent_prompt_spoken", { bookingId, lang: callContext.userProfile.preferredLang ?? "en" })
-      // S5 — structured TCPA audit log capturing the consent-disclosure
-      // moment (paired with the prior-consent verification in
-      // voice-tcpa-checks/{bookingId}_<runId>).
-      emitConsentSpokenAudit(callContext, consentLine, log)
+      try {
+        const speechHandle = session.say?.(consentLine, {
+          allowInterruptions: false,
+          addToChatCtx: false,
+        })
+        log("voice.consent_prompt_scheduled", {
+          bookingId,
+          lang: callContext.userProfile.preferredLang ?? "en",
+        })
+        await waitForSpeechPlayout(speechHandle, { timeoutMs: 12_000 })
+        log("voice.consent_prompt_spoken", { bookingId, lang: callContext.userProfile.preferredLang ?? "en" })
+        // S5 — structured TCPA audit log capturing the consent-disclosure
+        // moment (paired with the prior-consent verification in
+        // voice-tcpa-checks/{bookingId}_<runId>).
+        emitConsentSpokenAudit(callContext, consentLine, log)
+      } catch (err) {
+        log("voice.consent_prompt_failed", {
+          bookingId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     },
   })
 
@@ -394,6 +434,62 @@ function readBookingId(metadata?: string, roomName?: string): string {
   }
   if (roomName && roomName.length > 0) return roomName
   throw new Error("voice-agent: cannot resolve bookingId — neither room.metadata nor room.name is set")
+}
+
+export async function waitForRemoteParticipant(
+  room: {
+    remoteParticipants?: Map<string, RemoteParticipantLike>
+    on?: (event: string, listener: (...args: unknown[]) => void) => unknown
+    off?: (event: string, listener: (...args: unknown[]) => void) => unknown
+  },
+  opts: { identity?: string; timeoutMs?: number } = {},
+): Promise<RemoteParticipantLike | null> {
+  const timeoutMs = opts.timeoutMs ?? 15_000
+  const matches = (participant: RemoteParticipantLike): boolean =>
+    !opts.identity || participant.identity === opts.identity
+
+  for (const participant of room.remoteParticipants?.values?.() ?? []) {
+    if (matches(participant)) return participant
+  }
+
+  const on = room.on
+  if (!on) return null
+
+  return await new Promise((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const cleanup = () => {
+      if (timer) clearTimeout(timer)
+      room.off?.("participantConnected", onConnected)
+    }
+    const settle = (participant: RemoteParticipantLike | null) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(participant)
+    }
+    const onConnected = (...args: unknown[]) => {
+      const participant = (args[0] ?? {}) as RemoteParticipantLike
+      if (matches(participant)) settle(participant)
+    }
+
+    on("participantConnected", onConnected)
+    timer = setTimeout(() => settle(null), timeoutMs)
+  })
+}
+
+async function waitForSpeechPlayout(
+  speechHandle: unknown,
+  opts: { timeoutMs: number },
+): Promise<void> {
+  const maybeThen = speechHandle as { then?: unknown } | undefined
+  if (!maybeThen || typeof maybeThen.then !== "function") return
+  await Promise.race([
+    Promise.resolve(speechHandle).then(() => undefined),
+    new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error("speech_playout_timeout")), opts.timeoutMs)
+    }),
+  ])
 }
 
 /**

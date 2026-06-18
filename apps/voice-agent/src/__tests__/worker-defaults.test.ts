@@ -12,7 +12,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { defaultBuildPipeline, defaultLoadContext } from "../worker.js"
+import { defaultBuildPipeline, defaultLoadContext, waitForRemoteParticipant } from "../worker.js"
 import type { VoiceCallContext } from "../voice-context-types.js"
 
 interface FakeFetchCall {
@@ -87,6 +87,43 @@ test("defaultLoadContext throws when WEKRUIT_VOICE_CONTEXT_URL not set", async (
   delete process.env.WEKRUIT_VOICE_CONTEXT_URL
   await assert.rejects(() => defaultLoadContext("b1"), /WEKRUIT_VOICE_CONTEXT_URL not set/)
   restoreEnv()
+})
+
+test("waitForRemoteParticipant resolves immediately when a SIP participant is already in the room", async () => {
+  const room = {
+    remoteParticipants: new Map([
+      ["candidate-u1", { identity: "candidate-u1" }],
+    ]),
+    on() {
+      throw new Error("should not subscribe when participant is already present")
+    },
+    off() {},
+  }
+
+  const participant = await waitForRemoteParticipant(room)
+  assert.equal(participant?.identity, "candidate-u1")
+})
+
+test("waitForRemoteParticipant waits for LiveKit participantConnected before Claire speaks", async () => {
+  let listener: ((participant: { identity: string }) => void) | null = null
+  const room = {
+    remoteParticipants: new Map(),
+    on(event: string, cb: (participant: { identity: string }) => void) {
+      assert.equal(event, "participantConnected")
+      listener = cb
+    },
+    off(event: string, cb: (participant: { identity: string }) => void) {
+      assert.equal(event, "participantConnected")
+      assert.equal(cb, listener)
+    },
+  }
+
+  const pending = waitForRemoteParticipant(room, { timeoutMs: 1_000 })
+  assert.equal(typeof listener, "function")
+  listener?.({ identity: "candidate-u1" })
+
+  const participant = await pending
+  assert.equal(participant?.identity, "candidate-u1")
 })
 
 test("defaultLoadContext POSTs bookingId + secret header to context CF", async () => {

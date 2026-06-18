@@ -223,7 +223,20 @@ export function parseWebhookBody(req: {
   const body = (req.body ?? {}) as Record<string, unknown>
   // LiveKit shape — has `event` field.
   if (typeof body.event === "string" && body.room && typeof body.room === "object") {
-    return body as unknown as VoiceCallbackEvent
+    const room = body.room as Record<string, unknown>
+    if (typeof room.name !== "string" || room.name.length === 0) return null
+    return {
+      source: "livekit",
+      event: body.event as VoiceCallbackEvent extends { source: "livekit"; event: infer E } ? E : never,
+      room: { name: room.name },
+      participant:
+        body.participant && typeof body.participant === "object"
+          ? { identity: typeof (body.participant as Record<string, unknown>).identity === "string"
+            ? ((body.participant as Record<string, unknown>).identity as string)
+            : undefined }
+          : undefined,
+      sipCallId: typeof body.sipCallId === "string" ? body.sipCallId : undefined,
+    }
   }
   // Twilio shape — has `CallSid` + `CallStatus`.
   if (typeof body.CallSid === "string" && typeof body.CallStatus === "string") {
@@ -241,9 +254,72 @@ export function parseWebhookBody(req: {
   return null
 }
 
+export interface VoiceWebhookRequestLike {
+  get?: (h: string) => string | undefined
+  rawBody?: Buffer
+  body: unknown
+}
+
+export interface LiveKitWebhookReceiverLike {
+  receive(body: string, authHeader: string): Promise<unknown> | unknown
+}
+
+export interface ParseAuthorizedVoiceWebhookDeps {
+  sharedSecret: string
+  livekitApiKey: string
+  livekitApiSecret: string
+  makeLiveKitWebhookReceiver?: (apiKey: string, apiSecret: string) => LiveKitWebhookReceiverLike
+}
+
+export async function parseAuthorizedVoiceWebhookEvent(
+  req: VoiceWebhookRequestLike,
+  deps: ParseAuthorizedVoiceWebhookDeps,
+): Promise<VoiceCallbackEvent | null> {
+  const sharedSecret = deps.sharedSecret.trim()
+  const gotSharedSecret = (req.get?.("X-Wekruit-Voice-Webhook-Secret") ?? "").trim()
+  if (sharedSecret && gotSharedSecret === sharedSecret) {
+    return parseWebhookBody(req)
+  }
+
+  const authHeader = (req.get?.("Authorization") ?? req.get?.("authorization") ?? "").trim()
+  const livekitApiKey = deps.livekitApiKey.trim()
+  const livekitApiSecret = deps.livekitApiSecret.trim()
+  if (authHeader && livekitApiKey && livekitApiSecret) {
+    const rawBody = req.rawBody?.toString("utf8")
+    if (!rawBody) return null
+    try {
+      const receiver =
+        deps.makeLiveKitWebhookReceiver?.(livekitApiKey, livekitApiSecret) ??
+        await makeRealWebhookReceiver(livekitApiKey, livekitApiSecret)
+      const livekitEvent = await receiver.receive(rawBody, authHeader)
+      return parseWebhookBody({ body: livekitEvent })
+    } catch (err) {
+      logger.warn("paVoiceSipWebhook:livekit_auth_failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+  }
+
+  if (!sharedSecret && !livekitApiKey && !livekitApiSecret) {
+    return parseWebhookBody(req)
+  }
+
+  return null
+}
+
+async function makeRealWebhookReceiver(
+  apiKey: string,
+  apiSecret: string,
+): Promise<LiveKitWebhookReceiverLike> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mod: any = await import("livekit-server-sdk")
+  return new mod.WebhookReceiver(apiKey, apiSecret)
+}
+
 export const paVoiceSipWebhook: HttpsFunction = onRequest(
   {
-    secrets: [PA_VOICE_WEBHOOK_SECRET],
+    secrets: [PA_VOICE_WEBHOOK_SECRET, LIVEKIT_API_KEY, LIVEKIT_API_SECRET],
     cors: false,
     region: "us-central1",
     maxInstances: 1,
@@ -253,18 +329,13 @@ export const paVoiceSipWebhook: HttpsFunction = onRequest(
       res.status(405).json({ ok: false, reason: "method_not_allowed" })
       return
     }
-    const expected = PA_VOICE_WEBHOOK_SECRET.value().trim()
-    if (expected) {
-      const got = (req.get("X-Wekruit-Voice-Webhook-Secret") ?? "").trim()
-      if (got !== expected) {
-        res.status(401).json({ ok: false, reason: "unauthorized" })
-        return
-      }
-    }
-
-    const event = parseWebhookBody(req as unknown as Parameters<typeof parseWebhookBody>[0])
+    const event = await parseAuthorizedVoiceWebhookEvent(req as VoiceWebhookRequestLike, {
+      sharedSecret: PA_VOICE_WEBHOOK_SECRET.value().trim(),
+      livekitApiKey: LIVEKIT_API_KEY.value().trim(),
+      livekitApiSecret: LIVEKIT_API_SECRET.value().trim(),
+    })
     if (!event) {
-      res.status(400).json({ ok: false, reason: "unrecognized_body_shape" })
+      res.status(401).json({ ok: false, reason: "unauthorized_or_unrecognized_body" })
       return
     }
 
