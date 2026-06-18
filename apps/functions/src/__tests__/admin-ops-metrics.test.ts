@@ -183,3 +183,27 @@ describe("runAdminOpsMetrics — series shape", () => {
     }
   })
 })
+
+describe("runAdminOpsMetrics — exclude admin1-added candidates", () => {
+  it("drops candidates whose recruiter submission was by admin1@wekruit.com", async () => {
+    const mfs = new MockFirestore()
+    await seedUser(mfs, "cand-keep", { createdAt: TODAY_TS, recruiterSubmissionTracking: { lastStatus: "submitted" } })
+    await seedUser(mfs, "cand-admin1", { createdAt: TODAY_TS, recruiterSubmissionTracking: { lastStatus: "submitted" } })
+    // admin1 submitted cand-admin1 (excluded); a real recruiter submitted cand-keep
+    await mfs.collection("pa-recruiter-submissions").doc("sub-keep").set({
+      candidateId: "cand-keep", updatedAt: TODAY_TS, recruiterEmail: "real.recruiter@gmail.com", statusHistory: [],
+    })
+    await mfs.collection("pa-recruiter-submissions").doc("sub-admin1").set({
+      candidateId: "cand-admin1", updatedAt: TODAY_TS, recruiterEmail: "admin1@wekruit.com",
+      statusHistory: [{ status: "wekruit_interview", atIso: TODAY_TS }],
+    })
+    const result = await runAdminOpsMetrics({ rangeDays: 30, includeTest: false }, { db: asFirestore(mfs), now: () => NOW })
+    assert.equal(result.totals.newUsersRecruiterSubmitted, 1) // only cand-keep
+    assert.equal(result.totals.newUsersTotal, 1)
+    assert.equal(result.totals.interviewsConducted, 0) // admin1's interview excluded
+
+    // includeTest=true counts both
+    const all = await runAdminOpsMetrics({ rangeDays: 30, includeTest: true }, { db: asFirestore(mfs), now: () => NOW })
+    assert.equal(all.totals.newUsersTotal, 2)
+  })
+})
