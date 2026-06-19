@@ -184,6 +184,28 @@ export async function handleVoicePostCallFollowup(input: {
       },
       { merge: true },
     )
+    // Job-rec opt-in (Adam 2026-06-19): the message ends "want me to pull a few
+    // roles that fit?". Mark the prescreen session so the candidate's yes/no is
+    // resolved deterministically into find_match (or a warm decline) by
+    // runPrescreenTurnIfActive — the opt-in question previously dead-ended with no
+    // consumer. Prescreen bookings only; onboarding has no prescreen session.
+    const prescreenSessionId =
+      typeof booking.prescreenSessionId === "string" ? booking.prescreenSessionId.trim() : ""
+    if (purpose === "prescreen" && prescreenSessionId) {
+      try {
+        await db.collection("pa-prescreen-sessions").doc(prescreenSessionId).set(
+          {
+            voicePostCallJobRecOptInPending: true,
+            voicePostCallJobRecOptInAskedAt: nowIso,
+            updatedAt: nowIso,
+          },
+          { merge: true },
+        )
+      } catch {
+        // Best-effort — the followup text already shipped; a missing flag only
+        // means the yes falls through to the normal post-terminal handling.
+      }
+    }
     return { action: "sent", message }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)

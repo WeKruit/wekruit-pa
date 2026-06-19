@@ -1070,6 +1070,88 @@ export async function runPrescreenTurnIfActive(
     const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
     const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
     const nowIso = new Date().toISOString()
+
+    // ── VOICE POST-CALL JOB-REC OPT-IN (Adam 2026-06-19) ─────────────────────────────────────────
+    // The voice post-call followup (paVoicePostCallFollowup) asked "want me to pull a few roles that
+    // fit?" and flagged this session. Resolve the yes/no HERE — before the pending-review / retention
+    // machinery — so a yes deterministically fires the SAME find_match recs the FAIL terminal uses
+    // (the opt-in previously dead-ended with no consumer). The flag is only ever set by the voice
+    // followup, so this is inert for text-only prescreens. An ambiguous reply leaves the flag and
+    // falls through to normal handling.
+    if (sessData.voicePostCallJobRecOptInPending === true) {
+      const optIn = parseLowInfoCallConfirmation(args.replyText)
+      if (optIn !== null) {
+        await sessionRef.set(
+          {
+            voicePostCallJobRecOptInPending: false,
+            voicePostCallJobRecOptInResolvedAt: nowIso,
+            updatedAt: nowIso,
+          },
+          { merge: true },
+        )
+        await sessionRef.collection("turns").add({
+          qId: "terminal",
+          reply: args.replyText,
+          action: { kind: "voice_post_call_job_rec_opt_in", confirmed: optIn },
+          ts: nowIso,
+        })
+        if (optIn) {
+          const text = "on it — pulling a few roles that fit your screen now 🔍"
+          try {
+            await sendSms({
+              to: args.toE164,
+              content: text,
+              userId: args.userId,
+              db: args.db,
+              runtimeSource: "pa_prescreen_runtime",
+              idempotencyKey: `voice_post_call_optin_yes:${lookup.sessionId}`,
+            })
+          } catch (err) {
+            log("prescreen.turn.voice_post_call_optin_send_failed", {
+              sessionId: lookup.sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+          const fire = args.fireJobRecs ?? defaultGenerateJobRecs
+          try {
+            await fire({ userId: args.userId, toE164: args.toE164, lang: args.lang ?? "en" })
+          } catch (err) {
+            log("prescreen.turn.voice_post_call_optin_recs_failed", {
+              sessionId: lookup.sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+          log("prescreen.turn.voice_post_call_optin_recs_fired", {
+            sessionId: lookup.sessionId,
+            userId: args.userId,
+          })
+          return { handled: true, sessionId: lookup.sessionId, terminal: lookup.terminal, textSent: text }
+        }
+        const declineText =
+          "no problem — your screen's on file, and i'll reach out when something strong comes up."
+        try {
+          await sendSms({
+            to: args.toE164,
+            content: declineText,
+            userId: args.userId,
+            db: args.db,
+            runtimeSource: "pa_prescreen_runtime",
+            idempotencyKey: `voice_post_call_optin_no:${lookup.sessionId}`,
+          })
+        } catch (err) {
+          log("prescreen.turn.voice_post_call_optin_send_failed", {
+            sessionId: lookup.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+        log("prescreen.turn.voice_post_call_optin_declined", {
+          sessionId: lookup.sessionId,
+          userId: args.userId,
+        })
+        return { handled: true, sessionId: lookup.sessionId, terminal: lookup.terminal, textSent: declineText }
+      }
+    }
+
     if (sessData.terminalActionPendingReview === true) {
       const text = pendingReviewFollowupAckText(args.lang ?? "en")
       await sessionRef.collection("turns").add({

@@ -544,6 +544,77 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(sent.length, 1)
   })
 
+  function seedVoiceOptInTerminalSession() {
+    const now = new Date().toISOString()
+    return makeFakeDb({
+      "pa-prescreen-sessions/ps_voice_optin": {
+        sessionId: "ps_voice_optin",
+        userId: "u_vopt",
+        jobId: "sekai-ai-agent-engineer",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        voicePostCallJobRecOptInPending: true,
+        voicePostCallJobRecOptInAskedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", endedAt: now, boundary: "terminal" },
+      },
+    })
+  }
+
+  it("fires find_match recs when the candidate says yes to the voice post-call job-rec offer", async () => {
+    const { db, docs } = seedVoiceOptInTerminalSession()
+    const recs: Array<{ userId: string; toE164: string }> = []
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_vopt",
+      toE164: "+13054507715",
+      replyText: "yes",
+      fireJobRecs: async (a) => {
+        recs.push(a)
+        return { ok: true, jobCount: 3 }
+      },
+      sendSms: async (a) => {
+        sent.push(a.content)
+        return { status: "queued", from_number: null, number: a.to, content: a.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(recs.length, 1)
+    assert.equal(recs[0].userId, "u_vopt")
+    assert.match(sent[0] ?? "", /pulling a few roles/i)
+    const session = docs.get("pa-prescreen-sessions/ps_voice_optin")?.data
+    assert.equal(session?.voicePostCallJobRecOptInPending, false)
+  })
+
+  it("does not fire recs when the candidate declines the voice post-call job-rec offer", async () => {
+    const { db, docs } = seedVoiceOptInTerminalSession()
+    const recs: unknown[] = []
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_vopt",
+      toE164: "+13054507715",
+      replyText: "no thanks",
+      fireJobRecs: async (a) => {
+        recs.push(a)
+        return { ok: true, jobCount: 0 }
+      },
+      sendSms: async (a) => {
+        sent.push(a.content)
+        return { status: "queued", from_number: null, number: a.to, content: a.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(recs.length, 0)
+    assert.match(sent[0] ?? "", /on file/i)
+    const session = docs.get("pa-prescreen-sessions/ps_voice_optin")?.data
+    assert.equal(session?.voicePostCallJobRecOptInPending, false)
+  })
+
   it("ignores stale prescreen docs whose active question is already cleared", async () => {
     const now = new Date().toISOString()
     const { db } = makeFakeDb({
