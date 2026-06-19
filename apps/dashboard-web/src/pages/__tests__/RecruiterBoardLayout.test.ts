@@ -85,6 +85,16 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.match(source, /const pageRows = job\.submissions\.slice\(start, start \+ BOARD_SUBMISSION_PAGE_SIZE\)/)
   })
 
+  it("surfaces recruiter candidate tier and school/background evidence", () => {
+    assert.match(source, /suggestTierFromRecruiterAi/)
+    assert.match(source, /function suggestedCandidateTier\(evaluation: SubmissionAiEvaluation \| undefined\): CandidateTier \| null/)
+    assert.match(source, /function BackgroundSignalChips\(/)
+    assert.match(source, /function BackgroundEvidencePanel\(/)
+    assert.match(source, /Tier & background attachment/)
+    assert.match(source, /<BackgroundSignalChips evaluation=\{submission\.aiEvaluation\} compact \/>/)
+    assert.match(source, /<BackgroundEvidencePanel evaluation=\{submission\.aiEvaluation\} \/>/)
+  })
+
   it("does not clip later role tables inside the recruiter card", () => {
     const boardGroupBodyStyle = source.match(/const boardGroupBodyStyle: CSSProperties = \{[\s\S]*?\n\}/)
     assert.ok(boardGroupBodyStyle)

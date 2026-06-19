@@ -12,6 +12,12 @@
  */
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, updateDoc } from "firebase/firestore"
+import {
+  CANDIDATE_TIER_LABELS,
+  suggestTierFromRecruiterAi,
+  type CandidateTier,
+  type RecruiterAiVerdict,
+} from "@pa/core-types"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
@@ -68,6 +74,7 @@ interface SubmissionAiEvaluation {
     source?: string
     headline?: string
     companies?: Array<{ name?: string; role?: string; years?: string }>
+    education?: Array<{ school?: string; degree?: string }>
     signals?: string[]
     risks?: string[]
   }
@@ -926,6 +933,110 @@ const BACKGROUND_PILLARS: Array<{ key: "school" | "gpa" | "degree" | "company"; 
   { key: "company", label: "Company" },
 ]
 
+function isRecruiterAiVerdict(value: unknown): value is RecruiterAiVerdict {
+  return value === "advance" || value === "borderline" || value === "reject"
+}
+
+function hardGapCount(evaluation: SubmissionAiEvaluation | undefined): number {
+  const gaps = evaluation?.checklist?.hard?.gaps
+  return Array.isArray(gaps) ? gaps.length : 0
+}
+
+function suggestedCandidateTier(evaluation: SubmissionAiEvaluation | undefined): CandidateTier | null {
+  if (!evaluation || evaluation.error || !isRecruiterAiVerdict(evaluation.verdict)) return null
+  return suggestTierFromRecruiterAi(evaluation.verdict, hardGapCount(evaluation))
+}
+
+function tierTone(tier: CandidateTier): Parameters<typeof Badge>[0]["tone"] {
+  if (tier === "tier_1") return "ok"
+  if (tier === "tier_2") return "info"
+  return "warn"
+}
+
+function tierShortLabel(tier: CandidateTier): string {
+  return tier.replace("tier_", "Tier ")
+}
+
+function BackgroundSignalChips({
+  evaluation,
+  compact,
+}: {
+  evaluation: SubmissionAiEvaluation | undefined
+  compact?: boolean
+}) {
+  const tier = suggestedCandidateTier(evaluation)
+  const background = evaluation?.background
+  const pillars = BACKGROUND_PILLARS
+    .map(({ key, label }) => ({ key, label, pillar: background?.[key] }))
+    .filter(({ pillar }) => pillar?.verdict === "strong" || pillar?.verdict === "weak" || pillar?.verdict === "unknown")
+  if (!tier && pillars.length === 0) return null
+  const visiblePillars = compact ? pillars.filter(({ key }) => key === "school" || key === "company") : pillars
+  return (
+    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+      {tier ? (
+        <Badge tone={tierTone(tier)}>{compact ? `AI ${tierShortLabel(tier)}` : `AI suggests ${tierShortLabel(tier)}`}</Badge>
+      ) : null}
+      {visiblePillars.map(({ key, label, pillar }) => {
+        const tone = pillarTone(pillar?.verdict)
+        return (
+          <span
+            key={key}
+            title={pillar?.evidence ?? ""}
+            style={{
+              fontSize: 11,
+              padding: "2px 8px",
+              borderRadius: 999,
+              background: tone.bg,
+              color: tone.fg,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}: {pillar?.verdict ?? "unknown"}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+function BackgroundEvidencePanel({ evaluation }: { evaluation: SubmissionAiEvaluation | undefined }) {
+  const background = evaluation?.background
+  const pillars = BACKGROUND_PILLARS
+    .map(({ key, label }) => ({ key, label, pillar: background?.[key] }))
+    .filter(({ pillar }) => pillar?.verdict === "strong" || pillar?.verdict === "weak" || pillar?.verdict === "unknown")
+  const education = evaluation?.research?.education ?? []
+  const tier = suggestedCandidateTier(evaluation)
+  if (!tier && pillars.length === 0 && education.length === 0) return null
+  return (
+    <div style={{ border: "1px solid #eee6da", borderRadius: 8, padding: 10, background: "#fff", display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 12, color: "#4b3a2e" }}>Tier & background attachment</strong>
+        {tier ? (
+          <span style={{ fontSize: 11, color: "#6f6256" }}>
+            {CANDIDATE_TIER_LABELS[tier]} · hard gaps {hardGapCount(evaluation)}
+          </span>
+        ) : null}
+      </div>
+      <BackgroundSignalChips evaluation={evaluation} />
+      {pillars.map(({ key, label, pillar }) => (
+        pillar?.evidence ? (
+          <div key={key} style={{ fontSize: 12, color: "#555", lineHeight: 1.4 }}>
+            <strong>{label}:</strong> {pillar.evidence}
+          </div>
+        ) : null
+      ))}
+      {education.length > 0 ? (
+        <div style={{ fontSize: 12, color: "#555", lineHeight: 1.4 }}>
+          <strong>Education:</strong>{" "}
+          {education.slice(0, 4).map((entry) => (
+            `${entry.school}${entry.degree ? ` (${entry.degree})` : ""}`
+          )).join(" · ")}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function markGlyph(mark: ChecklistMark): string {
   return mark === "gap" ? "✗" : mark === "flag" ? "⚑" : "✓"
 }
@@ -1293,6 +1404,8 @@ function CandidateReviewPanel({
             <span style={{ color: "#8b7d6d", fontSize: 12 }}>{formatSubmittedDate(submission.createdAtMs ?? 0)}</span>
           </div>
 
+          <BackgroundSignalChips evaluation={submission.aiEvaluation} />
+
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {href && (
@@ -1327,6 +1440,8 @@ function CandidateReviewPanel({
               </div>
             )}
           </div>
+
+          <BackgroundEvidencePanel evaluation={submission.aiEvaluation} />
 
           <CandidateResumePreview
             resumeUrl={submission.candidate?.resumeUrl}
@@ -2132,6 +2247,7 @@ export default function RecruiterBoardOps() {
           <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
             <Badge tone={chip.tone}>{chip.label}</Badge>
             <Badge tone={status.tone}>{status.label}</Badge>
+            <BackgroundSignalChips evaluation={submission.aiEvaluation} compact />
             {viewed && <Badge tone="muted">Viewed</Badge>}
             {commentCount > 0 && (
               <span
