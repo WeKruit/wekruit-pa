@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { AdminPrescreenSessionLink } from "../components/AdminEntityLink.js"
 import { db } from "../lib/firebase.js"
+import { getCandidatePoolCounts, type CandidatePoolCounts } from "../lib/candidate-pool-counts-api.js"
 import { Icon } from "../components/console/Icon.js"
 import {
   Card,
@@ -530,10 +531,18 @@ export function Candidates() {
   const [accountOnly, setAccountOnly] = useState(true)
   const [includeDemoTestInternal, setIncludeDemoTestInternal] = useState(false)
   const [drawer, setDrawer] = useState<Row | null>(null)
+  // TRUE counts over the WHOLE pa-users pool (server-aggregated). The row table
+  // below is still the most recent 500 (a browse sample); these counts are not.
+  const [poolCounts, setPoolCounts] = useState<CandidatePoolCounts | null>(null)
 
   async function refresh() {
     setLoading(true)
     setErr(null)
+    // Pool counts load in parallel and never block / break the row table — if
+    // the callable fails we silently fall back to counts over the loaded rows.
+    void getCandidatePoolCounts()
+      .then(setPoolCounts)
+      .catch(() => undefined)
     try {
       const [docs, nextSourceMap, nextIdentityIndex] = await Promise.all([
         loadUserDocs(),
@@ -654,6 +663,46 @@ export function Candidates() {
       sendblueEligible,
     }
   }, [includeDemoTestInternal, rows])
+
+  // Header cards + STATE/SOURCE/IDENTITY chips render the TRUE whole-pool counts
+  // (server-aggregated) when available; until they load (or if the callable
+  // fails) they fall back to `counts` over the loaded 500 rows. Same shape as
+  // `counts`, so downstream render code is unchanged.
+  const displayCounts = useMemo(() => {
+    if (!poolCounts) return { ...counts, totalPaUsers: rows.length, isTruePool: false }
+    const variant = includeDemoTestInternal ? poolCounts.includingHidden : poolCounts.default
+    const byState = new Map<LifecycleState, number>(
+      Object.entries(variant.byState) as [LifecycleState, number][]
+    )
+    const bySource = new Map<SourceKind, number>(
+      Object.entries(variant.bySource) as [SourceKind, number][]
+    )
+    const byIdentity = new Map<IdentityFilter, number>([
+      ["registered", variant.byIdentity.registered],
+      ["phone_ready", variant.byIdentity.phone_ready],
+      ["phone_bound", variant.byIdentity.phone_bound],
+      ["sendblue_eligible", variant.byIdentity.sendblue_eligible],
+    ])
+    return {
+      byState,
+      bySource,
+      byIdentity,
+      realRows: variant.realRows,
+      accountCandidates: poolCounts.classBreakdown.accountCandidates,
+      externalProspects: poolCounts.classBreakdown.externalProspects,
+      legacySmsProfiles: poolCounts.classBreakdown.legacySmsProfiles,
+      demoPreviewProfiles: poolCounts.classBreakdown.demoPreviewProfiles,
+      syntheticTests: poolCounts.classBreakdown.syntheticTests,
+      internalProfiles: poolCounts.classBreakdown.internalProfiles,
+      identityArtifacts: poolCounts.classBreakdown.identityArtifacts,
+      registered: poolCounts.identityCards.registered,
+      phoneReady: poolCounts.identityCards.phoneReady,
+      phoneBound: poolCounts.identityCards.phoneBound,
+      sendblueEligible: poolCounts.identityCards.sendblueEligible,
+      totalPaUsers: poolCounts.totalPaUsers,
+      isTruePool: true,
+    }
+  }, [counts, includeDemoTestInternal, poolCounts, rows.length])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -798,72 +847,79 @@ export function Candidates() {
 
       <MetricStrip
         items={[
-          { label: "Loaded rows", value: rows.length, tone: "info", sub: "last 500 pa-users by createdAt" },
+          {
+            label: "Pool size",
+            value: displayCounts.isTruePool ? displayCounts.totalPaUsers : rows.length,
+            tone: "info",
+            sub: displayCounts.isTruePool
+              ? `all pa-users · table shows recent ${rows.length}`
+              : "last 500 pa-users by createdAt",
+          },
           {
             label: "Real users",
-            value: counts.realRows,
-            tone: counts.realRows > 0 ? "live" : "neutral",
+            value: displayCounts.realRows,
+            tone: displayCounts.realRows > 0 ? "live" : "neutral",
             sub: includeDemoTestInternal ? "including selected hidden rows" : "default visible pool",
           },
           {
             label: "Candidate accounts",
-            value: counts.accountCandidates,
-            tone: counts.accountCandidates > 0 ? "live" : "neutral",
+            value: displayCounts.accountCandidates,
+            tone: displayCounts.accountCandidates > 0 ? "live" : "neutral",
             sub: "real candidate users",
           },
           {
             label: "Registered",
-            value: counts.registered,
-            tone: counts.registered > 0 ? "live" : "neutral",
+            value: displayCounts.registered,
+            tone: displayCounts.registered > 0 ? "live" : "neutral",
             sub: "has pa-candidate-auth mapping",
           },
           {
             label: "Phone ready",
-            value: counts.phoneReady,
-            tone: counts.phoneReady > 0 ? "live" : "neutral",
+            value: displayCounts.phoneReady,
+            tone: displayCounts.phoneReady > 0 ? "live" : "neutral",
             sub: "valid pa-users.phoneE164",
           },
           {
             label: "Phone-bound",
-            value: counts.phoneBound,
-            tone: counts.phoneBound > 0 ? "live" : "neutral",
+            value: displayCounts.phoneBound,
+            tone: displayCounts.phoneBound > 0 ? "live" : "neutral",
             sub: "has phone handle index",
           },
           {
             label: "Sendblue eligible",
-            value: counts.sendblueEligible,
-            tone: counts.sendblueEligible > 0 ? "live" : "neutral",
+            value: displayCounts.sendblueEligible,
+            tone: displayCounts.sendblueEligible > 0 ? "live" : "neutral",
             sub: "registered + phone ready",
           },
           {
             label: "External prospects",
-            value: counts.externalProspects,
-            tone: counts.externalProspects > 0 ? "hitl" : "neutral",
+            value: displayCounts.externalProspects,
+            tone: displayCounts.externalProspects > 0 ? "hitl" : "neutral",
             sub: "operator-imported sourcing",
           },
           {
             label: "Legacy SMS",
-            value: counts.legacySmsProfiles,
-            tone: counts.legacySmsProfiles > 0 ? "neutral" : "neutral",
+            value: displayCounts.legacySmsProfiles,
+            tone: displayCounts.legacySmsProfiles > 0 ? "neutral" : "neutral",
             sub: "old phone-only rows",
           },
           {
             label: "Demo / preview",
-            value: counts.demoPreviewProfiles,
-            tone: counts.demoPreviewProfiles > 0 ? "neutral" : "neutral",
+            value: displayCounts.demoPreviewProfiles,
+            tone: displayCounts.demoPreviewProfiles > 0 ? "neutral" : "neutral",
             sub: "hidden by default",
           },
           {
             label: "Test / internal",
-            value: counts.syntheticTests + counts.internalProfiles,
-            tone: counts.syntheticTests + counts.internalProfiles > 0 ? "neutral" : "neutral",
+            value: displayCounts.syntheticTests + displayCounts.internalProfiles,
+            tone: displayCounts.syntheticTests + displayCounts.internalProfiles > 0 ? "neutral" : "neutral",
             sub: "hidden unless included",
           },
           {
             label: "Opted out",
-            value: counts.byState.get("opted_out") ?? 0,
+            value: displayCounts.byState.get("opted_out") ?? 0,
             tone:
-              (counts.byState.get("opted_out") ?? 0) > 0
+              (displayCounts.byState.get("opted_out") ?? 0) > 0
                 ? "hitl"
                 : "neutral",
             sub: "do-not-contact pool",
@@ -890,7 +946,7 @@ export function Candidates() {
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
           <FilterRow label="State">
             {LIFECYCLE_ORDER.map((s) => {
-              const n = counts.byState.get(s) ?? 0
+              const n = displayCounts.byState.get(s) ?? 0
               if (n === 0) return null
               const active = stateFilter.has(s)
               return (
@@ -908,7 +964,7 @@ export function Candidates() {
           </FilterRow>
           <FilterRow label="Source">
             {SOURCE_ORDER.map((s) => {
-              const n = counts.bySource.get(s) ?? 0
+              const n = displayCounts.bySource.get(s) ?? 0
               if (n === 0) return null
               const active = sourceFilter.has(s)
               return (
@@ -926,7 +982,7 @@ export function Candidates() {
           </FilterRow>
           <FilterRow label="Identity">
             {IDENTITY_FILTERS.map(({ key, label, tone }) => {
-              const n = counts.byIdentity.get(key) ?? 0
+              const n = displayCounts.byIdentity.get(key) ?? 0
               if (n === 0) return null
               const active = identityFilter.has(key)
               return (
