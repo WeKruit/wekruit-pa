@@ -214,7 +214,14 @@ export default function PublicJob() {
     // Stamp ?source=… into the wko_source cookie on first paint so the
     // subsequent CV-ingest POST has the right attribution available via
     // peekSource(). Idempotent — safe to run on every mount.
-    resolveSource()
+    const src = resolveSource()
+    if (src !== "candidate") {
+      void trackEvent("partner_page_view", {
+        source: src,
+        job_id: publicJobId ?? "",
+        path: window.location.pathname,
+      })
+    }
   }, [])
 
   useEffect(() => {

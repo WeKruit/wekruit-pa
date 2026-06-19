@@ -284,6 +284,7 @@ export {
 // rollups, and paginated session pages over pa-prescreen-sessions (the
 // client-side limit(75) reads undercounted).
 export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
+export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats.js"
 // Identity-conflict resolve/dismiss + true counts — client Firestore writes
 // to pa-candidate-identity-conflicts are rules-denied, so the dashboard
 // /admin/identity-conflicts page goes through this callable.

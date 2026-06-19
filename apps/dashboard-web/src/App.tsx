@@ -77,6 +77,7 @@ import { QrCampaigns } from "./pages/QrCampaigns.js"
 import OutreachOps from "./pages/OutreachOps.js"
 // Batch human-approve-then-send queue (pa-pending-outbound). Send is gated.
 import PendingOutbound from "./pages/PendingOutbound.js"
+import PartnerStats from "./pages/PartnerStats.js"
 // v2.0 S7 - job-scoped passed candidate snapshots.
 import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
@@ -246,6 +247,7 @@ export default function App() {
           <Route path="/admin/ats-inbound" element={<AtsInbound />} />
           <Route path="/admin/bulk-resumes" element={<BulkResumes />} />
           <Route path="/admin/outreach-ops" element={<OutreachOps />} />
+          <Route path="/admin/partner-stats" element={<PartnerStats />} />
           {/* Batch human-approve-then-send queue (pa-pending-outbound). */}
           <Route path="/admin/pending-outbound" element={<PendingOutbound />} />
           {/* v1.9 Phase 88 — Sendblue number pool admin. */}

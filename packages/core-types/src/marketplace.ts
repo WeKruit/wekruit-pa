@@ -518,6 +518,7 @@ export const CandidateJobStateDocSchema = z.object({
   outboundId: z.string().min(1).optional(),
   latestMatchId: z.string().min(1).optional(),
   archivedAt: TimestampSchema.optional(),
+  awaitingHmResponse: z.boolean().optional(),
 })
 export type CandidateJobStateDoc = z.infer<typeof CandidateJobStateDocSchema>
 
