@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { buildVoiceCallTools, OUTBOUND_BOOKINGS_COLLECTION, VOICE_CALL_OFFERS_COLLECTION } from "./voice-call-tools.js"
+import {
+  buildVoiceCallTools,
+  hasPendingVoiceCallOfferForUser,
+  OUTBOUND_BOOKINGS_COLLECTION,
+  VOICE_CALL_OFFERS_COLLECTION,
+} from "./voice-call-tools.js"
 import type { ClaireToolContext } from "../types.js"
 
 type Doc = Record<string, unknown>
@@ -412,4 +417,68 @@ test("offer_voice_call requires a job for prescreen", async () => {
   assert.equal(out.ok, false)
   assert.equal(out.reason, "missing_jobId")
   assert.equal(db.docs.size, 0)
+})
+
+const NOW_MS = Date.parse("2026-06-18T12:00:00.000Z")
+
+test("hasPendingVoiceCallOfferForUser is true for a live pending offer", async () => {
+  const db = new FakeDb()
+  db.docs.set(`${VOICE_CALL_OFFERS_COLLECTION}/offer-live`, {
+    userId: "u1",
+    sessionId: "chat1",
+    purpose: "prescreen",
+    paJobId: "job-1",
+    phoneE164: DEV_PHONE,
+    status: "pending",
+    createdAt: "2026-06-18T12:00:00.000Z",
+    expiresAt: "2026-06-18T12:10:00.000Z",
+    updatedAt: "2026-06-18T12:00:00.000Z",
+  })
+
+  assert.equal(await hasPendingVoiceCallOfferForUser(db as never, "u1", NOW_MS), true)
+})
+
+test("hasPendingVoiceCallOfferForUser ignores expired pending offers", async () => {
+  const db = new FakeDb()
+  db.docs.set(`${VOICE_CALL_OFFERS_COLLECTION}/offer-expired`, {
+    userId: "u1",
+    sessionId: "chat1",
+    purpose: "prescreen",
+    paJobId: "job-1",
+    phoneE164: DEV_PHONE,
+    status: "pending",
+    createdAt: "2026-06-18T11:40:00.000Z",
+    expiresAt: "2026-06-18T11:50:00.000Z",
+    updatedAt: "2026-06-18T11:40:00.000Z",
+  })
+
+  assert.equal(await hasPendingVoiceCallOfferForUser(db as never, "u1", NOW_MS), false)
+})
+
+test("hasPendingVoiceCallOfferForUser ignores declined offers and other users", async () => {
+  const db = new FakeDb()
+  db.docs.set(`${VOICE_CALL_OFFERS_COLLECTION}/offer-declined`, {
+    userId: "u1",
+    sessionId: "chat1",
+    purpose: "prescreen",
+    paJobId: "job-1",
+    phoneE164: DEV_PHONE,
+    status: "declined",
+    createdAt: "2026-06-18T12:00:00.000Z",
+    expiresAt: "2026-06-18T12:10:00.000Z",
+    updatedAt: "2026-06-18T12:00:00.000Z",
+  })
+  db.docs.set(`${VOICE_CALL_OFFERS_COLLECTION}/offer-other-user`, {
+    userId: "u2",
+    sessionId: "chat2",
+    purpose: "prescreen",
+    paJobId: "job-1",
+    phoneE164: DEV_PHONE,
+    status: "pending",
+    createdAt: "2026-06-18T12:00:00.000Z",
+    expiresAt: "2026-06-18T12:10:00.000Z",
+    updatedAt: "2026-06-18T12:00:00.000Z",
+  })
+
+  assert.equal(await hasPendingVoiceCallOfferForUser(db as never, "u1", NOW_MS), false)
 })

@@ -162,6 +162,49 @@ export async function hasPendingVoiceCallOffer(ctx: ClaireToolContext): Promise<
   return (await findLatestPendingOffer(ctx)) !== null
 }
 
+/**
+ * userId-scoped pending-offer existence check (non-expired). Used by the
+ * pre-Claire prescreen gate (prescreen-turn-handler.ts) to decide whether a
+ * bare "yes"/"no" arriving DURING an active text prescreen is answering a live
+ * voice-call offer (→ yield the turn to Claire's voice resolver) rather than a
+ * text-prescreen answer. Without this, runPrescreenTurnIfActive scores the "yes"
+ * as a prescreen answer and the offer never dials.
+ *
+ * Scoped by userId (not sessionId) because voice is dev-phone-only — one phone
+ * per user, so the sessionId-scoped offer always belongs to that user. Reuses
+ * the SAME collection + parseOfferDoc + isExpired as findLatestPendingOffer so
+ * the TTL truth lives in one place.
+ */
+export async function hasPendingVoiceCallOfferForUser(
+  db: {
+    collection: (name: string) => {
+      where: (field: string, op: string, value: unknown) => {
+        where: (field: string, op: string, value: unknown) => {
+          limit: (n: number) => {
+            get: () => Promise<{
+              docs?: Array<{ id: string; data: () => Record<string, unknown>; ref: PendingOffer["ref"] }>
+            }>
+          }
+        }
+      }
+    }
+  },
+  userId: string,
+  nowMs: number,
+): Promise<boolean> {
+  const snap = await db
+    .collection(VOICE_CALL_OFFERS_COLLECTION)
+    .where("userId", "==", userId)
+    .where("status", "==", "pending")
+    .limit(20)
+    .get()
+  for (const doc of snap.docs ?? []) {
+    const parsed = parseOfferDoc(doc.id, doc.data(), doc.ref)
+    if (parsed && !isExpired(parsed.data, nowMs)) return true
+  }
+  return false
+}
+
 function isExpired(offer: VoiceCallOfferDoc, nowMs: number): boolean {
   const expiresMs = Date.parse(offer.expiresAt)
   return Number.isFinite(expiresMs) && expiresMs <= nowMs

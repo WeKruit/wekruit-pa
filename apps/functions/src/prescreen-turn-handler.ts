@@ -64,6 +64,9 @@ import {
   runAgenticPrescreenTurn,
   type AgenticRunTurnResult,
 } from "./prescreen-agentic-turn.js"
+import { isClaireVoiceDevPhone } from "./voice/dev-phone-gate.js"
+import { isExplicitVoicePrescreenRequest } from "./claire-agent/voice-prescreen-request-router.js"
+import { parseLowInfoCallConfirmation } from "./claire-agent/voice-call-ack-guard.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 21 * 24 * 60 * 60 * 1000
 const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
@@ -1011,6 +1014,47 @@ export async function runPrescreenTurnIfActive(
     log,
   })
   if (safetyBlock) return safetyBlock
+
+  // ── VOICE-CALL GATE (Adam 2026-06-19, live E2E) ──────────────────────────────────────────────────
+  // An explicit phone-prescreen request ("I want to prescreen <role> on phone call"), or a yes/no
+  // answering a LIVE voice-call offer, must be owned by Claire's voice tools — NOT scored as a
+  // text-prescreen answer. This handler runs BEFORE the thin-Claire voice path (cutover.ts) in BOTH the
+  // coalescer (paMessageCoalescer step 3a) and the direct onPaInbound path, so without this yield an
+  // active prescreen session swallows the request into the keyword/agentic reducer. That was the live
+  // failure: "I want to prescreen Sekai … on phone call" got a text prescreen question instead of the
+  // "can I call you now?" offer. We yield the turn (handled:false) WITHOUT writing anything to the
+  // session — the cutover voice handlers (offer / resolve) then run. Dev-phone-only, matching the voice
+  // lane's own gate; non-dev phones keep the text-prescreen path byte-for-byte.
+  if (isClaireVoiceDevPhone(args.toE164)) {
+    if (isExplicitVoicePrescreenRequest(args.replyText)) {
+      log("prescreen.turn.yielded_to_voice_call", {
+        userId: args.userId,
+        sessionId: lookup.sessionId,
+        reason: "explicit_voice_prescreen_request",
+      })
+      return { handled: false, sessionId: lookup.sessionId }
+    }
+    const callAnswer = parseLowInfoCallConfirmation(args.replyText)
+    if (callAnswer !== null) {
+      try {
+        const { hasPendingVoiceCallOfferForUser } = await import("./claire-agent/tools/voice-call-tools.js")
+        if (await hasPendingVoiceCallOfferForUser(args.db, args.userId, Date.now())) {
+          log("prescreen.turn.yielded_to_voice_call", {
+            userId: args.userId,
+            sessionId: lookup.sessionId,
+            reason: "pending_offer_resolution",
+          })
+          return { handled: false, sessionId: lookup.sessionId }
+        }
+      } catch (err) {
+        log("prescreen.turn.voice_offer_check_failed", {
+          userId: args.userId,
+          sessionId: lookup.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+  }
 
   if (lookup.kind === "recent_terminal") {
     const shouldGuard = await shouldHandleRecentTerminalSession({
