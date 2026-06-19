@@ -270,3 +270,115 @@ test("WekruitLLM passes opts.agent through to AgentTurnContext.agent", async () 
   assert.equal(capture.ctx?.agent, customAgent)
   assert.equal(capture.ctx?.agent.model, "gpt-5.4-nano")
 })
+
+// ── v2.3 P0 — pipeline-adapter mode ─────────────────────────────────────────
+
+import type { VoicePipelineLite, RunTurnActionLite } from "../turn-loop.js"
+
+function fakePipeline(
+  result: { text: string; action: RunTurnActionLite },
+  capture: { input?: unknown } = {},
+): VoicePipelineLite {
+  return {
+    async runTurn(input) {
+      capture.input = input
+      return result
+    },
+  }
+}
+
+test("pipeline mode: scores the LAST user message and streams the pipeline reply", async () => {
+  const capture: { input?: any } = {}
+  const w = new WekruitLLM({
+    pipelineMode: {
+      voicePipeline: fakePipeline(
+        { text: "What did you personally own?", action: { kind: "advance", fromQId: "a", toQId: "b" } },
+        capture,
+      ),
+      sessionId: "ps_sekai",
+      userId: "u_voice",
+      lang: "en",
+      nowIso: () => "2026-06-19T00:00:00.000Z",
+    },
+  })
+  const ctx = new llm.ChatContext()
+  ctx.addMessage({ role: "system", content: "persona" })
+  ctx.addMessage({ role: "user", content: "first answer" })
+  ctx.addMessage({ role: "assistant", content: "ok" })
+  ctx.addMessage({ role: "user", content: "I built an autonomous coding agent." })
+
+  const out = await collect(w.chat({ chatCtx: ctx }))
+  const text = out.map((c) => c.delta?.content ?? "").join("")
+
+  assert.equal(capture.input?.reply, "I built an autonomous coding agent.")
+  assert.equal(capture.input?.sessionId, "ps_sekai")
+  assert.equal(capture.input?.lang, "en")
+  assert.equal(capture.input?.judgeCtx?.userId, "u_voice")
+  assert.equal(text, "What did you personally own?")
+})
+
+test("pipeline mode: fires onPipelineTerminal on a terminal action", async () => {
+  let terminal: RunTurnActionLite | null = null
+  const w = new WekruitLLM({
+    pipelineMode: {
+      voicePipeline: fakePipeline({
+        text: "That's it — thank you.",
+        action: { kind: "terminal", terminal: "PASS", reason: "done" },
+      }),
+      sessionId: "ps_sekai",
+      userId: "u_voice",
+      lang: "en",
+      onPipelineTerminal: (a) => {
+        terminal = a
+      },
+    },
+  })
+  const ctx = new llm.ChatContext()
+  ctx.addMessage({ role: "user", content: "final answer" })
+
+  const out = await collect(w.chat({ chatCtx: ctx }))
+  assert.equal(out.map((c) => c.delta?.content ?? "").join(""), "That's it — thank you.")
+  assert.ok(terminal, "onPipelineTerminal should fire")
+  assert.equal((terminal as RunTurnActionLite).kind, "terminal")
+})
+
+test("pipeline mode: redacts PII before streaming when no consent", async () => {
+  const w = new WekruitLLM({
+    pipelineMode: {
+      voicePipeline: fakePipeline({
+        text: "Got it, I'll send details to me@example.com shortly.",
+        action: { kind: "clarify", qId: "a", kAfter: 1 },
+      }),
+      sessionId: "ps_sekai",
+      userId: "u_voice",
+      lang: "en",
+      redactProfile: { userId: "u_voice", missingFields: [] },
+    },
+  })
+  const ctx = new llm.ChatContext()
+  ctx.addMessage({ role: "user", content: "ok" })
+
+  const text = (await collect(w.chat({ chatCtx: ctx }))).map((c) => c.delta?.content ?? "").join("")
+  assert.ok(!text.includes("me@example.com"), `email must be redacted, got: ${text}`)
+})
+
+test("pipeline mode: empty user message → no runTurn call, no content", async () => {
+  const capture: { input?: unknown } = {}
+  const w = new WekruitLLM({
+    pipelineMode: {
+      voicePipeline: fakePipeline(
+        { text: "should not be used", action: { kind: "advance", fromQId: "a", toQId: "b" } },
+        capture,
+      ),
+      sessionId: "ps_sekai",
+      userId: "u_voice",
+      lang: "en",
+    },
+  })
+  const ctx = new llm.ChatContext()
+  ctx.addMessage({ role: "system", content: "persona only, no user turn" })
+
+  const out = await collect(w.chat({ chatCtx: ctx }))
+  assert.equal(capture.input, undefined, "runTurn must not be called without a user message")
+  assert.equal(out.map((c) => c.delta?.content ?? "").join(""), "")
+})

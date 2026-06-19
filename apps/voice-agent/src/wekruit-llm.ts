@@ -32,6 +32,36 @@ import {
 } from "@pa/agent-runtime"
 import type { AgentDef, ChatMessage as PaChatMessage } from "@pa/core-types"
 import { randomUUID } from "node:crypto"
+import type { RunTurnActionLite, VoicePipelineLite } from "./turn-loop.js"
+import type { VoiceLang, VoiceUserProfile } from "./voice-context-types.js"
+import { redactForVoice } from "./pii-handler.js"
+
+/**
+ * v2.3 P0 — WekruitLLM in PIPELINE-ADAPTER mode (Adam-chosen approach,
+ * 2026-06-19). When `voicePipeline` is set, `run()` stops free-styling via the
+ * generic `runAgentTurnStream` brain and instead drives the SAME server-side
+ * prescreen/onboarding pipeline (runPrescreenTurn + KeywordSet judge + clarify
+ * composer) that the text channel uses. The LAST user message in the LK
+ * ChatContext is the candidate's reply; the pipeline scores it and returns the
+ * next question / clarify / terminal text, which we stream back as the single
+ * assistant turn. This kills the dueling-brain bug where AgentSession's generic
+ * LLM and a side-channel `session.say(pipeline)` both spoke. Back-compat: with
+ * `voicePipeline` unset the generic path is unchanged.
+ */
+export interface VoicePipelineModeOptions {
+  /** The channel-agnostic prescreen/onboarding runner (DI'd; HTTP-backed in prod). */
+  voicePipeline: VoicePipelineLite
+  /** prescreenSessionId (prescreen) or bookingId (onboarding). */
+  sessionId: string
+  userId: string
+  lang: VoiceLang
+  /** PII redaction profile (L6) applied to agent text before TTS. */
+  redactProfile?: VoiceUserProfile
+  /** Fired when the pipeline returns a terminal/complete action so the worker can close the call. */
+  onPipelineTerminal?: (action: RunTurnActionLite) => void | Promise<void>
+  /** Test seam — defaults to Date#toISOString. */
+  nowIso?: () => string
+}
 
 export interface WekruitLLMOptions {
   /** Override the AgentDef passed to runAgentTurnStream. */
@@ -42,6 +72,11 @@ export interface WekruitLLMOptions {
   systemPromptFallback?: string
   /** Test seam — swap the runtime entrypoint. Production should leave unset. */
   __runAgentTurnStream?: typeof runAgentTurnStream
+  /**
+   * P0 pipeline-adapter mode. When set, `run()` drives the prescreen/onboarding
+   * pipeline instead of the generic brain. The single source of in-call speech.
+   */
+  pipelineMode?: VoicePipelineModeOptions
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -112,6 +147,13 @@ export class WekruitLLMStream extends llm.LLMStream {
   }
 
   protected async run(): Promise<void> {
+    // ── P0 PIPELINE-ADAPTER MODE ─────────────────────────────────────────────
+    // Drive the prescreen/onboarding pipeline as the SOLE in-call brain.
+    if (this.streamOpts.pipelineMode) {
+      await this.runPipelineTurn(this.streamOpts.pipelineMode)
+      return
+    }
+
     const agent =
       this.streamOpts.agent ?? makeDefaultVoiceAgent(this.streamOpts.model)
     const fallback =
@@ -145,6 +187,77 @@ export class WekruitLLMStream extends llm.LLMStream {
     }
     emitFinalUsageChunk(this.queue, streamId, finalUsage)
   }
+
+  /**
+   * Pipeline-adapter turn: take the candidate's latest reply (last user message
+   * in the LK ChatContext), score it via the prescreen/onboarding pipeline, and
+   * stream the next question/clarify/terminal text as this assistant turn. PII
+   * is redacted (L6) before TTS. On a terminal/complete action the
+   * `onPipelineTerminal` hook lets the worker close the call.
+   */
+  private async runPipelineTurn(mode: VoicePipelineModeOptions): Promise<void> {
+    const streamId = randomUUID()
+    const reply = lastUserMessageText(this.chatCtx)
+    if (!reply) {
+      // No candidate utterance to score yet (e.g. an initial generate-reply
+      // with an empty turn). Emit nothing rather than free-styling.
+      emitFinalUsageChunk(this.queue, streamId, undefined)
+      return
+    }
+
+    const nowIso = (mode.nowIso ?? (() => new Date().toISOString()))()
+    let result: { text: string; action: RunTurnActionLite }
+    try {
+      result = await mode.voicePipeline.runTurn({
+        sessionId: mode.sessionId,
+        reply,
+        lang: mode.lang,
+        nowIso,
+        judgeCtx: { userId: mode.userId, turnId: `${mode.sessionId}:${nowIso}` },
+      })
+    } catch {
+      // Pipeline failure must not crash the call; stay silent this turn.
+      if (this.abortController.signal.aborted) return
+      emitFinalUsageChunk(this.queue, streamId, undefined)
+      return
+    }
+    if (this.abortController.signal.aborted) return
+
+    const speakText = mode.redactProfile
+      ? redactForVoice({ agentText: result.text, profile: mode.redactProfile }).speakText
+      : result.text
+
+    if (speakText && speakText.length > 0) {
+      this.queue.put({
+        id: streamId,
+        delta: { role: "assistant", content: speakText },
+      })
+    }
+
+    const kind = result.action?.kind
+    if (kind === "terminal" || kind === "complete") {
+      try {
+        await mode.onPipelineTerminal?.(result.action)
+      } catch {
+        // The close hook is best-effort; never fail the turn on it.
+      }
+    }
+
+    emitFinalUsageChunk(this.queue, streamId, undefined)
+  }
+}
+
+/** Extract the text of the LAST user message in a LK ChatContext (the
+ *  candidate's current reply). Returns "" when there is no user message. */
+export function lastUserMessageText(chatCtx: llm.ChatContext): string {
+  const items = chatCtx.items ?? []
+  for (let k = items.length - 1; k >= 0; k--) {
+    const msg = asChatMessage(items[k])
+    if (msg && msg.role === "user") {
+      return (msg.textContent ?? "").trim()
+    }
+  }
+  return ""
 }
 
 function emitFinalUsageChunk(
