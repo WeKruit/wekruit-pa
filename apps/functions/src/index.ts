@@ -285,6 +285,15 @@ export {
 // client-side limit(75) reads undercounted).
 export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
 export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats.js"
+
+// Negative-feedback review dashboard — classify candidate↔Claire conversations
+// by sentiment (daily scan + manual re-run) and serve the unhappy ones with a
+// transcript preview + "how to improve" note to /admin/conversation-feedback.
+export {
+  paConversationSentimentScan,
+  paConversationSentimentScanRun,
+} from "./conversation-sentiment-scan.js"
+export { paAdminConversationFeedback } from "./admin-conversation-feedback.js"
 // Operations Overview dashboard — daily time-series of new users (by channel),
 // interviews conducted, and candidates moved to client. Admin /admin/operations.
 export { paAdminOpsMetrics } from "./admin-ops-metrics.js"

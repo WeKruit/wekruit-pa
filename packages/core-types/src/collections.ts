@@ -25,6 +25,8 @@ export const PA_COLLECTIONS = {
   memoryActions: "pa-memory-actions",
   /** Rolled-up conversation summaries */
   conversationSummaries: "pa-conversation-summaries",
+  /** Per-candidate conversation sentiment classification (negative-feedback review dashboard) */
+  conversationSentiment: "pa-conversation-sentiment",
   /** GCS pointer rows for archived month-bucketed messages */
   messageArchives: "pa-message-archives",
   /** Connector / tool invocation ledger */
