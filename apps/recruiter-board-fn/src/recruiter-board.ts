@@ -1745,7 +1745,9 @@ export const paRecruiterAccess = onRequest(
 )
 
 export const paRecruiterMe = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  // First call of every recruiter session. minInstances:1 keeps one warm so a
+  // cold start can't surface as a transient profile-load failure on the client.
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, minInstances: 1 },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -1756,13 +1758,20 @@ export const paRecruiterMe = onRequest(
       res.status(405).json({ ok: false, reason: "method_not_allowed" })
       return
     }
-    const recruiter = await authenticateRecruiter(getFirestore(), req)
-    if (!recruiter) {
-      res.status(401).json({ ok: false, reason: "unauthorized" })
-      return
+    try {
+      const recruiter = await authenticateRecruiter(getFirestore(), req)
+      if (!recruiter) {
+        res.status(401).json({ ok: false, reason: "unauthorized" })
+        return
+      }
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, recruiterId: recruiter.recruiterId, recruiter })
+    } catch (err) {
+      // A transient Firestore/auth error must be observable (it previously
+      // surfaced as an unlogged 500) and return a clean body the client retries.
+      logger.error("paRecruiterMe_failed", { error: String(err) })
+      res.status(500).json({ ok: false, reason: "internal_error" })
     }
-    res.set("Cache-Control", "private, max-age=0, no-store")
-    res.status(200).json({ ok: true, recruiterId: recruiter.recruiterId, recruiter })
   },
 )
 
