@@ -59,6 +59,15 @@ export interface VoicePipelineModeOptions {
   redactProfile?: VoiceUserProfile
   /** Fired when the pipeline returns a terminal/complete action so the worker can close the call. */
   onPipelineTerminal?: (action: RunTurnActionLite) => void | Promise<void>
+  /**
+   * Voice-appropriate spoken close. The text-prescreen terminal copy is
+   * SMS-flavored ("i'll text you the next step here"), which reads wrong aloud.
+   * When set, the agent SPEAKS this on a terminal/complete action instead of the
+   * pipeline's terminal text — the summary + job-rec opt-in are handled by the
+   * post-call text (the webhook source of truth), so the call just needs to
+   * close warmly ("that's it — thank you").
+   */
+  terminalCloseText?: string
   /** Test seam — defaults to Date#toISOString. */
   nowIso?: () => string
 }
@@ -223,9 +232,14 @@ export class WekruitLLMStream extends llm.LLMStream {
     }
     if (this.abortController.signal.aborted) return
 
+    const kind = result.action?.kind
+    const isTerminal = kind === "terminal" || kind === "complete"
+    // On terminal, speak the voice-appropriate close (if provided) rather than the
+    // SMS-flavored terminal copy; the summary + job-rec opt-in ride the post-call text.
+    const rawText = isTerminal && mode.terminalCloseText ? mode.terminalCloseText : result.text
     const speakText = mode.redactProfile
-      ? redactForVoice({ agentText: result.text, profile: mode.redactProfile }).speakText
-      : result.text
+      ? redactForVoice({ agentText: rawText, profile: mode.redactProfile }).speakText
+      : rawText
 
     if (speakText && speakText.length > 0) {
       this.queue.put({
@@ -234,8 +248,7 @@ export class WekruitLLMStream extends llm.LLMStream {
       })
     }
 
-    const kind = result.action?.kind
-    if (kind === "terminal" || kind === "complete") {
+    if (isTerminal) {
       try {
         await mode.onPipelineTerminal?.(result.action)
       } catch {

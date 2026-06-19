@@ -382,3 +382,29 @@ test("pipeline mode: empty user message → no runTurn call, no content", async 
   assert.equal(capture.input, undefined, "runTurn must not be called without a user message")
   assert.equal(out.map((c) => c.delta?.content ?? "").join(""), "")
 })
+
+test("pipeline mode: speaks terminalCloseText (not the SMS-flavored terminal copy) on terminal", async () => {
+  let fired = false
+  const w = new WekruitLLM({
+    pipelineMode: {
+      voicePipeline: fakePipeline({
+        text: "that's the whole screen - i'll text you the next step here either way.",
+        action: { kind: "terminal", terminal: "PASS", reason: "done" },
+      }),
+      sessionId: "ps_sekai",
+      userId: "u_voice",
+      lang: "en",
+      terminalCloseText: "That's everything I needed — thank you so much for your time.",
+      onPipelineTerminal: () => {
+        fired = true
+      },
+    },
+  })
+  const ctx = new llm.ChatContext()
+  ctx.addMessage({ role: "user", content: "final answer" })
+
+  const text = (await collect(w.chat({ chatCtx: ctx }))).map((c) => c.delta?.content ?? "").join("")
+  assert.equal(text, "That's everything I needed — thank you so much for your time.")
+  assert.ok(!text.includes("i'll text you"), "SMS-flavored close must not be spoken")
+  assert.ok(fired, "onPipelineTerminal still fires")
+})

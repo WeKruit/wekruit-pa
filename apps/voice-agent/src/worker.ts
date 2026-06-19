@@ -256,6 +256,10 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
                 userId: callContext.userProfile.userId,
                 lang,
                 redactProfile: callContext.userProfile,
+                terminalCloseText:
+                  lang === "zh"
+                    ? "好的，我需要的就这些了——非常感谢你抽时间。我们很快会再联系你。"
+                    : "That's everything I needed — thank you so much for your time. We'll be in touch shortly.",
                 onPipelineTerminal: async () => {
                   await closeForTerminal()
                 },
