@@ -287,6 +287,9 @@ export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
 // Operations Overview dashboard — daily time-series of new users (by channel),
 // interviews conducted, and candidates moved to client. Admin /admin/operations.
 export { paAdminOpsMetrics } from "./admin-ops-metrics.js"
+// Candidate pool TRUE counts (whole pool, not the 500-row browse sample) for
+// the /admin/candidates header cards + STATE/SOURCE/IDENTITY breakdowns.
+export { paAdminCandidatePoolCounts } from "./admin-candidate-pool-counts.js"
 // Rejected-candidates-by-tier browse + AI re-evaluate-for-new-roles action.
 // Tier is stamped at rejection (prescreen + recruiter) via applyGlobalCandidateTier.
 export { paAdminRejectedCandidatesSnapshot } from "./admin-rejected-candidates.js"
