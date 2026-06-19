@@ -35,7 +35,7 @@
  *   session.say(buildConsentPrompt(ctx))           ← L8
  */
 
-import { createTurnLoop, type VoicePipelineLite } from "./turn-loop.js"
+import { type VoicePipelineLite } from "./turn-loop.js"
 import {
   registerEventHandlers,
   type RegisterSinks,
@@ -200,27 +200,41 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         ? await opts.buildPipeline(callContext)
         : await defaultBuildPipeline(callContext)
 
-      const turnLoop = createTurnLoop({
-        pipeline,
-        context: callContext,
-        log,
-      })
-
       // ── Build AgentSession via SDK ───────────────────────────────────────
       // Adaptive turn detection — MultilingualModel from the LiveKit SDK
       // owns endpointing decisions internally. We DO NOT pass a numeric
       // endpointing delay anywhere; the adaptive model is the policy.
       // (Lock L7 anti-hardcode; see __tests__/no-min-endpointing.test.ts.)
+      // Deferred terminal closer — set after the session exists so the pipeline
+      // adapter's onPipelineTerminal can end the call once the final line plays.
+      let closeForTerminal: () => Promise<void> = async () => {}
+      const lang = callContext.userProfile.preferredLang ?? "en"
+      const pipelineSessionId =
+        callContext.purpose === "prescreen" ? callContext.prescreenSessionId : callContext.bookingId
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let session: any
       if (!opts.defineAgent) {
         const { voice, inference } = livekitMod
         const vad = await sileroMod.VAD.load()
-        // LK @livekit/agents v1.4.2 — TurnDetectionMode is now a string
-        // ('vad' | 'stt' | 'realtime_llm' | 'manual') or a _TurnDetector
-        // instance. The old `new voice.MultilingualModel()` class was
-        // removed; pass `'vad'` to rely on Silero EOU detection.
-        const turnDetection = "vad" as const
+        // P1 turn detector (Adam 2026-06-19): prefer the contextual end-of-utterance
+        // model over plain VAD endpointing. Defensive — fall back to 'vad' if the
+        // installed SDK doesn't expose inference.TurnDetector (no tsc safety here;
+        // livekitMod is any). Silero VAD stays loaded for interruption handling.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let turnDetection: any = "vad"
+        try {
+          if (inference && typeof inference.TurnDetector === "function") {
+            turnDetection = new inference.TurnDetector()
+            log("voice.worker.turn_detector", { bookingId, mode: "inference" })
+          }
+        } catch (err) {
+          turnDetection = "vad"
+          log("voice.worker.turn_detector_fallback_vad", {
+            bookingId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
         const stt = new deepgramMod.STT({ model: "nova-3" })
         // Deepgram TTS model slug must be a concrete voice (aura-1) — passing
         // the bare family name "aura-2" returns WS handshake 400 from
@@ -228,11 +242,25 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         // server response: 400'` and immediately tears the session down
         // (no audio reaches the SIP candidate leg).
         const tts = new deepgramMod.TTS({ model: "aura-asteria-en" })
-        // W2: in-process WekruitLLM speaks directly to runAgentTurnStream.
-        // No HTTP shim, no openai plugin, no WEKRUIT_LLM_SHIM_URL.
-        const llm = (opts.buildLLM ?? buildDefaultLLM)()
-        // inference fallback (LK Cloud-managed) — kept inert; WekruitLLM is
-        // canonical.
+        // P0 single-brain (Adam 2026-06-19): WekruitLLM in PIPELINE-ADAPTER mode is
+        // the SOLE in-call brain — every spoken line is the real prescreen/onboarding
+        // pipeline output (runPrescreenTurn + KeywordSet judge + clarify composer).
+        // No generic free-styling, no `session.say` side-channel (the dueling-brain
+        // bug that produced repeated "that helps" filler over the real questions).
+        const llm = opts.buildLLM
+          ? opts.buildLLM()
+          : new WekruitLLM({
+              pipelineMode: {
+                voicePipeline: pipeline,
+                sessionId: pipelineSessionId,
+                userId: callContext.userProfile.userId,
+                lang,
+                redactProfile: callContext.userProfile,
+                onPipelineTerminal: async () => {
+                  await closeForTerminal()
+                },
+              },
+            })
         void inference
         session = new voice.AgentSession({ vad, turnDetection, stt, llm, tts })
       } else {
@@ -246,34 +274,30 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           start: async () => {},
         }
       }
+      closeForTerminal = async () => {
+        try {
+          await session.aclose?.()
+        } catch (err) {
+          log("voice.worker.terminal_close_failed", {
+            bookingId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
 
       // ── Wire 7 event handlers (L7) ───────────────────────────────────────
       const sinks: RegisterSinks = {
         log,
-        async onUserSpeechCommitted({ transcript, lang }) {
-          const out = await turnLoop.onUserCommit({
-            reply: transcript,
-            nowIso: new Date().toISOString(),
-            lang: lang === "zh" ? "zh" : "en",
+        onUserSpeechCommitted({ transcript }) {
+          // P0: the pipeline adapter (WekruitLLM pipelineMode) now OWNS the reply,
+          // PII redaction, and terminal close — the AgentSession runs the pipeline
+          // automatically on each user turn. This sink is observability only; calling
+          // the pipeline here would double-score the turn.
+          log("voice.worker.user_speech_committed", {
+            bookingId,
+            purpose: callContext.purpose,
+            chars: transcript.length,
           })
-          if (out.speakText.length > 0) {
-            await session.say(out.speakText)
-          }
-          if (out.action.kind === "terminal" || out.action.kind === "complete") {
-            log("voice.worker.terminal_turn_closing", {
-              bookingId,
-              purpose: callContext.purpose,
-              action: out.action.kind,
-            })
-            try {
-              await session.aclose?.()
-            } catch (err) {
-              log("voice.worker.terminal_close_failed", {
-                bookingId,
-                error: err instanceof Error ? err.message : String(err),
-              })
-            }
-          }
         },
         onConversationItemAdded(p) {
           log("voice.conversation_item_added", { role: p.role, len: p.textContent.length })
@@ -346,20 +370,22 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       // failure (missing bucket, missing GCP creds, transient API error)
       // is caught inside startRecordingEgress; the call continues either
       // way. Per L12 we never self-host — egress is LK Cloud managed.
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const roomName = (ctx.room as any).name ?? bookingId
-        await startRecordingEgress({ roomName, bookingId }, { log })
-      } catch (err) {
+      // P1 latency (Adam 2026-06-19): fire-and-forget so egress setup never blocks
+      // time-to-first-speech. Any failure is caught inside startRecordingEgress and
+      // logged here; the call proceeds regardless.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const egressRoomName = (ctx.room as any).name ?? bookingId
+      void startRecordingEgress({ roomName: egressRoomName, bookingId }, { log }).catch((err) => {
         log("voice.egress.unexpected", {
           error: err instanceof Error ? err.message : String(err),
         })
-      }
+      })
 
       // ── L8 recording consent — first utterance ──────────────────────────
+      // P1 latency: greet as soon as ANY remote (SIP) participant connects; don't
+      // burn up to 15s matching an exact identity the SIP leg may not set.
       const readyParticipant = await waitForRemoteParticipant(ctx.room, {
-        identity: candidateParticipantIdentity,
-        timeoutMs: 15_000,
+        timeoutMs: 5_000,
       })
       if (readyParticipant) {
         log("voice.worker.remote_participant_ready", {
@@ -390,6 +416,34 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         emitConsentSpokenAudit(callContext, consentLine, log)
       } catch (err) {
         log("voice.consent_prompt_failed", {
+          bookingId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+
+      // ── Q1 KICKOFF (Adam 2026-06-19) — voice the first question after consent ──
+      // Prescreen: the first question is in prescreenConfig (it was suppressed at
+      // session creation so the call could greet first). Onboarding: a warm opener;
+      // the pipeline asks the first real onboarding question on the candidate's reply.
+      // Without this the agent sat silent after the consent line until the candidate
+      // spoke first — there was no greeting→Q1.
+      try {
+        let kickoff: string | undefined
+        if (callContext.purpose === "prescreen") {
+          const q0 = callContext.prescreenConfig.questions[0]?.prompt
+          kickoff = q0?.[lang] ?? q0?.en
+        } else {
+          kickoff =
+            lang === "zh"
+              ? "我们开始吧——先跟我说说你在找什么样的机会？"
+              : "Let's get started — tell me a bit about the kind of role you're looking for."
+        }
+        if (kickoff) {
+          await session.say?.(kickoff, { allowInterruptions: true })
+          log("voice.worker.first_question_spoken", { bookingId, purpose: callContext.purpose })
+        }
+      } catch (err) {
+        log("voice.worker.first_question_failed", {
           bookingId,
           error: err instanceof Error ? err.message : String(err),
         })
