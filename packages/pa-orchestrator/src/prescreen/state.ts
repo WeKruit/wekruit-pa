@@ -103,6 +103,14 @@ export interface PreScreenState {
   /** Human-readable reason set on terminal transition. */
   terminalReason?: string
   /**
+   * Last few clarify follow-ups Claire has ALREADY sent this session (cap 6),
+   * across all questions. The clarify composer reads these to avoid repeating
+   * its own openers/phrasings (the "that helps" / "Got it" repetition Adam heard
+   * on the call), and opener rotation keys off the cumulative length instead of
+   * a per-question round that resets to "Got it - " on every new question.
+   */
+  recentClarifyTexts?: string[]
+  /**
    * ALWAYS_ASK deferral stash (Adam 2026-06-14). When the FSM has DECIDED a
    * terminal (PASS/FAIL/HARD_STOP/PAUSE) but an unanswered, not-skipped
    * ALWAYS_ASK question still remains, the pipeline does NOT finalize: it stashes

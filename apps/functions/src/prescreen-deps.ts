@@ -118,8 +118,13 @@ export function normalizePrescreenClarifyTextForRound(text: string, round: numbe
 
 export function makeProductionClarifyComposer(): PreScreenClarifyComposer {
   return async (input) => {
+    // Session-cumulative opener index + already-said list so openers rotate across
+    // the WHOLE call (not reset to "Got it - " each question) and the model avoids
+    // reusing its own prior follow-ups ("that helps" repetition).
+    const priorClarifyTexts = (input.state.recentClarifyTexts ?? []).slice(-5)
+    const sessionClarifyIndex = (input.state.recentClarifyTexts?.length ?? 0) + 1
     const hardFilterText = hardFilterClarifyText(input.question.qId, input.lang)
-    if (hardFilterText) return hardFilterText
+    if (hardFilterText) return normalizePrescreenClarifyTextForRound(hardFilterText, sessionClarifyIndex, input.lang)
     const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
     if (!apiKey) throw new Error("missing OpenAI API key")
     const weakCells = [...input.merged.perKeyword]
@@ -151,6 +156,7 @@ export function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       `Reason: ${input.reason}`,
       `Latest candidate reply: """${input.reply}"""`,
       `Prior answers for this same question: ${JSON.stringify(input.state.questions[input.question.qId]?.evidenceReplies ?? [])}`,
+      `Follow-ups YOU already sent this call (do NOT reuse these openers or phrasings): ${JSON.stringify(priorClarifyTexts)}`,
       `Merged score: s=${input.merged.aggregate.s.toFixed(2)} c=${input.merged.aggregate.c.toFixed(2)} summary=${input.merged.aggregate.summary}`,
       `Weak or missing areas JSON: ${JSON.stringify(weakCells)}`,
       `If unsure, use this fallback intent without copying it verbatim: ${input.fallbackText}`,
@@ -174,6 +180,6 @@ export function makeProductionClarifyComposer(): PreScreenClarifyComposer {
     if (!content) throw new Error("OpenAI clarify empty response")
     const parsed = JSON.parse(content) as { text?: unknown }
     if (typeof parsed.text !== "string" || !parsed.text.trim()) throw new Error("OpenAI clarify missing text")
-    return normalizePrescreenClarifyTextForRound(parsed.text, input.clarifyRound, input.lang)
+    return normalizePrescreenClarifyTextForRound(parsed.text, sessionClarifyIndex, input.lang)
   }
 }
