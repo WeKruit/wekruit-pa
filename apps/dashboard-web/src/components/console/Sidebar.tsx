@@ -100,6 +100,15 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/recruiter-access", label: "Invites & roster" },
     ],
   },
+  {
+    id: "partners",
+    label: "Partners",
+    icon: "link2",
+    mode: "ops",
+    items: [
+      { to: "/admin/partner-stats", label: "Partner stats" },
+    ],
+  },
   // ───────────── DEV ─────────────
   {
     id: "employers",

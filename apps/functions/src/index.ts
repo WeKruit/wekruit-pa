@@ -284,6 +284,7 @@ export {
 // rollups, and paginated session pages over pa-prescreen-sessions (the
 // client-side limit(75) reads undercounted).
 export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
+export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats.js"
 // Operations Overview dashboard — daily time-series of new users (by channel),
 // interviews conducted, and candidates moved to client. Admin /admin/operations.
 export { paAdminOpsMetrics } from "./admin-ops-metrics.js"

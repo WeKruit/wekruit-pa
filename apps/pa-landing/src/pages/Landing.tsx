@@ -12,6 +12,7 @@ import { useEffect } from "react"
 import { Link } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { trackEvent } from "../lib/analytics.js"
+import { resolveSource } from "../lib/source.js"
 import { formatPublicJobType } from "../lib/public-job-labels.js"
 import {
   PUBLIC_PA_JOBS_RAW_LIMIT,
@@ -136,6 +137,13 @@ export default function Landing() {
           message: heroQuery.error instanceof Error ? heroQuery.error.message : String(heroQuery.error),
         }
       : { status: "ready", jobs: heroQuery.data ?? [] }
+
+  useEffect(() => {
+    const src = resolveSource()
+    if (src !== "candidate") {
+      void trackEvent("partner_page_view", { source: src, path: window.location.pathname })
+    }
+  }, [])
 
   // Hash anchor scroll. Triggered on:
   //   1. Initial mount when URL contains a hash (e.g. /#how from cross-route nav).
