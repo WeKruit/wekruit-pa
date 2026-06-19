@@ -198,6 +198,13 @@ class Coll extends Query {
     const docId = id ?? `auto-${Math.random().toString(36).slice(2, 10)}`
     return new DocRef(this.mfs, this.collectionPath, docId)
   }
+
+  // Mirrors firebase-admin `CollectionReference.add` — auto-id doc + set.
+  async add(data: Record<string, unknown>): Promise<DocRef> {
+    const ref = this.doc()
+    await ref.set(data)
+    return ref
+  }
 }
 
 class Tx {

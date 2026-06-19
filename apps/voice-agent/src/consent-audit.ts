@@ -55,7 +55,10 @@ export function buildConsentSpokenAudit(
   spokenAt: Date = new Date(),
 ): ConsentSpokenAuditPayload {
   const lang: "en" | "zh" = ctx.userProfile.preferredLang === "zh" ? "zh" : "en"
-  const voiceMode = ctx.prescreenConfig.voiceMode ?? "professional_prescreen"
+  const voiceMode =
+    ctx.purpose === "onboarding"
+      ? "casual_onboarding"
+      : ctx.prescreenConfig.voiceMode ?? "professional_prescreen"
   return {
     bookingId: ctx.bookingId,
     paUserId: ctx.userProfile.userId,

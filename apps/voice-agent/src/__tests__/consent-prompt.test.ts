@@ -7,6 +7,8 @@ import type { VoiceCallContext } from "../voice-context-types.js"
 function ctxFor(lang: "zh" | "en" | undefined, mode: "casual_onboarding" | "professional_prescreen"): VoiceCallContext {
   return {
     bookingId: "bk",
+    purpose: "prescreen",
+    prescreenSessionId: "ps",
     userProfile: { userId: "u", preferredLang: lang, missingFields: [] },
     jobBrief: {
       jobId: "j",

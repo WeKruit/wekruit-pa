@@ -34,6 +34,19 @@ import {
   recruiterFeedbackForRejection,
   reusableForCandidateTier,
 } from "./recruiter-candidate-tracking.js"
+import { applyGlobalCandidateTier } from "./candidate-tier.js"
+import { suggestTierFromRecruiterAi, type RecruiterAiVerdict } from "@pa/core-types"
+
+/** Read the AI's suggested tier from the submission's persisted aiEvaluation. */
+function recruiterAiSuggestedTier(submission: Record<string, unknown>): ReturnType<typeof suggestTierFromRecruiterAi> | null {
+  const ai = submission.aiEvaluation
+  if (!ai || typeof ai !== "object") return null
+  const verdict = (ai as { verdict?: unknown }).verdict
+  const hardGaps =
+    ((ai as { checklist?: { hard?: { gaps?: unknown } } }).checklist?.hard?.gaps as unknown[] | undefined)?.length ?? 0
+  if (verdict !== "advance" && verdict !== "borderline" && verdict !== "reject") return null
+  return suggestTierFromRecruiterAi(verdict as RecruiterAiVerdict, hardGaps)
+}
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
@@ -230,13 +243,31 @@ export async function runAdminRecruiterSubmissionAction(
 
   await ref.set(patch, { merge: true })
   if (action === "reject" && rejection) {
-    await recordRecruiterSubmissionRejection(deps.db, {
+    const tracking = await recordRecruiterSubmissionRejection(deps.db, {
       submissionId,
       submission: data,
       rejection,
       actorEmail: by,
       now: at,
     })
+    // Stamp the unified global candidate tier (best-wins) so this rejection
+    // surfaces the candidate in the Rejected-by-tier browse for re-review.
+    if (tracking.status === "tracked" && tracking.candidateId) {
+      const jobId = cleanString(data.jobId) ?? cleanString(data.inboundJobId)
+      await applyGlobalCandidateTier(
+        {
+          candidateId: tracking.candidateId,
+          tier: rejection.candidateTier,
+          source: "recruiter",
+          ...(jobId ? { jobId } : {}),
+          reason: rejection.reason,
+          aiSuggestedTier: recruiterAiSuggestedTier(data),
+          humanConfirmed: true,
+          actor: by,
+        },
+        { db: deps.db, now: () => at },
+      )
+    }
   }
   return { ok: true, submissionId, status: targetStatus }
 }

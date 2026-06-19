@@ -285,6 +285,13 @@ export {
 // client-side limit(75) reads undercounted).
 export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
 export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats.js"
+// Operations Overview dashboard — daily time-series of new users (by channel),
+// interviews conducted, and candidates moved to client. Admin /admin/operations.
+export { paAdminOpsMetrics } from "./admin-ops-metrics.js"
+// Rejected-candidates-by-tier browse + AI re-evaluate-for-new-roles action.
+// Tier is stamped at rejection (prescreen + recruiter) via applyGlobalCandidateTier.
+export { paAdminRejectedCandidatesSnapshot } from "./admin-rejected-candidates.js"
+export { paAdminReevaluateCandidateTier } from "./admin-candidate-tier-actions.js"
 // Identity-conflict resolve/dismiss + true counts — client Firestore writes
 // to pa-candidate-identity-conflicts are rules-denied, so the dashboard
 // /admin/identity-conflicts page goes through this callable.
@@ -345,6 +352,7 @@ export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 //   LiveKit room webhooks. Idempotent reconciliation against the
 //   `outbound-bookings/{id}` state machine (Locks L9 + L10).
 export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
+export { paVoicePostCallFollowup } from "./voice/post-call-followup.js"
 
 // v2.2 — Voice-side HTTP callable CFs (shared-brain prescreen).
 //   `paVoiceCallContext`   — assembles VoiceCallContext from S1B loaders.
@@ -354,6 +362,7 @@ export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
 // Auth: bearer header `X-Wekruit-Voice-CF-Secret` = PA_VOICE_CF_SECRET.
 export {
   paVoiceCallContext,
+  paVoiceOnboardingTurn,
   paVoicePrescreenTurn,
 } from "./voice/voice-prescreen-callable.js"
 
@@ -429,6 +438,7 @@ export {
   paBulkResumeCreateBatch,
   paBulkResumeAddItems,
   paBulkResumeProcessBatch,
+  paBulkResumeSubmitRecruiterBatch,
   paBulkResumeRetryItem,
 } from "./bulk-resume-intake.js"
 // v2.0 S4 — admin/operator-only job enrichment draft review and approval.

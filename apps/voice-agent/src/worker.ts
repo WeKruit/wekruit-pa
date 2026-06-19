@@ -35,7 +35,7 @@
  *   session.say(buildConsentPrompt(ctx))           ← L8
  */
 
-import { createTurnLoop, type VoicePipelineLite } from "./turn-loop.js"
+import { type VoicePipelineLite } from "./turn-loop.js"
 import {
   registerEventHandlers,
   type RegisterSinks,
@@ -43,7 +43,7 @@ import {
 import { buildConsentPrompt } from "./consent-prompt.js"
 import { emitConsentSpokenAudit } from "./consent-audit.js"
 import { startRecordingEgress } from "./egress.js"
-import type { VoiceCallContext } from "./voice-context-types.js"
+import type { VoiceCallContext, VoicePrescreenCallContext } from "./voice-context-types.js"
 import { WekruitLLM } from "./wekruit-llm.js"
 
 /**
@@ -73,7 +73,7 @@ export interface StartWorkerOpts {
   /** Test seam — supply pre-loaded context (skips Firestore reads). */
   loadContext?: (bookingId: string) => Promise<VoiceCallContext>
   /** Test seam — pipeline factory. */
-  buildPipeline?: () => Promise<VoicePipelineLite>
+  buildPipeline?: (context: VoiceCallContext) => Promise<VoicePipelineLite>
   /** Test seam — LLM factory. Defaults to `buildDefaultLLM` (WekruitLLM). */
   buildLLM?: () => WekruitLLM
   /** Optional logger. */
@@ -84,6 +84,7 @@ interface AgentRuntimeCtx {
   room: {
     name?: string
     metadata?: string
+    remoteParticipants?: Map<string, RemoteParticipantLike>
     on: (event: string, listener: (...args: unknown[]) => void) => unknown
     off?: (event: string, listener: (...args: unknown[]) => void) => unknown
   }
@@ -102,6 +103,10 @@ interface AgentRuntimeCtx {
    * session's room operations fail with WS 400 ("Unexpected server
    * response: 400") and no audio reaches the SIP leg. */
   connect?: () => Promise<void>
+}
+
+interface RemoteParticipantLike {
+  identity?: string
 }
 
 /**
@@ -183,7 +188,7 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       }
 
       const callContext = await loadContext(bookingId)
-      if (callContext.jobBrief.dead === true) {
+      if (callContext.purpose === "prescreen" && callContext.jobBrief.dead === true) {
         log("voice.worker.dead_job_abort", {
           bookingId,
           jobId: callContext.jobBrief.jobId,
@@ -192,30 +197,44 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       }
 
       const pipeline = opts.buildPipeline
-        ? await opts.buildPipeline()
-        : await defaultBuildPipeline()
-
-      const turnLoop = createTurnLoop({
-        pipeline,
-        context: callContext,
-        log,
-      })
+        ? await opts.buildPipeline(callContext)
+        : await defaultBuildPipeline(callContext)
 
       // ── Build AgentSession via SDK ───────────────────────────────────────
       // Adaptive turn detection — MultilingualModel from the LiveKit SDK
       // owns endpointing decisions internally. We DO NOT pass a numeric
       // endpointing delay anywhere; the adaptive model is the policy.
       // (Lock L7 anti-hardcode; see __tests__/no-min-endpointing.test.ts.)
+      // Deferred terminal closer — set after the session exists so the pipeline
+      // adapter's onPipelineTerminal can end the call once the final line plays.
+      let closeForTerminal: () => Promise<void> = async () => {}
+      const lang = callContext.userProfile.preferredLang ?? "en"
+      const pipelineSessionId =
+        callContext.purpose === "prescreen" ? callContext.prescreenSessionId : callContext.bookingId
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let session: any
       if (!opts.defineAgent) {
         const { voice, inference } = livekitMod
         const vad = await sileroMod.VAD.load()
-        // LK @livekit/agents v1.4.2 — TurnDetectionMode is now a string
-        // ('vad' | 'stt' | 'realtime_llm' | 'manual') or a _TurnDetector
-        // instance. The old `new voice.MultilingualModel()` class was
-        // removed; pass `'vad'` to rely on Silero EOU detection.
-        const turnDetection = "vad" as const
+        // P1 turn detector (Adam 2026-06-19): prefer the contextual end-of-utterance
+        // model over plain VAD endpointing. Defensive — fall back to 'vad' if the
+        // installed SDK doesn't expose inference.TurnDetector (no tsc safety here;
+        // livekitMod is any). Silero VAD stays loaded for interruption handling.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let turnDetection: any = "vad"
+        try {
+          if (inference && typeof inference.TurnDetector === "function") {
+            turnDetection = new inference.TurnDetector()
+            log("voice.worker.turn_detector", { bookingId, mode: "inference" })
+          }
+        } catch (err) {
+          turnDetection = "vad"
+          log("voice.worker.turn_detector_fallback_vad", {
+            bookingId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
         const stt = new deepgramMod.STT({ model: "nova-3" })
         // Deepgram TTS model slug must be a concrete voice (aura-1) — passing
         // the bare family name "aura-2" returns WS handshake 400 from
@@ -223,11 +242,29 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         // server response: 400'` and immediately tears the session down
         // (no audio reaches the SIP candidate leg).
         const tts = new deepgramMod.TTS({ model: "aura-asteria-en" })
-        // W2: in-process WekruitLLM speaks directly to runAgentTurnStream.
-        // No HTTP shim, no openai plugin, no WEKRUIT_LLM_SHIM_URL.
-        const llm = (opts.buildLLM ?? buildDefaultLLM)()
-        // inference fallback (LK Cloud-managed) — kept inert; WekruitLLM is
-        // canonical.
+        // P0 single-brain (Adam 2026-06-19): WekruitLLM in PIPELINE-ADAPTER mode is
+        // the SOLE in-call brain — every spoken line is the real prescreen/onboarding
+        // pipeline output (runPrescreenTurn + KeywordSet judge + clarify composer).
+        // No generic free-styling, no `session.say` side-channel (the dueling-brain
+        // bug that produced repeated "that helps" filler over the real questions).
+        const llm = opts.buildLLM
+          ? opts.buildLLM()
+          : new WekruitLLM({
+              pipelineMode: {
+                voicePipeline: pipeline,
+                sessionId: pipelineSessionId,
+                userId: callContext.userProfile.userId,
+                lang,
+                redactProfile: callContext.userProfile,
+                terminalCloseText:
+                  lang === "zh"
+                    ? "好的，我需要的就这些了——非常感谢你抽时间。我们很快会再联系你。"
+                    : "That's everything I needed — thank you so much for your time. We'll be in touch shortly.",
+                onPipelineTerminal: async () => {
+                  await closeForTerminal()
+                },
+              },
+            })
         void inference
         session = new voice.AgentSession({ vad, turnDetection, stt, llm, tts })
       } else {
@@ -241,19 +278,30 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           start: async () => {},
         }
       }
+      closeForTerminal = async () => {
+        try {
+          await session.aclose?.()
+        } catch (err) {
+          log("voice.worker.terminal_close_failed", {
+            bookingId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
 
       // ── Wire 7 event handlers (L7) ───────────────────────────────────────
       const sinks: RegisterSinks = {
         log,
-        async onUserSpeechCommitted({ transcript, lang }) {
-          const out = await turnLoop.onUserCommit({
-            reply: transcript,
-            nowIso: new Date().toISOString(),
-            lang: lang === "zh" ? "zh" : "en",
+        onUserSpeechCommitted({ transcript }) {
+          // P0: the pipeline adapter (WekruitLLM pipelineMode) now OWNS the reply,
+          // PII redaction, and terminal close — the AgentSession runs the pipeline
+          // automatically on each user turn. This sink is observability only; calling
+          // the pipeline here would double-score the turn.
+          log("voice.worker.user_speech_committed", {
+            bookingId,
+            purpose: callContext.purpose,
+            chars: transcript.length,
           })
-          if (out.speakText.length > 0) {
-            await session.say(out.speakText)
-          }
         },
         onConversationItemAdded(p) {
           log("voice.conversation_item_added", { role: p.role, len: p.textContent.length })
@@ -300,7 +348,9 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         const { voice } = livekitMod
         conversationalAgent = new voice.Agent({
           instructions:
-            "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
+            callContext.purpose === "onboarding"
+              ? "You are Claire, WeKruit's voice onboarding agent. Your job is to ask the short onboarding questions needed to understand the candidate. Speak warmly and concisely. Stay on the onboarding flow and do not recommend jobs during this call."
+              : "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
           // "WeKruit" → "We-Cruit" (we + cruit as in re-cruit). Without the
           // remap, Deepgram aura pronounces the brand as a single mushed
           // syllable. Map applies before TTS synthesis to every variant.
@@ -312,31 +362,96 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           },
         })
       }
-      await session.start?.({ agent: conversationalAgent, room: ctx.room })
+      const candidateParticipantIdentity = `candidate-${callContext.userProfile.userId}`
+      await session.start?.({
+        agent: conversationalAgent,
+        room: ctx.room,
+        inputOptions: { participantIdentity: candidateParticipantIdentity },
+      })
 
       // ── S6 recording archive — kick off LiveKit Egress → GCS ─────────────
       // Fires-and-forgets behind WEKRUIT_VOICE_RECORDINGS_BUCKET env. Any
       // failure (missing bucket, missing GCP creds, transient API error)
       // is caught inside startRecordingEgress; the call continues either
       // way. Per L12 we never self-host — egress is LK Cloud managed.
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const roomName = (ctx.room as any).name ?? bookingId
-        await startRecordingEgress({ roomName, bookingId }, { log })
-      } catch (err) {
+      // P1 latency (Adam 2026-06-19): fire-and-forget so egress setup never blocks
+      // time-to-first-speech. Any failure is caught inside startRecordingEgress and
+      // logged here; the call proceeds regardless.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const egressRoomName = (ctx.room as any).name ?? bookingId
+      void startRecordingEgress({ roomName: egressRoomName, bookingId }, { log }).catch((err) => {
         log("voice.egress.unexpected", {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      })
+
+      // ── L8 recording consent — first utterance ──────────────────────────
+      // P1 latency: greet as soon as ANY remote (SIP) participant connects; don't
+      // burn up to 15s matching an exact identity the SIP leg may not set.
+      const readyParticipant = await waitForRemoteParticipant(ctx.room, {
+        timeoutMs: 5_000,
+      })
+      if (readyParticipant) {
+        log("voice.worker.remote_participant_ready", {
+          bookingId,
+          identity: readyParticipant.identity ?? "",
+        })
+      } else {
+        log("voice.worker.remote_participant_wait_timeout", {
+          bookingId,
+          identity: candidateParticipantIdentity,
+        })
+      }
+      const consentLine = buildConsentPrompt(callContext)
+      try {
+        const speechHandle = session.say?.(consentLine, {
+          allowInterruptions: false,
+          addToChatCtx: false,
+        })
+        log("voice.consent_prompt_scheduled", {
+          bookingId,
+          lang: callContext.userProfile.preferredLang ?? "en",
+        })
+        await waitForSpeechPlayout(speechHandle, { timeoutMs: 12_000 })
+        log("voice.consent_prompt_spoken", { bookingId, lang: callContext.userProfile.preferredLang ?? "en" })
+        // S5 — structured TCPA audit log capturing the consent-disclosure
+        // moment (paired with the prior-consent verification in
+        // voice-tcpa-checks/{bookingId}_<runId>).
+        emitConsentSpokenAudit(callContext, consentLine, log)
+      } catch (err) {
+        log("voice.consent_prompt_failed", {
+          bookingId,
           error: err instanceof Error ? err.message : String(err),
         })
       }
 
-      // ── L8 recording consent — first utterance ──────────────────────────
-      const consentLine = buildConsentPrompt(callContext)
-      await session.say?.(consentLine)
-      log("voice.consent_prompt_spoken", { bookingId, lang: callContext.userProfile.preferredLang ?? "en" })
-      // S5 — structured TCPA audit log capturing the consent-disclosure
-      // moment (paired with the prior-consent verification in
-      // voice-tcpa-checks/{bookingId}_<runId>).
-      emitConsentSpokenAudit(callContext, consentLine, log)
+      // ── Q1 KICKOFF (Adam 2026-06-19) — voice the first question after consent ──
+      // Prescreen: the first question is in prescreenConfig (it was suppressed at
+      // session creation so the call could greet first). Onboarding: a warm opener;
+      // the pipeline asks the first real onboarding question on the candidate's reply.
+      // Without this the agent sat silent after the consent line until the candidate
+      // spoke first — there was no greeting→Q1.
+      try {
+        let kickoff: string | undefined
+        if (callContext.purpose === "prescreen") {
+          const q0 = callContext.prescreenConfig.questions[0]?.prompt
+          kickoff = q0?.[lang] ?? q0?.en
+        } else {
+          kickoff =
+            lang === "zh"
+              ? "我们开始吧——先跟我说说你在找什么样的机会？"
+              : "Let's get started — tell me a bit about the kind of role you're looking for."
+        }
+        if (kickoff) {
+          await session.say?.(kickoff, { allowInterruptions: true })
+          log("voice.worker.first_question_spoken", { bookingId, purpose: callContext.purpose })
+        }
+      } catch (err) {
+        log("voice.worker.first_question_failed", {
+          bookingId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     },
   })
 
@@ -379,6 +494,62 @@ function readBookingId(metadata?: string, roomName?: string): string {
   throw new Error("voice-agent: cannot resolve bookingId — neither room.metadata nor room.name is set")
 }
 
+export async function waitForRemoteParticipant(
+  room: {
+    remoteParticipants?: Map<string, RemoteParticipantLike>
+    on?: (event: string, listener: (...args: unknown[]) => void) => unknown
+    off?: (event: string, listener: (...args: unknown[]) => void) => unknown
+  },
+  opts: { identity?: string; timeoutMs?: number } = {},
+): Promise<RemoteParticipantLike | null> {
+  const timeoutMs = opts.timeoutMs ?? 15_000
+  const matches = (participant: RemoteParticipantLike): boolean =>
+    !opts.identity || participant.identity === opts.identity
+
+  for (const participant of room.remoteParticipants?.values?.() ?? []) {
+    if (matches(participant)) return participant
+  }
+
+  const on = room.on
+  if (!on) return null
+
+  return await new Promise((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const cleanup = () => {
+      if (timer) clearTimeout(timer)
+      room.off?.("participantConnected", onConnected)
+    }
+    const settle = (participant: RemoteParticipantLike | null) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(participant)
+    }
+    const onConnected = (...args: unknown[]) => {
+      const participant = (args[0] ?? {}) as RemoteParticipantLike
+      if (matches(participant)) settle(participant)
+    }
+
+    on("participantConnected", onConnected)
+    timer = setTimeout(() => settle(null), timeoutMs)
+  })
+}
+
+async function waitForSpeechPlayout(
+  speechHandle: unknown,
+  opts: { timeoutMs: number },
+): Promise<void> {
+  const maybeThen = speechHandle as { then?: unknown } | undefined
+  if (!maybeThen || typeof maybeThen.then !== "function") return
+  await Promise.race([
+    Promise.resolve(speechHandle).then(() => undefined),
+    new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error("speech_playout_timeout")), opts.timeoutMs)
+    }),
+  ])
+}
+
 /**
  * v2.2 — default context loader fetches from paVoiceCallContext CF.
  * Worker stays free of firebase-admin + @pa/pa-orchestrator bundles so the
@@ -405,15 +576,27 @@ export async function defaultLoadContext(bookingId: string): Promise<VoiceCallCo
   }
   const data = (await res.json()) as {
     bookingId: string
+    purpose?: "prescreen" | "onboarding"
     userProfile: VoiceCallContext["userProfile"]
-    jobBrief: VoiceCallContext["jobBrief"]
-    prescreenConfig: VoiceCallContext["prescreenConfig"]
+    prescreenSessionId?: string
+    jobBrief?: unknown
+    prescreenConfig?: unknown
+  }
+  const purpose = data.purpose === "onboarding" ? "onboarding" : "prescreen"
+  if (purpose === "onboarding") {
+    return {
+      bookingId: data.bookingId,
+      purpose,
+      userProfile: data.userProfile,
+    }
   }
   return {
     bookingId: data.bookingId,
+    purpose,
+    prescreenSessionId: data.prescreenSessionId ?? data.bookingId,
     userProfile: data.userProfile,
-    jobBrief: data.jobBrief,
-    prescreenConfig: data.prescreenConfig,
+    jobBrief: data.jobBrief as VoicePrescreenCallContext["jobBrief"],
+    prescreenConfig: data.prescreenConfig as VoicePrescreenCallContext["prescreenConfig"],
   }
 }
 
@@ -424,10 +607,18 @@ export async function defaultLoadContext(bookingId: string): Promise<VoiceCallCo
  * judge + clarify composer) runs server-side and returns text + action
  * over HTTPS.
  */
-export async function defaultBuildPipeline(): Promise<VoicePipelineLite> {
-  const baseUrl = process.env.WEKRUIT_VOICE_PRESCREEN_TURN_URL
+export async function defaultBuildPipeline(context: VoiceCallContext): Promise<VoicePipelineLite> {
+  const envName =
+    context.purpose === "onboarding"
+      ? "WEKRUIT_VOICE_ONBOARDING_TURN_URL"
+      : "WEKRUIT_VOICE_PRESCREEN_TURN_URL"
+  const callableName =
+    context.purpose === "onboarding"
+      ? "paVoiceOnboardingTurn"
+      : "paVoicePrescreenTurn"
+  const baseUrl = process.env[envName]
   if (!baseUrl) {
-    throw new Error("voice-agent: WEKRUIT_VOICE_PRESCREEN_TURN_URL not set")
+    throw new Error(`voice-agent: ${envName} not set`)
   }
   return {
     async runTurn(input) {
@@ -440,6 +631,7 @@ export async function defaultBuildPipeline(): Promise<VoicePipelineLite> {
             : {}),
         },
         body: JSON.stringify({
+          bookingId: context.bookingId,
           sessionId: input.sessionId,
           userId: input.judgeCtx.userId,
           reply: input.reply,
@@ -449,7 +641,7 @@ export async function defaultBuildPipeline(): Promise<VoicePipelineLite> {
       })
       if (!res.ok) {
         throw new Error(
-          `voice-agent: paVoicePrescreenTurn ${res.status}: ${await res.text().catch(() => "?")}`,
+          `voice-agent: ${callableName} ${res.status}: ${await res.text().catch(() => "?")}`,
         )
       }
       const data = (await res.json()) as {

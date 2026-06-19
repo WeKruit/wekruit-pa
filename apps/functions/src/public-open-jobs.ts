@@ -213,7 +213,7 @@ function firstNonEmptyLine(md: unknown): string | undefined {
   return undefined
 }
 
-const JOBRIGHT_RE = /jobright\.ai/i
+const JOBRIGHT_RE = /jobright/i
 
 /** Canonical wekruit page URL for a job — partner pages MUST link here. */
 export function buildWekruitUrl(id: string): string {

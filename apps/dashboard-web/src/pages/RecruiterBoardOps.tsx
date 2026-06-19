@@ -6,17 +6,23 @@
  * paAdminRecruiterSubmissionAction.
  *
  * Client-side join of two small collections: pa-recruiter-users
- * (name/email/status) + pa-recruiter-submissions (latest 500). Submitter
+ * (name/email/status) + pa-recruiter-submissions. Submitter
  * emails with no matching recruiter profile land in an "Unclaimed
  * submitters" group.
  */
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
-import { collection, doc, getDoc, getDocs, limit, orderBy, query } from "firebase/firestore"
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, updateDoc } from "firebase/firestore"
+import {
+  CANDIDATE_TIER_LABELS,
+  suggestTierFromRecruiterAi,
+  type CandidateTier,
+  type RecruiterAiVerdict,
+} from "@pa/core-types"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
 import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "../components/prescreen/dual-pane.js"
-import { db } from "../lib/firebase.js"
+import { auth, db } from "../lib/firebase.js"
 import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
   runRecruiterSubmissionAction,
@@ -68,6 +74,7 @@ interface SubmissionAiEvaluation {
     source?: string
     headline?: string
     companies?: Array<{ name?: string; role?: string; years?: string }>
+    education?: Array<{ school?: string; degree?: string }>
     signals?: string[]
     risks?: string[]
   }
@@ -144,6 +151,10 @@ interface BoardSubmissionDoc {
   requestedInfo?: SubmissionRequestedInfoEntry[]
   /** Operator's saved per-item checklist assessment (AI mark + override). */
   adminChecklistMarks?: { marks?: Record<string, ChecklistMark>; by?: string; at?: string }
+  adminViewedAt?: { seconds?: number } | string | null
+  adminViewedByEmail?: string | null
+  adminCommentCount?: number | null
+  adminLastCommentAt?: { seconds?: number } | string | null
   createdAt?: { seconds?: number } | string | null
   createdAtMs?: number
 }
@@ -205,6 +216,8 @@ interface BoardRecruiterGroup {
 }
 
 const PENDING_STATUSES = ["submitted", "new", "reviewing"]
+const BOARD_SUBMISSION_LOAD_LIMIT = 5_000
+const BOARD_SUBMISSION_PAGE_SIZE = 100
 const DEFAULT_REQUEST_MESSAGE = "Please add the candidate's resume link and LinkedIn profile."
 const DEFAULT_REJECTION_CATEGORY: RecruiterCandidateRejectionCategory = "quality"
 const DEFAULT_REJECTION_TIER: RecruiterCandidateTier = "tier_3"
@@ -218,7 +231,7 @@ export function defaultRecruiterSubmissionRejection(): RecruiterSubmissionReject
   }
 }
 
-function timestampToMs(raw: BoardSubmissionDoc["createdAt"]): number {
+function timestampToMs(raw: BoardSubmissionDoc["createdAt"] | BoardSubmissionDoc["adminViewedAt"] | BoardSubmissionDoc["adminLastCommentAt"]): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
   if (typeof raw.seconds === "number") return raw.seconds * 1000
@@ -346,6 +359,59 @@ function selfScoreLabel(score: BoardSubmissionDoc["score"]): string {
   return `H ${score.hardChecked}/${score.hardTotal} · F ${score.fitChecked}/${score.fitTotal} · A ${score.antiChecked}/${score.antiTotal}`
 }
 
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(1, value))
+}
+
+function checklistMetRatio(tally: SubmissionAiChecklistTally | undefined): number {
+  const total = Number(tally?.total ?? 0)
+  if (!Number.isFinite(total) || total <= 0) return 0
+  return clamp01(Number(tally?.met ?? 0) / total)
+}
+
+function antiFlagRatio(tally: SubmissionAiAntiTally | undefined): number {
+  const total = Number(tally?.total ?? 0)
+  if (!Number.isFinite(total) || total <= 0) return 0
+  return clamp01(Number(tally?.flagged ?? 0) / total)
+}
+
+function selfScoreRatio(score: BoardSubmissionDoc["score"]): number {
+  if (!score) return 0
+  const positiveTotal = score.hardTotal + score.fitTotal + score.bonusTotal
+  const antiTotal = score.antiTotal
+  const positive = positiveTotal > 0
+    ? (score.hardChecked + score.fitChecked + score.bonusChecked) / positiveTotal
+    : 0
+  const antiPenalty = antiTotal > 0 ? score.antiChecked / antiTotal : 0
+  return clamp01(positive - antiPenalty)
+}
+
+function aiVerdictRank(evaluation: SubmissionAiEvaluation | undefined): number {
+  if (!evaluation || evaluation.error) return 0
+  if (evaluation.verdict === "advance") return 3
+  if (evaluation.verdict === "borderline") return 2
+  if (evaluation.verdict === "reject") return 1
+  return 0
+}
+
+function boardSubmissionQualityScore(submission: BoardSubmissionDoc): number {
+  const evaluation = submission.aiEvaluation
+  const verdictRank = aiVerdictRank(evaluation)
+  const confidence = clamp01(Number(evaluation?.confidence ?? 0))
+  const confidenceSignal = evaluation?.verdict === "reject" ? 1 - confidence : confidence
+  const checklist = evaluation?.checklist
+  return (
+    verdictRank * 1_000 +
+    checklistMetRatio(checklist?.hard) * 300 +
+    checklistMetRatio(checklist?.fit) * 220 +
+    checklistMetRatio(checklist?.bonus) * 90 -
+    antiFlagRatio(checklist?.anti) * 160 +
+    confidenceSignal * 50 +
+    selfScoreRatio(submission.score) * 30
+  )
+}
+
 function candidateHref(submission: BoardSubmissionDoc): string | null {
   const href = submission.candidate?.linkedinUrl ?? submission.candidate?.link
   return href?.trim() ? href : null
@@ -407,6 +473,27 @@ function formatMessageTime(at: string | undefined): string {
   return new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 }
 
+function normalizedCommentCount(submission: BoardSubmissionDoc): number {
+  return Math.max(0, Math.trunc(Number(submission.adminCommentCount ?? 0)) || 0)
+}
+
+function latestCommentAt(comments: SubmissionCommentDoc[]): string | null {
+  let latestMs = 0
+  let latestAt: string | null = null
+  for (const comment of comments) {
+    const ms = comment.at ? Date.parse(comment.at) : 0
+    if (ms > latestMs) {
+      latestMs = ms
+      latestAt = comment.at ?? null
+    }
+  }
+  return latestAt
+}
+
+function hasAdminViewed(submission: BoardSubmissionDoc): boolean {
+  return timestampToMs(submission.adminViewedAt) > 0
+}
+
 function recruiterMatches(submission: BoardSubmissionDoc, recruiter: BoardRecruiterDoc): boolean {
   if (submission.recruiterId && submission.recruiterId === recruiter.id) return true
   const email = recruiter.email?.trim().toLowerCase()
@@ -425,6 +512,8 @@ function sortSubmissions(submissions: BoardSubmissionDoc[]): BoardSubmissionDoc[
   return [...submissions].sort((a, b) => {
     const pendingDelta = Number(isPending(b)) - Number(isPending(a))
     if (pendingDelta !== 0) return pendingDelta
+    const qualityDelta = boardSubmissionQualityScore(b) - boardSubmissionQualityScore(a)
+    if (Math.abs(qualityDelta) > 0.000001) return qualityDelta
     return (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0)
   })
 }
@@ -529,10 +618,6 @@ const blockedButtonStyle = {
 const boardGroupBodyStyle: CSSProperties = {
   display: "grid",
   gap: 10,
-  maxHeight: 420,
-  overflow: "auto",
-  paddingRight: 6,
-  scrollbarWidth: "thin",
 }
 
 const boardJobHeaderStyle: CSSProperties = {
@@ -551,6 +636,29 @@ const boardTableShellStyle: CSSProperties = {
   scrollbarWidth: "thin",
 }
 
+const boardPaginationBarStyle: CSSProperties = {
+  position: "sticky",
+  top: 0,
+  zIndex: 2,
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 8,
+  padding: "6px 8px",
+  borderBottom: "1px solid #eee5d8",
+  background: "#fffdf9",
+  color: "#777",
+  fontSize: 11,
+  fontWeight: 600,
+}
+
+function boardPaginationButtonStyle(disabled: boolean): CSSProperties {
+  return {
+    ...actionButtonStyle,
+    ...(disabled ? blockedButtonStyle : null),
+  }
+}
+
 const boardTableStyle: CSSProperties = {
   minWidth: 760,
   border: 0,
@@ -560,7 +668,7 @@ const boardTableStyle: CSSProperties = {
 
 const boardHeaderCellStyle: CSSProperties = {
   position: "sticky",
-  top: 0,
+  top: 32,
   zIndex: 1,
   padding: "6px 6px",
   background: "#fff",
@@ -824,6 +932,110 @@ const BACKGROUND_PILLARS: Array<{ key: "school" | "gpa" | "degree" | "company"; 
   { key: "degree", label: "Degree" },
   { key: "company", label: "Company" },
 ]
+
+function isRecruiterAiVerdict(value: unknown): value is RecruiterAiVerdict {
+  return value === "advance" || value === "borderline" || value === "reject"
+}
+
+function hardGapCount(evaluation: SubmissionAiEvaluation | undefined): number {
+  const gaps = evaluation?.checklist?.hard?.gaps
+  return Array.isArray(gaps) ? gaps.length : 0
+}
+
+function suggestedCandidateTier(evaluation: SubmissionAiEvaluation | undefined): CandidateTier | null {
+  if (!evaluation || evaluation.error || !isRecruiterAiVerdict(evaluation.verdict)) return null
+  return suggestTierFromRecruiterAi(evaluation.verdict, hardGapCount(evaluation))
+}
+
+function tierTone(tier: CandidateTier): Parameters<typeof Badge>[0]["tone"] {
+  if (tier === "tier_1") return "ok"
+  if (tier === "tier_2") return "info"
+  return "warn"
+}
+
+function tierShortLabel(tier: CandidateTier): string {
+  return tier.replace("tier_", "Tier ")
+}
+
+function BackgroundSignalChips({
+  evaluation,
+  compact,
+}: {
+  evaluation: SubmissionAiEvaluation | undefined
+  compact?: boolean
+}) {
+  const tier = suggestedCandidateTier(evaluation)
+  const background = evaluation?.background
+  const pillars = BACKGROUND_PILLARS
+    .map(({ key, label }) => ({ key, label, pillar: background?.[key] }))
+    .filter(({ pillar }) => pillar?.verdict === "strong" || pillar?.verdict === "weak" || pillar?.verdict === "unknown")
+  if (!tier && pillars.length === 0) return null
+  const visiblePillars = compact ? pillars.filter(({ key }) => key === "school" || key === "company") : pillars
+  return (
+    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+      {tier ? (
+        <Badge tone={tierTone(tier)}>{compact ? `AI ${tierShortLabel(tier)}` : `AI suggests ${tierShortLabel(tier)}`}</Badge>
+      ) : null}
+      {visiblePillars.map(({ key, label, pillar }) => {
+        const tone = pillarTone(pillar?.verdict)
+        return (
+          <span
+            key={key}
+            title={pillar?.evidence ?? ""}
+            style={{
+              fontSize: 11,
+              padding: "2px 8px",
+              borderRadius: 999,
+              background: tone.bg,
+              color: tone.fg,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}: {pillar?.verdict ?? "unknown"}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+function BackgroundEvidencePanel({ evaluation }: { evaluation: SubmissionAiEvaluation | undefined }) {
+  const background = evaluation?.background
+  const pillars = BACKGROUND_PILLARS
+    .map(({ key, label }) => ({ key, label, pillar: background?.[key] }))
+    .filter(({ pillar }) => pillar?.verdict === "strong" || pillar?.verdict === "weak" || pillar?.verdict === "unknown")
+  const education = evaluation?.research?.education ?? []
+  const tier = suggestedCandidateTier(evaluation)
+  if (!tier && pillars.length === 0 && education.length === 0) return null
+  return (
+    <div style={{ border: "1px solid #eee6da", borderRadius: 8, padding: 10, background: "#fff", display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 12, color: "#4b3a2e" }}>Tier & background attachment</strong>
+        {tier ? (
+          <span style={{ fontSize: 11, color: "#6f6256" }}>
+            {CANDIDATE_TIER_LABELS[tier]} · hard gaps {hardGapCount(evaluation)}
+          </span>
+        ) : null}
+      </div>
+      <BackgroundSignalChips evaluation={evaluation} />
+      {pillars.map(({ key, label, pillar }) => (
+        pillar?.evidence ? (
+          <div key={key} style={{ fontSize: 12, color: "#555", lineHeight: 1.4 }}>
+            <strong>{label}:</strong> {pillar.evidence}
+          </div>
+        ) : null
+      ))}
+      {education.length > 0 ? (
+        <div style={{ fontSize: 12, color: "#555", lineHeight: 1.4 }}>
+          <strong>Education:</strong>{" "}
+          {education.slice(0, 4).map((entry) => (
+            `${entry.school}${entry.degree ? ` (${entry.degree})` : ""}`
+          )).join(" · ")}
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function markGlyph(mark: ChecklistMark): string {
   return mark === "gap" ? "✗" : mark === "flag" ? "⚑" : "✓"
@@ -1192,6 +1404,8 @@ function CandidateReviewPanel({
             <span style={{ color: "#8b7d6d", fontSize: 12 }}>{formatSubmittedDate(submission.createdAtMs ?? 0)}</span>
           </div>
 
+          <BackgroundSignalChips evaluation={submission.aiEvaluation} />
+
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {href && (
@@ -1226,6 +1440,8 @@ function CandidateReviewPanel({
               </div>
             )}
           </div>
+
+          <BackgroundEvidencePanel evaluation={submission.aiEvaluation} />
 
           <CandidateResumePreview
             resumeUrl={submission.candidate?.resumeUrl}
@@ -1428,7 +1644,7 @@ function ConversationSection({
   onCommentCount,
 }: {
   submission: BoardSubmissionDoc
-  onCommentCount: (submissionId: string, count: number) => void
+  onCommentCount: (submissionId: string, count: number, lastCommentAt?: string | null) => void
 }) {
   const [comments, setComments] = useState<SubmissionCommentDoc[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -1452,7 +1668,7 @@ function ConversationSection({
         if (cancelled) return
         setComments(rows)
         setLoadError(null)
-        onCommentCount(submission.id, rows.length)
+        onCommentCount(submission.id, rows.length, latestCommentAt(rows))
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
       }
@@ -1479,7 +1695,7 @@ function ConversationSection({
       await sendRecruiterSubmissionComment({ submissionId: submission.id, message })
       const rows = await fetchComments()
       setComments(rows)
-      onCommentCount(submission.id, rows.length)
+      onCommentCount(submission.id, rows.length, latestCommentAt(rows))
       setPendingComment(null)
     } catch (e) {
       setPendingComment(null)
@@ -1602,9 +1818,54 @@ export default function RecruiterBoardOps() {
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [reloadKey, setReloadKey] = useState(0)
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
+  const [jobPageByKey, setJobPageByKey] = useState<Record<string, number>>({})
 
-  function handleCommentCount(submissionId: string, count: number) {
-    setCommentCounts((prev) => (prev[submissionId] === count ? prev : { ...prev, [submissionId]: count }))
+  function handleCommentCount(submissionId: string, count: number, lastCommentAt?: string | null) {
+    const parsedCount = Math.trunc(Number(count))
+    const safeCount = Number.isFinite(parsedCount) ? Math.max(0, parsedCount) : 0
+    setCommentCounts((prev) => (prev[submissionId] === safeCount ? prev : { ...prev, [submissionId]: safeCount }))
+    setSubmissions((prev) =>
+      prev.map((submission) =>
+        submission.id === submissionId
+          ? { ...submission, adminCommentCount: safeCount, adminLastCommentAt: lastCommentAt ?? null }
+          : submission,
+      ),
+    )
+    const submission = submissions.find((row) => row.id === submissionId)
+    const existingCount = submission ? normalizedCommentCount(submission) : 0
+    const existingLastMs = timestampToMs(submission?.adminLastCommentAt ?? null)
+    const nextLastMs = lastCommentAt ? Date.parse(lastCommentAt) || 0 : 0
+    if (existingCount === safeCount && existingLastMs === nextLastMs) return
+    void updateDoc(doc(db(), "pa-recruiter-submissions", submissionId), {
+      adminCommentCount: safeCount,
+      adminLastCommentAt: lastCommentAt ?? null,
+    }).catch((error) => {
+      setActionErrors((prev) => ({ ...prev, [submissionId]: error instanceof Error ? error.message : String(error) }))
+    })
+  }
+
+  function markSubmissionViewed(submission: BoardSubmissionDoc) {
+    if (hasAdminViewed(submission)) return
+    const viewedAt = new Date().toISOString()
+    const viewedBy = auth().currentUser?.email ?? "operator"
+    setSubmissions((prev) =>
+      prev.map((row) =>
+        row.id === submission.id
+          ? { ...row, adminViewedAt: viewedAt, adminViewedByEmail: viewedBy }
+          : row,
+      ),
+    )
+    void updateDoc(doc(db(), "pa-recruiter-submissions", submission.id), {
+      adminViewedAt: viewedAt,
+      adminViewedByEmail: viewedBy,
+    }).catch((error) => {
+      setActionErrors((prev) => ({ ...prev, [submission.id]: error instanceof Error ? error.message : String(error) }))
+    })
+  }
+
+  function openSubmission(submission: BoardSubmissionDoc) {
+    markSubmissionViewed(submission)
+    setSelectedId(submission.id)
   }
 
   useEffect(() => {
@@ -1614,7 +1875,7 @@ export default function RecruiterBoardOps() {
         setLoading(true)
         setErr(null)
         const [submissionSnap, recruiterSnap] = await Promise.all([
-          getDocs(query(collection(db(), "pa-recruiter-submissions"), orderBy("createdAt", "desc"), limit(500))),
+          getDocs(query(collection(db(), "pa-recruiter-submissions"), orderBy("createdAt", "desc"), limit(BOARD_SUBMISSION_LOAD_LIMIT))),
           getDocs(collection(db(), "pa-recruiter-users")),
         ])
         if (cancelled) return
@@ -1622,6 +1883,11 @@ export default function RecruiterBoardOps() {
           const data = d.data() as Omit<BoardSubmissionDoc, "id">
           return { id: d.id, ...data, createdAtMs: timestampToMs(data.createdAt) }
         })
+        const loadedCommentCounts = Object.fromEntries(
+          loadedSubmissions
+            .map((submission) => [submission.id, normalizedCommentCount(submission)] as const)
+            .filter(([, count]) => count > 0),
+        )
         const jobIds = [...new Set(loadedSubmissions.flatMap(jobLookupKeys))]
         const loadedJobs = await Promise.all(
           jobIds.map(async (jobId) => {
@@ -1631,6 +1897,7 @@ export default function RecruiterBoardOps() {
         )
         if (cancelled) return
         setSubmissions(loadedSubmissions)
+        setCommentCounts(loadedCommentCounts)
         setRecruiters(recruiterSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<BoardRecruiterDoc, "id">) })))
         setJobDocs(Object.fromEntries(loadedJobs.filter((entry): entry is readonly [string, BoardJobDoc] => entry !== null)))
       } catch (e) {
@@ -1672,6 +1939,31 @@ export default function RecruiterBoardOps() {
         .filter((group) => group.jobs.length > 0),
     [unclaimedGroups, submissionFilter],
   )
+  const boardJobPageKey = (groupKey: string, jobKey: string) => `${submissionFilter}:${groupKey}:${jobKey}`
+
+  useEffect(() => {
+    const maxPageByKey = new Map<string, number>()
+    for (const group of [...visibleRecruiterGroups, ...visibleUnclaimedGroups]) {
+      for (const job of group.jobs) {
+        maxPageByKey.set(
+          boardJobPageKey(group.key, job.key),
+          Math.max(0, Math.ceil(job.submissions.length / BOARD_SUBMISSION_PAGE_SIZE) - 1),
+        )
+      }
+    }
+    setJobPageByKey((prev) => {
+      let changed = false
+      const next: Record<string, number> = {}
+      for (const [key, maxPage] of maxPageByKey.entries()) {
+        const page = Math.min(Math.max(0, prev[key] ?? 0), maxPage)
+        next[key] = page
+        if (prev[key] !== page) changed = true
+      }
+      if (Object.keys(prev).length !== Object.keys(next).length) changed = true
+      return changed ? next : prev
+    })
+  }, [visibleRecruiterGroups, visibleUnclaimedGroups, submissionFilter])
+
   const pendingTotal = submissions.filter(isPending).length
   const selectedBulkCount = bulkSelectedIds.size
   const selectedSubmission = useMemo(
@@ -1904,13 +2196,15 @@ export default function RecruiterBoardOps() {
     const bulkSelectable = isBulkRejectSelectable(submission)
     const actionError = actionErrors[submission.id]
     const status = statusDisplay(submission.status)
+    const viewed = hasAdminViewed(submission)
+    const commentCount = commentCounts[submission.id] ?? normalizedCommentCount(submission)
     const othersBlocked = (inFlightId !== null || bulkRejecting) && !busy
     const blocked = busy || othersBlocked
     const dim = othersBlocked ? blockedButtonStyle : null
     return (
       <tr
         key={submission.id}
-        onClick={() => setSelectedId(selected ? null : submission.id)}
+        onClick={() => (selected ? setSelectedId(null) : openSubmission(submission))}
         style={{ borderBottom: "1px solid #f1f1f1", cursor: "pointer", background: selected ? "#faf4ea" : undefined }}
       >
         <td style={boardSelectCellStyle} onClick={(e) => e.stopPropagation()}>
@@ -1929,7 +2223,10 @@ export default function RecruiterBoardOps() {
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  markSubmissionViewed(submission)
+                }}
                 style={{ color: "#2a5fb8" }}
               >
                 {submission.candidate?.name ?? "Candidate"}
@@ -1950,9 +2247,11 @@ export default function RecruiterBoardOps() {
           <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
             <Badge tone={chip.tone}>{chip.label}</Badge>
             <Badge tone={status.tone}>{status.label}</Badge>
-            {(commentCounts[submission.id] ?? 0) > 0 && (
+            <BackgroundSignalChips evaluation={submission.aiEvaluation} compact />
+            {viewed && <Badge tone="muted">Viewed</Badge>}
+            {commentCount > 0 && (
               <span
-                title={`${commentCounts[submission.id]} comment${commentCounts[submission.id] === 1 ? "" : "s"}`}
+                title={`${commentCount} comment${commentCount === 1 ? "" : "s"}`}
                 style={{
                   fontSize: 11,
                   color: "#555",
@@ -1963,7 +2262,7 @@ export default function RecruiterBoardOps() {
                   whiteSpace: "nowrap",
                 }}
               >
-                {commentCounts[submission.id]} msg
+                {commentCount} msg
               </span>
             )}
           </div>
@@ -1973,7 +2272,10 @@ export default function RecruiterBoardOps() {
             type="button"
             disabled={blocked}
             aria-disabled={blocked}
-            onClick={() => setSelectedId(submission.id)}
+            onClick={(e) => {
+              e.stopPropagation()
+              openSubmission(submission)
+            }}
             style={{ ...actionButtonStyle, ...dim }}
           >
             {busy ? "Working..." : selected ? "Open" : "Review"}
@@ -1983,6 +2285,79 @@ export default function RecruiterBoardOps() {
           )}
         </td>
       </tr>
+    )
+  }
+
+  const renderSubmissionTable = (groupKey: string, job: BoardJobGroup) => {
+    const pageKey = boardJobPageKey(groupKey, job.key)
+    const totalPages = Math.max(1, Math.ceil(job.submissions.length / BOARD_SUBMISSION_PAGE_SIZE))
+    const pageIndex = Math.min(Math.max(0, jobPageByKey[pageKey] ?? 0), totalPages - 1)
+    const start = pageIndex * BOARD_SUBMISSION_PAGE_SIZE
+    const pageRows = job.submissions.slice(start, start + BOARD_SUBMISSION_PAGE_SIZE)
+    const first = job.submissions.length === 0 ? 0 : start + 1
+    const last = Math.min(start + pageRows.length, job.submissions.length)
+    const rejectablePageRows = pageRows.filter(isBulkRejectSelectable)
+    const pageHasRejectable = rejectablePageRows.length > 0
+    const pageAllSelected = pageHasRejectable && rejectablePageRows.every((s) => bulkSelectedIds.has(s.id))
+    const setPage = (nextPage: number) => {
+      setJobPageByKey((prev) => ({
+        ...prev,
+        [pageKey]: Math.min(Math.max(0, nextPage), totalPages - 1),
+      }))
+    }
+
+    return (
+      <div style={boardTableShellStyle}>
+        <div style={boardPaginationBarStyle}>
+          <span>
+            Showing {first}-{last} of {job.submissions.length} · Best first
+          </span>
+          {totalPages > 1 && (
+            <div style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <button
+                type="button"
+                disabled={pageIndex === 0}
+                aria-disabled={pageIndex === 0}
+                onClick={() => setPage(pageIndex - 1)}
+                style={boardPaginationButtonStyle(pageIndex === 0)}
+              >
+                Prev
+              </button>
+              <span>Page {pageIndex + 1} / {totalPages}</span>
+              <button
+                type="button"
+                disabled={pageIndex >= totalPages - 1}
+                aria-disabled={pageIndex >= totalPages - 1}
+                onClick={() => setPage(pageIndex + 1)}
+                style={boardPaginationButtonStyle(pageIndex >= totalPages - 1)}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
+        <table style={boardTableStyle}>
+          <thead>
+            <tr>
+              <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
+                <input
+                  type="checkbox"
+                  aria-label={`Select visible rejectable submissions for ${job.title}`}
+                  checked={pageAllSelected}
+                  disabled={!pageHasRejectable || bulkRejecting}
+                  onChange={(e) => setBulkSelectionForSubmissions(pageRows, e.target.checked)}
+                />
+              </th>
+              <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
+              <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
+              <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
+              <th style={{ ...boardHeaderCellStyle, width: "28%" }}>Review</th>
+              <th style={{ ...boardHeaderCellStyle, width: "10%" }}>Open</th>
+            </tr>
+          </thead>
+          <tbody>{pageRows.map(renderSubmissionRow)}</tbody>
+        </table>
+      </div>
     )
   }
 
@@ -2015,29 +2390,7 @@ export default function RecruiterBoardOps() {
                   {job.pendingCount} pending · {job.totalCount} total
                 </span>
               </div>
-              <div style={boardTableShellStyle}>
-                <table style={boardTableStyle}>
-                  <thead>
-                    <tr>
-                      <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select all rejectable submissions for ${job.title}`}
-                          checked={job.submissions.some(isBulkRejectSelectable) && job.submissions.filter(isBulkRejectSelectable).every((s) => bulkSelectedIds.has(s.id))}
-                          disabled={!job.submissions.some(isBulkRejectSelectable) || bulkRejecting}
-                          onChange={(e) => setBulkSelectionForSubmissions(job.submissions, e.target.checked)}
-                        />
-                      </th>
-                      <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "28%" }}>Review</th>
-                      <th style={{ ...boardHeaderCellStyle, width: "10%" }}>Open</th>
-                    </tr>
-                  </thead>
-                  <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
-                </table>
-              </div>
+              {renderSubmissionTable(group.key, job)}
             </div>
           ))}
         </div>
@@ -2174,29 +2527,7 @@ export default function RecruiterBoardOps() {
                                   {job.pendingCount} pending · {job.totalCount} total
                                 </span>
                               </div>
-                              <div style={boardTableShellStyle}>
-                                <table style={boardTableStyle}>
-                                  <thead>
-                                    <tr>
-                                      <th style={{ ...boardHeaderCellStyle, width: 34, textAlign: "center" }}>
-                                        <input
-                                          type="checkbox"
-                                          aria-label={`Select all rejectable submissions for ${job.title}`}
-                                          checked={job.submissions.some(isBulkRejectSelectable) && job.submissions.filter(isBulkRejectSelectable).every((s) => bulkSelectedIds.has(s.id))}
-                                          disabled={!job.submissions.some(isBulkRejectSelectable) || bulkRejecting}
-                                          onChange={(e) => setBulkSelectionForSubmissions(job.submissions, e.target.checked)}
-                                        />
-                                      </th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "32%" }}>Candidate</th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "14%" }}>Submitted</th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "16%" }}>Self-score</th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "28%" }}>Review</th>
-                                      <th style={{ ...boardHeaderCellStyle, width: "10%" }}>Open</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>{job.submissions.map(renderSubmissionRow)}</tbody>
-                                </table>
-                              </div>
+                              {renderSubmissionTable(group.key, job)}
                             </div>
                           ))}
                         </div>

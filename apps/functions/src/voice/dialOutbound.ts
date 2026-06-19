@@ -5,8 +5,9 @@
  * when the row transitions `before.voiceState !== "dialing"` → `after.voiceState === "dialing"`.
  *
  * Lock contract:
- *   L5  — short-circuit + transition to failed if `paUserId` or `paJobId`
- *         missing (identity-first invariant). LLM never sees missing-identity
+ *   L5  — short-circuit + transition to failed if required booking identity
+ *         is missing. Every call requires `paUserId` + phone; prescreen also
+ *         requires `paJobId`. LLM never sees missing-identity
  *         rows.
  *   L10 — only deterministic transitions touch the row (dialing → connected
  *         only on webhook callback, never optimistically from here).
@@ -25,6 +26,7 @@ import type {
   SipParticipantInfo,
 } from "./types.js"
 import type { CallerIdStrategy } from "./caller-id-rotator.js"
+import { isClaireVoiceDevPhone } from "./dev-phone-gate.js"
 
 /**
  * Minimal Firestore document/ref surface dialOutbound depends on. Tests pass
@@ -66,6 +68,7 @@ export interface DialOutboundResult {
     | "skipped:no_transition"
     | "skipped:missing_data"
     | "failed:missing_identity"
+    | "failed:dev_phone_gate"
     | "failed:sip_dispatch"
     | "dispatched"
   bookingId: string
@@ -119,14 +122,15 @@ export async function handleDialOutbound(
     return { action: "skipped:missing_data", bookingId }
   }
 
-  // Gate 3 — Lock L5 identity-first. Missing paUserId / paJobId → mark the
-  // row failed and stop. No LLM, no LiveKit call.
+  // Gate 3 — Lock L5 identity-first. Missing required fields → mark the row
+  // failed and stop. No LLM, no LiveKit call.
   const paUserId = typeof after.paUserId === "string" ? after.paUserId.trim() : ""
   const paJobId = typeof after.paJobId === "string" ? after.paJobId.trim() : ""
-  if (!paUserId || !paJobId) {
+  const purpose = after.purpose === "onboarding" ? "onboarding" : "prescreen"
+  if (!paUserId || (purpose === "prescreen" && !paJobId)) {
     const missing = []
     if (!paUserId) missing.push("paUserId")
-    if (!paJobId) missing.push("paJobId")
+    if (purpose === "prescreen" && !paJobId) missing.push("paJobId")
     log("warn", "dialOutbound:missing_identity", { bookingId, missing })
     // Only flip if the forward transition `dialing → failed` is legal.
     if (isForwardTransition("dialing", "failed")) {
@@ -163,6 +167,23 @@ export async function handleDialOutbound(
       action: "failed:missing_identity",
       bookingId,
       errorMessage: "missing:phoneE164",
+    }
+  }
+  if (!isClaireVoiceDevPhone(phoneE164)) {
+    log("warn", "dialOutbound:dev_phone_gate", { bookingId })
+    await bookingRef.set(
+      {
+        voiceState: "failed",
+        voiceOutcome: "failed:dev_phone_gate",
+        voiceLastError: "voice_calls_enabled_only_for_dev_phones",
+        voiceEndedAt: now().toISOString(),
+      },
+      { merge: true },
+    )
+    return {
+      action: "failed:dev_phone_gate",
+      bookingId,
+      errorMessage: "voice_calls_enabled_only_for_dev_phones",
     }
   }
 

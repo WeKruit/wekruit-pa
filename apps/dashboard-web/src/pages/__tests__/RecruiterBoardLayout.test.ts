@@ -63,4 +63,61 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.match(source, /All \{submissions\.length\}/)
     assert.match(source, /visibleRecruiterGroups\.map\(renderGroup\)/)
   })
+
+  it("loads enough recruiter submissions for admin-heavy days but renders each job page at 100 rows", () => {
+    assert.match(source, /const BOARD_SUBMISSION_LOAD_LIMIT = 5_000/)
+    assert.match(source, /const BOARD_SUBMISSION_PAGE_SIZE = 100/)
+    assert.match(source, /limit\(BOARD_SUBMISSION_LOAD_LIMIT\)/)
+    assert.match(source, /const \[jobPageByKey, setJobPageByKey\] = useState<Record<string, number>>\(\{\}\)/)
+    assert.match(source, /const pageRows = job\.submissions\.slice\(start, start \+ BOARD_SUBMISSION_PAGE_SIZE\)/)
+    assert.match(source, /<tbody>\{pageRows\.map\(renderSubmissionRow\)\}<\/tbody>/)
+    assert.match(source, /Showing \{first\}-\{last\} of \{job\.submissions\.length\} · Best first/)
+    assert.match(source, /Page \{pageIndex \+ 1\} \/ \{totalPages\}/)
+    assert.match(source, /setBulkSelectionForSubmissions\(pageRows, e\.target\.checked\)/)
+  })
+
+  it("sorts each role page by AI fit quality before paginating", () => {
+    assert.match(source, /function boardSubmissionQualityScore\(submission: BoardSubmissionDoc\): number/)
+    assert.match(source, /function sortSubmissions\(submissions: BoardSubmissionDoc\[\]\): BoardSubmissionDoc\[\] \{[\s\S]*boardSubmissionQualityScore\(b\) - boardSubmissionQualityScore\(a\)/)
+    assert.match(source, /if \(Math\.abs\(qualityDelta\) > 0\.000001\) return qualityDelta/)
+    assert.match(source, /function buildJobGroups\(submissions: BoardSubmissionDoc\[\]\): BoardJobGroup\[\] \{[\s\S]*const sorted = sortSubmissions\(list\)/)
+    assert.match(source, /submissions: sorted,\n\s+pendingCount: sorted\.filter\(isPending\)\.length,/)
+    assert.match(source, /const pageRows = job\.submissions\.slice\(start, start \+ BOARD_SUBMISSION_PAGE_SIZE\)/)
+  })
+
+  it("surfaces recruiter candidate tier and school/background evidence", () => {
+    assert.match(source, /suggestTierFromRecruiterAi/)
+    assert.match(source, /function suggestedCandidateTier\(evaluation: SubmissionAiEvaluation \| undefined\): CandidateTier \| null/)
+    assert.match(source, /function BackgroundSignalChips\(/)
+    assert.match(source, /function BackgroundEvidencePanel\(/)
+    assert.match(source, /Tier & background attachment/)
+    assert.match(source, /<BackgroundSignalChips evaluation=\{submission\.aiEvaluation\} compact \/>/)
+    assert.match(source, /<BackgroundEvidencePanel evaluation=\{submission\.aiEvaluation\} \/>/)
+  })
+
+  it("does not clip later role tables inside the recruiter card", () => {
+    const boardGroupBodyStyle = source.match(/const boardGroupBodyStyle: CSSProperties = \{[\s\S]*?\n\}/)
+    assert.ok(boardGroupBodyStyle)
+    assert.doesNotMatch(boardGroupBodyStyle[0], /maxHeight/)
+    assert.doesNotMatch(boardGroupBodyStyle[0], /overflow/)
+    assert.doesNotMatch(boardGroupBodyStyle[0], /scrollbarWidth/)
+  })
+
+  it("marks submissions viewed when opened and shows a persisted viewed badge", () => {
+    assert.match(source, /adminViewedAt\?: \{ seconds\?: number \} \| string \| null/)
+    assert.match(source, /function hasAdminViewed\(submission: BoardSubmissionDoc\): boolean/)
+    assert.match(source, /function markSubmissionViewed\(submission: BoardSubmissionDoc\)/)
+    assert.match(source, /updateDoc\(doc\(db\(\), "pa-recruiter-submissions", submission\.id\), \{[\s\S]*adminViewedAt: viewedAt,[\s\S]*adminViewedByEmail: viewedBy/)
+    assert.match(source, /onClick=\{\(\) => \(selected \? setSelectedId\(null\) : openSubmission\(submission\)\)\}/)
+    assert.match(source, /\{viewed && <Badge tone="muted">Viewed<\/Badge>\}/)
+  })
+
+  it("keeps message badges after reload by persisting parent comment metadata", () => {
+    assert.match(source, /adminCommentCount\?: number \| null/)
+    assert.match(source, /function normalizedCommentCount\(submission: BoardSubmissionDoc\): number/)
+    assert.match(source, /const loadedCommentCounts = Object\.fromEntries\(/)
+    assert.match(source, /setCommentCounts\(loadedCommentCounts\)/)
+    assert.match(source, /updateDoc\(doc\(db\(\), "pa-recruiter-submissions", submissionId\), \{[\s\S]*adminCommentCount: safeCount,[\s\S]*adminLastCommentAt: lastCommentAt \?\? null/)
+    assert.match(source, /const commentCount = commentCounts\[submission\.id\] \?\? normalizedCommentCount\(submission\)/)
+  })
 })

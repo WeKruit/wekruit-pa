@@ -74,6 +74,8 @@ const TERMINAL_PARAM_VALUES: readonly StrictReviewTerminalFilter[] = [
   "PAUSE",
   "IN_PROGRESS",
 ]
+const SORT_PARAM_VALUES: readonly StrictReviewSort[] = ["strict_priority", "score_desc", "oldest", "newest"]
+const DEFAULT_SORT: StrictReviewSort = "score_desc"
 
 function paramValue<T extends string>(raw: string | null, allowed: readonly T[], fallback: T): T {
   return raw !== null && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback
@@ -159,7 +161,9 @@ export default function PrescreenSessionsList() {
   )
   const [actionFilter, setActionFilter] = useState<StrictReviewActionFilter>("all")
   const [draftFilter, setDraftFilter] = useState<StrictReviewDraftFilter>("all")
-  const [sortMode, setSortMode] = useState<StrictReviewSort>("strict_priority")
+  const [sortMode, setSortMode] = useState<StrictReviewSort>(
+    () => paramValue(searchParams.get("sort"), SORT_PARAM_VALUES, DEFAULT_SORT),
+  )
   const [search, setSearch] = useState(() => searchParams.get("search") ?? "")
   const [includeTest, setIncludeTest] = useState(() => searchParams.get("includeTest") === "1")
   const [bulkAction, setBulkAction] = useState<PrescreenBulkAction>("reject")
@@ -171,20 +175,22 @@ export default function PrescreenSessionsList() {
       syncSearchParam(next, "queue", queueFilter, "pending")
       syncSearchParam(next, "bucket", bucketFilter, "all")
       syncSearchParam(next, "terminal", terminalFilter, "all")
+      syncSearchParam(next, "sort", sortMode, DEFAULT_SORT)
       syncSearchParam(next, "search", search, "")
       syncSearchParam(next, "includeTest", includeTest ? "1" : "", "")
       return next
     }, { replace: true })
-  }, [bucketFilter, includeTest, queueFilter, search, setSearchParams, terminalFilter])
+  }, [bucketFilter, includeTest, queueFilter, search, setSearchParams, sortMode, terminalFilter])
 
   const sessionsInput = useMemo<Omit<PrescreenOpsSessionsPageInput, "cursor">>(
     () => ({
       ...(jobIdParam ? { jobId: jobIdParam } : {}),
       ...(includeTest ? { includeTest: true } : {}),
       queue: queueFilter,
+      sort: sortMode,
       limit: PAGE_LIMIT,
     }),
-    [includeTest, jobIdParam, queueFilter],
+    [includeTest, jobIdParam, queueFilter, sortMode],
   )
 
   useEffect(() => {

@@ -2,7 +2,22 @@
  * Pure résumé-URL → embeddable-URL logic, split out from CandidateResumePreview so it can
  * be unit-tested without pulling in React.
  */
-export type ResumeEmbed = { embedUrl: string | null; kind: "drive" | "pdf" | "gview" | "none" }
+export type ResumeEmbed = { embedUrl: string | null; kind: "blob" | "drive" | "pdf" | "gview" | "none" }
+
+export function isFirebaseStorageUri(rawUrl: string | undefined | null): boolean {
+  return /^gs:\/\/[^/]+\/.+/i.test((rawUrl ?? "").trim())
+}
+
+export function toFirebaseStorageBrowserUrl(rawUrl: string | undefined | null): string | undefined {
+  const match = /^gs:\/\/([^/]+)\/(.+)$/i.exec((rawUrl ?? "").trim())
+  if (!match) return undefined
+  const bucket = encodeURIComponent(match[1]!)
+  const objectPath = match[2]!
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/")
+  return `https://storage.cloud.google.com/${bucket}/${objectPath}`
+}
 
 /** Rewrite a résumé URL into something an <iframe> can render. Pure + testable. */
 export function toResumeEmbedUrl(rawUrl: string | undefined | null): ResumeEmbed {
@@ -14,6 +29,8 @@ export function toResumeEmbedUrl(rawUrl: string | undefined | null): ResumeEmbed
   } catch {
     return { embedUrl: null, kind: "none" }
   }
+  if (u.protocol === "blob:") return { embedUrl: url, kind: "blob" }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return { embedUrl: null, kind: "none" }
   const host = u.host.toLowerCase()
 
   // Google Drive: /file/d/{id}/view · /open?id={id} · ?id={id}  →  /file/d/{id}/preview

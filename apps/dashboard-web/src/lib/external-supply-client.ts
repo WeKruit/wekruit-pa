@@ -177,6 +177,10 @@ export interface ReviewEvaluationAttemptInput {
   correctionReason?: string
   /** Rich eval-quality annotation (agree/disagree, error categories, evidence, quality 1-5). */
   label?: ReviewEvalLabelInput
+  /** Operator-confirmed candidate tier for a prescreen rejection (FAIL/HARD_STOP). */
+  tier?: "tier_1" | "tier_2" | "tier_3"
+  /** The AI's suggested tier shown to the operator (override audit). */
+  tierAiSuggested?: "tier_1" | "tier_2" | "tier_3"
   /**
    * When false, this is a LABEL-ONLY write: record the human label + correction
    * event, never commit a prescreen terminal, never message the candidate. Defaults

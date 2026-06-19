@@ -57,6 +57,7 @@ export type RunTurnActionLite =
   | { kind: "clarify"; qId: string; kAfter: number }
   | { kind: "advance"; fromQId: string; toQId: string }
   | { kind: "terminal"; terminal: string; reason: string }
+  | { kind: "complete"; reason?: string }
   | { kind: "error"; reason: string }
 
 export interface RunTurnResultLite {
@@ -120,7 +121,9 @@ export function createTurnLoop(deps: TurnLoopDeps) {
       const lang: Lang = input.lang ?? deps.context.userProfile.preferredLang ?? "en"
 
       const qIdBefore =
-        deps.context.prescreenConfig.questions[0]?.qId ?? null
+        deps.context.purpose === "prescreen"
+          ? deps.context.prescreenConfig.questions[0]?.qId ?? null
+          : null
 
       log("voice.turn.runTurn.start", {
         bookingId: deps.context.bookingId,
@@ -129,7 +132,10 @@ export function createTurnLoop(deps: TurnLoopDeps) {
       })
 
       const result = await deps.pipeline.runTurn({
-        sessionId: deps.context.bookingId,
+        sessionId:
+          deps.context.purpose === "prescreen"
+            ? deps.context.prescreenSessionId
+            : deps.context.bookingId,
         reply: input.reply,
         lang,
         nowIso: input.nowIso,

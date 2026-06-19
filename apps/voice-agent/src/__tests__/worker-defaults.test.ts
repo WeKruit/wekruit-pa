@@ -12,7 +12,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { defaultBuildPipeline, defaultLoadContext } from "../worker.js"
+import { defaultBuildPipeline, defaultLoadContext, waitForRemoteParticipant } from "../worker.js"
+import type { VoiceCallContext } from "../voice-context-types.js"
 
 interface FakeFetchCall {
   url: string
@@ -41,6 +42,7 @@ function installFakeFetch(handler: (input: FakeFetchCall) => Response | Promise<
 const ORIGINAL_ENV = {
   WEKRUIT_VOICE_CONTEXT_URL: process.env.WEKRUIT_VOICE_CONTEXT_URL,
   WEKRUIT_VOICE_PRESCREEN_TURN_URL: process.env.WEKRUIT_VOICE_PRESCREEN_TURN_URL,
+  WEKRUIT_VOICE_ONBOARDING_TURN_URL: process.env.WEKRUIT_VOICE_ONBOARDING_TURN_URL,
   PA_VOICE_CF_SECRET: process.env.PA_VOICE_CF_SECRET,
 }
 
@@ -51,10 +53,77 @@ function restoreEnv() {
   }
 }
 
+function prescreenContext(): VoiceCallContext {
+  return {
+    bookingId: "b1",
+    purpose: "prescreen",
+    prescreenSessionId: "ps1",
+    userProfile: { userId: "u1", missingFields: [] },
+    jobBrief: { jobId: "j1", jobTitle: "T", companyName: "C", missingFields: [] },
+    prescreenConfig: {
+      jobId: "j1",
+      version: 1,
+      jobTitle: "T",
+      threshold: 0.65,
+      confidenceThreshold: 0.7,
+      maxClarifyRounds: 2,
+      voiceMode: "professional_prescreen",
+      questions: [],
+      parsedFromZod: true,
+      missingFields: [],
+    },
+  }
+}
+
+function onboardingContext(): VoiceCallContext {
+  return {
+    bookingId: "b-onboard",
+    purpose: "onboarding",
+    userProfile: { userId: "u1", missingFields: [] },
+  }
+}
+
 test("defaultLoadContext throws when WEKRUIT_VOICE_CONTEXT_URL not set", async () => {
   delete process.env.WEKRUIT_VOICE_CONTEXT_URL
   await assert.rejects(() => defaultLoadContext("b1"), /WEKRUIT_VOICE_CONTEXT_URL not set/)
   restoreEnv()
+})
+
+test("waitForRemoteParticipant resolves immediately when a SIP participant is already in the room", async () => {
+  const room = {
+    remoteParticipants: new Map([
+      ["candidate-u1", { identity: "candidate-u1" }],
+    ]),
+    on() {
+      throw new Error("should not subscribe when participant is already present")
+    },
+    off() {},
+  }
+
+  const participant = await waitForRemoteParticipant(room)
+  assert.equal(participant?.identity, "candidate-u1")
+})
+
+test("waitForRemoteParticipant waits for LiveKit participantConnected before Claire speaks", async () => {
+  let listener: ((participant: { identity: string }) => void) | null = null
+  const room = {
+    remoteParticipants: new Map(),
+    on(event: string, cb: (participant: { identity: string }) => void) {
+      assert.equal(event, "participantConnected")
+      listener = cb
+    },
+    off(event: string, cb: (participant: { identity: string }) => void) {
+      assert.equal(event, "participantConnected")
+      assert.equal(cb, listener)
+    },
+  }
+
+  const pending = waitForRemoteParticipant(room, { timeoutMs: 1_000 })
+  assert.equal(typeof listener, "function")
+  listener?.({ identity: "candidate-u1" })
+
+  const participant = await pending
+  assert.equal(participant?.identity, "candidate-u1")
 })
 
 test("defaultLoadContext POSTs bookingId + secret header to context CF", async () => {
@@ -62,6 +131,8 @@ test("defaultLoadContext POSTs bookingId + secret header to context CF", async (
   process.env.PA_VOICE_CF_SECRET = "shh"
   const fixture = {
     bookingId: "b1",
+    purpose: "prescreen",
+    prescreenSessionId: "ps1",
     userProfile: { userId: "u1", missingFields: [] },
     jobBrief: { jobId: "j1", jobTitle: "T", companyName: "C", missingFields: [] },
     prescreenConfig: {
@@ -89,6 +160,9 @@ test("defaultLoadContext POSTs bookingId + secret header to context CF", async (
     const body = JSON.parse(String(init.body))
     assert.equal(body.bookingId, "b1")
     assert.equal(ctx.bookingId, "b1")
+    assert.equal(ctx.purpose, "prescreen")
+    if (ctx.purpose !== "prescreen") throw new Error("expected prescreen context")
+    assert.equal(ctx.prescreenSessionId, "ps1")
     assert.equal(ctx.userProfile.userId, "u1")
     assert.equal(ctx.jobBrief.jobId, "j1")
   } finally {
@@ -108,9 +182,32 @@ test("defaultLoadContext throws on non-2xx response", async () => {
   }
 })
 
+test("defaultLoadContext accepts onboarding context without job fields", async () => {
+  process.env.WEKRUIT_VOICE_CONTEXT_URL = "https://example.test/paVoiceCallContext"
+  const fake = installFakeFetch(async () =>
+    new Response(
+      JSON.stringify({
+        bookingId: "b-onboard",
+        purpose: "onboarding",
+        userProfile: { userId: "u1", missingFields: [] },
+      }),
+      { status: 200 },
+    ),
+  )
+  try {
+    const ctx = await defaultLoadContext("b-onboard")
+    assert.equal(ctx.purpose, "onboarding")
+    assert.equal(ctx.bookingId, "b-onboard")
+    assert.equal(ctx.userProfile.userId, "u1")
+  } finally {
+    fake.restore()
+    restoreEnv()
+  }
+})
+
 test("defaultBuildPipeline throws when WEKRUIT_VOICE_PRESCREEN_TURN_URL not set", async () => {
   delete process.env.WEKRUIT_VOICE_PRESCREEN_TURN_URL
-  await assert.rejects(() => defaultBuildPipeline(), /WEKRUIT_VOICE_PRESCREEN_TURN_URL not set/)
+  await assert.rejects(() => defaultBuildPipeline(prescreenContext()), /WEKRUIT_VOICE_PRESCREEN_TURN_URL not set/)
   restoreEnv()
 })
 
@@ -130,9 +227,9 @@ test("defaultBuildPipeline.runTurn POSTs the turn input + secret header", async 
       ),
   )
   try {
-    const pipeline = await defaultBuildPipeline()
+    const pipeline = await defaultBuildPipeline(prescreenContext())
     const out = await pipeline.runTurn({
-      sessionId: "b1",
+      sessionId: "ps1",
       reply: "I built it",
       lang: "en",
       nowIso: "2026-05-16T00:00:00Z",
@@ -140,7 +237,8 @@ test("defaultBuildPipeline.runTurn POSTs the turn input + secret header", async 
     })
     assert.equal(fake.calls.length, 1)
     const body = JSON.parse(String(fake.calls[0]!.init!.body))
-    assert.equal(body.sessionId, "b1")
+    assert.equal(body.bookingId, "b1")
+    assert.equal(body.sessionId, "ps1")
     assert.equal(body.userId, "u1")
     assert.equal(body.reply, "I built it")
     assert.equal(body.lang, "en")
@@ -170,7 +268,7 @@ test("defaultBuildPipeline.runTurn maps null text to empty string", async () => 
       ),
   )
   try {
-    const pipeline = await defaultBuildPipeline()
+    const pipeline = await defaultBuildPipeline(prescreenContext())
     const out = await pipeline.runTurn({
       sessionId: "b1",
       reply: "still here",
@@ -189,7 +287,7 @@ test("defaultBuildPipeline.runTurn throws on 5xx", async () => {
   process.env.WEKRUIT_VOICE_PRESCREEN_TURN_URL = "https://example.test/paVoicePrescreenTurn"
   const fake = installFakeFetch(async () => new Response("oops", { status: 502 }))
   try {
-    const pipeline = await defaultBuildPipeline()
+    const pipeline = await defaultBuildPipeline(prescreenContext())
     await assert.rejects(
       () =>
         pipeline.runTurn({
@@ -212,6 +310,8 @@ test("defaultLoadContext omits secret header when PA_VOICE_CF_SECRET unset", asy
   delete process.env.PA_VOICE_CF_SECRET
   const fixture = {
     bookingId: "b1",
+    purpose: "prescreen",
+    prescreenSessionId: "ps1",
     userProfile: { userId: "u1", missingFields: [] },
     jobBrief: { jobId: "j1", jobTitle: "T", companyName: "C", missingFields: [] },
     prescreenConfig: {
@@ -232,6 +332,41 @@ test("defaultLoadContext omits secret header when PA_VOICE_CF_SECRET unset", asy
     await defaultLoadContext("b1")
     const headers = fake.calls[0]!.init!.headers as Record<string, string>
     assert.equal("X-Wekruit-Voice-CF-Secret" in headers, false)
+  } finally {
+    fake.restore()
+    restoreEnv()
+  }
+})
+
+test("defaultBuildPipeline routes onboarding context to onboarding callable", async () => {
+  process.env.WEKRUIT_VOICE_ONBOARDING_TURN_URL = "https://example.test/paVoiceOnboardingTurn"
+  process.env.PA_VOICE_CF_SECRET = "shh"
+  const fake = installFakeFetch(
+    async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          lifecycleKind: "onboarding_turn",
+          text: "What kind of role are you looking for?",
+          action: { kind: "advance", currentQId: "q_role" },
+        }),
+        { status: 200 },
+      ),
+  )
+  try {
+    const pipeline = await defaultBuildPipeline(onboardingContext())
+    const out = await pipeline.runTurn({
+      sessionId: "b-onboard",
+      reply: "hi",
+      lang: "en",
+      nowIso: "2026-05-16T00:00:00Z",
+      judgeCtx: { userId: "u1", turnId: "t1" },
+    })
+    assert.equal(fake.calls[0]!.url, "https://example.test/paVoiceOnboardingTurn")
+    const body = JSON.parse(String(fake.calls[0]!.init!.body))
+    assert.equal(body.bookingId, "b-onboard")
+    assert.equal(body.sessionId, "b-onboard")
+    assert.equal(out.action.kind, "advance")
   } finally {
     fake.restore()
     restoreEnv()

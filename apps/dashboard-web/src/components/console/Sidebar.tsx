@@ -37,6 +37,14 @@ export type NavMode = NavSectionDef["mode"]
 export const CONSOLE_NAV: NavSectionDef[] = [
   // ───────────── OPS ─────────────
   {
+    id: "overview",
+    label: "Overview",
+    icon: "trending_up",
+    mode: "ops",
+    defaultOpen: true,
+    items: [{ to: "/admin/operations", label: "Operations overview" }],
+  },
+  {
     id: "prescreen",
     label: "Prescreen",
     icon: "list_check",
@@ -58,6 +66,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     items: [
       { to: "/admin/candidates", label: "All candidates", end: true },
       { to: "/admin/passed-candidates", label: "Passed candidates" },
+      { to: "/admin/rejected-candidates", label: "Rejected · by tier" },
       { to: "/admin/identity-conflicts", label: "Identity conflicts", hitl: true },
       { to: "/conversations", label: "iMessage conversations" },
     ],
