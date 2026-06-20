@@ -747,5 +747,16 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "_comment": "Operator work-queue badge (work-queue-counts.ts fetchEnrichmentDrafts) — count() over collectionGroup(\"enrichment\") where status in [draft, needs_review]. Collection-group single-field queries need a COLLECTION_GROUP-scoped single-field index; it is NOT auto-created, so the unindexed count() threw failed-precondition (console 400 on every dashboard load). COLLECTION asc/desc preserved so per-job enrichment reads are unaffected.",
+      "collectionGroup": "enrichment",
+      "fieldPath": "status",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    }
+  ]
 }
