@@ -945,7 +945,7 @@ async function mirrorRecruiterEvalAttempt(
 }
 
 export async function runRecruiterSubmissionEval(
-  raw: { submissionId: string; submission: Record<string, unknown> },
+  raw: { submissionId: string; submission: Record<string, unknown>; force?: boolean },
   deps: RecruiterSubmissionEvalDeps,
 ): Promise<RecruiterSubmissionEvalResult> {
   const now = deps.now ?? (() => new Date().toISOString())
@@ -953,9 +953,10 @@ export async function runRecruiterSubmissionEval(
 
   // Idempotent re-fire guard on the FRESH doc — onDocumentCreated re-fires
   // deliver the at-creation snapshot, which never contains aiEvaluation.
+  // `force` (admin re-eval) bypasses the guard to overwrite a stale evaluation.
   const fresh = await ref.get()
   const submission = fresh.exists ? (fresh.data() ?? {}) : raw.submission
-  if (asRecord(submission.aiEvaluation)) {
+  if (!raw.force && asRecord(submission.aiEvaluation)) {
     deps.log?.("skipped_existing_evaluation", { submissionId: raw.submissionId })
     return { status: "skipped_existing", submissionId: raw.submissionId }
   }
@@ -1058,7 +1059,7 @@ export async function runRecruiterSubmissionEval(
 // Production CF — thin shim over runRecruiterSubmissionEval.
 // ---------------------------------------------------------------------------
 
-function makeProdEvalDeps(db: Firestore): RecruiterSubmissionEvalDeps {
+export function makeProdEvalDeps(db: Firestore): RecruiterSubmissionEvalDeps {
   const openai = getOpenAIConfig()
   const anthropic = getAnthropicConfig()
   return {
