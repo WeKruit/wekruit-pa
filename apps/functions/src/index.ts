@@ -290,6 +290,9 @@ export { paAdminOpsMetrics } from "./admin-ops-metrics.js"
 // Candidate pool TRUE counts (whole pool, not the 500-row browse sample) for
 // the /admin/candidates header cards + STATE/SOURCE/IDENTITY breakdowns.
 export { paAdminCandidatePoolCounts } from "./admin-candidate-pool-counts.js"
+// Trimmed list of EVERY recruiter submission (not just the recent 500) so the
+// /admin/recruiter-submissions search + state filter see the whole pool.
+export { paAdminRecruiterSubmissionsList } from "./admin-recruiter-submissions-list.js"
 // Rejected-candidates-by-tier browse + AI re-evaluate-for-new-roles action.
 // Tier is stamped at rejection (prescreen + recruiter) via applyGlobalCandidateTier.
 export { paAdminRejectedCandidatesSnapshot } from "./admin-rejected-candidates.js"
