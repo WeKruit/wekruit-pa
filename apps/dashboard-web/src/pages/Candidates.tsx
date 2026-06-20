@@ -26,6 +26,7 @@ import { AdminPrescreenSessionLink } from "../components/AdminEntityLink.js"
 import { db } from "../lib/firebase.js"
 import { getCandidatePoolCounts, type CandidatePoolCounts } from "../lib/candidate-pool-counts-api.js"
 import { cachedLoad, invalidatePrefix } from "../lib/unified-cache.js"
+import { algoliaSearch, isAlgoliaConfigured, ALGOLIA_CANDIDATES_INDEX } from "../lib/algolia-search.js"
 import { Icon } from "../components/console/Icon.js"
 import {
   Card,
@@ -518,6 +519,10 @@ export function Candidates() {
   const navigate = useNavigate()
   const [rows, setRows] = useState<Row[]>([])
   const [lookupRows, setLookupRows] = useState<Row[]>([])
+  // Algolia search rows (whole 5k+ pool, not just the loaded 500). Empty until a
+  // text query is typed; `algoliaQuery` tracks which query they belong to.
+  const [algoliaRows, setAlgoliaRows] = useState<Row[]>([])
+  const [algoliaQuery, setAlgoliaQuery] = useState("")
   const [sourceMap, setSourceMap] = useState<Map<string, ExternalSource>>(new Map())
   const [identityIndex, setIdentityIndex] = useState<IdentityIndex>(emptyIdentityIndex)
   const [loading, setLoading] = useState(true)
@@ -604,6 +609,57 @@ export function Candidates() {
       cancelled = true
     }
   }, [identityIndex, rows, search, sourceMap])
+
+  // Algolia full-pool search (debounced). A text query hits the pa_candidates
+  // index (all 5k+), not just the loaded 500; results are mapped to rows and
+  // merged in `filtered`. No-op (and harmless) when Algolia isn't configured.
+  useEffect(() => {
+    const q = search.trim()
+    if (!q || !isAlgoliaConfigured()) {
+      setAlgoliaRows([])
+      setAlgoliaQuery("")
+      return
+    }
+    let cancelled = false
+    const t = setTimeout(() => {
+      void algoliaSearch<{
+        objectID: string
+        displayName?: string
+        email?: string
+        phoneE164?: string
+        linkedinUrl?: string
+      }>(ALGOLIA_CANDIDATES_INDEX, q, { hitsPerPage: 100 })
+        .then((res) => {
+          if (cancelled) return
+          setAlgoliaRows(
+            res.hits.map((h) =>
+              buildRow(
+                {
+                  id: h.objectID,
+                  displayName: h.displayName,
+                  email: h.email,
+                  phoneE164: h.phoneE164,
+                  linkedinUrl: h.linkedinUrl,
+                } as UserDoc,
+                sourceMap,
+                identityIndex,
+              ),
+            ),
+          )
+          setAlgoliaQuery(q)
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setAlgoliaRows([])
+            setAlgoliaQuery("")
+          }
+        })
+    }, 200)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [search, sourceMap, identityIndex])
 
   const counts = useMemo(() => {
     const byState = new Map<LifecycleState, number>()
@@ -713,7 +769,13 @@ export function Candidates() {
     const q = search.trim().toLowerCase()
     const normalizedPhone = normalizeCandidatePhoneLookup(search)
     const phoneDigits = phoneSearchDigits(search)
-    const merged = [...lookupRows, ...rows].filter(
+    // When a text query is active and Algolia served results for THIS query, the
+    // base set is the whole-pool Algolia hits (not just the loaded 500). Text was
+    // matched server-side (typo-tolerant), and account-only/demo gates are
+    // bypassed so a search finds anyone; explicit chip filters still apply.
+    const algoliaActive = q.length > 0 && isAlgoliaConfigured() && algoliaQuery === search.trim()
+    const baseRows = algoliaActive ? algoliaRows : rows
+    const merged = [...lookupRows, ...baseRows].filter(
       (row, index, all) => all.findIndex((r) => r.id === row.id) === index
     )
     return merged.filter((r) => {
@@ -721,8 +783,6 @@ export function Candidates() {
         (normalizedPhone !== null && r.doc.phoneE164 === normalizedPhone) ||
         (phoneDigits !== null && matchesPhoneSearch(r.doc.phoneE164, search))
       if (phoneMatch) return true
-      if (!includeDemoTestInternal && isDemoTestOrInternal(r.candidateClass)) return false
-      if (accountOnly && r.candidateClass !== "candidate_account") return false
       if (stateFilter.size > 0 && !stateFilter.has(r.lifecycle)) return false
       if (sourceFilter.size > 0 && !sourceFilter.has(r.source)) return false
       if (
@@ -732,6 +792,9 @@ export function Candidates() {
         return false
       }
       if (hasReachable && !(r.doc.email || r.doc.phoneE164 || r.doc.linkedinUrl)) return false
+      if (algoliaActive) return true
+      if (!includeDemoTestInternal && isDemoTestOrInternal(r.candidateClass)) return false
+      if (accountOnly && r.candidateClass !== "candidate_account") return false
       if (!q) return true
       const hay = [
         r.id,
@@ -757,6 +820,8 @@ export function Candidates() {
     search,
     sourceFilter,
     stateFilter,
+    algoliaRows,
+    algoliaQuery,
   ])
 
   // Ranking. Sortable columns: handle (alpha), lifecycle (pipeline order),
