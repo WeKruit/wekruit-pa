@@ -1051,6 +1051,25 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     ],
   })
 
+  // The list is trimmed (no aiEvaluation / statusHistory / candidateBackground,
+  // to keep the payload ~2.6MB instead of ~19.5MB). Fetch the FULL submission
+  // doc when a row is opened so the detail drawer has everything. MUST stay
+  // above the early returns below so the hook count is stable (React #310).
+  useEffect(() => {
+    if (!expandedId || fullById.has(expandedId)) return
+    let cancel = false
+    void getDoc(doc(db(), "pa-recruiter-submissions", expandedId))
+      .then((s) => {
+        if (!cancel && s.exists()) {
+          setFullById((m) => new Map(m).set(s.id, { id: s.id, ...(s.data() as Omit<SubmissionDoc, "id">) }))
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancel = true
+    }
+  }, [expandedId, fullById])
+
   const header = (
     <>
       <PageHeader
@@ -1298,24 +1317,6 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
       },
     },
   ]
-
-  // The list is trimmed (no aiEvaluation / statusHistory / candidateBackground,
-  // to keep the payload ~2.6MB instead of ~19.5MB). Fetch the FULL submission
-  // doc when a row is opened so the detail drawer has everything.
-  useEffect(() => {
-    if (!expandedId || fullById.has(expandedId)) return
-    let cancel = false
-    void getDoc(doc(db(), "pa-recruiter-submissions", expandedId))
-      .then((s) => {
-        if (!cancel && s.exists()) {
-          setFullById((m) => new Map(m).set(s.id, { id: s.id, ...(s.data() as Omit<SubmissionDoc, "id">) }))
-        }
-      })
-      .catch(() => undefined)
-    return () => {
-      cancel = true
-    }
-  }, [expandedId, fullById])
 
   const baseRow = expandedId ? rows.find((r) => r.id === expandedId) ?? null : null
   const selectedRow = baseRow ? { ...baseRow, ...(fullById.get(baseRow.id ?? "") ?? {}) } : null
