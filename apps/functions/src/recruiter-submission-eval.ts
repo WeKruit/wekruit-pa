@@ -48,6 +48,8 @@ import {
 } from "@pa/core-types"
 import { getEvaluationAttempt, saveEvaluationAttempt } from "@pa/pa-persistence"
 import { getOrFetchCoresignalByLinkedin } from "./lib/coresignal-cache.js"
+import { getStorage } from "firebase-admin/storage"
+import { fetchPdfWithSizeCap } from "./cv-ingest/cv-size-cap.js"
 import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
 import { ensureRecruiterSubmissionCandidateTracked } from "./recruiter-candidate-tracking.js"
 
@@ -221,6 +223,7 @@ export const EVAL_JUDGMENT_JSON_SCHEMA = {
 export const JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL recruiter-submission evaluator. A third-party recruiter submitted a candidate against a job rubric and self-reported which checklist items the candidate meets. Recruiters are incentivized to over-claim: every tick is a CLAIM to verify against the candidate info and independent research, NEVER a fact.
 
 Rules:
+- PRIMARY EVIDENCE = the candidate's résumé full text (when provided) + the recruiter's submitted fields/notes. The Coresignal research is CORROBORATION ONLY — it can be stale, sparse, or a wrong-identity match for the pasted LinkedIn URL. When the résumé and the research disagree, TRUST THE RÉSUMÉ. Verify hard items primarily against the résumé; NEVER reject because the research lacks or contradicts what the résumé clearly evidences.
 - WRONG-IDENTITY GUARD (check FIRST): the independent research is fetched from the LinkedIn URL the recruiter pasted, which CAN BE WRONG — a mistyped/ambiguous URL or a common-name collision resolves a DIFFERENT person. Before using research as evidence, sanity-check it plausibly belongs to THIS candidate: compare the research subject's name, profession/field, and seniority against the candidate's submitted name, current role, resume notes, and skills. If the research SHARPLY CONFLICTS with the candidate's own resume — a fundamentally different profession or field (e.g. research shows a pharmacist / Walgreens pharmacy manager while the resume and current role are a senior software engineer) — treat the research as a LIKELY WRONG-IDENTITY match: **set \`identityConflict\`: true**, DO NOT use the research as disqualifying evidence, DO NOT reject on it, judge on the submitted resume/notes alone, prefer verdict "borderline" (human review), and state the identity conflict explicitly in \`reasons\`. Only treat research as authoritative when it is consistent with the candidate's own info; set \`identityConflict\`: false otherwise (including when research is simply absent/sparse — that is "unverifiable", NOT a conflict and NOT disqualifying).
 - Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the candidate info or research contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text.
 - Apply the same evidence bar to fit and bonus items; list unmet/unverifiable item texts in their gaps arrays.
@@ -422,6 +425,9 @@ export interface RecruiterSubmissionEvalDeps {
   }
   now?: () => string
   log?: (event: string, fields?: Record<string, unknown>) => void
+  /** Download+extract the uploaded résumé text (PRIMARY evidence). Defaults to
+   *  defaultFetchResumeText in prod; tests stub it. Omitted → no résumé text. */
+  fetchResumeText?: (resumeUrl: string) => Promise<string | undefined>
 }
 
 export type RecruiterSubmissionEvalResult = {
@@ -458,6 +464,39 @@ async function researchCandidate(
     log: (event, fields) => deps.log?.(event, { submissionId, ...(fields ?? {}) }),
   })
   return employee ? buildResearchFromEmployee(employee) : undefined
+}
+
+/**
+ * Download + text-extract the uploaded résumé (PRIMARY ground-truth evidence).
+ * Handles https (firebasestorage download URL) and gs:// URIs. FAIL-OPEN: any
+ * download/parse error → undefined (judge falls back to notes + research).
+ * Bounded: 5MB download cap + 50-page pdf-parse + 100KB text cap. No OCR/vision
+ * here (keeps the trigger fast); image-only PDFs yield empty → undefined.
+ */
+export async function defaultFetchResumeText(
+  resumeUrl: string,
+  log?: (event: string, fields?: Record<string, unknown>) => void,
+): Promise<string | undefined> {
+  try {
+    let bytes: Uint8Array
+    if (resumeUrl.startsWith("gs://")) {
+      const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(resumeUrl)
+      if (!m) return undefined
+      const [buf] = await getStorage().bucket(m[1]!).file(decodeURIComponent(m[2]!)).download()
+      bytes = new Uint8Array(buf)
+    } else {
+      bytes = (await fetchPdfWithSizeCap(resumeUrl)).bytes
+    }
+    const mod = (await import("pdf-parse/lib/pdf-parse.js")) as unknown as {
+      default: (data: Buffer, opts?: { max?: number }) => Promise<{ text: string }>
+    }
+    const out = await mod.default(Buffer.from(bytes), { max: 50 })
+    const text = (out.text ?? "").trim()
+    return text.length > 0 ? text.slice(0, 100_000) : undefined
+  } catch (err) {
+    log?.("resume_text_extract_failed", { error: String(err).slice(0, 200) })
+    return undefined
+  }
 }
 
 function renderJdBlocks(job: Record<string, unknown>): string {
@@ -573,6 +612,7 @@ export function buildJudgeUserText(args: {
   ticks: Record<string, boolean>
   submission: Record<string, unknown>
   research: SubmissionEvalResearch | undefined
+  resumeText?: string
 }): string {
   const title = cleanString(args.job.title) ?? cleanString(asRecord(args.job.prescreenConfig)?.jobTitle) ?? args.jobId
   const company =
@@ -596,7 +636,10 @@ Name: ${args.candidate.name}
 Link: ${args.candidate.link || "(none)"}
 ${args.candidate.email ? `Email: ${args.candidate.email}\n` : ""}${args.candidate.currentRole ? `Current role: ${args.candidate.currentRole}\n` : ""}${args.candidate.currentCompany ? `Current company: ${args.candidate.currentCompany}\n` : ""}${args.candidate.yoe ? `Years of experience: ${args.candidate.yoe}\n` : ""}${args.candidate.location ? `Location: ${args.candidate.location}\n` : ""}${args.candidate.workAuthorization ? `Work authorization: ${args.candidate.workAuthorization}\n` : ""}${args.candidate.employmentStatus ? `Employment status: ${args.candidate.employmentStatus}\n` : ""}${args.candidate.compensationExpectation ? `Compensation expectation: ${args.candidate.compensationExpectation}\n` : ""}Recruiter notes (the recruiter's summary of the candidate's résumé/experience — primary evidence about THIS person): ${(args.candidate.notes ?? "(none)").slice(0, 1500)}
 
-## Independent research (Coresignal)
+## Candidate résumé (full text — PRIMARY, ground-truth evidence about THIS person; trust it over the LinkedIn research when they disagree)
+${args.resumeText ? args.resumeText.slice(0, 12_000) : "(no résumé text available — judge on the recruiter notes + research, weighing unverifiability)"}
+
+## Independent research (Coresignal — CORROBORATION only; may be stale/wrong or a different person for the pasted URL)
 ${renderResearch(args.research)}
 ${(() => {
   const note = buildSchoolPriorNote((args.research?.education ?? []).map((e) => e.school), roleFunctionsOf(args.job))
@@ -927,7 +970,15 @@ export async function runRecruiterSubmissionEval(
     const groups = extractChecklistGroups(job)
     const candidate = extractCandidate(submission)
     const ticks = extractChecklistTicks(submission)
-    const research = await researchCandidate(candidate.linkedinUrl ?? candidate.link, deps, raw.submissionId)
+    // Read the uploaded résumé (PRIMARY ground-truth evidence about THIS person)
+    // in parallel with the Coresignal research. Coresignal can be stale/wrong
+    // for a valid URL, so the résumé is the source of truth; research corroborates.
+    const resumeUrl = cleanString(asRecord(submission.candidate)?.resumeUrl)
+    const fetchResume = deps.fetchResumeText ?? ((u: string) => defaultFetchResumeText(u, deps.log))
+    const [research, resumeText] = await Promise.all([
+      researchCandidate(candidate.linkedinUrl ?? candidate.link, deps, raw.submissionId),
+      resumeUrl ? fetchResume(resumeUrl) : Promise.resolve(undefined),
+    ])
     const evaluatedAt = now()
     const tracking = await ensureRecruiterSubmissionCandidateTracked(deps.db, {
       submissionId: raw.submissionId,
@@ -947,7 +998,7 @@ export async function runRecruiterSubmissionEval(
         }
       : {}
 
-    const userText = buildJudgeUserText({ jobId, job, groups, candidate, ticks, submission, research })
+    const userText = buildJudgeUserText({ jobId, job, groups, candidate, ticks, submission, research, resumeText })
     const { judgment, usedModel } = await judgeSubmission(deps, userText, raw.submissionId, groups)
 
     const aiEvaluation: SubmissionAiEvaluation = {
@@ -1031,6 +1082,10 @@ function makeProdEvalDeps(db: Firestore): RecruiterSubmissionEvalDeps {
       searchEmployeeIdByLinkedinUrl,
       fetchEmployeeCollect,
     },
+    fetchResumeText: (resumeUrl) =>
+      defaultFetchResumeText(resumeUrl, (event, fields) =>
+        logger.info(`[recruiter-submission-eval] ${event}`, fields as Record<string, unknown>),
+      ),
     now: () => new Date().toISOString(),
     log: (event, fields) => logger.info(`[recruiter-submission-eval] ${event}`, fields),
   }
