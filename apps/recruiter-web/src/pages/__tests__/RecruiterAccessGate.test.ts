@@ -14,14 +14,20 @@ test("Recruiter access gate uses SiteHeader instead of standalone back-link", ()
   assert.match(source, /<SiteHeader \/>/)
 })
 
-test("Gate is a single Continue-with-Google card with no code or name inputs", () => {
+test("Gate is a Continue-with-Google card plus legal/ToS/magic-link inputs and no access-code input", () => {
   const formStart = source.indexOf("onSubmit={submitSignIn}")
   assert.ok(formStart > 0, "sign-in form exists")
   const formEnd = source.indexOf("</form>", formStart)
   const formSlice = source.slice(formStart, formEnd)
-  assert.doesNotMatch(formSlice, /<input/, "gate has no text inputs")
+  // The gate legitimately carries the email magic-link inputs: a legal-entity
+  // name field, a ToS checkbox, and a magic-link email field.
   assert.match(formSlice, /Continue with Google/)
+  assert.match(formSlice, /legal entity name/i, "legal-entity name input present")
+  assert.match(formSlice, /type="checkbox"/, "ToS checkbox present")
+  assert.match(formSlice, /type="email"/, "magic-link email input present")
+  // But it must never re-introduce a manual access-code / invite-code input.
   assert.doesNotMatch(formSlice, /access code/i, "no access code language in the gate")
+  assert.doesNotMatch(formSlice, /placeholder="WK-/, "no invite-code input field in the gate")
 })
 
 test("Codeless claim sends the payload without inviteCode and pulls the Google displayName", () => {
