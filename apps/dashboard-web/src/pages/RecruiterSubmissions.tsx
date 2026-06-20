@@ -7,7 +7,6 @@
  */
 import { Fragment, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { arrayUnion, collection, doc, getDoc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
-import { createEvaluationAttemptId } from "@pa/core-types"
 import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { EvalLabelForm } from "../components/prescreen/EvalLabelForm.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
@@ -139,13 +138,12 @@ function recruiterVerdictToOutcomeKind(
   return "hold"
 }
 
-// Resolve the canonical attempt id: prefer the stamp written by the trigger;
-// fall back to recomputing the same deterministic hash for legacy rows that
-// predate the stamp (backfill will fill them in too).
+// Resolve the canonical attempt id from the STORED stamp only. The sha256
+// fallback (createEvaluationAttemptId) is server-only — node:crypto is shimmed
+// to throw in the dashboard bundle, so computing it here white-screens the
+// drawer. Legacy rows without the stamp resolve to null (eval just doesn't load).
 function resolveSubmissionAttemptId(row: SubmissionDoc): string | null {
-  if (row.evaluationAttemptId) return row.evaluationAttemptId
-  if (!row.jobId) return null
-  return createEvaluationAttemptId({ source: "recruiter_submission", jobId: row.jobId, salt: row.id })
+  return row.evaluationAttemptId ?? null
 }
 
 const CHECKLIST_TIER_DISPLAY_ORDER: ChecklistTierKind[] = ["hard", "fit", "anti", "bonus"]
