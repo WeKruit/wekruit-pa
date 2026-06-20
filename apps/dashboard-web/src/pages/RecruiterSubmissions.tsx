@@ -6,7 +6,7 @@
  * primitive + useTable hook.
  */
 import { Fragment, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
-import { arrayUnion, collection, doc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
+import { arrayUnion, collection, doc, getDoc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
 import { createEvaluationAttemptId } from "@pa/core-types"
 import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { EvalLabelForm } from "../components/prescreen/EvalLabelForm.js"
@@ -14,7 +14,8 @@ import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../component
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
-import { cachedLoad } from "../lib/unified-cache.js"
+import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
+import { getRecruiterSubmissionsList, type RecruiterSubmissionsListResult } from "../lib/recruiter-submissions-list-api.js"
 import { replaceRecruiterInviteCode, resendRecruiterInviteCodeEmail, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 import {
   buildRoleApplicationReview,
@@ -927,6 +928,8 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
   const [rows, setRows] = useState<SubmissionDoc[]>([])
   const [jobsByKey, setJobsByKey] = useState<Map<string, RecruiterBoardAdminJobDoc>>(new Map())
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Full submission docs fetched on drawer-open (the list rows are trimmed).
+  const [fullById, setFullById] = useState<Map<string, SubmissionDoc>>(new Map())
 
   useEffect(() => {
     if (!isSubmissions) {
@@ -939,18 +942,16 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     void (async () => {
       try {
         setLoading(true)
-        const q = query(
-          collection(db(), "pa-recruiter-submissions"),
-          orderBy("createdAt", "desc"),
-          limit(500),
-        )
-        const [snap, jobSnap] = await Promise.all([
-          getDocs(q),
+        // ALL submissions (trimmed) via the admin callable — not the recent 500.
+        // Loading 3.8k full docs client-side is ~19.5MB; the callable returns
+        // ~2.6MB of just the table/search/filter fields so search + the state
+        // filter see the whole pool. Cached (in-mem 3-min) for instant re-open.
+        const [listResult, jobSnap] = await Promise.all([
+          cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
           getDocs(query(collection(db(), "pa-jobs"), limit(500))),
         ])
         if (cancelled) return
-        const all = snap.docs.map((d) => {
-          const data = d.data() as Omit<SubmissionDoc, "id">
+        const all = (listResult.rows as (Omit<SubmissionDoc, "id"> & { id: string })[]).map((data) => {
           const createdAtMs = data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0
           const triageSortMs = TRIAGE_FIRST_STATUSES.includes(data.status ?? "new")
             ? createdAtMs + TRIAGE_SORT_BOOST_MS
@@ -958,7 +959,7 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
           const hardScorePct = data.score?.hardTotal
             ? data.score.hardChecked / data.score.hardTotal
             : 0
-          return { id: d.id, ...data, createdAtMs, triageSortMs, hardScorePct }
+          return { ...data, createdAtMs, triageSortMs, hardScorePct }
         })
         const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
         for (const d of jobSnap.docs) {
@@ -1298,7 +1299,26 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     },
   ]
 
-  const selectedRow = expandedId ? rows.find((r) => r.id === expandedId) ?? null : null
+  // The list is trimmed (no aiEvaluation / statusHistory / candidateBackground,
+  // to keep the payload ~2.6MB instead of ~19.5MB). Fetch the FULL submission
+  // doc when a row is opened so the detail drawer has everything.
+  useEffect(() => {
+    if (!expandedId || fullById.has(expandedId)) return
+    let cancel = false
+    void getDoc(doc(db(), "pa-recruiter-submissions", expandedId))
+      .then((s) => {
+        if (!cancel && s.exists()) {
+          setFullById((m) => new Map(m).set(s.id, { id: s.id, ...(s.data() as Omit<SubmissionDoc, "id">) }))
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancel = true
+    }
+  }, [expandedId, fullById])
+
+  const baseRow = expandedId ? rows.find((r) => r.id === expandedId) ?? null : null
+  const selectedRow = baseRow ? { ...baseRow, ...(fullById.get(baseRow.id ?? "") ?? {}) } : null
 
   return (
     <div>
@@ -1339,6 +1359,21 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
               onClose={() => setExpandedId(null)}
               onUpdated={(next) => {
                 setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next } : r))
+                setFullById((m) => {
+                  const cur = m.get(next.id ?? "")
+                  return cur ? new Map(m).set(next.id ?? "", { ...cur, ...next }) : m
+                })
+                // Keep the cached list in sync so re-opening the tab shows the
+                // new status immediately (server cache self-heals within 60s).
+                const cached = readCache<RecruiterSubmissionsListResult>("recruiter-submissions:list", 3 * 60_000)
+                if (cached) {
+                  writeCache("recruiter-submissions:list", {
+                    ...cached.data,
+                    rows: cached.data.rows.map((rr) =>
+                      (rr as { id?: string }).id === next.id ? { ...rr, ...next } : rr,
+                    ),
+                  })
+                }
               }}
             />
           ) : (
