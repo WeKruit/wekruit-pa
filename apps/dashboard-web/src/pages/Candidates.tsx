@@ -25,6 +25,7 @@ import { Link, useNavigate } from "react-router-dom"
 import { AdminPrescreenSessionLink } from "../components/AdminEntityLink.js"
 import { db } from "../lib/firebase.js"
 import { getCandidatePoolCounts, type CandidatePoolCounts } from "../lib/candidate-pool-counts-api.js"
+import { cachedLoad, invalidatePrefix } from "../lib/unified-cache.js"
 import { Icon } from "../components/console/Icon.js"
 import {
   Card,
@@ -535,9 +536,13 @@ export function Candidates() {
   // below is still the most recent 500 (a browse sample); these counts are not.
   const [poolCounts, setPoolCounts] = useState<CandidatePoolCounts | null>(null)
 
-  async function refresh() {
+  async function refresh(force = false) {
     setLoading(true)
     setErr(null)
+    // `force` (the Refresh button) bypasses the cache; a normal mount/navigation
+    // serves the in-memory cache → instant re-open instead of re-reading ~3k+
+    // docs every time. Cache TTL 3 min; manual refresh always re-reads.
+    if (force) invalidatePrefix("candidates:")
     // Pool counts load in parallel and never block / break the row table — if
     // the callable fails we silently fall back to counts over the loaded rows.
     void getCandidatePoolCounts()
@@ -545,9 +550,9 @@ export function Candidates() {
       .catch(() => undefined)
     try {
       const [docs, nextSourceMap, nextIdentityIndex] = await Promise.all([
-        loadUserDocs(),
-        loadSourceLinks(),
-        loadIdentityIndex(),
+        cachedLoad("candidates:userDocs", loadUserDocs),
+        cachedLoad("candidates:sourceLinks", loadSourceLinks),
+        cachedLoad("candidates:identityIndex", loadIdentityIndex),
       ])
       setSourceMap(nextSourceMap)
       setIdentityIndex(nextIdentityIndex)
@@ -827,7 +832,7 @@ export function Candidates() {
             <button
               type="button"
               className="btn btn--secondary btn--sm"
-              onClick={() => void refresh()}
+              onClick={() => void refresh(true)}
               disabled={loading}
             >
               <Icon name="refresh" size={12} />
