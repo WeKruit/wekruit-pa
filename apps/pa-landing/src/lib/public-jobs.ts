@@ -1,6 +1,9 @@
 import { collection, getDocs, limit, query, where, type DocumentData } from "firebase/firestore"
 import { db } from "./firebase.js"
 import { formatPublicJobType } from "./public-job-labels.js"
+import { stripJobSourceSection, stripVisaLines } from "./public-job-description.js"
+
+export { stripJobSourceSection, stripVisaLines } from "./public-job-description.js"
 
 export interface PublicCompanyProfile {
   tagline?: string
@@ -119,54 +122,6 @@ function summaryLine(value: string | undefined, title: string, company: string):
     })
 }
 
-function isSourceHeading(value: string): boolean {
-  const normalized = value
-    .replace(/^#{1,6}\s+/, "")
-    .replace(/^\*\*/, "")
-    .replace(/\*\*$/, "")
-    .trim()
-    .toLowerCase()
-  return normalized === "source" || normalized === "job source" || normalized === "original source"
-}
-
-function isHeading(value: string): boolean {
-  return /^#{1,6}\s+\S/.test(value) || /^\*\*[^*]+\*\*$/.test(value)
-}
-
-function isStandaloneSourceUrl(value: string): boolean {
-  const trimmed = value.trim()
-  if (/^https?:\/\/\S+$/i.test(trimmed)) return true
-  if (/^\[[^\]]+\]\(https?:\/\/[^)]+\)$/i.test(trimmed)) return true
-  return false
-}
-
-export function stripJobSourceSection(markdown?: string): string | undefined {
-  const raw = markdown?.trim()
-  if (!raw) return raw
-  const lines = raw.split(/\r?\n/)
-  const kept: string[] = []
-  let skippingSource = false
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed && isSourceHeading(trimmed)) {
-      skippingSource = true
-      continue
-    }
-    if (skippingSource) {
-      if (trimmed && isHeading(trimmed)) {
-        skippingSource = false
-      } else {
-        continue
-      }
-    }
-    if (isStandaloneSourceUrl(trimmed)) continue
-    kept.push(line)
-  }
-
-  return kept.join("\n").trim()
-}
-
 export function toPublicJobOpening(id: string, data: DocumentData): PublicJobOpening | null {
   const raw = data as RawPublicJob
   if (raw.publicVisible !== true || raw.dead === true) return null
@@ -174,7 +129,9 @@ export function toPublicJobOpening(id: string, data: DocumentData): PublicJobOpe
   const company = raw.companyName ?? raw.company ?? raw.prescreenConfig?.company ?? "Confidential employer"
   const salaryRange = raw.salaryRange ?? raw.prescreenConfig?.level1Reveal?.salaryRange
   const collaborated = raw.wekruitCollaborationStatus === "collaborated"
-  const descriptionMd = collaborated ? stripJobSourceSection(raw.descriptionMd) : raw.descriptionMd
+  const descriptionMd = stripVisaLines(
+    collaborated ? stripJobSourceSection(raw.descriptionMd) : raw.descriptionMd,
+  )
   return {
     id,
     title,
