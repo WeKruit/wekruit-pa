@@ -33,7 +33,7 @@ const CACHE_COLLECTION = "pa-recruiter-submissions-list-cache"
 // stale browse should self-heal within a minute (the client also patches its
 // own cache on each status mutation).
 const CACHE_TTL_MS = 60_000
-const CACHE_VERSION = "v1"
+const CACHE_VERSION = "v2"
 
 // Only the fields the table columns, search, and filter chips read. Nested
 // paths keep the payload tiny — the heavy aiEvaluation / statusHistory /
@@ -59,6 +59,9 @@ const SELECT_FIELDS = [
   "recruiterFeedbackRating",
   "recruiterFeedbackReasons",
   "recruiterPayout",
+  // Stored eval-attempt stamp — the drawer reads it; without it the client used
+  // to recompute a sha256 (server-only) and white-screen.
+  "evaluationAttemptId",
 ] as const
 
 export const AdminRecruiterSubmissionsListInputSchema = z.object({
