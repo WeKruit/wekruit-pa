@@ -55,6 +55,7 @@ interface SubmissionDoc {
   aiEvaluation?: {
     verdict?: "advance" | "borderline" | "reject"
     confidence?: number
+    identityConflict?: boolean
     summary?: string
     reasons?: string[]
     background?: {
@@ -4214,6 +4215,25 @@ function RowDetailPanel({
         </button>
       }
     >
+      {row.aiEvaluation?.identityConflict && (
+        <div
+          style={{
+            margin: "0 0 12px",
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid #f0b429",
+            background: "#fffaf0",
+            color: "#8a5800",
+            fontSize: 13,
+            lineHeight: 1.45,
+          }}
+        >
+          <strong>⚠️ Possible wrong-identity research.</strong> The LinkedIn profile pulled for this
+          candidate appears to be a <strong>different person</strong> (or stale Coresignal data) than the
+          submitted résumé — so the AI verdict was set to <strong>review</strong> and the research was{" "}
+          <strong>not</strong> used to reject. Verify against the résumé below before deciding.
+        </div>
+      )}
       <div className="sub-detail__metrics">
         <OpsMetric label="Review verdict" value={reviewSummary.title} />
         <OpsMetric
@@ -4440,7 +4460,12 @@ function RowDetailPanel({
                     {verdictLabel}
                   </span>
                   {typeof ai?.confidence === "number" && (
-                    <span style={{ fontSize: 12, color: "#777" }}>confidence {(ai.confidence * 100).toFixed(0)}%</span>
+                    <span
+                      style={{ fontSize: 12, color: "#777" }}
+                      title="How sure the AI is about THIS verdict — not a candidate score. e.g. 'reject · 92% sure' = 92% confident in rejecting, not a 92% rating."
+                    >
+                      {(ai.confidence * 100).toFixed(0)}% sure in this verdict
+                    </span>
                   )}
                 </div>
                 {ai?.summary && (

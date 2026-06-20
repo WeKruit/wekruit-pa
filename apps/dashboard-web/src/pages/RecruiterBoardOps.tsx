@@ -328,8 +328,10 @@ function recruiterAccountTone(status: string | null): Parameters<typeof Badge>[0
 function verdictChip(evaluation: SubmissionAiEvaluation | undefined): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
   if (!evaluation) return { label: "evaluating…", tone: "muted" }
   if (evaluation.error) return { label: "eval failed", tone: "warn" }
+  // "{verdict} · {n}% sure" — n is the AI's confidence in THIS verdict, not a
+  // candidate score (e.g. "reject · 92% sure" = 92% sure about rejecting).
   const confidence = typeof evaluation.confidence === "number"
-    ? ` · ${Math.round(evaluation.confidence * 100)}%`
+    ? ` · ${Math.round(evaluation.confidence * 100)}% sure`
     : ""
   switch (evaluation.verdict) {
     case "advance":
