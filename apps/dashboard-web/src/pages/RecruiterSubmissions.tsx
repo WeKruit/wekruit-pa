@@ -14,6 +14,7 @@ import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
 import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
+import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { getRecruiterSubmissionsList, type RecruiterSubmissionsListResult } from "../lib/recruiter-submissions-list-api.js"
 import { replaceRecruiterInviteCode, resendRecruiterInviteCodeEmail, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 import {
@@ -42,6 +43,8 @@ interface SubmissionDoc {
     name?: string
     email?: string
     link?: string
+    linkedinUrl?: string
+    resumeUrl?: string
     currentRole?: string
     yoe?: string
     notes?: string
@@ -4315,6 +4318,18 @@ function RowDetailPanel({
                 Notes
               </h4>
               <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{row.candidate.notes}</p>
+            </>
+          )}
+          {(row.candidate?.resumeUrl || row.candidate?.linkedinUrl || row.candidate?.link) && (
+            <>
+              <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+                Résumé
+              </h4>
+              <CandidateResumePreview
+                resumeUrl={row.candidate?.resumeUrl}
+                linkedinUrl={row.candidate?.linkedinUrl ?? row.candidate?.link}
+                height="60vh"
+              />
             </>
           )}
         </div>

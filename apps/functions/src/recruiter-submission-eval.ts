@@ -69,6 +69,9 @@ export type SubmissionEvalAntiTally = { flagged: number; total: number; flags: s
 
 export type SubmissionEvalResearch = {
   source: "coresignal"
+  /** Name on the resolved Coresignal profile — surfaced so the judge can detect
+   *  a wrong-identity match (recruiter pasted a wrong/ambiguous LinkedIn). */
+  subjectName?: string
   headline: string
   companies: Array<{ name: string; role?: string; years?: string }>
   education: Array<{ school: string; degree?: string }>
@@ -206,9 +209,10 @@ export const EVAL_JUDGMENT_JSON_SCHEMA = {
   },
 } as const
 
-const JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL recruiter-submission evaluator. A third-party recruiter submitted a candidate against a job rubric and self-reported which checklist items the candidate meets. Recruiters are incentivized to over-claim: every tick is a CLAIM to verify against the candidate info and independent research, NEVER a fact.
+export const JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL recruiter-submission evaluator. A third-party recruiter submitted a candidate against a job rubric and self-reported which checklist items the candidate meets. Recruiters are incentivized to over-claim: every tick is a CLAIM to verify against the candidate info and independent research, NEVER a fact.
 
 Rules:
+- WRONG-IDENTITY GUARD (check FIRST): the independent research is fetched from the LinkedIn URL the recruiter pasted, which CAN BE WRONG — a mistyped/ambiguous URL or a common-name collision resolves a DIFFERENT person. Before using research as evidence, sanity-check it plausibly belongs to THIS candidate: compare the research subject's name, profession/field, and seniority against the candidate's submitted name, current role, resume notes, and skills. If the research SHARPLY CONFLICTS with the candidate's own resume — a fundamentally different profession or field (e.g. research shows a pharmacist / Walgreens pharmacy manager while the resume and current role are a senior software engineer) — treat the research as a LIKELY WRONG-IDENTITY match: DO NOT use it as disqualifying evidence, DO NOT reject on it, judge on the submitted resume/notes alone, set verdict "borderline" (human review) rather than "reject", cap confidence at 0.5, and state the identity conflict explicitly in \`reasons\`. Only treat research as authoritative when it is consistent with the candidate's own info. Absent or empty research is "unverifiable", NOT disqualifying.
 - Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the candidate info or research contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text.
 - Apply the same evidence bar to fit and bonus items; list unmet/unverifiable item texts in their gaps arrays.
 - For anti-signal items, flagged = items that plausibly apply to this candidate; list their exact item texts in checklist.anti.flags. Also flag anti-signals you observe in the research even when the recruiter left them unticked.
@@ -272,11 +276,16 @@ type SubmissionCandidate = {
   linkedinUrl?: string
   email?: string
   currentRole?: string
+  currentCompany?: string
+  location?: string
+  workAuthorization?: string
+  employmentStatus?: string
+  compensationExpectation?: string
   yoe?: string
   notes?: string
 }
 
-function extractCandidate(submission: Record<string, unknown>): SubmissionCandidate {
+export function extractCandidate(submission: Record<string, unknown>): SubmissionCandidate {
   const candidate = asRecord(submission.candidate) ?? {}
   return {
     name: cleanString(candidate.name) ?? "(unknown)",
@@ -284,12 +293,17 @@ function extractCandidate(submission: Record<string, unknown>): SubmissionCandid
     ...(cleanString(candidate.linkedinUrl) ? { linkedinUrl: cleanString(candidate.linkedinUrl) } : {}),
     ...(cleanString(candidate.email) ? { email: cleanString(candidate.email) } : {}),
     ...(cleanString(candidate.currentRole) ? { currentRole: cleanString(candidate.currentRole) } : {}),
+    ...(cleanString(candidate.currentCompany) ? { currentCompany: cleanString(candidate.currentCompany) } : {}),
+    ...(cleanString(candidate.location) ? { location: cleanString(candidate.location) } : {}),
+    ...(cleanString(candidate.workAuthorization) ? { workAuthorization: cleanString(candidate.workAuthorization) } : {}),
+    ...(cleanString(candidate.employmentStatus) ? { employmentStatus: cleanString(candidate.employmentStatus) } : {}),
+    ...(cleanString(candidate.compensationExpectation) ? { compensationExpectation: cleanString(candidate.compensationExpectation) } : {}),
     ...(cleanString(candidate.yoe) ? { yoe: cleanString(candidate.yoe) } : {}),
     ...(cleanString(candidate.notes) ? { notes: cleanString(candidate.notes) } : {}),
   }
 }
 
-function extractChecklistTicks(submission: Record<string, unknown>): Record<string, boolean> {
+export function extractChecklistTicks(submission: Record<string, unknown>): Record<string, boolean> {
   const checklist = asRecord(submission.checklist) ?? {}
   const out: Record<string, boolean> = {}
   for (const [key, value] of Object.entries(checklist)) {
@@ -361,6 +375,10 @@ export function buildResearchFromEmployee(employee: CoresignalEmployeeCollectV2)
 
   return {
     source: "coresignal",
+    ...(cleanString((employee as { name?: string }).name) ??
+    cleanString((employee as { full_name?: string }).full_name)
+      ? { subjectName: cleanString((employee as { name?: string }).name) ?? cleanString((employee as { full_name?: string }).full_name) }
+      : {}),
     headline: cleanString(employee.headline) ?? activeTitle ?? "",
     companies,
     education,
@@ -481,6 +499,7 @@ function renderResearch(research: SubmissionEvalResearch | undefined): string {
     .map((e) => `- ${e.school}${e.degree ? ` — ${e.degree}` : ""}`)
     .join("\n")
   return [
+    `Research subject (name on the resolved LinkedIn profile): ${research.subjectName || "(name not on profile)"}`,
     `Headline: ${research.headline || "(none)"}`,
     `Companies:\n${companies || "(none)"}`,
     `Education:\n${education || "(none — no school/degree on the profile)"}`,
@@ -537,7 +556,7 @@ export function buildSchoolPriorNote(
   return `${best.canonical} is ${where}. Treat this as a POSITIVE prior for the \`school\` background pillar, but weigh it alongside real experience/skills and do NOT over-credit pedigree. (If no such note appears, there is simply no school prior — never read that as a negative.)`
 }
 
-function buildJudgeUserText(args: {
+export function buildJudgeUserText(args: {
   jobId: string
   job: Record<string, unknown>
   groups: ChecklistGroup[]
@@ -563,10 +582,10 @@ ${renderChecklist(args.groups, args.ticks)}
 ## Recruiter self-reported score
 ${renderScore(args.submission)}
 
-## Candidate (as submitted by the recruiter)
+## Candidate (as submitted by the recruiter — this IS the person under review; judge THIS profile)
 Name: ${args.candidate.name}
 Link: ${args.candidate.link || "(none)"}
-${args.candidate.email ? `Email: ${args.candidate.email}\n` : ""}${args.candidate.currentRole ? `Current role: ${args.candidate.currentRole}\n` : ""}${args.candidate.yoe ? `Years of experience: ${args.candidate.yoe}\n` : ""}Recruiter notes: ${(args.candidate.notes ?? "(none)").slice(0, 1500)}
+${args.candidate.email ? `Email: ${args.candidate.email}\n` : ""}${args.candidate.currentRole ? `Current role: ${args.candidate.currentRole}\n` : ""}${args.candidate.currentCompany ? `Current company: ${args.candidate.currentCompany}\n` : ""}${args.candidate.yoe ? `Years of experience: ${args.candidate.yoe}\n` : ""}${args.candidate.location ? `Location: ${args.candidate.location}\n` : ""}${args.candidate.workAuthorization ? `Work authorization: ${args.candidate.workAuthorization}\n` : ""}${args.candidate.employmentStatus ? `Employment status: ${args.candidate.employmentStatus}\n` : ""}${args.candidate.compensationExpectation ? `Compensation expectation: ${args.candidate.compensationExpectation}\n` : ""}Recruiter notes (the recruiter's summary of the candidate's résumé/experience — primary evidence about THIS person): ${(args.candidate.notes ?? "(none)").slice(0, 1500)}
 
 ## Independent research (Coresignal)
 ${renderResearch(args.research)}
