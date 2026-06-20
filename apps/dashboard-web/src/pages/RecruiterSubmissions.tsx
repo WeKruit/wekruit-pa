@@ -14,6 +14,7 @@ import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../component
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
+import { cachedLoad } from "../lib/unified-cache.js"
 import { replaceRecruiterInviteCode, resendRecruiterInviteCodeEmail, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 import {
   buildRoleApplicationReview,
@@ -1455,25 +1456,36 @@ function RecruiterRolesPanel() {
   const [savingPriorityId, setSavingPriorityId] = useState<string | null>(null)
   const [priorityErr, setPriorityErr] = useState<string | null>(null)
 
-  const reload = async () => {
+  const reload = async (force = false) => {
     setLoading(true)
     setErr(null)
     try {
-      const [jobSnap, submissionSnap, candidateSnap, applicationSnap, feedbackSnap, questionSnap] = await Promise.all([
-        getDocs(query(collection(db(), "pa-jobs"), limit(500))),
-        getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-feedback"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-questions"), limit(1000))),
-      ])
-      const jobs = jobSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterBoardAdminJobDoc, "id">) }))
-      const submissions = submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) }))
-      const candidates = candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) }))
-      const applications = applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) }))
-      const feedback = feedbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleFeedbackDoc, "id">) }))
-      const questions = questionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleQuestionDoc, "id">) }))
-      setRows(buildRecruiterRoleOpsRows({ jobs, submissions, candidates, applications, feedback, questions }))
+      // Cache-through (3-min TTL): mount serves the built rows from cache (the
+      // ~5k-doc read is the slow part); mutations + the Refresh button pass
+      // force=true to re-read.
+      const built = await cachedLoad(
+        "recruiter-role-ops:rows",
+        async () => {
+          const [jobSnap, submissionSnap, candidateSnap, applicationSnap, feedbackSnap, questionSnap] = await Promise.all([
+            getDocs(query(collection(db(), "pa-jobs"), limit(500))),
+            getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-feedback"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-questions"), limit(1000))),
+          ])
+          const jobs = jobSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterBoardAdminJobDoc, "id">) }))
+          const submissions = submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) }))
+          const candidates = candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) }))
+          const applications = applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) }))
+          const feedback = feedbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleFeedbackDoc, "id">) }))
+          const questions = questionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleQuestionDoc, "id">) }))
+          return buildRecruiterRoleOpsRows({ jobs, submissions, candidates, applications, feedback, questions })
+        },
+        undefined,
+        force,
+      )
+      setRows(built)
     } catch (error) {
       setErr(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1517,7 +1529,7 @@ function RecruiterRolesPanel() {
         delete next[row.id]
         return next
       })
-      await reload()
+      await reload(true)
     } catch (error) {
       setPriorityErr(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1809,7 +1821,7 @@ function RecruiterRolesPanel() {
       <Panel
         title="Role priorities"
         eyebrow="pa-jobs, recruiterBoard, applications, calibration"
-        actions={<button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>}
+        actions={<button type="button" onClick={() => void reload(true)} disabled={loading}>Refresh</button>}
       >
         {priorityErr && (
           <div style={{ marginBottom: 12 }}>

@@ -171,6 +171,29 @@ describe("runAdminOpsMetrics — interviews", () => {
     assert.equal(result.totals.interviewsConducted, 0)
     assert.equal(result.totals.prescreensConducted, 1)
   })
+
+  it("excludes test/internal/dev-phone users' prescreens (no session-level flag)", async () => {
+    const mfs = new MockFirestore()
+    // dev-phone user (Adam) — pa-user resolves to a dev phone, no test flag on session
+    await seedUser(mfs, "dev-user", { createdAt: TODAY_TS, phoneE164: "+14243201960" })
+    // internal operator (@wekruit.com)
+    await seedUser(mfs, "intern-user", { createdAt: TODAY_TS, email: "ops@wekruit.com" })
+    // a real candidate
+    await seedUser(mfs, "real-user", { createdAt: TODAY_TS, phoneE164: "+14155550123" })
+    for (const uid of ["dev-user", "intern-user", "real-user"]) {
+      await mfs.collection("pa-prescreen-sessions").doc(`ps-${uid}`).set({
+        userId: uid,
+        createdAt: TODAY_TS,
+        terminal: "PASS",
+      })
+    }
+    const result = await runAdminOpsMetrics({ rangeDays: 30, includeTest: false }, { db: asFirestore(mfs), now: () => NOW })
+    // only the real candidate's prescreen counts
+    assert.equal(result.totals.prescreensConducted, 1)
+    // includeTest=true counts all three
+    const all = await runAdminOpsMetrics({ rangeDays: 30, includeTest: true }, { db: asFirestore(mfs), now: () => NOW })
+    assert.equal(all.totals.prescreensConducted, 3)
+  })
 })
 
 describe("runAdminOpsMetrics — series shape", () => {

@@ -42,6 +42,8 @@ import { z } from "zod"
 import {
   PA_COLLECTIONS,
   isSyntheticTestProfile,
+  isInternalOperatorProfile,
+  isDemoPreviewProfile,
   type CandidateListUserDoc,
 } from "@pa/core-types"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
@@ -71,13 +73,19 @@ const TEST_USER_SOURCES = new Set(["dev_test", "e2e_run", "qa_run"])
 // Operators whose own recruiter submissions are seed/test data — the candidates
 // they added are excluded from the counts (unless includeTest).
 const EXCLUDED_OPERATOR_EMAILS = new Set(["admin1@wekruit.com"])
+// Dev/test phones with standing send authorization (Adam + Noah). A pa-user
+// whose phone is one of these is a test account — their prescreens/interviews
+// must not count. Prescreen/interview test data carries NO session-level flag
+// (verified: 0/646 sessions have testMode/isDemo); the only reliable signal is
+// the USER profile, so we resolve it from the users scan below.
+const DEV_TEST_PHONES = new Set(["+14243201960", "+12154034668"])
 // Server-side result cache — the 5-collection scan is heavy, so repeat loads
 // read one cached doc instead of re-scanning. 30-min freshness is fine for an
 // ops dashboard.
 const OPS_METRICS_CACHE_COLLECTION = "pa-ops-metrics-cache"
 const OPS_METRICS_CACHE_TTL_MS = 30 * 60_000
 // Bump when the computation changes so stale cached results aren't served.
-const OPS_METRICS_CACHE_VERSION = "v4"
+const OPS_METRICS_CACHE_VERSION = "v5"
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -219,6 +227,23 @@ function isTruthyFlag(value: unknown): boolean {
   return value === true || value === "true"
 }
 
+/**
+ * A pa-user that should never count toward operational metrics: synthetic/QA,
+ * demo/preview, internal operator (@wekruit.com), an explicit test `source`, or
+ * a dev/test phone (Adam/Noah). Prescreen/interview "test data" is identifiable
+ * ONLY here (the session/submission docs carry no test flag).
+ */
+function isTestOrInternalUser(id: string, data: Record<string, unknown>): boolean {
+  const doc = { ...data, id } as unknown as CandidateListUserDoc
+  if (isSyntheticTestProfile(doc) || isInternalOperatorProfile(doc) || isDemoPreviewProfile(doc)) {
+    return true
+  }
+  const source = typeof data.source === "string" ? data.source : ""
+  if (TEST_USER_SOURCES.has(source)) return true
+  const phone = typeof data.phoneE164 === "string" ? data.phoneE164 : ""
+  return DEV_TEST_PHONES.has(phone)
+}
+
 export async function runAdminOpsMetrics(
   input: AdminOpsMetricsInput,
   deps: AdminOpsMetricsDeps,
@@ -279,6 +304,8 @@ export async function runAdminOpsMetrics(
       "signupSource",
       "recruiterSubmissionTracking",
       "testMode",
+      "isDemo",
+      "demoSourcePool",
       "phoneE164",
       "email",
     ]),
@@ -315,6 +342,17 @@ export async function runAdminOpsMetrics(
     if (cid) authSet.add(cid)
   }
 
+  // Test/internal pa-user ids (resolved from the users scan). Applied to every
+  // metric so dev-phone / synthetic / internal / demo activity never inflates
+  // prescreens, interviews, moved-to-client, or new users. Prescreen + interview
+  // docs carry no test flag, so the USER profile is the only reliable signal.
+  const excludedTestUserIds = new Set<string>()
+  if (!input.includeTest) {
+    for (const { id, data } of usersScan.docs) {
+      if (isTestOrInternalUser(id, data)) excludedTestUserIds.add(id)
+    }
+  }
+
   // Candidates ADDED BY an excluded operator (admin1's own recruiter submissions
   // are test/seed data) — dropped from every metric unless includeTest. Adam
   // 2026-06-17: "don't count candidates added by admin1@wekruit.com".
@@ -344,14 +382,11 @@ export async function runAdminOpsMetrics(
     const createdMs = toMs(data.createdAt)
     if (!createdMs || !inWindow(createdMs)) continue
     if (!input.includeTest) {
-      const source = typeof data.source === "string" ? data.source : undefined
-      if (source && TEST_USER_SOURCES.has(source)) continue
-      // Admin-created candidates (bulk adds via the admin identity path) are
-      // not organic signups — drop them. Adam 2026-06-17 (the "Direct" flood).
+      // Test/internal/demo/dev-phone users (excludedTestUserIds) AND admin-
+      // created bulk adds (identity:admin) are not organic signups — drop them.
+      // Adam 2026-06-17 (the "Direct" flood) + 2026-06-19 (test prescreens).
+      if (excludedTestUserIds.has(id)) continue
       if (data.signupSource === "identity:admin") continue
-      // `isSyntheticTestProfile` reads `doc.id` — ensure it's set from the doc
-      // key when the stored data omits it, so the call can't throw.
-      if (isSyntheticTestProfile({ ...data, id } as unknown as CandidateListUserDoc)) continue
     }
     const key = utcDayKey(createdMs)
     const bucket = ensureUserDay(key)
@@ -368,6 +403,7 @@ export async function runAdminOpsMetrics(
       (typeof data.candidateUserId === "string" && data.candidateUserId) ||
       `submission:${id}`
     if (excludedCandidateIds.has(candidateId)) continue
+    if (!input.includeTest && excludedTestUserIds.has(candidateId)) continue
     for (const entry of statusHistoryOf(data)) {
       const status = typeof entry.status === "string" ? entry.status : ""
       if (!status) continue
@@ -386,6 +422,7 @@ export async function runAdminOpsMetrics(
     if (!input.includeTest && (isTruthyFlag(data.testMode) || isTruthyFlag(data.isDemo))) continue
     const userId = typeof data.userId === "string" ? data.userId : undefined
     if (!userId || excludedCandidateIds.has(userId)) continue
+    if (!input.includeTest && excludedTestUserIds.has(userId)) continue
     const workSession =
       data.workSession && typeof data.workSession === "object"
         ? (data.workSession as Record<string, unknown>)
@@ -404,6 +441,7 @@ export async function runAdminOpsMetrics(
     if (!CLIENT_JOB_STATES.has(state)) continue
     const candidateId = typeof data.candidateId === "string" ? data.candidateId : undefined
     if (!candidateId || excludedCandidateIds.has(candidateId)) continue
+    if (!input.includeTest && excludedTestUserIds.has(candidateId)) continue
     const atMs = toMs(data.stateUpdatedAt)
     if (!atMs || !inWindow(atMs)) continue
     addClient(utcDayKey(atMs), candidateId)
