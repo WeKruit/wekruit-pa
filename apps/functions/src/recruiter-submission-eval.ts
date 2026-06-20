@@ -102,6 +102,9 @@ export type SubmissionAiEvaluation = {
   }
   background: SubmissionEvalBackground
   research?: SubmissionEvalResearch
+  /** true when the LinkedIn research resolved a DIFFERENT person (wrong/mismatched
+   *  LinkedIn URL on the submission). When set, the verdict is forced to review. */
+  identityConflict?: boolean
   evaluatedAt: string
   model: string
   version: "submission-eval-v2"
@@ -140,6 +143,7 @@ export const EvalJudgmentSchema = z.object({
     anti: AntiTallySchema,
   }),
   background: BackgroundSchema,
+  identityConflict: z.boolean().optional().default(false),
 })
 export type EvalJudgment = z.infer<typeof EvalJudgmentSchema>
 
@@ -188,10 +192,15 @@ const BACKGROUND_JSON_SCHEMA = {
 export const EVAL_JUDGMENT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["verdict", "confidence", "summary", "reasons", "checklist", "background"],
+  required: ["verdict", "confidence", "summary", "reasons", "checklist", "background", "identityConflict"],
   properties: {
     verdict: { type: "string", enum: ["advance", "borderline", "reject"] },
     confidence: { type: "number", description: "0..1 confidence in the verdict given the evidence." },
+    identityConflict: {
+      type: "boolean",
+      description:
+        "TRUE when the independent LinkedIn research appears to be a DIFFERENT person than the candidate (a wrong/mismatched LinkedIn URL): the research's profession/field/companies fundamentally conflict with the candidate's own résumé/role/notes (e.g. research = pharmacist, candidate = senior software engineer). FALSE otherwise (including when research is simply absent/sparse).",
+    },
     summary: { type: "string", description: "1-2 sentence operator-facing summary of the candidate vs the rubric." },
     reasons: { type: "array", items: { type: "string" } },
     checklist: {
@@ -212,7 +221,7 @@ export const EVAL_JUDGMENT_JSON_SCHEMA = {
 export const JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL recruiter-submission evaluator. A third-party recruiter submitted a candidate against a job rubric and self-reported which checklist items the candidate meets. Recruiters are incentivized to over-claim: every tick is a CLAIM to verify against the candidate info and independent research, NEVER a fact.
 
 Rules:
-- WRONG-IDENTITY GUARD (check FIRST): the independent research is fetched from the LinkedIn URL the recruiter pasted, which CAN BE WRONG — a mistyped/ambiguous URL or a common-name collision resolves a DIFFERENT person. Before using research as evidence, sanity-check it plausibly belongs to THIS candidate: compare the research subject's name, profession/field, and seniority against the candidate's submitted name, current role, resume notes, and skills. If the research SHARPLY CONFLICTS with the candidate's own resume — a fundamentally different profession or field (e.g. research shows a pharmacist / Walgreens pharmacy manager while the resume and current role are a senior software engineer) — treat the research as a LIKELY WRONG-IDENTITY match: DO NOT use it as disqualifying evidence, DO NOT reject on it, judge on the submitted resume/notes alone, set verdict "borderline" (human review) rather than "reject", cap confidence at 0.5, and state the identity conflict explicitly in \`reasons\`. Only treat research as authoritative when it is consistent with the candidate's own info. Absent or empty research is "unverifiable", NOT disqualifying.
+- WRONG-IDENTITY GUARD (check FIRST): the independent research is fetched from the LinkedIn URL the recruiter pasted, which CAN BE WRONG — a mistyped/ambiguous URL or a common-name collision resolves a DIFFERENT person. Before using research as evidence, sanity-check it plausibly belongs to THIS candidate: compare the research subject's name, profession/field, and seniority against the candidate's submitted name, current role, resume notes, and skills. If the research SHARPLY CONFLICTS with the candidate's own resume — a fundamentally different profession or field (e.g. research shows a pharmacist / Walgreens pharmacy manager while the resume and current role are a senior software engineer) — treat the research as a LIKELY WRONG-IDENTITY match: **set \`identityConflict\`: true**, DO NOT use the research as disqualifying evidence, DO NOT reject on it, judge on the submitted resume/notes alone, prefer verdict "borderline" (human review), and state the identity conflict explicitly in \`reasons\`. Only treat research as authoritative when it is consistent with the candidate's own info; set \`identityConflict\`: false otherwise (including when research is simply absent/sparse — that is "unverifiable", NOT a conflict and NOT disqualifying).
 - Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the candidate info or research contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text.
 - Apply the same evidence bar to fit and bonus items; list unmet/unverifiable item texts in their gaps arrays.
 - For anti-signal items, flagged = items that plausibly apply to this candidate; list their exact item texts in checklist.anti.flags. Also flag anti-signals you observe in the research even when the recruiter left them unticked.
@@ -667,6 +676,23 @@ async function judgeSubmission(
           gaps: judgment.checklist.hard.gaps.length,
         })
         judgment = { ...judgment, verdict: "borderline" }
+      }
+      // DETERMINISTIC wrong-identity clamp: the LLM reliably DETECTS when the
+      // LinkedIn research is a different person, but it doesn't always downgrade
+      // the verdict (it once still returned reject 0.72). When identityConflict
+      // is set, the research is untrustworthy → never a confident reject on it:
+      // force "borderline" (human review), cap confidence, and surface why.
+      if (judgment.identityConflict && judgment.verdict === "reject") {
+        deps.log?.("verdict_clamped_identity_conflict", { submissionId })
+        judgment = {
+          ...judgment,
+          verdict: "borderline",
+          confidence: Math.min(judgment.confidence, 0.5),
+          reasons: [
+            "Independent LinkedIn research appears to be a DIFFERENT person (wrong/mismatched LinkedIn URL) — verdict set to human review; the research was not used to reject.",
+            ...judgment.reasons,
+          ],
+        }
       }
       return { judgment, usedModel: result.usedModel }
     } catch (err) {
