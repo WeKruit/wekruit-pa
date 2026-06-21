@@ -4809,7 +4809,7 @@ export async function addRecruiterSubmissionComment(
   input: { submissionId: string; message: string },
   nowIso = new Date().toISOString(),
 ): Promise<
-  | { ok: true; comment: RecruiterSubmissionCommentListItem }
+  | { ok: true; comment: RecruiterSubmissionCommentListItem; submission: Record<string, unknown> }
   | { ok: false; status: 403 | 404; reason: string }
 > {
   const owned = await loadOwnedRecruiterSubmission(db, recruiter, input.submissionId)
@@ -4826,6 +4826,7 @@ export async function addRecruiterSubmissionComment(
   return {
     ok: true,
     comment: { id: commentId, ...commentDoc },
+    submission: owned.data,
   }
 }
 
@@ -4876,7 +4877,7 @@ export const paRecruiterSubmissionCommentsList = onRequest(
 )
 
 export const paRecruiterSubmissionCommentAdd = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -4904,6 +4905,22 @@ export const paRecruiterSubmissionCommentAdd = onRequest(
         res.status(result.status).json({ ok: false, reason: result.reason })
         return
       }
+      // Notify WeKruit ops that a recruiter messaged us on the platform. Best-effort,
+      // fail-open — never block the comment write on a mailgun hiccup.
+      const sub = result.submission
+      const candidate = (sub.candidate ?? {}) as Record<string, unknown>
+      const roleLine = [sub.jobTitleSnapshot, sub.companyLabelSnapshot]
+        .map((v) => (typeof v === "string" ? v.trim() : ""))
+        .filter(Boolean)
+        .join(" @ ")
+      await notifyWekruitOfRecruiterComment({
+        recruiterName: recruiter.name || recruiter.email,
+        recruiterEmail: recruiter.email,
+        submissionId: validated.value.submissionId,
+        candidateName: (typeof candidate.name === "string" && candidate.name.trim()) || "the candidate",
+        roleLine,
+        message: validated.value.message,
+      })
       res.set("Cache-Control", "private, max-age=0, no-store")
       res.status(200).json({ ok: true, comment: result.comment })
     } catch (err) {
@@ -5100,6 +5117,59 @@ async function sendRecruiterMailgunEmail(
     return { ok: true, messageId: parsed.id }
   } catch {
     return { ok: true }
+  }
+}
+
+// Where recruiter-message notifications go. Adam: "if a recruiter sends a message
+// on our platform, email me at noah.liu@wekruit.com." Overridable via env.
+const RECRUITER_MESSAGE_NOTIFY_TO = (process.env.RECRUITER_MESSAGE_NOTIFY_TO ?? "noah.liu@wekruit.com").trim()
+const ADMIN_DASHBOARD_BASE_URL = "https://wekruit-pa.web.app"
+
+/**
+ * Email WeKruit ops when a recruiter posts a message on a submission thread.
+ * Best-effort + fail-open: a mailgun miss must NEVER fail the comment write.
+ */
+async function notifyWekruitOfRecruiterComment(input: {
+  recruiterName: string
+  recruiterEmail: string
+  submissionId: string
+  candidateName: string
+  roleLine: string
+  message: string
+}): Promise<void> {
+  try {
+    const cfg = recruiterMailgunConfigFromEnv()
+    if (!cfg) {
+      logger.warn("recruiter_comment_notify_skipped", { reason: "mailgun_not_configured" })
+      return
+    }
+    const link = `${ADMIN_DASHBOARD_BASE_URL}/admin/recruiter-submissions?submission=${encodeURIComponent(input.submissionId)}`
+    const subject = `New recruiter message — ${input.recruiterName} re: ${input.candidateName}`
+    const text = [
+      `${input.recruiterName} (${input.recruiterEmail}) sent a message on the WeKruit recruiter platform.`,
+      "",
+      `Candidate: ${input.candidateName}`,
+      input.roleLine ? `Role: ${input.roleLine}` : "",
+      "",
+      "Message:",
+      input.message,
+      "",
+      `Open the submission: ${link}`,
+    ].filter((l) => l !== "").join("\n")
+    const html = [
+      `<p><b>${escapeHtml(input.recruiterName)}</b> (${escapeHtml(input.recruiterEmail)}) sent a message on the WeKruit recruiter platform.</p>`,
+      `<p><b>Candidate:</b> ${escapeHtml(input.candidateName)}${input.roleLine ? `<br/><b>Role:</b> ${escapeHtml(input.roleLine)}` : ""}</p>`,
+      `<p style="border-left:3px solid #ccc;padding-left:12px;white-space:pre-wrap">${escapeHtml(input.message)}</p>`,
+      `<p><a href="${escapeHtml(link)}">Open the submission in the admin dashboard</a></p>`,
+    ].join("")
+    const sent = await sendRecruiterMailgunEmail(cfg, { to: RECRUITER_MESSAGE_NOTIFY_TO, subject, text, html })
+    if (!sent.ok) {
+      logger.error("recruiter_comment_notify_failed", { status: sent.status, raw: sent.raw.slice(0, 300) })
+    } else {
+      logger.info("recruiter_comment_notify_sent", { to: RECRUITER_MESSAGE_NOTIFY_TO, messageId: sent.messageId })
+    }
+  } catch (err) {
+    logger.error("recruiter_comment_notify_error", { error: String(err) })
   }
 }
 
