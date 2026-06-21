@@ -29,6 +29,7 @@ import {
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
   hardFilterClarifyText,
+  isPrescreenSessionPastMaxAge,
   isSharedOnboardingSlotSatisfied,
   loadSharedOnboardingParsedResumeForPrompt,
   type KeywordSetLlmCaller,
@@ -316,8 +317,15 @@ async function findActiveSession(
   const doc = candidates[0]!
   const data = doc.data() as Record<string, unknown>
   const lastActiveMs = timestampMs(data.updatedAt) ?? timestampMs(data.createdAt)
+  const createdAtMs = timestampMs(data.createdAt)
   const nowMs = opts.nowMs ?? Date.now()
-  if (lastActiveMs !== null && nowMs - lastActiveMs > ACTIVE_PRESCREEN_TIMEOUT_MS) {
+  const inactivityExpired = lastActiveMs !== null && nowMs - lastActiveMs > ACTIVE_PRESCREEN_TIMEOUT_MS
+  // Zombie-prescreen fix (Adam 2026-06-21): a createdAt-keyed absolute age cap that the
+  // clarify-loop updatedAt self-refresh CANNOT poison. Without it a session stuck on Q1
+  // re-bumps its own updatedAt on every captured turn → the inactivity clock never fires
+  // → it hijacks unrelated future inbounds (job-rec "yes") into prescreen probes forever.
+  const pastMaxAge = isPrescreenSessionPastMaxAge(createdAtMs, nowMs)
+  if (inactivityExpired || pastMaxAge) {
     const nowIso = new Date(nowMs).toISOString()
     await doc.ref.set(
       {
@@ -337,8 +345,10 @@ async function findActiveSession(
     opts.log?.("prescreen.turn.expired_inactive_session", {
       userId,
       sessionId: doc.id,
-      lastActiveAt: new Date(lastActiveMs).toISOString(),
+      lastActiveAt: lastActiveMs !== null ? new Date(lastActiveMs).toISOString() : null,
       timeoutMinutes: ACTIVE_PRESCREEN_TIMEOUT_MS / 60_000,
+      reason: pastMaxAge ? "max_age" : "inactivity",
+      ...(createdAtMs !== null ? { createdAt: new Date(createdAtMs).toISOString() } : {}),
     })
     return {
       kind: "expired",
