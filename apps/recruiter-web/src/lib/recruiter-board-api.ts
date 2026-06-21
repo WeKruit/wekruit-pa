@@ -210,6 +210,17 @@ export interface RecruiterSubmissionStatusHistoryItem {
   reasons?: string[]
 }
 
+// Per-company send (which companies the candidate was forwarded to + the
+// hiring-manager outcome). Read-only on the recruiter side.
+export interface RecruiterCompanySend {
+  id: string
+  company: string
+  status: "sent" | "waiting_hm" | "interested" | "passed"
+  feedback?: string
+  sentAt?: string
+  updatedAt?: string
+}
+
 // Appended by paAdminRecruiterSubmissionAction request_info.
 export interface RecruiterSubmissionRequestedInfoEntry {
   message?: string
@@ -250,6 +261,7 @@ export interface RecruiterSubmissionItem {
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
   statusHistory?: RecruiterSubmissionStatusHistoryItem[]
+  companySends?: RecruiterCompanySend[]
   requestedInfo?: RecruiterSubmissionRequestedInfoEntry[]
   extraFields?: Record<string, string>
   recruiterFeedbackNote?: string | null

@@ -1989,6 +1989,7 @@ interface RecruiterSubmissionListItem {
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
   statusHistory?: RecruiterSubmissionStatusHistoryItem[]
+  companySends?: RecruiterCompanySendPublic[]
   requestedInfo?: RecruiterSubmissionRequestedInfoItem[]
   extraFields?: Record<string, string>
   recruiterFeedbackNote?: string | null
@@ -2036,6 +2037,42 @@ function sanitizeSubmissionFeedbackReasons(raw: unknown): string[] {
 function timestampMs(value: unknown): number {
   const iso = coerceToIso(value)
   return iso ? Date.parse(iso) || 0 : 0
+}
+
+// Recruiter-visible view of a company send: the company, its stage, and the
+// hiring-manager feedback. The internal `by` (ops email) is dropped.
+export interface RecruiterCompanySendPublic {
+  id: string
+  company: string
+  status: "sent" | "waiting_hm" | "interested" | "passed"
+  feedback?: string
+  sentAt?: string
+  updatedAt?: string
+}
+
+const COMPANY_SEND_PUBLIC_STATUSES = new Set(["sent", "waiting_hm", "interested", "passed"])
+
+export function sanitizeRecruiterCompanySends(raw: unknown): RecruiterCompanySendPublic[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((entry): RecruiterCompanySendPublic | null => {
+      if (!entry || typeof entry !== "object") return null
+      const e = entry as Record<string, unknown>
+      const id = typeof e.id === "string" ? e.id : ""
+      const company = typeof e.company === "string" ? e.company.trim() : ""
+      const status = typeof e.status === "string" && COMPANY_SEND_PUBLIC_STATUSES.has(e.status) ? e.status : "sent"
+      if (!id || !company) return null
+      const feedback = typeof e.feedback === "string" && e.feedback.trim() ? e.feedback.trim() : undefined
+      return {
+        id,
+        company,
+        status: status as RecruiterCompanySendPublic["status"],
+        ...(feedback ? { feedback } : {}),
+        sentAt: typeof e.sentAt === "string" ? e.sentAt : undefined,
+        updatedAt: typeof e.updatedAt === "string" ? e.updatedAt : undefined,
+      }
+    })
+    .filter((x): x is RecruiterCompanySendPublic => x !== null)
 }
 
 export function sanitizeSubmissionStatusHistory(raw: unknown): RecruiterSubmissionStatusHistoryItem[] {
@@ -2150,6 +2187,7 @@ export function publicRecruiterSubmission(d: { id: string; data: () => Record<st
       : "unclassified",
     status: typeof data.status === "string" ? data.status : "submitted",
     statusHistory: sanitizeSubmissionStatusHistory(data.statusHistory),
+    companySends: sanitizeRecruiterCompanySends(data.companySends),
     requestedInfo: sanitizeSubmissionRequestedInfo(data.requestedInfo),
     extraFields: sanitizeSubmissionExtraFields(data.extraFields),
     recruiterFeedbackNote: typeof data.recruiterFeedbackNote === "string" ? data.recruiterFeedbackNote : null,

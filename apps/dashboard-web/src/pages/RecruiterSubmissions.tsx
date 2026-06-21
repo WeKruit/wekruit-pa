@@ -15,6 +15,13 @@ import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
 import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
+import {
+  upsertCompanySend,
+  removeCompanySend,
+  COMPANY_SEND_STATUS_LABEL,
+  type CompanySend,
+  type CompanySendStatus,
+} from "../lib/recruiter-submission-actions-api.js"
 import { getRecruiterSubmissionsList, type RecruiterSubmissionsListResult } from "../lib/recruiter-submissions-list-api.js"
 import { replaceRecruiterInviteCode, resendRecruiterInviteCodeEmail, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 import {
@@ -97,6 +104,7 @@ interface SubmissionDoc {
     rating?: number
     reasons?: string[]
   }>
+  companySends?: CompanySend[]
   inboundJobId?: string
   recruiterId?: string | null
   recruiterEmail?: string
@@ -4087,6 +4095,108 @@ function ChecklistTierMatrix({ review }: { review: ChecklistTierReview }) {
   )
 }
 
+const COMPANY_SEND_STATUS_OPTIONS: CompanySendStatus[] = ["sent", "waiting_hm", "interested", "passed"]
+const companySendTone = (s: CompanySendStatus): Parameters<typeof Badge>[0]["tone"] =>
+  s === "interested" ? "ok" : s === "passed" ? "warn" : s === "waiting_hm" ? "info" : "muted"
+
+/**
+ * Per-company "waiting for hiring manager" tracker. Lets ops mark which companies
+ * a candidate was sent to, each with its own status (sent → waiting HM →
+ * interested/passed) + hiring-manager feedback. Writes via the admin action
+ * callable; the FSM submission status flips to "with client" on the first send.
+ */
+function CompanySendsPanel({ submissionId, initial }: { submissionId: string; initial?: CompanySend[] }) {
+  const [sends, setSends] = useState<CompanySend[]>(initial ?? [])
+  const [newCompany, setNewCompany] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const run = async (fn: () => Promise<CompanySend[]>) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      setSends(await fn())
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const add = () => {
+    const c = newCompany.trim()
+    if (!c) return
+    setNewCompany("")
+    void run(() => upsertCompanySend(submissionId, { company: c, status: "sent" }))
+  }
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Company sends — waiting for hiring manager
+      </h4>
+      {err && <p style={{ color: "#c0392b", fontSize: 12, margin: "0 0 6px" }}>{err}</p>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {sends.length === 0 && (
+          <p style={{ margin: 0, fontSize: 13, color: "#999" }}>
+            No companies yet. Add each company you send this candidate to, then track the hiring-manager response.
+          </p>
+        )}
+        {sends.map((s) => (
+          <div key={s.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>{s.company}</strong>
+              <Badge tone={companySendTone(s.status)}>{COMPANY_SEND_STATUS_LABEL[s.status]}</Badge>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                disabled={busy}
+                value={s.status}
+                onChange={(e) => void run(() => upsertCompanySend(submissionId, { id: s.id, company: s.company, status: e.target.value as CompanySendStatus }))}
+              >
+                {COMPANY_SEND_STATUS_OPTIONS.map((o) => (
+                  <option key={o} value={o}>{COMPANY_SEND_STATUS_LABEL[o]}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(() => removeCompanySend(submissionId, s.id))}
+                style={{ marginLeft: "auto", fontSize: 12, color: "#c0392b", background: "none", border: "none", cursor: "pointer" }}
+              >
+                Remove
+              </button>
+            </div>
+            <textarea
+              defaultValue={s.feedback ?? ""}
+              placeholder="Hiring manager feedback…"
+              onBlur={(e) => {
+                const v = e.target.value.trim()
+                if (v !== (s.feedback ?? "")) void run(() => upsertCompanySend(submissionId, { id: s.id, company: s.company, feedback: v }))
+              }}
+              style={{ width: "100%", minHeight: 44, fontSize: 13, padding: 6, borderRadius: 6, border: "1px solid #ddd", boxSizing: "border-box" }}
+            />
+            <span style={{ fontSize: 11, color: "#999" }}>
+              Updated {formatOpsDate(s.updatedAt)}{s.by ? ` · ${s.by}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <input
+          type="text"
+          value={newCompany}
+          placeholder="Company name…"
+          disabled={busy}
+          onChange={(e) => setNewCompany(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") add() }}
+          style={{ flex: 1, fontSize: 13, padding: "6px 8px", borderRadius: 6, border: "1px solid #ddd" }}
+        />
+        <button type="button" disabled={busy || !newCompany.trim()} onClick={add} style={{ fontSize: 13, padding: "6px 12px" }}>
+          Add company
+        </button>
+      </div>
+    </>
+  )
+}
+
 function RowDetailPanel({
   row,
   role,
@@ -4394,6 +4504,8 @@ function RowDetailPanel({
           ) : (
             <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No status history stored.</p>
           )}
+
+          <CompanySendsPanel submissionId={row.id} initial={row.companySends} />
 
           <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
             Role evidence matrix
