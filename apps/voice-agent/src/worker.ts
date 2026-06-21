@@ -43,7 +43,7 @@ import {
 import { buildConsentPrompt } from "./consent-prompt.js"
 import { emitConsentSpokenAudit } from "./consent-audit.js"
 import { startRecordingEgress } from "./egress.js"
-import type { VoiceCallContext, VoicePrescreenCallContext } from "./voice-context-types.js"
+import type { VoiceCallContext, VoicePrescreenCallContext, VoiceUserProfile } from "./voice-context-types.js"
 import { WekruitLLM } from "./wekruit-llm.js"
 
 /**
@@ -225,9 +225,14 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         return
       }
 
-      const pipeline = opts.buildPipeline
-        ? await opts.buildPipeline(callContext)
-        : await defaultBuildPipeline(callContext)
+      // know-you-better is CONVERSATIONAL (WekruitLLM generic drill persona) — it
+      // has no server-side turn pipeline, so we don't build one.
+      const isConversational = callContext.purpose === "know_you_better"
+      const pipeline = isConversational
+        ? undefined
+        : opts.buildPipeline
+          ? await opts.buildPipeline(callContext)
+          : await defaultBuildPipeline(callContext)
 
       // ── Build AgentSession via SDK ───────────────────────────────────────
       // Adaptive turn detection — MultilingualModel from the LiveKit SDK
@@ -297,22 +302,28 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         // bug that produced repeated "that helps" filler over the real questions).
         const llm = opts.buildLLM
           ? opts.buildLLM()
-          : new WekruitLLM({
-              pipelineMode: {
-                voicePipeline: pipeline,
-                sessionId: pipelineSessionId,
-                userId: callContext.userProfile.userId,
-                lang,
-                redactProfile: callContext.userProfile,
-                terminalCloseText:
-                  lang === "zh"
-                    ? "好的，我需要的就这些了——非常感谢你抽时间。我们很快会再联系你。"
-                    : "That's everything I needed — thank you so much for your time. We'll be in touch shortly.",
-                onPipelineTerminal: async () => {
-                  await closeForTerminal()
+          : isConversational
+            ? // know-you-better: generic conversational brain. The drill persona +
+              // profile context + time budget live in the voice.Agent instructions
+              // (built below), which WekruitLLM reads as the system prompt. The call
+              // ends on the time-budget cutoff or hangup (no pipeline terminal).
+              new WekruitLLM({})
+            : new WekruitLLM({
+                pipelineMode: {
+                  voicePipeline: pipeline as VoicePipelineLite,
+                  sessionId: pipelineSessionId,
+                  userId: callContext.userProfile.userId,
+                  lang,
+                  redactProfile: callContext.userProfile,
+                  terminalCloseText:
+                    lang === "zh"
+                      ? "好的，我需要的就这些了——非常感谢你抽时间。我们很快会再联系你。"
+                      : "That's everything I needed — thank you so much for your time. We'll be in touch shortly.",
+                  onPipelineTerminal: async () => {
+                    await closeForTerminal()
+                  },
                 },
-              },
-            })
+              })
         void inference
         session = new voice.AgentSession({ vad, turnDetection, stt, llm, tts })
       } else {
@@ -398,9 +409,11 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         const { voice } = livekitMod
         conversationalAgent = new voice.Agent({
           instructions:
-            callContext.purpose === "onboarding"
-              ? "You are Claire, WeKruit's voice onboarding agent. Your job is to ask the short onboarding questions needed to understand the candidate. Speak warmly and concisely. Stay on the onboarding flow and do not recommend jobs during this call."
-              : "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
+            callContext.purpose === "know_you_better"
+              ? buildKnowYouBetterInstructions(callContext.userProfile, callContext.timeBudgetSec ?? 360)
+              : callContext.purpose === "onboarding"
+                ? "You are Claire, WeKruit's voice onboarding agent. Your job is to ask the short onboarding questions needed to understand the candidate. Speak warmly and concisely. Stay on the onboarding flow and do not recommend jobs during this call."
+                : "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
           // "WeKruit" → "We-Cruit" (we + cruit as in re-cruit). Without the
           // remap, Deepgram aura pronounces the brand as a single mushed
           // syllable. Map applies before TTS synthesis to every variant.
@@ -580,6 +593,38 @@ function readBookingId(metadata?: string, roomName?: string): string {
   throw new Error("voice-agent: cannot resolve bookingId — neither room.metadata nor room.name is set")
 }
 
+/**
+ * Build the know-you-better drill persona (Adam 2026-06-21) — a warm,
+ * profile-grounded recruiter conversation: hybrid 2-3 anchored questions then a
+ * natural drill into the candidate's recent role / résumé, paced to the time
+ * budget. Exported for unit tests.
+ */
+export function buildKnowYouBetterInstructions(profile: VoiceUserProfile, budgetSec: number): string {
+  const minutes = Math.max(1, Math.round(budgetSec / 60))
+  const bits: string[] = []
+  if (profile.displayName) bits.push(`Name: ${profile.displayName}`)
+  if (profile.recentRoleTitle) {
+    bits.push(`Recent role: ${profile.recentRoleTitle}${profile.recentCompany ? ` at ${profile.recentCompany}` : ""}`)
+  }
+  if (profile.workHistorySummary) bits.push(`Background: ${profile.workHistorySummary}`)
+  const skillNames = (profile.skills ?? []).map((s) => s.name).filter(Boolean).slice(0, 8)
+  if (skillNames.length) bits.push(`Skills on file: ${skillNames.join(", ")}`)
+  if (profile.yoeRange) bits.push(`Years of experience: ~${profile.yoeRange[0]}-${profile.yoeRange[1]}`)
+  if (profile.targetRoleFunction?.length) bits.push(`Open to: ${profile.targetRoleFunction.join(", ")}`)
+  if (profile.targetLocations?.length) bits.push(`Locations: ${profile.targetLocations.join(", ")}`)
+  const known = bits.length
+    ? bits.join("\n")
+    : "(we have very little on file yet — use this call to learn the basics)"
+  return [
+    "You are Claire from WeKruit on a warm, friendly 'get to know you' phone call — like a recruiter friend catching up, not an interrogation.",
+    "What we already know about the candidate:",
+    known,
+    `You have about ${minutes} minute(s) for this call. PACE YOURSELF: go deeper early; as you near the end, wrap up warmly (e.g. "this was great — I'll text you the next steps"). One short question at a time; speak naturally for voice (no lists).`,
+    "FLOW (hybrid): (1) Warm hello, then 2-3 quick anchored questions — what kind of role they're looking for and what matters most to them. (2) Then DRILL into their actual background: reference their recent role / company / skills above and ask natural follow-ups — 'I saw you worked on X at Y, walk me through that', 'what did you own?', 'what are you most proud of?'. (3) Fill the gaps in what we know (recent work, what they want next, location, timing).",
+    "Do NOT score or judge them, and do NOT recommend specific jobs on this call — that comes later by text. Be warm, curious, human. If they go quiet, gently prompt.",
+  ].join("\n")
+}
+
 export async function waitForRemoteParticipant(
   room: {
     remoteParticipants?: Map<string, RemoteParticipantLike>
@@ -662,17 +707,22 @@ export async function defaultLoadContext(bookingId: string): Promise<VoiceCallCo
   }
   const data = (await res.json()) as {
     bookingId: string
-    purpose?: "prescreen" | "onboarding"
+    purpose?: "prescreen" | "onboarding" | "know_you_better"
     timeBudgetSec?: number
     userProfile: VoiceCallContext["userProfile"]
     prescreenSessionId?: string
     jobBrief?: unknown
     prescreenConfig?: unknown
   }
-  const purpose = data.purpose === "onboarding" ? "onboarding" : "prescreen"
+  const purpose =
+    data.purpose === "onboarding"
+      ? "onboarding"
+      : data.purpose === "know_you_better"
+        ? "know_you_better"
+        : "prescreen"
   const timeBudgetSec =
     typeof data.timeBudgetSec === "number" && data.timeBudgetSec > 0 ? data.timeBudgetSec : undefined
-  if (purpose === "onboarding") {
+  if (purpose === "onboarding" || purpose === "know_you_better") {
     return {
       bookingId: data.bookingId,
       purpose,

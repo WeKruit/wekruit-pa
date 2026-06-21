@@ -135,7 +135,12 @@ export async function handleDialOutbound(
   // failed and stop. No LLM, no LiveKit call.
   const paUserId = typeof after.paUserId === "string" ? after.paUserId.trim() : ""
   const paJobId = typeof after.paJobId === "string" ? after.paJobId.trim() : ""
-  const purpose = after.purpose === "onboarding" ? "onboarding" : "prescreen"
+  const purpose =
+    after.purpose === "onboarding"
+      ? "onboarding"
+      : after.purpose === "know_you_better"
+        ? "know_you_better"
+        : "prescreen"
   if (!paUserId || (purpose === "prescreen" && !paJobId)) {
     const missing = []
     if (!paUserId) missing.push("paUserId")

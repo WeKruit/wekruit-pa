@@ -51,7 +51,7 @@ const PA_VOICE_CF_SECRET = defineSecret("PA_VOICE_CF_SECRET")
 // to ambiguous → HARD_STOP, so the voice prescreen scored nothing (Adam 2026-06-21).
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 
-type VoicePurpose = "prescreen" | "onboarding"
+type VoicePurpose = "prescreen" | "onboarding" | "know_you_better"
 
 function checkAuth(req: { get: (h: string) => string | undefined }, expected: string): boolean {
   if (!expected) return true // dev / unconfigured → permissive
@@ -159,7 +159,12 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
       (typeof booking.paUserId === "string" && booking.paUserId) ||
       (typeof booking.userId === "string" && booking.userId) ||
       ""
-    const purpose: VoicePurpose = booking.purpose === "onboarding" ? "onboarding" : "prescreen"
+    const purpose: VoicePurpose =
+      booking.purpose === "onboarding"
+        ? "onboarding"
+        : booking.purpose === "know_you_better"
+          ? "know_you_better"
+          : "prescreen"
     if (!userId) {
       res.status(400).json({ ok: false, reason: "booking_missing_user" })
       return
@@ -167,17 +172,22 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
 
     // Per-session time budget (Adam 2026-06-21) — the worker arms a graceful hard
     // cutoff at this many seconds. A booking may override via timeBudgetSec; else
-    // the per-purpose default. Onboarding/know-you-better are short; prescreens run
-    // a bit longer.
+    // the per-purpose default: prescreen 10 min, know-you-better résumé drill 6 min,
+    // onboarding 4 min.
+    const DEFAULT_BUDGET_SEC: Record<VoicePurpose, number> = {
+      prescreen: 600,
+      know_you_better: 360,
+      onboarding: 240,
+    }
     const timeBudgetSec =
       typeof booking.timeBudgetSec === "number" && booking.timeBudgetSec > 0
         ? Math.round(booking.timeBudgetSec)
-        : purpose === "onboarding"
-          ? 240
-          : 360
+        : DEFAULT_BUDGET_SEC[purpose]
 
     try {
-      if (purpose === "onboarding") {
+      // Onboarding + know-you-better are not tied to a job — same context shape
+      // (profile only); the worker routes by purpose to the right runner/mode.
+      if (purpose === "onboarding" || purpose === "know_you_better") {
         const userProfile = await loadUserProfileForVoice(db, userId)
         res.status(200).json({
           ok: true,

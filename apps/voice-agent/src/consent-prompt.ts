@@ -28,9 +28,9 @@ const ZH_PROFESSIONAL =
 export function buildConsentPrompt(ctx: VoiceCallContext): string {
   const lang = ctx.userProfile.preferredLang ?? "en"
   const mode =
-    ctx.purpose === "onboarding"
-      ? "casual_onboarding"
-      : ctx.prescreenConfig.voiceMode ?? "professional_prescreen"
+    ctx.purpose === "prescreen"
+      ? ctx.prescreenConfig.voiceMode ?? "professional_prescreen"
+      : "casual_onboarding"
   if (lang === "zh") {
     return mode === "casual_onboarding" ? ZH_CASUAL : ZH_PROFESSIONAL
   }
