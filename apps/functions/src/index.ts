@@ -1174,6 +1174,41 @@ async function processBrokerImessageEvent(
     })
   }
 
+  // ── INBOUND TAPBACK NO-OP GATE (live 2026-06-19) ─────────────────────────
+  // An iMessage REACTION on one of Claire's own messages arrives as plaintext
+  // (`Loved "…"`). Before this gate it was treated as a fresh user turn → Claire
+  // re-acked AND re-ran find_match → duplicate batch. A reaction on OUR message
+  // is a no-op: nothing sent, no tool call. Same earliest common seam as STOP;
+  // mirrored in the coalescer path. Deterministic regex (tapback-parser.ts),
+  // verified against Claire's recent assistant messages in pa-messages.
+  try {
+    const { runTapbackGate } = await import("./claire-agent/tapback-gate.js")
+    const tapbackGate = await runTapbackGate(
+      db,
+      { eventId: claimed.id, userId: user.id, text: payload.text.trim() },
+      { log: (e, pl) => logger.info(`[tapback-gate][onPaInbound] ${e}`, pl ?? {}) },
+    )
+    if (tapbackGate.handled) {
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "tapback_reaction_noop",
+        },
+        { merge: true }
+      )
+      return 1
+    }
+  } catch (err) {
+    // runTapbackGate never throws by design; this guards the dynamic import only.
+    logger.warn("[tapback-gate][onPaInbound] gate FAILED — falling through", {
+      eventId: claimed.id,
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
   // Direct broker path can receive the same candidate trigger token as
   // Sendblue. Treat it as control-plane input here; never let it fall into
   // onboarding, where it would produce the q_lang prompt instead of starting

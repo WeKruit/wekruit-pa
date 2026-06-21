@@ -80,6 +80,8 @@ const NULL_ARGS = {
   avoidIndustrySector: null,
   companySize: null,
   careerStage: null,
+  yoeMin: null,
+  yoeMax: null,
 }
 
 async function run(ctx: ClaireToolContext, args: Record<string, unknown>) {
@@ -179,6 +181,27 @@ test("companySize + careerStage scalar/replace axes persist", async () => {
   const tags = storedTags(db)
   assert.deepEqual(tags.companySize, ["early_startup"])
   assert.equal(tags.careerStage, "senior")
+})
+
+test("'make sure these are all 3 to 4 years of experience' → yoeRange:[3,4] PERSISTS", async () => {
+  // The 2026-06-19 "explicit YoE correction silently dropped" bug: the schema
+  // could not carry a yoe range, so "3-4 years" collapsed to a scalar careerStage
+  // and the upper bound was lost. yoeRange now rides the reducer → sole writer.
+  const db = makeDb({ careerStage: "mid_level" })
+  const ctx = makeCtx(db)
+  const out = await run(ctx, { yoeMin: 3, yoeMax: 4 })
+  assert.equal(out.ok, true)
+  assert.deepEqual(storedTags(db).yoeRange, [3, 4])
+})
+
+test("yoeRange endpoints are normalized lo..hi and restating the same range is a no-op", async () => {
+  const db = makeDb({ yoeRange: [3, 4] })
+  const ctx = makeCtx(db)
+  // reversed order normalizes to [3,4] — identical to stored → nothing new to save.
+  const out = await run(ctx, { yoeMin: 4, yoeMax: 3 })
+  assert.equal(out.ok, true)
+  assert.match(String(out.summary), /Nothing new/i)
+  assert.deepEqual(storedTags(db).yoeRange, [3, 4])
 })
 
 // ── capture_match_feedback tagDeltas — visaStatus + negativeJobType ride the

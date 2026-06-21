@@ -1896,6 +1896,148 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(attemptDoc.proposedOutcome?.prescreenTerminal, "PASS")
   })
 
+  it("a NOT_PASS (FAIL) terminal sends verdict-aware honest holding copy, never the PASS pitch framing", async () => {
+    // Live trust bug 2026-06-19 (+13055102017): a HARD_STOP/FAIL outcome held for human review was
+    // told "nice work — pitching you to the hiring manager" (a fabricated pass on a rejection).
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: null,
+        currentQId: "role_fit",
+        createdAt: now,
+        updatedAt: now,
+        score: 0,
+        scoreMax: 1,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 2,
+        qOrder: ["role_fit"],
+        questions: {
+          role_fit: {
+            qId: "role_fit",
+            type: "MUST_HAVE",
+            weight: 1,
+            // clarify budget already exhausted → a confident low score terminates non-PASS now.
+            clarifyRounds: 2,
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: now, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "role_fit",
+              prompt: { en: "What recent work best matches this software engineering role?", zh: "What recent work best matches this software engineering role?" },
+              clarifyPrompt: { en: "Tell me more.", zh: "Tell me more." },
+              keywords: [{ keyword: "ownership", weight: 1 }],
+            },
+          ],
+        },
+      },
+    })
+
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        return {
+          perKeyword: [
+            {
+              keyword: "ownership",
+              match: 0,
+              confidence: 0.95,
+              evidence: "no relevant engineering ownership",
+              reasoning: "confident non-match",
+            },
+          ],
+          summary: "Confident mismatch.",
+          answered: true,
+        }
+      },
+    }
+    const sent: string[] = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "I have never done software engineering.",
+      keywordSetCaller: caller,
+      runTerminalAction: async () => ({ alreadyFired: false, level1Sent: false, jobRecsFired: false }),
+      markReviewPending: async () => ({ changed: true }),
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          id: "out-not-pass",
+          created: true,
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.notEqual(result.terminal, "PASS")
+    assert.equal(sent.length, 1)
+    // Honest holding copy: warm, review-pending, retention — but NEVER a fabricated pass.
+    assert.match(sent[0] ?? "", /WeKruit team/i)
+    assert.match(sent[0] ?? "", /review/i)
+    assert.doesNotMatch(sent[0] ?? "", /pitch the hiring manager/i)
+    assert.doesNotMatch(sent[0] ?? "", /pitch you to the hiring manager/i)
+    assert.doesNotMatch(sent[0] ?? "", /nice work/i)
+    const session = docs.get("pa-prescreen-sessions/ps_active")?.data
+    assert.equal(session?.terminalActionPendingReview, true)
+  })
+
+  it("a recent NOT_PASS pending-review follow-up ack is honest, never the PASS pitch framing", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-prescreen-sessions/ps_pending_review_notpass": {
+        sessionId: "ps_pending_review_notpass",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "HARD_STOP",
+        currentQId: null,
+        terminalActionPendingReview: true,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      // A non-explicit-new-intent follow-up: prescreen owns the thread (suppresses thin re-engagement).
+      replyText: "ok thanks",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, "HARD_STOP")
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /WeKruit team/i)
+    assert.doesNotMatch(sent[0] ?? "", /pitch the hiring manager/i)
+    assert.doesNotMatch(sent[0] ?? "", /pitch you to the hiring manager/i)
+    assert.doesNotMatch(sent[0] ?? "", /nice work/i)
+  })
+
   it("yields an active prescreen when layoff onboarding owns the user turn", async () => {
     const now = new Date().toISOString()
     const { db } = makeFakeDb({

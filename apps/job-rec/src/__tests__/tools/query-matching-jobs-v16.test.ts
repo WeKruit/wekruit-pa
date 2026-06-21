@@ -487,6 +487,200 @@ test("applyV16HardFilters: malformed careerStageRange falls back to scalar windo
   assert.equal(r.counters.careerStage, 1)
 })
 
+// ---------------------------------------------------------------------------
+// Hard-gate leak fixes (2026-06-19) — 38 "wrong match" complaints.
+// (a) mid-level IC must NOT receive lead/manager roles
+// (b) new-grad must NOT receive 8+yr (senior/staff/principal) roles
+// (c) internship-seeker must NOT receive full-time; full-time-seeker no internship
+// (d) negativeRoleFunction customer_service must HARD-drop customer-service jobs
+// Plus inverse "should KEEP" cases so the gates don't over-filter.
+// ---------------------------------------------------------------------------
+
+test("LEAK-FIX (a): mid_level IC candidate — manager/director jobs DROPPED, IC peers KEPT", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "mid", seniorityLevel: "mid_level" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+    mkJob({ id: "director", seniorityLevel: "director" }),
+    mkJob({ id: "vp", seniorityLevel: "vp" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "mid_level" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // mid_level keeps adjacent IC tiers (mid, senior) but DROPS the people-management band
+  assert.deepEqual(r.kept.map((j) => j.id), ["mid", "senior"])
+  assert.ok(!r.kept.map((j) => j.id).includes("manager"), "manager leak closed")
+  assert.ok(!r.kept.map((j) => j.id).includes("director"), "director leak closed")
+  assert.equal(r.counters.careerStage, 3)
+})
+
+test("LEAK-FIX (a): junior IC candidate — manager job DROPPED, 'Lead' (→senior IC) KEPT", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+    mkJob({ id: "lead", seniorityLevel: "senior" }), // "Lead" normalizes to senior, an IC tier
+    mkJob({ id: "mid", seniorityLevel: "mid_level" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "junior" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // junior window keeps mid (idx 4, |4-3|=1); manager (people-mgmt) dropped; senior(5) is
+  // outside junior's ±1 window so also dropped by the ordinal gate.
+  assert.ok(r.kept.map((j) => j.id).includes("mid"), "adjacent IC mid kept")
+  assert.ok(!r.kept.map((j) => j.id).includes("manager"), "manager leak closed for junior")
+})
+
+test("LEAK-FIX (a) inverse: a manager candidate STILL receives manager roles (no over-filter)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "director", seniorityLevel: "director" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "manager" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // manager is NOT an IC early/mid stage → the leakage guard never fires; the ±1
+  // ordinal window (idx 5) keeps senior(5)/manager(5); director(7) is |7-5|=2 → dropped.
+  assert.ok(r.kept.map((j) => j.id).includes("manager"))
+  assert.ok(r.kept.map((j) => j.id).includes("senior"))
+})
+
+test("LEAK-FIX (a) inverse: founder/range candidate still keeps the executive band (no regress)", () => {
+  const jobs: MatchingJob[] = [mkJob({ id: "manager", seniorityLevel: "manager" })]
+  // founder
+  const founderTags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "founder" } as never
+  assert.deepEqual(applyV16HardFilters(jobs, founderTags, NOW).kept.map((j) => j.id), ["manager"])
+  // explicit range that spans into the management band — overrides the IC guard
+  const rangeTags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "mid_level",
+    careerStageRange: ["mid_level", "director"],
+  } as never
+  assert.deepEqual(applyV16HardFilters(jobs, rangeTags, NOW).kept.map((j) => j.id), ["manager"])
+})
+
+// ---------------------------------------------------------------------------
+// YoE-correction fix (2026-06-19) — "make sure these roles are all 3 to 4 years
+// of experience" still got ~5+yr Senior roles. An EXPLICIT candidate-authored
+// yoeRange must hard-cap the careerStage window's upper bound at the stage
+// implied by yoeRange[1] (careerStageFromYoeMax), tighter than the static ±1
+// scalar window — WITHOUT tightening candidates who never stated a yoeRange.
+// ---------------------------------------------------------------------------
+
+test("YOE-FIX (a): explicit yoeRange [3,4] mid_level — ~5+yr 'senior' job DROPPED", () => {
+  const jobs: MatchingJob[] = [mkJob({ id: "senior", seniorityLevel: "senior" })]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "mid_level", // static ±1 window (junior/mid/senior) would ADMIT senior…
+    yoeRange: [3, 4], // …but 3-4yr → yoeMax 4 → cap at mid_level (idx 4): senior (idx 5) DROPPED
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), [])
+  assert.equal(r.counters.careerStage, 1)
+})
+
+test("YOE-FIX (b): same yoeRange [3,4] candidate — a mid/3-4yr job is KEPT", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "mid", seniorityLevel: "mid_level" }),
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "mid_level",
+    yoeRange: [3, 4],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // mid_level (idx 4) at/below the cap is KEPT; junior (idx 3) inside the ±1 floor is KEPT.
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["junior", "mid"])
+  assert.equal(r.counters.careerStage, 0)
+})
+
+test("YOE-FIX (c): NO yoeRange mid_level candidate still gets the ±1 window (senior KEPT)", () => {
+  // Guard against over-tightening everyone — without an explicit yoeRange the
+  // static ±1 acceptable window is unchanged, so an adjacent senior is KEPT.
+  const jobs: MatchingJob[] = [mkJob({ id: "senior", seniorityLevel: "senior" })]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "mid_level" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["senior"])
+  assert.equal(r.counters.careerStage, 0)
+})
+
+test("YOE-FIX (d): founder path unchanged — seasoned founder keeps the executive band", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "director", seniorityLevel: "director" }),
+    mkJob({ id: "vp", seniorityLevel: "vp" }),
+  ]
+  // Seasoned founder (yoeMax ≥ FOUNDER_SENIOR_YOE) keeps the full senior+ band.
+  const seasoned = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "founder",
+    yoeRange: [8, 10],
+  } as never
+  const rSeasoned = applyV16HardFilters(jobs, seasoned, NOW)
+  assert.deepEqual(rSeasoned.kept.map((j) => j.id).sort(), ["director", "senior", "vp"])
+  // Low-yoe founder is still early-career-capped (no regress to founder yoe-gate).
+  const lowYoe = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "founder",
+    yoeRange: [1.5, 2.5], // → entry_level window → senior/director/vp all DROPPED
+  } as never
+  const rLow = applyV16HardFilters(jobs, lowYoe, NOW)
+  assert.deepEqual(rLow.kept.map((j) => j.id), [])
+})
+
+test("LEAK-FIX (b): new-grad (entry_level) — 8+yr senior/staff/principal jobs DROPPED, entry KEPT", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "entry", seniorityLevel: "entry_level" }),
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "staff", seniorityLevel: "staff" }),
+    mkJob({ id: "principal", seniorityLevel: "principal" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "entry_level" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["entry", "junior"])
+  assert.ok(!r.kept.map((j) => j.id).includes("senior"), "8+yr senior leak closed for new-grad")
+  assert.ok(!r.kept.map((j) => j.id).includes("staff"), "staff leak closed")
+  assert.equal(r.counters.careerStage, 3)
+})
+
+test("LEAK-FIX (c): internship-seeker — full_time/contract DROPPED, internship KEPT", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "intern", jobType: "internship" }),
+    mkJob({ id: "ft", jobType: "full_time" }),
+    mkJob({ id: "ct", jobType: "contract" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, targetJobType: ["internship"] } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["intern"])
+  assert.equal(r.counters.jobType, 2)
+})
+
+test("LEAK-FIX (c): full_time-seeker — internship DROPPED, full_time KEPT", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "ft", jobType: "full_time" }),
+    mkJob({ id: "intern", jobType: "internship" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, targetJobType: ["full_time"] } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["ft"])
+  assert.equal(r.counters.jobType, 1)
+})
+
+test("LEAK-FIX (d): negativeRoleFunction customer_service HARD-drops CS jobs, others KEPT", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "cs", roleFunction: ["customer_service_and_support"] }),
+    mkJob({ id: "cs_multi", roleFunction: ["sales", "customer_service_and_support"] }),
+    mkJob({ id: "swe", roleFunction: ["software_engineering"] }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    negativeRoleFunction: ["customer_service_and_support"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["swe"])
+  assert.ok(!r.kept.map((j) => j.id).includes("cs"), "customer-service hard-dropped")
+  assert.ok(!r.kept.map((j) => j.id).includes("cs_multi"), "multi-function CS hard-dropped")
+  assert.equal(r.counters.negativeListDrop, 2)
+})
+
 test("applyV16HardFilters: jobType exact intersect", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "ft", jobType: "full_time" }),

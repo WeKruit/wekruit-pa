@@ -153,6 +153,15 @@ export type ClaireRunResult = {
   deliveredViaTool: boolean
   /** 2A — best-effort per-turn token usage (absent on tripwire/error paths). */
   usage?: ClaireTurnUsage
+  /** which model actually SERVED the reply: the primary CLAIRE_MODEL, or CLAIRE_FALLBACK_MODEL when
+   *  the provider-fallback retry produced it. Absent on the happy path is fine (defaults to primary). */
+  servedByModel?: string
+  /** coarse code for a turn that errored / used the fallback (e.g. "primary_model_threw_fallback_
+   *  recovered", "primary_and_fallback_threw", "claire_run_timeout", "claire_circuit_open"). Absent
+   *  on a clean primary-served turn. Persisted to the decision trace for Firestore debuggability. */
+  errorCode?: string
+  /** the underlying provider error message(s) for the errored/fallback turn (absent on a clean turn). */
+  errorMessage?: string
 }
 
 /** Workstream stub marker — throws so an unfilled seam fails loudly, never silently. */

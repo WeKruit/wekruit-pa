@@ -51,6 +51,15 @@ export interface MatchingPreferenceProposal {
   companySize?: readonly string[] | null
   /** Seniority (CAREER_STAGE_VOCAB) — scalar REPLACE. */
   careerStage?: string | null
+  /**
+   * Explicit years-of-experience RANGE [min, max] the candidate wants their
+   * matched roles to require — REPLACE. Drives the V16 careerStage hard-filter
+   * upper-bound cap (matchingCareerStageWindow): "make sure these roles are all
+   * 3 to 4 years of experience" → yoeRange [3, 4] hard-drops ~5+yr senior roles
+   * that the static ±1 careerStage window would otherwise admit (the live
+   * 2026-06-19 "explicit YoE correction silently dropped" bug).
+   */
+  yoeRange?: readonly [number, number] | null
 }
 
 /** The subset of pa-users.tags this reducer owns. */
@@ -66,6 +75,7 @@ export interface MatchingTagsSlice {
   minSalary?: number
   companySize?: string[]
   careerStage?: string
+  yoeRange?: [number, number]
 }
 
 export interface MatchingReducerResult {
@@ -221,6 +231,20 @@ export function reduceMatchingPreferences(
       proposal.careerStage !== current.careerStage) {
     changed.careerStage = proposal.careerStage
   }
+  // yoeRange — tuple REPLACE. A valid [min, max] of finite, non-negative
+  // numbers (max ≥ min) replaces the stored range. A restated identical range
+  // is a no-op (mirrors the other replace axes).
+  if (
+    Array.isArray(proposal.yoeRange) &&
+    proposal.yoeRange.length === 2 &&
+    proposal.yoeRange.every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0)
+  ) {
+    const lo = Math.min(proposal.yoeRange[0], proposal.yoeRange[1])
+    const hi = Math.max(proposal.yoeRange[0], proposal.yoeRange[1])
+    const prior = current.yoeRange
+    const same = Array.isArray(prior) && prior.length === 2 && prior[0] === lo && prior[1] === hi
+    if (!same) changed.yoeRange = [lo, hi]
+  }
 
   const next: MatchingTagsSlice = {
     targetRoleFunction: positive,
@@ -247,6 +271,9 @@ export function reduceMatchingPreferences(
       : {}),
     ...(changed.careerStage !== undefined || current.careerStage !== undefined
       ? { careerStage: changed.careerStage ?? current.careerStage }
+      : {}),
+    ...(changed.yoeRange !== undefined || current.yoeRange !== undefined
+      ? { yoeRange: changed.yoeRange ?? current.yoeRange }
       : {}),
   }
 

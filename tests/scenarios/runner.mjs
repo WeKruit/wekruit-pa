@@ -61,6 +61,7 @@ const PA_USERS = "pa-users"
 const PA_MEMORY_FACTS = "pa-memory-facts"
 const PA_SCHEDULED_JOBS = "pa-scheduled-jobs"
 const PA_AUDIT_EVENTS = "pa-audit-events"
+const PARSED_RESUMES = "parsedCandidateResumes"
 const generatedParticipants = new Set()
 
 // Phase 60 (DEV-02) — `--user-id <uid>` flag.
@@ -224,6 +225,99 @@ async function applyUserPatch(db, userId, patchSpec, label) {
   await db.collection(PA_USERS).doc(userId).set(patch, { merge: true })
 }
 
+// ---------------------------------------------------------------------------
+// CV-fixture injection (match-correctness scenarios).
+//
+// A scenario can declare a top-level `fixture` block that the runner seeds
+// into Firestore for the resolved throwaway test user BEFORE the first turn.
+// This lets a turn whose user line is "(pretend i sent the cv)" find a
+// parsed résumé + stated preferences, so `getUserCvParsed`/`generateJobRecs`
+// have tags to match on (otherwise find_match short-circuits and the reply
+// comes back null).
+//
+// Shape (all optional except `cv`):
+//   fixture:
+//     statedPreferences: { ...canonical onboarding prefs... }
+//     userTags:          { ...pa-users.tags (V16 cascade source)... }
+//     cv:                { topSkills, experiences, education, industryTags,
+//                          candidateProfile, ... }   # parsedCandidateResumes
+//
+// REQUIRES `testMode: true`. The seeded résumé doc id is deterministic
+// (`harness-fixture-<userId>`) so re-runs are idempotent, and it is deleted
+// in cleanup. The pa-users doc itself is created fresh per run by
+// ensureScenarioTestUser (reserved +1999999xxxx range, randomized
+// participant), so it is already throwaway.
+// ---------------------------------------------------------------------------
+async function seedScenarioFixture(db, userId, fixture) {
+  if (!fixture || typeof fixture !== "object") return null
+  const nowIso2 = nowIso()
+
+  // 1. pa-users overlay: statedPreferences + tags (+ keep onboarding state
+  //    consistent so the cvParsed edge fires). We merge so the
+  //    ensureScenarioTestUser-created doc is preserved.
+  const userOverlay = { testMode: true, updatedAt: nowIso2 }
+  if (fixture.statedPreferences && typeof fixture.statedPreferences === "object") {
+    // Resolve "__seeded__" timestamp placeholders to the seed-time ISO so
+    // scenarios don't have to hardcode dates (e.g. contactEmailVerifiedAt).
+    const prefs = {}
+    for (const [k, v] of Object.entries(fixture.statedPreferences)) {
+      prefs[k] = v === "__seeded__" ? nowIso2 : v
+    }
+    userOverlay.statedPreferences = prefs
+  }
+  if (fixture.userTags && typeof fixture.userTags === "object") {
+    userOverlay.tags = fixture.userTags
+  }
+  if (typeof fixture.onboardingStatus === "string") userOverlay.onboardingStatus = fixture.onboardingStatus
+  if (typeof fixture.onboardingState === "string") userOverlay.onboardingState = fixture.onboardingState
+  await db.collection(PA_USERS).doc(userId).set(userOverlay, { merge: true })
+
+  // 2. parsedCandidateResumes doc — what getUserCvParsed + generateJobRecs read.
+  let resumeDocId = null
+  if (fixture.cv && typeof fixture.cv === "object") {
+    resumeDocId = `harness-fixture-${userId}`
+    const cv = fixture.cv
+    const data = {
+      userId,
+      candidateProfile: cv.candidateProfile ?? null,
+      experiences: cv.experiences ?? [],
+      workHistory: cv.workHistory ?? cv.experiences ?? [],
+      topSkills: cv.topSkills ?? [],
+      education: cv.education ?? [],
+      industryTags: cv.industryTags ?? [],
+      parserVersion: cv.parserVersion ?? "v1",
+      ingestedAt: nowIso2,
+      ingestedVia: "harness-fixture",
+      originalFileName: cv.originalFileName ?? "harness-fixture-resume.pdf",
+      fileType: "application/pdf",
+      studentFrom: null,
+      sessionId: null,
+      mediaUrl: cv.mediaUrl ?? "https://example.com/harness-fixture-resume.pdf",
+      createdAt: nowIso2,
+      // Mock 1536-d embedding so cosineSimilarity scoring path doesn't crash.
+      embedding: Array.isArray(cv.embedding) ? cv.embedding : new Array(1536).fill(0.01),
+      embeddingModel: "text-embedding-3-small",
+      embeddingDim: 1536,
+      embeddingComputedAt: nowIso2,
+      harnessSeed: true,
+      note: "scenario fixture (seeded by runner before turn 0)",
+    }
+    await db.collection(PARSED_RESUMES).doc(resumeDocId).set(data, { merge: true })
+  }
+  return { resumeDocId }
+}
+
+async function cleanupScenarioFixture(db, seeded) {
+  if (!seeded) return
+  try {
+    if (seeded.resumeDocId) {
+      await db.collection(PARSED_RESUMES).doc(seeded.resumeDocId).delete()
+    }
+  } catch {
+    // best-effort
+  }
+}
+
 function assertScenarioParticipant(scenario) {
   const allowed = (process.env.PA_SCENARIO_ALLOWED_PARTICIPANTS ?? "")
     .split(",")
@@ -278,10 +372,23 @@ async function assertNoOutboundWhenSuppressed(db, eventId, suppressOutbound) {
   }
 }
 
-/** Build a broker-shaped iMessage inbound event. CF detects via rawPayload.kind. */
-function brokerEvent({ participant, chatId, text }) {
+/** Build a broker-shaped iMessage inbound event. CF detects via rawPayload.kind.
+ *
+ * `cvParsedTrigger` — when true, deliver this turn as the synthetic
+ * `[cv-parsed]` resume-parse-completed re-entry the production worker /
+ * cv-ingest pipeline emit. The orchestrator's deterministic onboarding
+ * detects it via `event.body.startsWith("[cv-parsed]")` + rawMeta
+ * `cvParsedTrigger`, then reads the seeded parsedCandidateResumes doc and
+ * fires the cv-analysis + job-rec edge. Without it a plain text at
+ * q_resume_asked never reaches that edge → null reply. `triggerResumeId`
+ * is carried through too (apps/functions/src/index.ts maps both into
+ * rawMeta). */
+function brokerEvent({ participant, chatId, text, cvParsedTrigger, triggerResumeId }) {
   const id = `harness_${randomUUID()}`
   const idempotencyKey = `harness:${id}`
+  // The detector keys off the body prefix; carry the scenario's human text
+  // after the marker so transcripts stay readable.
+  const body = cvParsedTrigger ? `[cv-parsed] ${text ?? ""}`.trim() : text
   return {
     id,
     docData: {
@@ -297,7 +404,9 @@ function brokerEvent({ participant, chatId, text }) {
         participant,
         chatId,
         messageRowId: Date.now(),
-        text,
+        text: body,
+        ...(cvParsedTrigger ? { cvParsedTrigger: true } : {}),
+        ...(typeof triggerResumeId === "string" && triggerResumeId ? { triggerResumeId } : {}),
         harness: {
           runner: "tests/scenarios/runner.mjs",
           suppressOutbound: true,
@@ -323,13 +432,20 @@ async function runTurn(db, scenario, turnIdx) {
   const event = brokerEvent({
     participant: scenario.participant,
     chatId: scenario.chatId,
+    cvParsedTrigger: turn.cvParsedTrigger === true,
+    triggerResumeId: turn.cvParsedTrigger === true ? scenario.__seededResumeDocId : undefined,
     text: turn.user,
   })
+  // Capture the turn-start instant BEFORE writing the event so the
+  // pa-outbound fallback (below) can scope its query to rows this turn
+  // produced (the thin/cutover reply path writes outbound rows with NO
+  // rawMeta.eventId, only userId + createdAt).
+  const turnStartIso = nowIso()
   await db.collection(PA_INBOUND).doc(event.id).set(event.docData)
 
   // Wait for orchestrator to mark inbound completed.
   const evRef = db.collection(PA_INBOUND).doc(event.id)
-  await pollUntil(
+  const completedInbound = await pollUntil(
     async () => {
       const snap = await evRef.get()
       const data = snap.data()
@@ -342,6 +458,10 @@ async function runTurn(db, scenario, turnIdx) {
     },
     { timeoutMs: scenario.turnTimeoutMs ?? 30000, label: `inbound ${event.id} completed` }
   )
+  // The CF stamps the resolved userId onto the inbound row; the throwaway
+  // test user is unique per run, so userId+createdAt is a clean correlation
+  // key for the pa-outbound fallback.
+  const resolvedUserId = completedInbound?.userId ?? null
 
   // Find the assistant reply. Phase 10.5 changed idempotencyKey from the
   // legacy "out-${eventId}" string to a hash of (sessionId, role, body) so
@@ -372,6 +492,35 @@ async function runTurn(db, scenario, turnIdx) {
       if (!legacy.empty) {
         const d = legacy.docs[0].data()
         return d.body
+      }
+      // Fallback 2 — thin-Claire / cutover path. That path writes the
+      // assistant reply to pa-outbound (source="pa_orchestrator") with NO
+      // rawMeta.eventId — only userId + createdAt. Since the harness test
+      // user is a fresh throwaway per run, scope by userId + createdAt >=
+      // turnStartIso and return the FIRST-emitted body (lowest seq /
+      // earliest createdAt) so multi-bubble job-rec sends surface their
+      // lead message deterministically.
+      if (resolvedUserId) {
+        const ob = await db
+          .collection(PA_OUTBOUND)
+          .where("userId", "==", resolvedUserId)
+          .get()
+        const rows = ob.docs
+          .map((d) => d.data())
+          .filter(
+            (d) =>
+              typeof d.body === "string" &&
+              d.body.length > 0 &&
+              typeof d.createdAt === "string" &&
+              d.createdAt >= turnStartIso
+          )
+          .sort((a, b) => {
+            const seqA = Number.isFinite(a.seq) ? a.seq : Number.MAX_SAFE_INTEGER
+            const seqB = Number.isFinite(b.seq) ? b.seq : Number.MAX_SAFE_INTEGER
+            if (seqA !== seqB) return seqA - seqB
+            return (a.createdAt ?? "").localeCompare(b.createdAt ?? "")
+          })
+        if (rows.length > 0) return rows[0].body
       }
       return false
     },
@@ -1046,6 +1195,18 @@ async function runScenario(db, scenarioPath, ctx) {
     await applyUserPatch(db, userId, scenario.setup.userPatch, "setup")
   }
 
+  // CV-fixture injection — seed parsedCandidateResumes + statedPreferences /
+  // tags for the throwaway test user BEFORE the first turn so find_match has
+  // data to match on. Requires testMode + a resolved test user.
+  let seededFixture = null
+  if (scenario.fixture && typeof scenario.fixture === "object") {
+    if (scenario.testMode !== true || !userId) {
+      throw new Error(`[runner] fixture requires testMode: true and a resolved test user`)
+    }
+    seededFixture = await seedScenarioFixture(db, userId, scenario.fixture)
+    scenario.__seededResumeDocId = seededFixture?.resumeDocId ?? null
+  }
+
   // Phase 22 — proactive scenario seed + sweep hook
   let seededJobIds = []
   if (Array.isArray(scenario.proactiveSeed) && scenario.proactiveSeed.length > 0) {
@@ -1210,6 +1371,11 @@ async function runScenario(db, scenarioPath, ctx) {
   // Phase 22 — clean up seeded pa_scheduled_jobs. Best-effort.
   if (seededJobIds.length > 0) {
     await cleanupSeededJobs(db, seededJobIds)
+  }
+  // CV-fixture cleanup — delete the seeded parsedCandidateResumes doc.
+  // Best-effort; the pa-users doc is a throwaway reserved-range test user.
+  if (seededFixture) {
+    await cleanupScenarioFixture(db, seededFixture)
   }
   return result
 }

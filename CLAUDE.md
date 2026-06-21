@@ -1,5 +1,17 @@
 # Claude Operating Authority — wekruit-pa
 
+## 🔒 PRESCREEN TOKEN MUST CARRY THE BIND USER ID — NEVER STRIP IT (Adam-LOCKED 2026-06-14)
+
+The prescreen start token is `WeKruit_<jobId>_<bindUserId>_Job`. The `<bindUserId>` segment is **NON-NEGOTIABLE and MANDATORY**. It is the web→phone IDENTITY BRIDGE: a candidate registers on the public job page (resume gate → server `candidateId`), the page mints the token with that id, and the FIRST text from their phone uses it to bind phone→web account and start. **WITHOUT the uid, a web-registered candidate whose phone is not yet bound resolves to NO account → DEAD SILENCE** (live incident 2026-06-14: +19196855995 pasted a job-only token 3×, zero response — I had wrongly stripped the uid thinking phone-is-auth made it redundant; it is redundant ONLY for an already-bound phone, NOT for first contact).
+
+Rules:
+1. The token ALWAYS carries the bind user id. NEVER emit a job-only `WeKruit_<jobId>_Job`.
+2. To stop transit glyph corruption (`l`↔`1`, `I`, `O`↔`0`, stray `-`), carry the id as the **opaque transit-safe bind-code** (`pa-bind-codes`, Crockford-base32-minus-ambiguous, server-minted, single-use, 24h) — NOT the raw Firebase pushId, and NOT nothing. Corruption-proof AND identity-preserving.
+3. phone-is-auth is a FALLBACK for an already-bound phone, never a replacement for the uid in the token.
+4. Inbound resolves: bind-code → candidateId → bind phone → start. Unknown/expired code or unbound phone → graceful notice, NEVER silence, NEVER a wrong-account bind, NEVER a duplicate account that splits the web profile.
+
+---
+
 ## ⭐ CANONICAL CANDIDATE FLOW — READ FIRST, FOLLOW ALWAYS (Adam-LOCKED 2026-06-03)
 
 **The candidate onboarding→match→prescreen journey is specified in [`.planning/CANONICAL-CANDIDATE-FLOW.md`](.planning/CANONICAL-CANDIDATE-FLOW.md) (main repo: `/Users/adam/Desktop/WeKruit/wekruit-pa/.planning/CANONICAL-CANDIDATE-FLOW.md`). Every agent / spawned team reads it FIRST and stays INSIDE it.**
