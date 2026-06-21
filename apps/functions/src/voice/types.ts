@@ -15,7 +15,9 @@ import type { VoiceState } from "./state-machine.js"
 export interface OutboundBookingRow {
   paUserId?: string | null
   paJobId?: string | null
-  purpose?: "prescreen" | "onboarding" | null
+  purpose?: "prescreen" | "onboarding" | "know_you_better" | null
+  /** Optional per-call time-budget override (seconds); else per-purpose default. */
+  timeBudgetSec?: number | null
   phoneE164?: string | null
   voiceState?: VoiceState
   voiceCallSid?: string | null

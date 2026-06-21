@@ -101,7 +101,7 @@ export interface VoicePrescreenConfig {
   missingFields: string[]
 }
 
-export type VoiceCallPurpose = "prescreen" | "onboarding"
+export type VoiceCallPurpose = "prescreen" | "onboarding" | "know_you_better"
 
 interface VoiceCallContextBase {
   bookingId: string
@@ -135,7 +135,21 @@ export interface VoiceOnboardingCallContext extends VoiceCallContextBase {
 }
 
 /**
+ * "Know you better" résumé-drill calls (Adam 2026-06-21) — a CONVERSATIONAL,
+ * profile-grounded get-to-know-you call (hybrid: 2-3 anchored questions then a
+ * natural drill into the candidate's recent role / résumé), bounded by the time
+ * budget. Not job-tied and NOT the deterministic prescreen/onboarding reducer;
+ * the worker runs it via WekruitLLM generic mode with a drill persona.
+ */
+export interface VoiceKnowYouBetterCallContext extends VoiceCallContextBase {
+  purpose: "know_you_better"
+}
+
+/**
  * The full per-call context the voice worker assembles before turn-loop
  * dispatch. `bookingId` is the room-metadata key from S3.
  */
-export type VoiceCallContext = VoicePrescreenCallContext | VoiceOnboardingCallContext
+export type VoiceCallContext =
+  | VoicePrescreenCallContext
+  | VoiceOnboardingCallContext
+  | VoiceKnowYouBetterCallContext
