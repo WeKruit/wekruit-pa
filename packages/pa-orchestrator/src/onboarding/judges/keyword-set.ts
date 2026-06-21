@@ -61,6 +61,12 @@ export interface KeywordSetJudgeSpec {
    */
   questionPrompt?: string
   /**
+   * Optional candidate context (résumé / profile summary) so the LLM can
+   * CREDIT evidence already proven elsewhere and avoid penalizing a reply
+   * for not re-stating it. Rendered into the prompt when present.
+   */
+  candidateContext?: string
+  /**
    * Injected LLM caller. Phase 78/80 wires the gpt-5.4-nano JSON-mode path
    * via agent-runtime. Tests pass canned outputs.
    */
@@ -79,6 +85,7 @@ export interface KeywordSetLlmCaller {
     lang: Lang
     keywords: KeywordSpec[]
     questionPrompt?: string
+    candidateContext?: string
   }): Promise<KeywordSetLlmOutput>
 }
 
@@ -296,6 +303,7 @@ export class KeywordSetJudge implements Judge<{ answered: boolean }> {
         lang,
         keywords: this.spec.keywords,
         questionPrompt: this.spec.questionPrompt,
+        candidateContext: this.spec.candidateContext,
       })
     } catch (err) {
       log("keyword-set.llm_error", {
@@ -400,6 +408,7 @@ export function buildKeywordSetPrompt(args: {
   lang: Lang
   keywords: KeywordSpec[]
   questionPrompt?: string
+  candidateContext?: string
 }): { system: string; user: string } {
   const keywordList = args.keywords
     .map((k, i) => {
@@ -423,7 +432,7 @@ export function buildKeywordSetPrompt(args: {
     "  - summary: ≤120 char overall assessment",
     "  - answered: true|false — did the candidate substantively address the question?",
     "  - abortHint (optional): {kind: low_confidence|off_topic|decline|ambiguous, reason: string}",
-    "    only set when there is clear evidence of one of these modes",
+    "    set this whenever there is clear evidence of one of these modes — in particular set kind:decline whenever the candidate cannot or will not produce the requested artifact/proof.",
     "",
     "CALIBRATION ANCHORS:",
     "- 0.95-1.00: top-5% evidence only: exact required skill/scope, direct ownership, concrete shipped outcome, and clear metrics/systems/constraints.",
@@ -446,6 +455,8 @@ export function buildKeywordSetPrompt(args: {
     "- Do NOT invent keywords not in the configured set.",
     "- Do NOT echo the reply text — only the short evidence excerpt.",
     "- Temperature is fixed at 0; be deterministic.",
+    "- If the candidate clearly signals they CANNOT or WILL NOT produce the requested artifact/proof (e.g. 'I don't have that', 'I can't share', 'I'm having difficulty', 'that's the smallest/only thing I have', 'I already told you', repeated inability), set abortHint:{kind:\"decline\",reason:...}. Do not keep scoring as if more probing will help.",
+    "- A candidate-context block may be provided (résumé / profile). CREDIT evidence already present there — do NOT penalize the reply for not re-stating what the profile already proves. Score the keyword as matched if the candidate context substantiates it.",
   ].join("\n")
 
   const user = [
@@ -454,6 +465,9 @@ export function buildKeywordSetPrompt(args: {
     `Candidate reply (${args.lang}):`,
     `"""${args.reply}"""`,
     "",
+    args.candidateContext
+      ? `Candidate context (résumé/profile — credit evidence already shown here):\n${args.candidateContext}`
+      : "",
     "Keyword set:",
     keywordList,
     "",

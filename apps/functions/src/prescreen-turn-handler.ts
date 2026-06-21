@@ -130,12 +130,18 @@ function stripUndefined<T>(v: T): T {
 }
 
 /** Production LLM caller — gpt-5.4-nano JSON-mode. */
-function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
+function makeProductionKeywordSetCaller(candidateContext = ""): KeywordSetLlmCaller {
   return {
-    async score({ reply, lang, keywords, questionPrompt }) {
+    async score({ reply, lang, keywords, questionPrompt, candidateContext: perCall }) {
       const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
       if (!apiKey) throw new Error("missing OpenAI API key")
-      const { system, user } = buildKeywordSetPrompt({ reply, lang, keywords, questionPrompt })
+      const { system, user } = buildKeywordSetPrompt({
+        reply,
+        lang,
+        keywords,
+        questionPrompt,
+        candidateContext: perCall ?? candidateContext,
+      })
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -158,7 +164,53 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
   }
 }
 
-function makeProductionClarifyComposer(): PreScreenClarifyComposer {
+/** One-paragraph candidate context (résumé + profile) for the prescreen judge/clarify. Best-effort; "" on any miss. */
+async function buildPrescreenCandidateContext(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+): Promise<string> {
+  try {
+    const userSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+    const user = (userSnap.data() ?? {}) as Record<string, unknown>
+    const tags = (user.tags ?? {}) as Record<string, unknown>
+    const lines: string[] = []
+    const role = (tags.recentRoleTitle ?? user.recentRoleTitle) as unknown
+    const company = (tags.recentCompany ?? user.recentCompany) as unknown
+    if (role || company) {
+      lines.push(`Current/recent: ${[role, company].filter(Boolean).join(" @ ")}`)
+    }
+    if (Array.isArray(tags.yoeRange) && tags.yoeRange.length === 2) {
+      lines.push(`YoE: ${tags.yoeRange[0]}-${tags.yoeRange[1]}`)
+    }
+    if (typeof tags.workHistorySummary === "string" && tags.workHistorySummary.trim()) {
+      lines.push(`History: ${String(tags.workHistorySummary).slice(0, 400)}`)
+    }
+    // tags.skills is an array of Skill objects ({ name, bucket, ... }), not strings.
+    if (Array.isArray(tags.skills) && tags.skills.length) {
+      const skillNames = (tags.skills as unknown[])
+        .map((s) => (typeof s === "string" ? s : (s as Record<string, unknown> | null)?.name))
+        .filter((n): n is string => typeof n === "string" && n.length > 0)
+        .slice(0, 20)
+      if (skillNames.length) lines.push(`Skills: ${skillNames.join(", ")}`)
+    }
+    const parsedResume = await loadSharedOnboardingParsedResumeForPrompt(db, userId, user).catch(() => null)
+    if (parsedResume) {
+      const r = parsedResume as Record<string, unknown>
+      // Parsed-resume summary lives under one of these keys (see summaryTextFrom).
+      const summary =
+        r.candidateProfileSummary ?? r.profileSummary ?? r.resumeSummary ?? r.summary
+      if (typeof summary === "string" && summary.trim()) {
+        lines.push(`Résumé summary: ${summary.slice(0, 400)}`)
+      }
+    }
+    return lines.join("\n").slice(0, 1200)
+  } catch {
+    return ""
+  }
+}
+
+/** Production LLM caller — gpt-5.4-nano JSON-mode (keyword-set judge). */
+function makeProductionClarifyComposer(candidateContext = ""): PreScreenClarifyComposer {
   return async (input) => {
     const hardFilterText = hardFilterClarifyText(input.question.qId, input.lang)
     if (hardFilterText) return hardFilterText
@@ -190,6 +242,7 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       "Do not ask a checklist. Pick one natural angle: their role, technical depth, systems touched, tradeoff, failure, user/customer impact, or measurable outcome.",
       "Do not ask for business impact, ownership, systems touched, or validation again if the session evidence already covers it. Ask for the missing signal instead.",
       "For technical-depth questions, prefer the weakest required technology or implementation detail; do not drift back to role-fit impact/ownership unless that is the only missing signal.",
+      "If the candidate has signaled they cannot produce the artifact, or the profile/résumé context already answers this, do NOT keep probing the same point — acknowledge and move on.",
       "Keep it under 360 characters. Output strict JSON only: {\"text\":\"...\"}.",
     ].join("\n")
 
@@ -205,8 +258,13 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       `Already-covered session evidence from other questions: ${sessionEvidence}`,
       `Merged score: s=${input.merged.aggregate.s.toFixed(2)} c=${input.merged.aggregate.c.toFixed(2)} summary=${input.merged.aggregate.summary}`,
       `Weak or missing areas JSON: ${JSON.stringify(weakCells)}`,
+      candidateContext
+        ? `Candidate résumé/profile context (don't re-ask what this already proves):\n${candidateContext}`
+        : "",
       `If unsure, use this fallback intent without copying it verbatim: ${input.fallbackText}`,
-    ].join("\n")
+    ]
+      .filter(Boolean)
+      .join("\n")
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -1754,8 +1812,11 @@ export async function runPrescreenTurnIfActive(
     return { handled: true, sessionId, terminal: "PAUSE", textSent: text }
   }
 
-  // Build PreScreenQuestion bindings with production LLM caller
-  const caller = args.keywordSetCaller ?? makeProductionKeywordSetCaller()
+  // Build PreScreenQuestion bindings with production LLM caller. Best-effort
+  // candidate context (résumé/profile) so the judge credits proven evidence
+  // and the clarify composer stops re-asking what the profile already proves.
+  const candidateContext = await buildPrescreenCandidateContext(args.db, args.userId)
+  const caller = args.keywordSetCaller ?? makeProductionKeywordSetCaller(candidateContext)
   const questions: Record<string, PreScreenQuestion> = {}
   for (const q of cfgSnapshot.questions) {
     questions[q.qId] = {
@@ -1767,6 +1828,7 @@ export async function runPrescreenTurnIfActive(
         keywords: q.keywords,
         questionPrompt: q.prompt.en,
         llmCaller: caller,
+        candidateContext,
       }),
     }
   }
@@ -1774,7 +1836,7 @@ export async function runPrescreenTurnIfActive(
     questions,
     store,
     log,
-    composeClarify: args.clarifyComposer ?? makeProductionClarifyComposer(),
+    composeClarify: args.clarifyComposer ?? makeProductionClarifyComposer(candidateContext),
   })
   const runReducerTurn = (reply: string) =>
     pipeline.runTurn({
