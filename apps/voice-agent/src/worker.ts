@@ -274,9 +274,12 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         // Deepgram, which AgentSession surfaces as `voice.error: 'Unexpected
         // server response: 400'` and immediately tears the session down
         // (no audio reaches the SIP candidate leg).
-        // speed < 1.0 slows Claire's delivery (Adam 2026-06-21: "make the tone
-        // slower"). Deepgram Aura supports a `speed` param (TTSOptions.speed).
-        const tts = new deepgramMod.TTS({ model: "aura-asteria-en", speed: 0.9 })
+        // aura-2-luna-en (Adam 2026-06-21) — Aura-2 calm/consistent-pacing voice.
+        // speed=0.9 slows delivery (Deepgram speed range 0.7–1.5; in-range so it
+        // won't error). NOTE: Deepgram's speed param is Early Access — if the
+        // account isn't enabled it's ignored (tone unchanged), not an error.
+        // `model` is typed TTSModels|string so the aura-2 slug is accepted.
+        const tts = new deepgramMod.TTS({ model: "aura-2-luna-en" as string, speed: 0.9 })
         // P0 single-brain (Adam 2026-06-19): WekruitLLM in PIPELINE-ADAPTER mode is
         // the SOLE in-call brain — every spoken line is the real prescreen/onboarding
         // pipeline output (runPrescreenTurn + KeywordSet judge + clarify composer).
