@@ -45,6 +45,11 @@ import {
 } from "./context-loaders/index.js"
 
 const PA_VOICE_CF_SECRET = defineSecret("PA_VOICE_CF_SECRET")
+// The in-call prescreen/onboarding turn runs the KeywordSet judge + clarify
+// composer, which read PA_OPENAI_AGENT_API_KEY (fallback OPENAI_API_KEY). Without
+// this binding the judge threw "missing OpenAI API key" → every answer fell open
+// to ambiguous → HARD_STOP, so the voice prescreen scored nothing (Adam 2026-06-21).
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 
 type VoicePurpose = "prescreen" | "onboarding"
 
@@ -225,7 +230,7 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
  */
 export const paVoicePrescreenTurn: HttpsFunction = onRequest(
   {
-    secrets: [PA_VOICE_CF_SECRET],
+    secrets: [PA_VOICE_CF_SECRET, PA_OPENAI_AGENT_API_KEY],
     cors: false,
     region: "us-central1",
     memory: "512MiB",
@@ -339,7 +344,7 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
 
 export const paVoiceOnboardingTurn: HttpsFunction = onRequest(
   {
-    secrets: [PA_VOICE_CF_SECRET],
+    secrets: [PA_VOICE_CF_SECRET, PA_OPENAI_AGENT_API_KEY],
     cors: false,
     region: "us-central1",
     memory: "512MiB",
