@@ -113,13 +113,13 @@ const CHECKLIST_TIER_META: Record<
   { label: string; required: boolean; rule: string }
 > = {
   hard: { label: "Hard filters", required: true, rule: "Must mostly be met to be considered a match." },
-  fit: { label: "Strong fit signals", required: true, rule: "Ideal candidates hit 2 or more." },
+  fit: { label: "Strong fit signals", required: false, rule: "Ideal candidates hit 2 or more — optional, but it helps." },
   anti: { label: "Anti-signals", required: true, rule: "If any is present, likely NOT a match." },
   bonus: { label: "Bonuses", required: false, rule: "Nice to have — leave blank if unknown." },
 }
 
 // The tiers whose items must be answered before the row can be submitted.
-const CHECKLIST_REQUIRED_KINDS: ChecklistKind[] = ["hard", "fit", "anti"]
+const CHECKLIST_REQUIRED_KINDS: ChecklistKind[] = ["hard", "anti"]
 
 // Display order on screen: hard → fit → anti → bonus (matches the shared
 // contract; distinct from CHECKLIST_KIND_ORDER which keeps bonus before anti
@@ -500,7 +500,7 @@ function addRowBlockers(
     (col) => CHECKLIST_REQUIRED_KINDS.includes(col.kind) && !(draft.checklist[col.id] ?? ""),
   )
   if (hasUnansweredRequired) {
-    blockers.push("Answer every hard, fit, and anti checklist item (bonuses optional).")
+    blockers.push("Answer every hard and anti checklist item (strong-fit signals and bonuses are optional).")
   }
   return blockers
 }
@@ -1312,7 +1312,7 @@ function AddCandidatePanel({
       {checklistColumns.length > 0 && (
         <div className="rs-addpanel__checklist">
           <h4>Screening checklist</h4>
-          <p className="rs-cl-hint">Answer every hard, fit, and anti item — bonuses are optional.</p>
+          <p className="rs-cl-hint">Answer every hard and anti item — strong-fit signals and bonuses are optional.</p>
           <ChecklistTiers
             checklistColumns={checklistColumns}
             answers={draft.checklist}
