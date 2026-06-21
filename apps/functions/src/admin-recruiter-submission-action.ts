@@ -46,7 +46,10 @@ function recruiterAiSuggestedTier(submission: Record<string, unknown>): ReturnTy
   const hardGaps =
     ((ai as { checklist?: { hard?: { gaps?: unknown } } }).checklist?.hard?.gaps as unknown[] | undefined)?.length ?? 0
   if (verdict !== "advance" && verdict !== "borderline" && verdict !== "reject") return null
-  return suggestTierFromRecruiterAi(verdict as RecruiterAiVerdict, hardGaps)
+  const confidence = Number((ai as { confidence?: unknown }).confidence ?? 0)
+  const bg = (ai as { background?: { school?: { verdict?: unknown }; company?: { verdict?: unknown } } }).background
+  const strongBackground = bg?.school?.verdict === "strong" || bg?.company?.verdict === "strong"
+  return suggestTierFromRecruiterAi(verdict as RecruiterAiVerdict, hardGaps, { confidence, strongBackground })
 }
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")

@@ -40,13 +40,22 @@ describe("reconcileGlobalTier (best-wins)", () => {
   })
 })
 
-describe("suggestTierFromRecruiterAi", () => {
-  it("advance/borderline → tier_1", () => {
-    assert.equal(suggestTierFromRecruiterAi("advance", 2), "tier_1")
-    assert.equal(suggestTierFromRecruiterAi("borderline", 0), "tier_1")
+describe("suggestTierFromRecruiterAi (harsh: tier_1 is rare)", () => {
+  it("tier_1 ONLY for a confident advance from a strong background", () => {
+    assert.equal(suggestTierFromRecruiterAi("advance", 0, { confidence: 0.9, strongBackground: true }), "tier_1")
   })
-  it("reject with hard gaps → tier_3, without → tier_2", () => {
-    assert.equal(suggestTierFromRecruiterAi("reject", 1), "tier_3")
+  it("advance that is not confident-and-strong is NOT tier_1", () => {
+    assert.equal(suggestTierFromRecruiterAi("advance", 0, { confidence: 0.9, strongBackground: false }), "tier_2", "weak background → tier_2")
+    assert.equal(suggestTierFromRecruiterAi("advance", 0, { confidence: 0.6, strongBackground: true }), "tier_2", "low confidence → tier_2")
+    assert.equal(suggestTierFromRecruiterAi("advance", 0), "tier_2", "no signals → never tier_1")
+  })
+  it("borderline is never tier_1 (was the inflation source)", () => {
+    assert.equal(suggestTierFromRecruiterAi("borderline", 0, { confidence: 0.95, strongBackground: true }), "tier_2")
+    assert.equal(suggestTierFromRecruiterAi("borderline", 1, { strongBackground: false }), "tier_3", "hard gap + weak bg → tier_3")
+  })
+  it("hard gap with weak background → tier_3; a strong background rescues to tier_2", () => {
+    assert.equal(suggestTierFromRecruiterAi("reject", 1, { strongBackground: false }), "tier_3")
+    assert.equal(suggestTierFromRecruiterAi("reject", 1, { strongBackground: true }), "tier_2")
     assert.equal(suggestTierFromRecruiterAi("reject", 0), "tier_2")
   })
   it("unknown verdict, no hard gaps → tier_2", () => {

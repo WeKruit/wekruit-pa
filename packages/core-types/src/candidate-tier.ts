@@ -61,18 +61,40 @@ export function isReusableTier(tier: CandidateTier): boolean {
 /** Recruiter `aiEvaluation.verdict` values (recruiter-submission-eval.ts). */
 export type RecruiterAiVerdict = "advance" | "borderline" | "reject"
 
+/** tier_1 needs a CONFIDENT advance (raw confidence ≥ this). */
+export const RECRUITER_TIER_1_CONFIDENCE = 0.8
+
+export interface RecruiterTierSignals {
+  /** AI confidence 0..1 — tier_1 requires a confident advance, not a thin one. */
+  confidence?: number | null
+  /** Strong school OR strong company (role-aware AI background pillars). */
+  strongBackground?: boolean
+}
+
 /**
- * Suggest a tier for a RECRUITER rejection from the AI verdict + hard-gap count.
- *  - advance / borderline → tier_1 (the AI thought they were close → re-review)
- *  - reject with 0 hard gaps → tier_2 (soft miss, still reusable)
- *  - reject with hard gaps   → tier_3 (clear must-have mismatch)
+ * Suggest a tier from the recruiter AI eval. tier_1 is RARE (Adam 2026-06-21:
+ * "we should be kinda harsh") — the old `advance || borderline → tier_1` made
+ * ~88% of candidates tier_1. This mirrors the prescreen tiering: tier_1 is
+ * reserved for a CONFIDENT `advance` from a STRONG background; everyone else is
+ * tier_2 (reusable) unless they have a hard-requirement gap with no redeeming
+ * background (tier_3).
+ *  - advance + confidence ≥ 0.8 + strong school/company → tier_1 (the genuine top)
+ *  - hard gap AND weak background                        → tier_3 (hard mismatch)
+ *  - otherwise (close, or a gap rescued by strong bg)    → tier_2 (reusable)
+ *
+ * The `signals` arg is optional for back-compat; WITHOUT it no candidate can be
+ * tier_1 (callers should pass confidence + strongBackground from the eval).
  */
 export function suggestTierFromRecruiterAi(
   verdict: RecruiterAiVerdict | undefined | null,
   hardGaps: number,
+  signals: RecruiterTierSignals = {},
 ): CandidateTier {
-  if (verdict === "advance" || verdict === "borderline") return "tier_1"
-  return hardGaps > 0 ? "tier_3" : "tier_2"
+  const confident = (signals.confidence ?? 0) >= RECRUITER_TIER_1_CONFIDENCE
+  const strongBackground = signals.strongBackground === true
+  if (verdict === "advance" && confident && strongBackground) return "tier_1"
+  if (hardGaps > 0 && !strongBackground) return "tier_3"
+  return "tier_2"
 }
 
 /** Prescreen terminal + the checklist eval verdict feed the prescreen suggestion. */

@@ -898,7 +898,12 @@ function hardGapCount(evaluation: SubmissionAiEvaluation | undefined): number {
 
 function suggestedCandidateTier(evaluation: SubmissionAiEvaluation | undefined): CandidateTier | null {
   if (!evaluation || evaluation.error || !isRecruiterAiVerdict(evaluation.verdict)) return null
-  return suggestTierFromRecruiterAi(evaluation.verdict, hardGapCount(evaluation))
+  const strongBackground =
+    evaluation.background?.school?.verdict === "strong" || evaluation.background?.company?.verdict === "strong"
+  return suggestTierFromRecruiterAi(evaluation.verdict, hardGapCount(evaluation), {
+    confidence: evaluation.confidence,
+    strongBackground,
+  })
 }
 
 function tierTone(tier: CandidateTier): Parameters<typeof Badge>[0]["tone"] {
