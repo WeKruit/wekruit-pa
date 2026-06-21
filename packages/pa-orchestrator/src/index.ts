@@ -7505,6 +7505,8 @@ export type {
 // agent-behavior change lands once and propagates everywhere.
 export {
   ACTIVE_PRESCREEN_TIMEOUT_MS,
+  ACTIVE_PRESCREEN_MAX_AGE_MS,
+  isPrescreenSessionPastMaxAge,
   RECENT_TERMINAL_PRESCREEN_GUARD_MS,
   FirestoreSessionFinder,
   InMemorySessionFinder,

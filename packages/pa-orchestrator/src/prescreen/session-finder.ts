@@ -20,6 +20,38 @@ import type { Firestore } from "firebase-admin/firestore"
 /** Active-session inactivity timeout (21 days). */
 export const ACTIVE_PRESCREEN_TIMEOUT_MS = 21 * 24 * 60 * 60 * 1000
 
+/**
+ * Absolute age cap for a non-terminal prescreen session, keyed on `createdAt` (24h).
+ *
+ * Why a SECOND, createdAt-keyed bound on top of the updatedAt inactivity timeout
+ * (Adam 2026-06-21, "zombie prescreen" live failure +19196415056 /
+ * ps_hs-10996795-invoko-product-manager_JQct3rmfvUkCDsHypkss_…): the inactivity
+ * timeout keys on `updatedAt`, but EVERY captured turn bumps `updatedAt` (clarify
+ * loops, status questions, the generic turn write). A session that gets stuck on
+ * Q1 in a clarify loop therefore refreshes its OWN updatedAt every time it
+ * captures an unrelated future inbound (job-rec "yes", etc.) → the inactivity
+ * clock never advances → the screen captures turns FOREVER. The live zombie was
+ * createdAt 06-18 / updatedAt 06-21, currentQId stuck on q_consumer_product_experience,
+ * never scored, hijacking job-rec replies into prescreen probes days later.
+ *
+ * `createdAt` is the ONE timestamp NOT refreshed by a captured turn, so an
+ * absolute age cap on it CANNOT be poisoned by the clarify-loop self-refresh. A
+ * real prescreen is a single sitting (minutes); 24h is a generous ceiling for the
+ * whole interview. Past it, the session is swept to a stale-closed terminal and
+ * stops capturing turns — the inbound falls through to normal triage/matching.
+ */
+export const ACTIVE_PRESCREEN_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Is a non-terminal session past its absolute age cap (createdAt-keyed)?
+ * Returns false when createdAt is missing/unparseable (fail-open → keep active;
+ * the inactivity timeout remains the backstop). `nowMs`/`createdAtMs` in epoch ms.
+ */
+export function isPrescreenSessionPastMaxAge(createdAtMs: number | null, nowMs: number): boolean {
+  if (createdAtMs === null || !Number.isFinite(createdAtMs)) return false
+  return nowMs - createdAtMs > ACTIVE_PRESCREEN_MAX_AGE_MS
+}
+
 /** Window in which a recently-terminated session still suppresses Claire. */
 export const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
 
@@ -103,7 +135,11 @@ export class InMemorySessionFinder implements PrescreenSessionFinder {
       .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
     if (active.length > 0) {
       const top = active[0]!
-      if (nowMs - top.updatedAtMs > ACTIVE_PRESCREEN_TIMEOUT_MS) {
+      const createdAtMs = top.createdAtMs ?? null
+      const pastMaxAge = isPrescreenSessionPastMaxAge(createdAtMs, nowMs)
+      // Either bound expires the session: updatedAt inactivity OR createdAt absolute age.
+      // The createdAt cap is immune to the clarify-loop updatedAt self-refresh (zombie fix).
+      if (nowMs - top.updatedAtMs > ACTIVE_PRESCREEN_TIMEOUT_MS || pastMaxAge) {
         // Expire it.
         this.update(top.sessionId, {
           terminal: "PAUSE",
@@ -115,6 +151,8 @@ export class InMemorySessionFinder implements PrescreenSessionFinder {
           userId,
           sessionId: top.sessionId,
           lastActiveAt: new Date(top.updatedAtMs).toISOString(),
+          reason: pastMaxAge ? "max_age" : "inactivity",
+          ...(createdAtMs !== null ? { createdAt: new Date(createdAtMs).toISOString() } : {}),
         })
         return { kind: "expired", sessionId: top.sessionId, jobId: top.jobId }
       }
@@ -229,10 +267,13 @@ export class FirestoreSessionFinder implements PrescreenSessionFinder {
       const top = docs[0]!
       const data = top.data() as Record<string, unknown>
       const lastActiveMs = timestampMs(data.updatedAt) ?? timestampMs(data.createdAt)
+      const createdAtMs = timestampMs(data.createdAt)
       const jobId = typeof data.jobId === "string" ? data.jobId : ""
       const activeQId = typeof data.currentQId === "string" ? data.currentQId : null
 
-      if (lastActiveMs !== null && nowMs - lastActiveMs > ACTIVE_PRESCREEN_TIMEOUT_MS) {
+      const inactivityExpired = lastActiveMs !== null && nowMs - lastActiveMs > ACTIVE_PRESCREEN_TIMEOUT_MS
+      const pastMaxAge = isPrescreenSessionPastMaxAge(createdAtMs, nowMs)
+      if (inactivityExpired || pastMaxAge) {
         const nowIso = new Date(nowMs).toISOString()
         await top.ref.set(
           {
@@ -252,8 +293,10 @@ export class FirestoreSessionFinder implements PrescreenSessionFinder {
         log("prescreen.session_finder.expired_inactive", {
           userId,
           sessionId: top.id,
-          lastActiveAt: new Date(lastActiveMs).toISOString(),
+          lastActiveAt: lastActiveMs !== null ? new Date(lastActiveMs).toISOString() : null,
           timeoutMinutes: ACTIVE_PRESCREEN_TIMEOUT_MS / 60_000,
+          reason: pastMaxAge ? "max_age" : "inactivity",
+          ...(createdAtMs !== null ? { createdAt: new Date(createdAtMs).toISOString() } : {}),
         })
         return { kind: "expired", sessionId: top.id, jobId }
       }
