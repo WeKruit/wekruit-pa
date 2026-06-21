@@ -165,6 +165,17 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
       return
     }
 
+    // Per-session time budget (Adam 2026-06-21) — the worker arms a graceful hard
+    // cutoff at this many seconds. A booking may override via timeBudgetSec; else
+    // the per-purpose default. Onboarding/know-you-better are short; prescreens run
+    // a bit longer.
+    const timeBudgetSec =
+      typeof booking.timeBudgetSec === "number" && booking.timeBudgetSec > 0
+        ? Math.round(booking.timeBudgetSec)
+        : purpose === "onboarding"
+          ? 240
+          : 360
+
     try {
       if (purpose === "onboarding") {
         const userProfile = await loadUserProfileForVoice(db, userId)
@@ -172,6 +183,7 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
           ok: true,
           bookingId,
           purpose,
+          timeBudgetSec,
           userProfile,
         })
         return
@@ -196,6 +208,7 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
         ok: true,
         bookingId,
         purpose,
+        timeBudgetSec,
         prescreenSessionId,
         userProfile,
         jobBrief,
