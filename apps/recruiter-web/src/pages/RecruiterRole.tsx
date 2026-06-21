@@ -82,6 +82,9 @@ interface FormState {
   candidateResumeUrl: string
   candidateCurrentRole: string
   candidateYoe: string
+  candidateWorkAuthorization: string
+  candidateLocationMode: "" | "open" | "prefer"
+  candidateLocationPref: string
   candidateNotes: string
   candidateConsent: boolean
   checklist: Record<string, boolean>
@@ -190,6 +193,9 @@ function emptyForm(): FormState {
     candidateResumeUrl: "",
     candidateCurrentRole: "",
     candidateYoe: "",
+    candidateWorkAuthorization: "",
+    candidateLocationMode: "",
+    candidateLocationPref: "",
     candidateNotes: "",
     candidateConsent: false,
     checklist: {},
@@ -1058,6 +1064,9 @@ function buildRoleSubmissionPacket(input: {
   if (!candidateEmail) blockers.push("Candidate email is missing.")
   else if (!candidateEmailValid) blockers.push("Candidate email is invalid.")
   if (!candidateLink) blockers.push("LinkedIn profile URL is missing.")
+  if (!form.candidateWorkAuthorization.trim()) blockers.push("Working status (sponsorship) is required.")
+  if (!form.candidateLocationMode) blockers.push("Location preference is required.")
+  else if (form.candidateLocationMode === "prefer" && !form.candidateLocationPref.trim()) blockers.push("Enter the candidate's preferred location(s).")
   for (const field of roleSubmitFields(job)) {
     const value = (form.extraFields[field.id] ?? "").trim()
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
@@ -2831,6 +2840,11 @@ export default function RecruiterRole() {
           link: candidateLinkedinUrl,
           currentRole: form.candidateCurrentRole.trim() || undefined,
           yoe: form.candidateYoe.trim() || undefined,
+          workAuthorization: form.candidateWorkAuthorization.trim() || undefined,
+          location:
+            form.candidateLocationMode === "open"
+              ? "Open to anywhere / remote"
+              : form.candidateLocationPref.trim() || undefined,
           notes: form.candidateNotes.trim() || undefined,
         },
         checklist: form.checklist,
@@ -3151,6 +3165,43 @@ export default function RecruiterRole() {
               onChange={(e) => setForm({ ...form, candidateResumeUrl: e.target.value })}
             />
             <p className="rb-form-note">LinkedIn is required for identity and enrichment. Resume links are optional supporting evidence.</p>
+          </div>
+          <div className="field">
+            <label>Working status *</label>
+            <select
+              required
+              value={form.candidateWorkAuthorization}
+              onChange={(e) => setForm({ ...form, candidateWorkAuthorization: e.target.value })}
+            >
+              <option value="">Select…</option>
+              <option value="U.S. citizen / Green card — no sponsorship needed">U.S. citizen / Green card — no sponsorship needed</option>
+              <option value="Needs visa sponsorship (now or in future)">Needs visa sponsorship (now or in future)</option>
+              <option value="Other / not sure">Other / not sure</option>
+            </select>
+            <p className="rb-form-note">Confirm with the candidate — sponsorship is a hard requirement on most roles.</p>
+          </div>
+          <div className="field">
+            <label>Location *</label>
+            <select
+              required
+              value={form.candidateLocationMode}
+              onChange={(e) => setForm({ ...form, candidateLocationMode: e.target.value as FormState["candidateLocationMode"] })}
+            >
+              <option value="">Select…</option>
+              <option value="open">Open to anywhere / remote</option>
+              <option value="prefer">Prefers specific location(s)</option>
+            </select>
+            {form.candidateLocationMode === "prefer" && (
+              <input
+                type="text"
+                required
+                placeholder="e.g. New York, SF Bay Area, remote-US"
+                value={form.candidateLocationPref}
+                onChange={(e) => setForm({ ...form, candidateLocationPref: e.target.value })}
+                style={{ marginTop: 8 }}
+              />
+            )}
+            <p className="rb-form-note">Where is the candidate open to working? Relocation/location is a hard requirement on most roles.</p>
           </div>
           <button
             type="button"
