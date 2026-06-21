@@ -183,6 +183,10 @@ export class PreScreenPipeline {
     })
 
     const qState = state.questions[state.currentQId]
+    // Clamp the clarify ceiling. Per-job config may allow up to 5 rounds
+    // (config.ts), but 5 blind probe rounds feel like an interrogation. Cap
+    // the in-turn clarify gates at 2.
+    const effectiveMaxClarify = Math.min(state.maxClarifyRounds, 2)
     const priorEvidenceReplies = normalizeEvidenceReplies(qState.evidenceReplies)
     const scoringReply = composeQuestionEvidenceReply(priorEvidenceReplies, input.reply)
 
@@ -209,12 +213,55 @@ export class PreScreenPipeline {
       abortHint: scored.abortHint?.kind,
     })
 
+    // ── Decline gate ─────────────────────────────────────────────────────────
+    // The candidate signaled they cannot/will not produce the requested
+    // artifact. Stop clarifying (another probe round won't help and feels like
+    // an interrogation). For GATING questions (MUST_HAVE / PROBING) end the
+    // screen cleanly; for NON-gating questions (GOOD_TO_HAVE / ALWAYS_ASK,
+    // which never block per transitions.ts) just skip the probe and proceed.
+    const declined = scored.abortHint?.kind === "decline"
+    const declineGating =
+      declined && (qState.type === "MUST_HAVE" || qState.type === "PROBING")
+    if (declineGating) {
+      log("prescreen.pipeline.candidate_declined", {
+        sessionId: input.sessionId,
+        qId: state.currentQId,
+        reason: scored.abortHint?.reason,
+        s,
+        c,
+      })
+      qState.finalS = s
+      qState.finalC = c
+      qState.answeredAt = input.nowIso
+      qState.terminalCause = "candidate_declined"
+      return await this.transitionTerminal(
+        state,
+        "FAIL",
+        `candidate signaled inability/decline at qId=${qState.qId}: ${scored.abortHint?.reason}`,
+        input.nowIso,
+        input.lang,
+        log
+      )
+    }
+    if (declined) {
+      // Non-gating decline: don't interrogate — skip clarify and let the type
+      // gate proceed (GOOD_TO_HAVE / ALWAYS_ASK never hard-stop).
+      log("prescreen.pipeline.decline_nongating_proceed", {
+        sessionId: input.sessionId,
+        qId: state.currentQId,
+        type: qState.type,
+        reason: scored.abortHint?.reason,
+        s,
+        c,
+      })
+    }
+
     // ── Confidence Gate ──────────────────────────────────────────────────────
     const confGate = evalConfidenceGate({
       c,
       threshold: state.confidenceThreshold,
       clarifyRoundsSoFar: qState.clarifyRounds,
-      maxClarifyRounds: state.maxClarifyRounds,
+      maxClarifyRounds: effectiveMaxClarify,
     })
 
     const confidenceSoftProceed = confGate.action === "clarify" && shouldProceedDespiteLowConfidence({
@@ -226,7 +273,7 @@ export class PreScreenPipeline {
       matchThreshold: qState.matchThreshold,
     })
 
-    if (confGate.action === "clarify" && !confidenceSoftProceed) {
+    if (confGate.action === "clarify" && !confidenceSoftProceed && !declined) {
       qState.clarifyRounds = confGate.kAfter
       state.updatedAt = input.nowIso
       await this.opts.store.save(state)
@@ -299,7 +346,7 @@ export class PreScreenPipeline {
           input.lang,
           log
         )
-      } else if (qState.clarifyRounds < state.maxClarifyRounds) {
+      } else if (qState.clarifyRounds < effectiveMaxClarify) {
         qState.clarifyRounds += 1
         state.updatedAt = input.nowIso
         await this.opts.store.save(state)
@@ -538,7 +585,7 @@ export class PreScreenPipeline {
     const qState = state.questions[qId]
     const question = this.opts.questions[qId]
     if (!qState || !question || !qState.scored) return null
-    if (qState.clarifyRounds >= state.maxClarifyRounds) return null
+    if (qState.clarifyRounds >= Math.min(state.maxClarifyRounds, 2)) return null
 
     if (typeof qState.finalS === "number") {
       state.score = Math.max(0, state.score - qState.finalS * qState.weight)
@@ -948,9 +995,12 @@ function shouldSoftAcceptAfterProbing(args: {
   if (isHardFilterQId(args.qId)) return false
   if (args.clarifyRoundsSoFar < MIN_SOFT_ACCEPT_CLARIFY_ROUNDS) return false
   if (args.c < args.state.confidenceThreshold) return false
+  // Compare against the clamped clarify ceiling (mirrors `effectiveMaxClarify`
+  // in runTurn) so adjacent role_fit evidence can still soft-accept once the
+  // probe budget is exhausted at the clamped max instead of hard-stopping.
   if (
     args.qId === "role_fit" &&
-    args.clarifyRoundsSoFar >= args.state.maxClarifyRounds &&
+    args.clarifyRoundsSoFar >= Math.min(args.state.maxClarifyRounds, 2) &&
     args.s >= ROLE_FIT_MAX_PROBE_SOFT_ACCEPT_SCORE
   ) {
     return true
