@@ -69,7 +69,10 @@ export function buildDefaultLLM(): WekruitLLM {
 
 export interface StartWorkerOpts {
   /** Test seam — supply an alternative `defineAgent` impl. */
-  defineAgent?: (def: { entry: (ctx: AgentRuntimeCtx) => Promise<void> }) => unknown
+  defineAgent?: (def: {
+    entry: (ctx: AgentRuntimeCtx) => Promise<void>
+    prewarm?: (proc: { userData?: Record<string, unknown> }) => void | Promise<void>
+  }) => unknown
   /** Test seam — supply pre-loaded context (skips Firestore reads). */
   loadContext?: (bookingId: string) => Promise<VoiceCallContext>
   /** Test seam — pipeline factory. */
@@ -103,6 +106,10 @@ interface AgentRuntimeCtx {
    * session's room operations fail with WS 400 ("Unexpected server
    * response: 400") and no audio reaches the SIP leg. */
   connect?: () => Promise<void>
+  /** LK JobProcess shared store. prewarm() loads Silero VAD here once per
+   *  (pre-spawned) process so entry() doesn't pay the multi-second model load
+   *  on the call's critical path — the dominant chunk of time-to-first-speech. */
+  proc?: { userData?: Record<string, unknown> }
 }
 
 interface RemoteParticipantLike {
@@ -153,13 +160,35 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
 
   const defineAgent =
     opts.defineAgent ??
-    ((def: { entry: (ctx: AgentRuntimeCtx) => Promise<void> }) =>
-      livekitMod.defineAgent(def))
+    ((def: {
+      entry: (ctx: AgentRuntimeCtx) => Promise<void>
+      prewarm?: (proc: { userData?: Record<string, unknown> }) => void | Promise<void>
+    }) => livekitMod.defineAgent(def))
 
   const loadContext = opts.loadContext ?? defaultLoadContext
 
+  // ── PREWARM (Adam 2026-06-21) — load Silero VAD ONCE per pre-spawned process,
+  // not per call. The VAD ONNX model load was multiple seconds on the call's
+  // critical path (the bulk of the ~20s "dead air" after pickup). With a warm
+  // idle process (cli.ts numIdleProcesses), the dispatched job grabs a process
+  // whose VAD is already in proc.userData → entry() skips the load entirely.
+  const prewarm = async (proc: { userData?: Record<string, unknown> }) => {
+    try {
+      if (!sileroMod) return
+      const vad = await sileroMod.VAD.load()
+      proc.userData = proc.userData ?? {}
+      proc.userData.vad = vad
+      log("voice.worker.prewarm.vad_loaded", {})
+    } catch (err) {
+      log("voice.worker.prewarm.failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   // ── The actual LiveKit Agent definition ─────────────────────────────────
   const agent = defineAgent({
+    prewarm,
     entry: async (ctx: AgentRuntimeCtx) => {
       // Dispatch-time room info lives on `ctx.job.room` (proto JobInfo);
       // `ctx.room` is the rtc-node Room instance which is empty until
@@ -216,7 +245,11 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       let session: any
       if (!opts.defineAgent) {
         const { voice, inference } = livekitMod
-        const vad = await sileroMod.VAD.load()
+        // Prefer the VAD prewarmed at process start; only load inline if this
+        // process wasn't prewarmed (cold spawn) — keeps it off the critical path.
+        const prewarmedVad = ctx.proc?.userData?.vad
+        const vad = prewarmedVad ?? (await sileroMod.VAD.load())
+        log("voice.worker.vad_source", { prewarmed: Boolean(prewarmedVad), bookingId })
         // P1 turn detector (Adam 2026-06-19): prefer the contextual end-of-utterance
         // model over plain VAD endpointing. Defensive — fall back to 'vad' if the
         // installed SDK doesn't expose inference.TurnDetector (no tsc safety here;
