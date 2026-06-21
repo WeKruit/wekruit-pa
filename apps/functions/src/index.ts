@@ -314,6 +314,9 @@ export { paRecruiterSubmissionEval } from "./recruiter-submission-eval.js"
 // Admin one-shot re-eval of existing submissions with the current (résumé-grounded)
 // judge — onDocumentCreated never re-fires, so stale verdicts need this backfill.
 export { paAdminReevaluateRecruiterSubmissions } from "./admin-reevaluate-submissions.js"
+// Admin backlog re-eval of prescreen sessions with the current (transcript-primary,
+// wrong-identity-aware) judge — onDocumentWritten never re-fires on evaluated sessions.
+export { paAdminReevaluatePrescreens } from "./admin-reevaluate-prescreens.js"
 // Operator decision callable for the recruiter-submission review board.
 // advance/reject/reviewing/duplicate set status + adminDecision; request_info
 // appends requestedInfo[]. The recruiter-board codebase's

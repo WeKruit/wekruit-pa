@@ -121,6 +121,27 @@ describe("prescreen-candidate-eval", () => {
     assert.equal(redrafts[0]!.terminal, "HARD_STOP")
   })
 
+  it("identityConflict + reject → deterministically clamped to borderline (≤0.5 conf)", async () => {
+    const { db, stores } = makeDb(seed())
+    const conflictJudgment = JSON.stringify({
+      ...JSON.parse(JUDGMENT),
+      verdict: "reject",
+      confidence: 0.82,
+      identityConflict: true,
+    })
+    const res = await runPrescreenCandidateEval("ps-1", {
+      db, now: () => NOW,
+      callJudge: async () => ({ rawJson: conflictJudgment, usedModel: "m" }),
+      research: { apiKey: "k", searchEmployeeIdByLinkedinUrl: async () => 7, fetchEmployeeCollect: async () => employee },
+      regenerateDraft: (async () => ({ stored: true })) as never,
+    })
+    assert.equal(res.status, "written")
+    const stored = (stores.get("pa-prescreen-sessions")!.get("ps-1")!.review as Record<string, unknown>).candidateChecklistEval as Record<string, unknown>
+    assert.equal(stored.verdict, "borderline", "wrong-identity reject is clamped to borderline")
+    assert.ok((stored.confidence as number) <= 0.5, "confidence capped at 0.5")
+    assert.match(String((stored.reasons as string[])[0]), /wrong-identity/i)
+  })
+
   it("judges transcript-only when there is no LinkedIn (enriched=false), still stores", async () => {
     const s = seed()
     s["pa-users"]["cand-1"] = { recentRoleTitle: "Intern" } // no linkedinUrl
