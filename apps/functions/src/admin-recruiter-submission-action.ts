@@ -43,10 +43,22 @@ function recruiterAiSuggestedTier(submission: Record<string, unknown>): ReturnTy
   const ai = submission.aiEvaluation
   if (!ai || typeof ai !== "object") return null
   const verdict = (ai as { verdict?: unknown }).verdict
-  const hardGaps =
-    ((ai as { checklist?: { hard?: { gaps?: unknown } } }).checklist?.hard?.gaps as unknown[] | undefined)?.length ?? 0
   if (verdict !== "advance" && verdict !== "borderline" && verdict !== "reject") return null
-  return suggestTierFromRecruiterAi(verdict as RecruiterAiVerdict, hardGaps)
+  const cl = (ai as { checklist?: Record<string, { met?: number; total?: number; flagged?: number; gaps?: unknown }> }).checklist ?? {}
+  const ratio = (t?: { met?: number; total?: number }) =>
+    t && Number(t.total) > 0 ? Math.max(0, Math.min(1, Number(t.met ?? 0) / Number(t.total))) : 0
+  const antiRatio = cl.anti && Number(cl.anti.total) > 0 ? Math.max(0, Math.min(1, Number(cl.anti.flagged ?? 0) / Number(cl.anti.total))) : 0
+  const hardGaps = (cl.hard?.gaps as unknown[] | undefined)?.length ?? 0
+  const bg = (ai as { background?: { school?: { verdict?: unknown }; company?: { verdict?: unknown } } }).background
+  const strongBackground = bg?.school?.verdict === "strong" || bg?.company?.verdict === "strong"
+  return suggestTierFromRecruiterAi(verdict as RecruiterAiVerdict, hardGaps, {
+    confidence: Number((ai as { confidence?: unknown }).confidence ?? 0),
+    strongBackground,
+    hardRatio: ratio(cl.hard),
+    fitRatio: ratio(cl.fit),
+    bonusRatio: ratio(cl.bonus),
+    antiRatio,
+  })
 }
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
