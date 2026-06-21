@@ -312,12 +312,31 @@ test("terminal completion text is neutral pending WeKruit review", () => {
   assert.doesNotMatch(text, /employer will follow/i)
 })
 
-test("HARD_STOP terminal text is a soft pause, not an abrupt rejection", () => {
+test("HARD_STOP terminal text is verdict-aware honest holding copy, never a fabricated pass", () => {
   const text = terminalText("HARD_STOP", "must-have failed", "en")
   assert.match(text, /WeKruit team/i)
-  assert.match(text, /pitch the hiring manager/i)
   // Graceful ending (Adam 2026-06-10): retention framing, never a dead-end.
   assert.match(text, /still matching you to other roles/i)
+  assert.match(text, /review/i)
+  // Trust bug 2026-06-19: a HARD_STOP must NEVER read as a pass. No pitch
+  // framing, no "nice work" — those imply the candidate cleared the screen.
+  assert.doesNotMatch(text, /pitch the hiring manager/i)
+  assert.doesNotMatch(text, /nice work/i)
   assert.doesNotMatch(text, /daily/i)
   assert.doesNotMatch(text, /didn't align|not a fit|passed/i)
+})
+
+test("FAIL terminal text is verdict-aware honest holding copy, never a fabricated pass", () => {
+  const text = terminalText("FAIL", "score below bar", "en")
+  assert.match(text, /WeKruit team/i)
+  assert.match(text, /still matching you to other roles/i)
+  assert.doesNotMatch(text, /pitch the hiring manager/i)
+  assert.doesNotMatch(text, /nice work/i)
+  assert.doesNotMatch(text, /didn't align|not a fit|passed/i)
+})
+
+test("PASS terminal text keeps the pitch-the-hiring-manager framing", () => {
+  const text = terminalText("PASS", "passed", "en")
+  assert.match(text, /pitch the hiring manager/i)
+  assert.match(text, /nice work/i)
 })

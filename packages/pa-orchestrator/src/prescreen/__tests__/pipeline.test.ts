@@ -1018,7 +1018,10 @@ test("Phase 76: confirmed hard-filter mismatch stops after one direct clarify", 
   assert.equal(second.state.questions.location_alignment.finalS, 0.25)
   assert.equal(second.state.questions.location_alignment.finalC, 0.85)
   assert.match(second.text, /WeKruit team/i)
-  assert.match(second.text, /pitch the hiring manager/i)
+  // Trust bug 2026-06-19: a HARD_STOP must use verdict-aware honest holding copy,
+  // never the PASS pitch framing.
+  assert.doesNotMatch(second.text, /pitch the hiring manager/i)
+  assert.doesNotMatch(second.text, /nice work/i)
   assert.doesNotMatch(second.text, /force-fit|help find jobs|proceed/i)
 })
 

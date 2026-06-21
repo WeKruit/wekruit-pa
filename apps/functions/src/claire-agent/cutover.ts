@@ -1567,6 +1567,8 @@ export async function maybeRunThinClaire(
         inputTokens: trace.usage?.inputTokens,
         cachedInputTokens: trace.usage?.cachedInputTokens,
         turnsUsed: trace.usage?.turnsUsed,
+        servedByModel: trace.servedByModel,
+        errorCode: trace.errorCode,
       })
     } catch (traceErr) {
       log("thin_claire.turn_trace_failed", {
@@ -1574,6 +1576,97 @@ export async function maybeRunThinClaire(
         err: traceErr instanceof Error ? traceErr.message : String(traceErr),
       })
     }
+    // ── PERSIST USER MESSAGE TO pa-messages (2026-06-18) ────────────────────────────
+    // The thin path skips processInboundEvent → user messages never reach pa-messages →
+    // the conversation extractor sees assistant-only transcripts → skills/yoeRange/
+    // careerStage are never extracted → V16 matching is blind to conversational intent.
+    // Write the inbound text as a role:user row so the transcript is complete for the
+    // extractor, dashboard, and audit. Idempotent via inbound-event:${eventId} key.
+    // Fail-open: a write failure must never block the turn (reply already sent).
+    if (hasRealUserText(text)) {
+      try {
+        const userMsgId = `inbound-event:${eventId}`
+        const existing = await db
+          .collection(PA_COLLECTIONS.messages)
+          .where("idempotencyKey", "==", userMsgId)
+          .limit(1)
+          .get()
+        if (existing.empty) {
+          const nowIso = new Date().toISOString()
+          await db.collection(PA_COLLECTIONS.messages).doc(eventId).set({
+            id: eventId,
+            sessionId,
+            userId,
+            role: "user",
+            body: text,
+            createdAt: nowIso,
+            idempotencyKey: userMsgId,
+            rawMeta: { source: "thin_claire_persist", eventId },
+          })
+          log("thin_claire.user_message_persisted", { eventId, userId })
+        }
+      } catch (persistErr) {
+        log("thin_claire.user_message_persist_failed", {
+          eventId,
+          err: persistErr instanceof Error ? persistErr.message : String(persistErr),
+        })
+      }
+
+      // ── RUN CONVERSATION EXTRACTOR (2026-06-18) ──────────────────────────────────
+      // Extract skills/yoeRange/careerStage/industrySector from the conversation so
+      // V16 matching has structured signals beyond just targetRoleFunction.
+      // Fire-and-forget: extractor errors must never block the turn.
+      try {
+        const { maybeRunExtractor } = await import("@pa/pa-orchestrator")
+        const recentSnap = await db
+          .collection(PA_COLLECTIONS.messages)
+          .where("userId", "==", userId)
+          .orderBy("createdAt", "desc")
+          .limit(30)
+          .get()
+        const recentMessages = recentSnap.docs
+          .map((d) => {
+            const md = d.data() as { role?: string; body?: string; createdAt?: string }
+            return {
+              role: (md.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
+              body: String(md.body ?? ""),
+              createdAt: String(md.createdAt ?? ""),
+            }
+          })
+          .filter((m) => m.body.trim().length > 0 && !m.body.startsWith("[system-event:"))
+          .reverse()
+        if (recentMessages.length > 0) {
+          const userSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+          const userData = (userSnap.data() ?? {}) as Record<string, unknown>
+          const existingTags = (userData.tags ?? {}) as Record<string, unknown>
+          const onboardingState = typeof userData.onboardingState === "string" ? userData.onboardingState : null
+          const outcome = await maybeRunExtractor({
+            db,
+            userId,
+            recentMessages,
+            existingTags,
+            onboardingState,
+            userMsgsThisBatch: 1,
+            forceTrigger: "intent_signal" as const,
+            log: (evt: string, payload?: Record<string, unknown>) => log(`thin_claire.extractor.${evt}`, payload ?? {}),
+          })
+          log("thin_claire.extractor_result", {
+            eventId,
+            userId,
+            ran: outcome.ran,
+            reason: outcome.reason,
+            tagFieldsChanged: outcome.tagFieldsChanged,
+          })
+        }
+      } catch (extractErr) {
+        log("thin_claire.extractor_failed", {
+          eventId,
+          userId,
+          err: extractErr instanceof Error ? extractErr.message : String(extractErr),
+        })
+      }
+    }
+
     log("thin_claire_handled", { eventId, userId })
     return true
   } catch (e) {

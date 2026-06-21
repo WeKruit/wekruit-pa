@@ -997,20 +997,35 @@ export function terminalText(
   lang: Lang
 ): string {
   switch (terminal) {
+    // A real PASS gets the "packaging you for the hiring manager" framing.
     case "PASS":
+      return prescreenReviewPendingAckText(lang)
+    // FAIL / HARD_STOP are NOT_PASS verdicts held for human review (auto-draft
+    // path). They MUST NOT read as a pass — never "nice work" / "pitch the
+    // hiring manager". Route to the neutral, honest holding copy. (Trust bug
+    // 2026-06-19: a HARD_STOP 0/7.5 candidate was told we were pitching them.)
     case "FAIL":
     case "HARD_STOP":
-      return prescreenReviewPendingAckText(lang)
+      return prescreenReviewPendingNotPassAckText(lang)
     case "PAUSE":
       return terminalPauseText(lang)
   }
 }
 
-// Graceful review-pending ack (Adam 2026-06-10): the whole point of the screen is that strong
-// candidates get packaged for the WeKruit team to pitch the right hiring manager. MUST NOT promise
-// or imply pass/fail (review-pending invariant: never say "you passed" before the outcome commits).
+// Graceful review-pending ack for a PASS (Adam 2026-06-10): the whole point of the screen is that
+// strong candidates get packaged for the WeKruit team to pitch the right hiring manager. MUST NOT
+// promise or imply pass/fail explicitly (review-pending invariant: never say "you passed" before
+// the outcome commits) — but the pitch framing only fires when the verdict is PASS.
 export function prescreenReviewPendingAckText(_lang: Lang): string {
   return "that's the whole screen - nice work. i'm sending it to the WeKruit team to help pitch the hiring manager. i'll text you the next step here either way, and i'm still matching you to other roles in the meantime."
+}
+
+// Honest review-pending ack for a NOT_PASS (FAIL / HARD_STOP) verdict held for human review.
+// MUST NOT imply a pass — no "nice work", no "pitch the hiring manager". Warm + honest, consistent
+// with the honest-ending / auto-draft path. The rejection is still pending human review, so we do
+// not say "you didn't pass" either; we thank them and keep them in the marketplace pool.
+export function prescreenReviewPendingNotPassAckText(_lang: Lang): string {
+  return "that's the whole screen - thanks for taking the time. the WeKruit team will review where things landed and i'll text you the next step here either way. in the meantime i'm still matching you to other roles."
 }
 
 function clarifyText(

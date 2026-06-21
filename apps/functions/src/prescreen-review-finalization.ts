@@ -1,6 +1,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import {
   prescreenReviewPendingAckText,
+  prescreenReviewPendingNotPassAckText,
   prescreenSessionToEvaluationAttempt,
   type PreScreenState,
 } from "@pa/pa-orchestrator"
@@ -81,7 +82,14 @@ export async function finalizePrescreenForHumanReview(args: {
     occurredAt: nowIso,
   })
 
-  const pendingAckText = prescreenReviewPendingAckText(args.lang)
+  // VERDICT-AWARE candidate ack (live bug 2026-06-19): a NOT_PASS (FAIL / HARD_STOP) outcome held for
+  // human review MUST NOT get the "pitch you to the hiring manager / nice work" PASS framing — that
+  // reads as a fabricated pass on a rejection (+13055102017: 0/7.5 HARD_STOP told we were pitching
+  // them). ONLY a real PASS gets the pitch framing; NOT_PASS gets warm, honest holding copy.
+  const pendingAckText =
+    args.terminal === "PASS"
+      ? prescreenReviewPendingAckText(args.lang)
+      : prescreenReviewPendingNotPassAckText(args.lang)
   const sendResult = await (args.sendSms ?? sendRuntimeApprovedIMessage)({
     to: args.toE164,
     content: pendingAckText,

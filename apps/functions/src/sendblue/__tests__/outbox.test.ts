@@ -1,7 +1,15 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
 
-import { isMarketplaceOutreachOutbound, paSendblueOutboxHandler, shouldAppendOutboundTranscript, _resetPriorInboundEvidenceCache } from "../outbox.js"
+import {
+  isMarketplaceOutreachOutbound,
+  paSendblueOutboxHandler,
+  shouldAppendOutboundTranscript,
+  isSyntheticOutboundRecipient,
+  isHarnessInboundEvent,
+  hasPriorInboundEvidence,
+  _resetPriorInboundEvidenceCache,
+} from "../outbox.js"
 import { SendblueClientError, SendblueServerError } from "../sendblue-client.js"
 import { _resetPoolCache, _resetCountersCache } from "../pool.js"
 
@@ -12,7 +20,12 @@ type DocData = Record<string, unknown>
 function makeFakeDb(
   initialOutbound: Record<string, DocData> = {},
   users: Record<string, DocData> = {},
-  opts: { quotaLimit?: number; existingDailyCount?: number; inboundEvidenceFor?: string[] } = {}
+  opts: {
+    quotaLimit?: number
+    existingDailyCount?: number
+    inboundEvidenceFor?: string[]
+    inboundRows?: DocData[]
+  } = {}
 ) {
   const outbound = new Map<string, DocData>(
     Object.entries(initialOutbound).map(([id, row]) => [
@@ -39,6 +52,10 @@ function makeFakeDb(
       },
     ])
   )
+  // Optional explicit inbound rows (used to inject synthetic/harness fixtures).
+  ;(opts.inboundRows ?? []).forEach((row, i) => {
+    inboundEvents.set(`inb_custom_${i}`, row)
+  })
 
   function nestedField(data: DocData, path: string): unknown {
     let cur: unknown = data
@@ -774,5 +791,140 @@ describe("paSendblueOutboxHandler", () => {
     assert.equal(outbound.get("doc-hard")!.status, "failed")
     assert.match(String(outbound.get("doc-hard")!.error), /quota/)
     assert.ok(audit.some((a) => a.type === "quota_hardblock"), "expected quota_hardblock audit row")
+  })
+
+  // ── 2026-06-19 incident — synthetic / test recipient hard block ──────────
+  it("Synthetic A: +1999999xxxx recipient is blocked, NO Sendblue POST", async () => {
+    const SYNTH = "+19999990118"
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: SYNTH,
+      body: "hey! i'm claire, your recruiter at wekruit",
+      idempotencyKey: "claire-reply-harness_x:abc",
+      createdAt: new Date().toISOString(),
+    }
+    // Even WITH a (synthetic) prior-inbound row for this handle, it must block.
+    const { db, outbound } = makeFakeDb(
+      { "doc-synth": baseRow },
+      { [USER.id]: USER },
+      { inboundEvidenceFor: [SYNTH] }
+    )
+    const sb = makeSendblueMock()
+    await paSendblueOutboxHandler(makeEvent("doc-synth", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+    assert.equal(sb.calls, 0, "synthetic recipient must NEVER POST to Sendblue")
+    assert.equal(outbound.get("doc-synth")!.status, "blocked_synthetic_recipient")
+    assert.equal(outbound.get("doc-synth")!.blockedBySyntheticGate, true)
+  })
+
+  it("Synthetic B: e2eTest-marked row is blocked even for a real-looking number", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: "+15558675309",
+      body: "scenario fixture body that is long enough",
+      idempotencyKey: "out-e2e-1",
+      e2eTest: true,
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb(
+      { "doc-e2e": baseRow },
+      { [USER.id]: USER },
+      { inboundEvidenceFor: ["+15558675309"] }
+    )
+    const sb = makeSendblueMock()
+    await paSendblueOutboxHandler(makeEvent("doc-e2e", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+    assert.equal(sb.calls, 0)
+    assert.equal(outbound.get("doc-e2e")!.status, "blocked_synthetic_recipient")
+  })
+
+  it("Synthetic C: real inbound-first recipient (no markers) still sends normally", async () => {
+    const REAL = "+15551112222"
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: REAL,
+      body: "a normal candidate-facing reply",
+      idempotencyKey: "out-real-1",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb(
+      { "doc-real": baseRow },
+      { [USER.id]: USER },
+      { inboundEvidenceFor: [REAL] }
+    )
+    const sb = makeSendblueMock()
+    await paSendblueOutboxHandler(makeEvent("doc-real", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date(),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1", userId: USER.id, externalChatId: "x", channel: "imessage" } as never),
+    })
+    assert.equal(sb.calls, 1, "real inbound-first user must still receive sends")
+    assert.equal(outbound.get("doc-real")!.status, "sent")
+  })
+
+  it("Synthetic D: harness-only inbound does NOT count as prior-inbound evidence", async () => {
+    const REAL = "+15553334444"
+    // ONLY a harness-origin inbound row exists for this handle → not consent.
+    const evidence = await hasPriorInboundEvidence(
+      makeFakeDb({}, {}, {
+        inboundEvidenceFor: [],
+        inboundRows: [
+          {
+            userId: "u-1",
+            createdAt: new Date().toISOString(),
+            idempotencyKey: "harness:harness_abc",
+            rawPayload: {
+              kind: "imessage",
+              participant: REAL,
+              fromNumber: REAL,
+              harness: { runner: "tests/scenarios/runner.mjs", suppressOutbound: true },
+            },
+          },
+        ],
+      }).db as never,
+      REAL,
+      () => {}
+    )
+    assert.equal(evidence.ok, false, "harness inbound must not satisfy RULE 1")
+  })
+
+  it("Synthetic E: pure helpers classify reserved range + harness rows", () => {
+    assert.equal(isSyntheticOutboundRecipient("+19999990118", {}), true)
+    assert.equal(isSyntheticOutboundRecipient("+15551234567", {}), false)
+    assert.equal(isSyntheticOutboundRecipient("+15551234567", { e2eTest: true }), true)
+    assert.equal(
+      isSyntheticOutboundRecipient("+15551234567", { harness: { runner: "x" } }),
+      true
+    )
+    assert.equal(
+      isHarnessInboundEvent({ rawPayload: { harness: { runner: "x" } } }),
+      true
+    )
+    assert.equal(isHarnessInboundEvent({ idempotencyKey: "harness:abc" }), true)
+    assert.equal(
+      isHarnessInboundEvent({ rawPayload: { participant: "+15551234567" } }),
+      false
+    )
   })
 })

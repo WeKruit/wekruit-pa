@@ -7492,7 +7492,7 @@ export {
   type PreScreenStateProvider,
   type PreScreenTerminal,
 } from "./prescreen/state.js"
-export { PreScreenPipeline, hardFilterClarifyText, prescreenReviewPendingAckText, terminalText } from "./prescreen/pipeline.js"
+export { PreScreenPipeline, hardFilterClarifyText, prescreenReviewPendingAckText, prescreenReviewPendingNotPassAckText, terminalText } from "./prescreen/pipeline.js"
 export type {
   ComposeClarifyInput,
   PreScreenClarifyComposer,

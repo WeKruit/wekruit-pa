@@ -686,9 +686,15 @@ function postPrescreenOnboardingPrompt(_lang: "zh" | "en", terminal?: string | n
     : "Thanks for taking the time. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
-function pendingReviewFollowupAckText(_lang: "zh" | "en"): string {
+function pendingReviewFollowupAckText(_lang: "zh" | "en", terminal?: string | null): string {
   // Claire IS the WeKruit recruiting team — warm, human, on-their-side. Not a
   // detached "I won't guess at the decision" bot (Adam 2026-06-14: felt robotic).
+  // VERDICT-AWARE (live bug 2026-06-19): the "pitch you to the hiring manager" framing implies a PASS
+  // and MUST NOT fire on a NOT_PASS (FAIL / HARD_STOP) outcome held for review — that reads as a
+  // fabricated pass on a rejection. A NOT_PASS gets warm, honest holding copy instead.
+  if (terminal === "FAIL" || terminal === "HARD_STOP") {
+    return "thank you — really appreciate you taking the time on this 🙏 i've got your full screen now and the WeKruit team is reviewing where things landed. i'll text you the moment there's an update either way — and in the meantime i'm keeping an eye out for other roles that fit you."
+  }
   return "thank you — really appreciate you taking the time on this 🙏 i've got your full screen now, and the WeKruit team is reviewing it to help pitch you to the hiring manager. i'll text you the moment there's an update — and in the meantime i'm keeping an eye out for other roles that fit you."
 }
 
@@ -940,6 +946,8 @@ async function shouldHandleRecentTerminalSession(args: {
   userId: string
   replyText: string
   terminal?: string | null
+  /** The terminal outcome is held for human review (auto-draft path) — see live bug 2026-06-19. */
+  pendingReview?: boolean
   log: (event: string, payload: Record<string, unknown>) => void
 }): Promise<boolean> {
   let user: Record<string, unknown> | undefined
@@ -953,6 +961,18 @@ async function shouldHandleRecentTerminalSession(args: {
     })
   }
   if (isPrescreenOutcomeExplanationRequest(args.replyText)) return true
+  // PENDING-REVIEW THREAD OWNERSHIP (live bug 2026-06-19): while a just-terminated outcome (PASS or
+  // NOT_PASS) is held for human review, prescreen owns the thread within the recent-terminal window so
+  // thin-Claire does NOT re-engage with unsolicited matching offers ("say yes and i'll pull roles") +
+  // duplicates. The ONE escape hatch is an EXPLICIT fresh job-search / new-intent ask from the
+  // candidate — that is a deliberate request, not an unsolicited re-engagement, so we yield to runtime.
+  if (args.pendingReview && !isExplicitNewIntentAfterTerminal(args.replyText)) {
+    args.log("prescreen.turn.recent_terminal_owned_pending_review", {
+      userId: args.userId,
+      terminal: args.terminal ?? null,
+    })
+    return true
+  }
   if (hasActiveUserPostMatchRetention(user)) {
     args.log("prescreen.turn.recent_terminal_guard_yielded_to_post_match_retention", {
       userId: args.userId,
@@ -1057,17 +1077,24 @@ export async function runPrescreenTurnIfActive(
   }
 
   if (lookup.kind === "recent_terminal") {
+    // Fetch the session up-front so the guard can see whether the terminal outcome is held for
+    // human review. A pending-review session MUST keep ownership of the thread (within the recent-
+    // terminal window) so thin-Claire does NOT re-engage with unsolicited matching offers on a turn
+    // whose verdict has not yet been committed (live bug 2026-06-19: a HARD_STOP held for review was
+    // followed by "say yes and i'll pull roles" matching re-engagement + duplicates).
+    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
+    const sessSnap = await sessionRef.get()
+    const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
+    const pendingReview = sessData.terminalActionPendingReview === true
     const shouldGuard = await shouldHandleRecentTerminalSession({
       db: args.db,
       userId: args.userId,
       replyText: args.replyText,
       terminal: lookup.terminal,
+      pendingReview,
       log,
     })
     if (!shouldGuard) return { handled: false }
-    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
-    const sessSnap = await sessionRef.get()
-    const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
     const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
     const nowIso = new Date().toISOString()
 
@@ -1152,8 +1179,8 @@ export async function runPrescreenTurnIfActive(
       }
     }
 
-    if (sessData.terminalActionPendingReview === true) {
-      const text = pendingReviewFollowupAckText(args.lang ?? "en")
+    if (pendingReview) {
+      const text = pendingReviewFollowupAckText(args.lang ?? "en", lookup.terminal)
       await sessionRef.collection("turns").add({
         qId: "terminal",
         reply: args.replyText,
