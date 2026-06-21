@@ -20,6 +20,7 @@ import {
 } from "@pa/core-types"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
+import { boardSubmissionRankKey, compareRankKeys } from "./board-submission-rank.js"
 import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
 import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "../components/prescreen/dual-pane.js"
 import { auth, db } from "../lib/firebase.js"
@@ -361,58 +362,7 @@ function selfScoreLabel(score: BoardSubmissionDoc["score"]): string {
   return `H ${score.hardChecked}/${score.hardTotal} · F ${score.fitChecked}/${score.fitTotal} · A ${score.antiChecked}/${score.antiTotal}`
 }
 
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(1, value))
-}
-
-function checklistMetRatio(tally: SubmissionAiChecklistTally | undefined): number {
-  const total = Number(tally?.total ?? 0)
-  if (!Number.isFinite(total) || total <= 0) return 0
-  return clamp01(Number(tally?.met ?? 0) / total)
-}
-
-function antiFlagRatio(tally: SubmissionAiAntiTally | undefined): number {
-  const total = Number(tally?.total ?? 0)
-  if (!Number.isFinite(total) || total <= 0) return 0
-  return clamp01(Number(tally?.flagged ?? 0) / total)
-}
-
-function selfScoreRatio(score: BoardSubmissionDoc["score"]): number {
-  if (!score) return 0
-  const positiveTotal = score.hardTotal + score.fitTotal + score.bonusTotal
-  const antiTotal = score.antiTotal
-  const positive = positiveTotal > 0
-    ? (score.hardChecked + score.fitChecked + score.bonusChecked) / positiveTotal
-    : 0
-  const antiPenalty = antiTotal > 0 ? score.antiChecked / antiTotal : 0
-  return clamp01(positive - antiPenalty)
-}
-
-function aiVerdictRank(evaluation: SubmissionAiEvaluation | undefined): number {
-  if (!evaluation || evaluation.error) return 0
-  if (evaluation.verdict === "advance") return 3
-  if (evaluation.verdict === "borderline") return 2
-  if (evaluation.verdict === "reject") return 1
-  return 0
-}
-
-function boardSubmissionQualityScore(submission: BoardSubmissionDoc): number {
-  const evaluation = submission.aiEvaluation
-  const verdictRank = aiVerdictRank(evaluation)
-  const confidence = clamp01(Number(evaluation?.confidence ?? 0))
-  const confidenceSignal = evaluation?.verdict === "reject" ? 1 - confidence : confidence
-  const checklist = evaluation?.checklist
-  return (
-    verdictRank * 1_000 +
-    checklistMetRatio(checklist?.hard) * 300 +
-    checklistMetRatio(checklist?.fit) * 220 +
-    checklistMetRatio(checklist?.bonus) * 90 -
-    antiFlagRatio(checklist?.anti) * 160 +
-    confidenceSignal * 50 +
-    selfScoreRatio(submission.score) * 30
-  )
-}
+// Triage-ranking helpers live in ./board-submission-rank (pure + unit-tested).
 
 function candidateHref(submission: BoardSubmissionDoc): string | null {
   const href = submission.candidate?.linkedinUrl ?? submission.candidate?.link
@@ -512,10 +462,12 @@ function submissionJobKey(submission: BoardSubmissionDoc): string {
 
 function sortSubmissions(submissions: BoardSubmissionDoc[]): BoardSubmissionDoc[] {
   return [...submissions].sort((a, b) => {
+    // Still-actionable (pending) above already-decided submissions.
     const pendingDelta = Number(isPending(b)) - Number(isPending(a))
     if (pendingDelta !== 0) return pendingDelta
-    const qualityDelta = boardSubmissionQualityScore(b) - boardSubmissionQualityScore(a)
-    if (Math.abs(qualityDelta) > 0.000001) return qualityDelta
+    // Lexicographic triage: verdict → confidence band → bounded sub-score tie-break.
+    const keyDelta = compareRankKeys(boardSubmissionRankKey(a), boardSubmissionRankKey(b))
+    if (keyDelta !== 0) return keyDelta
     return (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0)
   })
 }
