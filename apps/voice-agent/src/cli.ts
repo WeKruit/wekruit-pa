@@ -107,6 +107,13 @@ export async function runCli(opts: RunCliOpts = {}): Promise<number> {
     lkCli.runApp(
       new WorkerOptions({
         agent: fileURLToPath(agentFile),
+        // Keep warm, pre-spawned job processes whose prewarm() has already
+        // loaded Silero VAD — a dispatched call grabs a ready process instead of
+        // cold-spawning + loading the model on the critical path (~20s dead air
+        // after pickup). initializeProcessTimeout gives prewarm room to finish
+        // the model load before the process is marked ready.
+        numIdleProcesses: 2,
+        initializeProcessTimeout: 30_000,
       }),
     )
   })
