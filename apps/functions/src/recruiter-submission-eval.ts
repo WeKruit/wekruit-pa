@@ -29,12 +29,27 @@ import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { callWithFallback } from "@pa/pa-resume-parser"
+import { lookupSchoolPrior, type RoleFunction } from "@wekruit/shared-tags"
 import {
   fetchEmployeeCollect,
   searchEmployeeIdByLinkedinUrl,
   type CoresignalEmployeeCollectV2,
 } from "@pa/external-supply"
+import {
+  SCREENING_EVALUATION_ALGORITHM_VERSION,
+  confidenceToScore,
+  createEvaluationAttemptId,
+  deriveReviewPriority,
+  scoreToAnchor,
+  type EvaluationAttempt,
+  type EvaluationDimensionScore,
+  type EvaluationEvidenceRef,
+  type EvaluationOutcome,
+} from "@pa/core-types"
+import { getEvaluationAttempt, saveEvaluationAttempt } from "@pa/pa-persistence"
 import { getOrFetchCoresignalByLinkedin } from "./lib/coresignal-cache.js"
+import { getStorage } from "firebase-admin/storage"
+import { fetchPdfWithSizeCap } from "./cv-ingest/cv-size-cap.js"
 import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
 import { ensureRecruiterSubmissionCandidateTracked } from "./recruiter-candidate-tracking.js"
 
@@ -56,6 +71,9 @@ export type SubmissionEvalAntiTally = { flagged: number; total: number; flags: s
 
 export type SubmissionEvalResearch = {
   source: "coresignal"
+  /** Name on the resolved Coresignal profile — surfaced so the judge can detect
+   *  a wrong-identity match (recruiter pasted a wrong/ambiguous LinkedIn). */
+  subjectName?: string
   headline: string
   companies: Array<{ name: string; role?: string; years?: string }>
   education: Array<{ school: string; degree?: string }>
@@ -86,6 +104,9 @@ export type SubmissionAiEvaluation = {
   }
   background: SubmissionEvalBackground
   research?: SubmissionEvalResearch
+  /** true when the LinkedIn research resolved a DIFFERENT person (wrong/mismatched
+   *  LinkedIn URL on the submission). When set, the verdict is forced to review. */
+  identityConflict?: boolean
   evaluatedAt: string
   model: string
   version: "submission-eval-v2"
@@ -124,6 +145,7 @@ export const EvalJudgmentSchema = z.object({
     anti: AntiTallySchema,
   }),
   background: BackgroundSchema,
+  identityConflict: z.boolean().optional().default(false),
 })
 export type EvalJudgment = z.infer<typeof EvalJudgmentSchema>
 
@@ -172,10 +194,15 @@ const BACKGROUND_JSON_SCHEMA = {
 export const EVAL_JUDGMENT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["verdict", "confidence", "summary", "reasons", "checklist", "background"],
+  required: ["verdict", "confidence", "summary", "reasons", "checklist", "background", "identityConflict"],
   properties: {
     verdict: { type: "string", enum: ["advance", "borderline", "reject"] },
     confidence: { type: "number", description: "0..1 confidence in the verdict given the evidence." },
+    identityConflict: {
+      type: "boolean",
+      description:
+        "TRUE when the independent LinkedIn research appears to be a DIFFERENT person than the candidate (a wrong/mismatched LinkedIn URL): the research's profession/field/companies fundamentally conflict with the candidate's own résumé/role/notes (e.g. research = pharmacist, candidate = senior software engineer). FALSE otherwise (including when research is simply absent/sparse).",
+    },
     summary: { type: "string", description: "1-2 sentence operator-facing summary of the candidate vs the rubric." },
     reasons: { type: "array", items: { type: "string" } },
     checklist: {
@@ -193,20 +220,23 @@ export const EVAL_JUDGMENT_JSON_SCHEMA = {
   },
 } as const
 
-const JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL recruiter-submission evaluator. A third-party recruiter submitted a candidate against a job rubric and self-reported which checklist items the candidate meets. Recruiters are incentivized to over-claim: every tick is a CLAIM to verify against the candidate info and independent research, NEVER a fact.
+export const JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL recruiter-submission evaluator. A third-party recruiter submitted a candidate against a job rubric and self-reported which checklist items the candidate meets. Recruiters are incentivized to over-claim: every tick is a CLAIM to verify against the candidate info and independent research, NEVER a fact.
 
 Rules:
+- PRIMARY EVIDENCE = the candidate's résumé full text (when provided) + the recruiter's submitted fields/notes. The Coresignal research is CORROBORATION ONLY — it can be stale, sparse, or a wrong-identity match for the pasted LinkedIn URL. When the résumé and the research disagree, TRUST THE RÉSUMÉ. Verify hard items primarily against the résumé; NEVER reject because the research lacks or contradicts what the résumé clearly evidences.
+- NO-RÉSUMÉ FALLBACK: when no résumé text is available (none uploaded, or a link that could not be fetched), the LinkedIn/Coresignal research + the recruiter's submitted fields/notes BECOME your primary evidence — judge fit on what you DO have. A missing résumé is "unverifiable", NOT a disqualifier: do NOT reject merely because the résumé is absent or because hard items cannot be confirmed for lack of one. If the available research/notes plausibly support the hard requirements, prefer verdict "borderline" (human review) so a human can request the résumé. Reject ONLY when the AVAILABLE evidence shows a clear MISMATCH against a hard requirement — wrong field/role, clearly insufficient experience, or an applicable anti-signal — never on absence of a résumé alone. (Still apply the WRONG-IDENTITY GUARD below: research that is a different person is neither evidence FOR nor AGAINST.)
+- WRONG-IDENTITY GUARD (check FIRST): the independent research is fetched from the LinkedIn URL the recruiter pasted, which CAN BE WRONG — a mistyped/ambiguous URL or a common-name collision resolves a DIFFERENT person. Before using research as evidence, sanity-check it plausibly belongs to THIS candidate: compare the research subject's name, profession/field, and seniority against the candidate's submitted name, current role, resume notes, and skills. If the research SHARPLY CONFLICTS with the candidate's own resume — a fundamentally different profession or field (e.g. research shows a pharmacist / Walgreens pharmacy manager while the resume and current role are a senior software engineer) — treat the research as a LIKELY WRONG-IDENTITY match: **set \`identityConflict\`: true**, DO NOT use the research as disqualifying evidence, DO NOT reject on it, judge on the submitted resume/notes alone, prefer verdict "borderline" (human review), and state the identity conflict explicitly in \`reasons\`. Only treat research as authoritative when it is consistent with the candidate's own info; set \`identityConflict\`: false otherwise (including when research is simply absent/sparse — that is "unverifiable", NOT a conflict and NOT disqualifying).
 - Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the candidate info or research contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text.
 - Apply the same evidence bar to fit and bonus items; list unmet/unverifiable item texts in their gaps arrays.
 - For anti-signal items, flagged = items that plausibly apply to this candidate; list their exact item texts in checklist.anti.flags. Also flag anti-signals you observe in the research even when the recruiter left them unticked.
 - met/total (and flagged/total) must tally the rubric items per group; total = number of items in that group.
-- Be stingy. verdict "advance" ONLY when checklist.hard.gaps is empty AND the supporting evidence is concrete. Thin, generic, or unverifiable submissions are "borderline". Clear hard gaps or applicable anti-signals push toward "reject".
+- Be stingy. verdict "advance" ONLY when checklist.hard.gaps is empty AND the supporting evidence is concrete. Thin, generic, or unverifiable submissions are "borderline" (NOT "reject") — including submissions with no résumé whose hard items are merely unconfirmed. "reject" requires a clear, evidenced MISMATCH against a hard requirement or an applicable anti-signal, not merely missing/unverifiable evidence.
 - confidence is 0..1 — how confident you are in the verdict given the evidence quality.
 - reasons: short concrete bullets citing the specific evidence (or its absence) that drove the verdict.
 - Also independently assess the candidate's BACKGROUND pillars from the research + resume, and output \`background\` with one of strong / weak / unknown per pillar plus short \`evidence\`:
-  - school: "strong" for a target / strong / well-known university; "weak" for clearly non-target; "unknown" if no education info is available.
+  - school: "strong" for a target / well-known / brand-name university; "weak" for a real but non-target / lesser-known school. "unknown" ONLY when there is genuinely NO education info available. If ANY school is named, you MUST choose "strong" or "weak" (never "unknown") and name that school in \`evidence\` — an unranked or unfamiliar school is "weak", not "unknown".
   - degree: "strong" for a relevant degree/field for this role; "weak" if mismatched; "unknown" if absent.
-  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers; "unknown" if no work history is available.
+  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers (a named-but-unfamiliar employer is "weak", not "unknown"); "unknown" only if no work history is available.
   - gpa: ALMOST ALWAYS "unknown". Set "strong"/"weak" ONLY if the resume/notes explicitly state a GPA. NEVER infer GPA from the school or LinkedIn.
   The recruiter's background self-flag (shown in the prompt) is a HINT, not a fact — assess each pillar independently from the evidence.
 - Output STRICT JSON matching the schema. Nothing else.`
@@ -259,11 +289,16 @@ type SubmissionCandidate = {
   linkedinUrl?: string
   email?: string
   currentRole?: string
+  currentCompany?: string
+  location?: string
+  workAuthorization?: string
+  employmentStatus?: string
+  compensationExpectation?: string
   yoe?: string
   notes?: string
 }
 
-function extractCandidate(submission: Record<string, unknown>): SubmissionCandidate {
+export function extractCandidate(submission: Record<string, unknown>): SubmissionCandidate {
   const candidate = asRecord(submission.candidate) ?? {}
   return {
     name: cleanString(candidate.name) ?? "(unknown)",
@@ -271,12 +306,17 @@ function extractCandidate(submission: Record<string, unknown>): SubmissionCandid
     ...(cleanString(candidate.linkedinUrl) ? { linkedinUrl: cleanString(candidate.linkedinUrl) } : {}),
     ...(cleanString(candidate.email) ? { email: cleanString(candidate.email) } : {}),
     ...(cleanString(candidate.currentRole) ? { currentRole: cleanString(candidate.currentRole) } : {}),
+    ...(cleanString(candidate.currentCompany) ? { currentCompany: cleanString(candidate.currentCompany) } : {}),
+    ...(cleanString(candidate.location) ? { location: cleanString(candidate.location) } : {}),
+    ...(cleanString(candidate.workAuthorization) ? { workAuthorization: cleanString(candidate.workAuthorization) } : {}),
+    ...(cleanString(candidate.employmentStatus) ? { employmentStatus: cleanString(candidate.employmentStatus) } : {}),
+    ...(cleanString(candidate.compensationExpectation) ? { compensationExpectation: cleanString(candidate.compensationExpectation) } : {}),
     ...(cleanString(candidate.yoe) ? { yoe: cleanString(candidate.yoe) } : {}),
     ...(cleanString(candidate.notes) ? { notes: cleanString(candidate.notes) } : {}),
   }
 }
 
-function extractChecklistTicks(submission: Record<string, unknown>): Record<string, boolean> {
+export function extractChecklistTicks(submission: Record<string, unknown>): Record<string, boolean> {
   const checklist = asRecord(submission.checklist) ?? {}
   const out: Record<string, boolean> = {}
   for (const [key, value] of Object.entries(checklist)) {
@@ -348,6 +388,10 @@ export function buildResearchFromEmployee(employee: CoresignalEmployeeCollectV2)
 
   return {
     source: "coresignal",
+    ...(cleanString((employee as { name?: string }).name) ??
+    cleanString((employee as { full_name?: string }).full_name)
+      ? { subjectName: cleanString((employee as { name?: string }).name) ?? cleanString((employee as { full_name?: string }).full_name) }
+      : {}),
     headline: cleanString(employee.headline) ?? activeTitle ?? "",
     companies,
     education,
@@ -382,12 +426,17 @@ export interface RecruiterSubmissionEvalDeps {
   }
   now?: () => string
   log?: (event: string, fields?: Record<string, unknown>) => void
+  /** Download+extract the uploaded résumé text (PRIMARY evidence). Defaults to
+   *  defaultFetchResumeText in prod; tests stub it. Omitted → no résumé text. */
+  fetchResumeText?: (resumeUrl: string) => Promise<string | undefined>
 }
 
 export type RecruiterSubmissionEvalResult = {
   status: "skipped_existing" | "written" | "error_written"
   submissionId: string
   aiEvaluation?: SubmissionAiEvaluation
+  /** The canonical pa-evaluation-attempts id mirrored on a successful write. */
+  evaluationAttemptId?: string
 }
 
 // The cache key + the unified Coresignal store live in ./lib/coresignal-cache.
@@ -416,6 +465,64 @@ async function researchCandidate(
     log: (event, fields) => deps.log?.(event, { submissionId, ...(fields ?? {}) }),
   })
   return employee ? buildResearchFromEmployee(employee) : undefined
+}
+
+/**
+ * Download + text-extract the uploaded résumé (PRIMARY ground-truth evidence).
+ * Handles https (firebasestorage download URL) and gs:// URIs. FAIL-OPEN: any
+ * download/parse error → undefined (judge falls back to notes + research).
+ * Bounded: 5MB download cap + 50-page pdf-parse + 100KB text cap. No OCR/vision
+ * here (keeps the trigger fast); image-only PDFs yield empty → undefined.
+ */
+/**
+ * Normalize common share-link formats to a direct-download endpoint that
+ * returns raw PDF bytes. Recruiters overwhelmingly paste Google Drive
+ * `drive.google.com/file/d/<id>/view` (and `open?id=`) links — those serve an
+ * HTML *viewer* page, not the PDF, so pdf-parse extracts nothing and the
+ * candidate gets rejected for "no résumé". `drive.usercontent.google.com`
+ * with `confirm=t` returns the bytes (and clears the large-file interstitial).
+ * Google Docs links export to PDF. Non-Drive URLs pass through unchanged.
+ */
+export function normalizeResumeUrl(url: string): string {
+  const drive = /drive\.google\.com\/(?:file\/d\/([^/?]+)|open\?id=([^&]+)|uc\?(?:[^#]*&)?id=([^&]+))/.exec(url)
+  const driveId = drive?.[1] ?? drive?.[2] ?? drive?.[3]
+  if (driveId) return `https://drive.usercontent.google.com/download?id=${driveId}&export=download&confirm=t`
+  const doc = /docs\.google\.com\/document\/d\/([^/?]+)/.exec(url)
+  if (doc?.[1]) return `https://docs.google.com/document/d/${doc[1]}/export?format=pdf`
+  return url
+}
+
+export async function defaultFetchResumeText(
+  resumeUrl: string,
+  log?: (event: string, fields?: Record<string, unknown>) => void,
+): Promise<string | undefined> {
+  try {
+    let bytes: Uint8Array
+    if (resumeUrl.startsWith("gs://")) {
+      const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(resumeUrl)
+      if (!m) return undefined
+      const [buf] = await getStorage().bucket(m[1]!).file(decodeURIComponent(m[2]!)).download()
+      bytes = new Uint8Array(buf)
+    } else {
+      bytes = (await fetchPdfWithSizeCap(normalizeResumeUrl(resumeUrl))).bytes
+    }
+    // Guard: only parse real PDF bytes. A Drive/Docs viewer or "request access"
+    // HTML page is not a %PDF — feeding it to pdf-parse yields junk/empty, so
+    // fail-open here (judge falls back to research) instead of fabricating text.
+    if (!(bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
+      log?.("resume_not_pdf", { resumeUrl: resumeUrl.slice(0, 120) })
+      return undefined
+    }
+    const mod = (await import("pdf-parse/lib/pdf-parse.js")) as unknown as {
+      default: (data: Buffer, opts?: { max?: number }) => Promise<{ text: string }>
+    }
+    const out = await mod.default(Buffer.from(bytes), { max: 50 })
+    const text = (out.text ?? "").trim()
+    return text.length > 0 ? text.slice(0, 100_000) : undefined
+  } catch (err) {
+    log?.("resume_text_extract_failed", { error: String(err).slice(0, 200) })
+    return undefined
+  }
 }
 
 function renderJdBlocks(job: Record<string, unknown>): string {
@@ -466,6 +573,7 @@ function renderResearch(research: SubmissionEvalResearch | undefined): string {
     .map((e) => `- ${e.school}${e.degree ? ` — ${e.degree}` : ""}`)
     .join("\n")
   return [
+    `Research subject (name on the resolved LinkedIn profile): ${research.subjectName || "(name not on profile)"}`,
     `Headline: ${research.headline || "(none)"}`,
     `Companies:\n${companies || "(none)"}`,
     `Education:\n${education || "(none — no school/degree on the profile)"}`,
@@ -483,7 +591,46 @@ function renderRecruiterBackgroundFlag(submission: Record<string, unknown>): str
   return parts.length ? parts.join(" · ") : "(recruiter did not flag any background pillars)"
 }
 
-function buildJudgeUserText(args: {
+/** Pull a job's roleFunction token(s) off the job doc (array or string). [] when absent. */
+export function roleFunctionsOf(job: Record<string, unknown> | null | undefined): string[] {
+  const rf = job?.roleFunction
+  if (Array.isArray(rf)) return rf.filter((s): s is string => typeof s === "string")
+  if (typeof rf === "string" && rf.trim()) return [rf.trim()]
+  const tags = (job?.tags ?? {}) as Record<string, unknown>
+  const t = tags.targetRoleFunction ?? tags.roleFunction
+  if (Array.isArray(t)) return t.filter((s): s is string => typeof s === "string")
+  return []
+}
+
+/**
+ * Advisory school-strength note for the LLM judge, from WeKruit's role-aware target-school
+ * list ({@link lookupSchoolPrior}). A SOFT prior — never a gate, never a reject reason. Picks
+ * the STRONGEST hit across the candidate's schools, scoped to the job's roleFunction lens
+ * (falls back to the broad general US list). Returns "" when no school resolves — and the
+ * ABSENCE of a note must NEVER be read as a negative (many strong candidates are non-target).
+ */
+export function buildSchoolPriorNote(
+  schools: Array<string | undefined | null>,
+  roleFunction: string | string[] | undefined | null,
+): string {
+  const rf = (Array.isArray(roleFunction) ? roleFunction : roleFunction ? [roleFunction] : []) as RoleFunction[]
+  const rank = (s: string) => (s === "strong" ? 0 : s === "recognized" ? 1 : 2)
+  let best: ReturnType<typeof lookupSchoolPrior> | null = null
+  for (const s of schools) {
+    if (!s || !s.trim()) continue
+    const r = lookupSchoolPrior(s, rf)
+    if (r.strength === "unknown") continue
+    if (!best || rank(r.strength) < rank(best.strength)) best = r
+  }
+  if (!best) return ""
+  const where =
+    best.matchedVia === "general_fallback"
+      ? "a broadly-recognized US school"
+      : `a ${best.strength === "strong" ? "top/strong target" : "recognized"} school for this role family (lens ${best.lens}, ${best.tier})`
+  return `${best.canonical} is ${where}. Treat this as a POSITIVE prior for the \`school\` background pillar, but weigh it alongside real experience/skills and do NOT over-credit pedigree. (If no such note appears, there is simply no school prior — never read that as a negative.)`
+}
+
+export function buildJudgeUserText(args: {
   jobId: string
   job: Record<string, unknown>
   groups: ChecklistGroup[]
@@ -491,6 +638,7 @@ function buildJudgeUserText(args: {
   ticks: Record<string, boolean>
   submission: Record<string, unknown>
   research: SubmissionEvalResearch | undefined
+  resumeText?: string
 }): string {
   const title = cleanString(args.job.title) ?? cleanString(asRecord(args.job.prescreenConfig)?.jobTitle) ?? args.jobId
   const company =
@@ -509,14 +657,20 @@ ${renderChecklist(args.groups, args.ticks)}
 ## Recruiter self-reported score
 ${renderScore(args.submission)}
 
-## Candidate (as submitted by the recruiter)
+## Candidate (as submitted by the recruiter — this IS the person under review; judge THIS profile)
 Name: ${args.candidate.name}
 Link: ${args.candidate.link || "(none)"}
-${args.candidate.email ? `Email: ${args.candidate.email}\n` : ""}${args.candidate.currentRole ? `Current role: ${args.candidate.currentRole}\n` : ""}${args.candidate.yoe ? `Years of experience: ${args.candidate.yoe}\n` : ""}Recruiter notes: ${(args.candidate.notes ?? "(none)").slice(0, 1500)}
+${args.candidate.email ? `Email: ${args.candidate.email}\n` : ""}${args.candidate.currentRole ? `Current role: ${args.candidate.currentRole}\n` : ""}${args.candidate.currentCompany ? `Current company: ${args.candidate.currentCompany}\n` : ""}${args.candidate.yoe ? `Years of experience: ${args.candidate.yoe}\n` : ""}${args.candidate.location ? `Location: ${args.candidate.location}\n` : ""}${args.candidate.workAuthorization ? `Work authorization: ${args.candidate.workAuthorization}\n` : ""}${args.candidate.employmentStatus ? `Employment status: ${args.candidate.employmentStatus}\n` : ""}${args.candidate.compensationExpectation ? `Compensation expectation: ${args.candidate.compensationExpectation}\n` : ""}Recruiter notes (the recruiter's summary of the candidate's résumé/experience — primary evidence about THIS person): ${(args.candidate.notes ?? "(none)").slice(0, 1500)}
 
-## Independent research (Coresignal)
+## Candidate résumé (full text — PRIMARY, ground-truth evidence about THIS person; trust it over the LinkedIn research when they disagree)
+${args.resumeText ? args.resumeText.slice(0, 12_000) : "(no résumé text available — apply the NO-RÉSUMÉ FALLBACK rule: judge fit on the research + recruiter notes as primary evidence; do NOT reject solely for the missing résumé; prefer borderline if plausibly qualified)"}
+
+## Independent research (Coresignal — CORROBORATION only; may be stale/wrong or a different person for the pasted URL)
 ${renderResearch(args.research)}
-
+${(() => {
+  const note = buildSchoolPriorNote((args.research?.education ?? []).map((e) => e.school), roleFunctionsOf(args.job))
+  return note ? `\n## School-strength prior (ADVISORY — WeKruit role-aware target-school list; a soft signal, NEVER a gate or reject reason)\n${note}\n` : ""
+})()}
 ## Recruiter background self-flag (HINT only — verify independently)
 ${renderRecruiterBackgroundFlag(args.submission)}
 
@@ -592,6 +746,23 @@ async function judgeSubmission(
         })
         judgment = { ...judgment, verdict: "borderline" }
       }
+      // DETERMINISTIC wrong-identity clamp: the LLM reliably DETECTS when the
+      // LinkedIn research is a different person, but it doesn't always downgrade
+      // the verdict (it once still returned reject 0.72). When identityConflict
+      // is set, the research is untrustworthy → never a confident reject on it:
+      // force "borderline" (human review), cap confidence, and surface why.
+      if (judgment.identityConflict && judgment.verdict === "reject") {
+        deps.log?.("verdict_clamped_identity_conflict", { submissionId })
+        judgment = {
+          ...judgment,
+          verdict: "borderline",
+          confidence: Math.min(judgment.confidence, 0.5),
+          reasons: [
+            "Independent LinkedIn research appears to be a DIFFERENT person (wrong/mismatched LinkedIn URL) — verdict set to human review; the research was not used to reject.",
+            ...judgment.reasons,
+          ],
+        }
+      }
       return { judgment, usedModel: result.usedModel }
     } catch (err) {
       lastErr = err
@@ -630,8 +801,177 @@ export function errorEvaluation(message: string, evaluatedAt: string): Submissio
   }
 }
 
+// ---------------------------------------------------------------------------
+// Canonical eval-store mirror (P3, 2026-06-15).
+//
+// Mirror every recruiter submission's `aiEvaluation` into a
+// `pa-evaluation-attempts/{attemptId}` doc so it is labelable through the SAME
+// data-labeling surface as prescreen + external-supply (shared <EvalLabelForm>).
+// Recruiter submissions have NO pa-users candidateId, so the attempt id is
+// derived from {source:"recruiter_submission", jobId, salt:submissionId}; the
+// submissionId is preserved in `externalEvaluationId` for traceability.
+//
+// The mirror is ADDITIVE and idempotent: it NEVER clobbers an existing
+// `humanReview.label` (a human's gold label). If an attempt already carries a
+// label, only the AI fields are refreshed and the human review is preserved.
+// ---------------------------------------------------------------------------
+
+export const RECRUITER_SUBMISSION_EVAL_RUBRIC_VERSION = SUBMISSION_EVAL_VERSION
+
+/** verdict → canonical proposed-outcome kind. */
+function recruiterVerdictToOutcome(
+  verdict: SubmissionAiEvaluation["verdict"],
+): EvaluationOutcome {
+  const kind = verdict === "advance" ? "pass" : verdict === "reject" ? "reject" : "hold"
+  return { kind }
+}
+
+function tallyDimension(
+  id: string,
+  label: string,
+  weight: number,
+  tally: SubmissionEvalTally,
+): EvaluationDimensionScore {
+  // Met-ratio of the checklist group → a 0..1 confidence → a 0..4 score.
+  const ratio = tally.total > 0 ? Math.max(0, Math.min(1, tally.met / tally.total)) : 0
+  const score = confidenceToScore(ratio)
+  return {
+    dimensionId: id,
+    label,
+    criterion: label,
+    weight,
+    score,
+    anchor: scoreToAnchor(score),
+    confidence: ratio,
+    evidenceRefs: [],
+    missingEvidence: tally.gaps.slice(0, 12),
+    rationale: `${label}: ${tally.met}/${tally.total} met`,
+    riskFlags: [],
+  }
+}
+
+/**
+ * Map a recruiter `SubmissionAiEvaluation` → a canonical `EvaluationAttempt`.
+ * Pure (no IO). `existing` (when supplied) preserves a prior `humanReview` —
+ * including a labeler's gold `humanReview.label` — so the mirror is additive.
+ */
+export function recruiterSubmissionToEvaluationAttempt(input: {
+  submissionId: string
+  jobId: string
+  candidateId?: string
+  companyId?: string
+  aiEvaluation: SubmissionAiEvaluation
+  nowIso: string
+  existing?: EvaluationAttempt | null
+}): EvaluationAttempt {
+  const ai = input.aiEvaluation
+  const attemptId = createEvaluationAttemptId({
+    source: "recruiter_submission",
+    jobId: input.jobId,
+    salt: input.submissionId,
+  })
+
+  const dimensions: EvaluationDimensionScore[] = [
+    tallyDimension("hard", "Must-have requirements", 3, ai.checklist.hard),
+    tallyDimension("fit", "Strong-fit signals", 2, ai.checklist.fit),
+    tallyDimension("bonus", "Bonus signals", 1, ai.checklist.bonus),
+  ]
+
+  const proposedOutcome = recruiterVerdictToOutcome(ai.verdict)
+  const confidence = Math.max(0, Math.min(1, Number.isFinite(ai.confidence) ? ai.confidence : 0))
+  // Anti-signal flags surface as risk flags on the attempt.
+  const riskFlags = (ai.checklist.anti.flags ?? []).slice(0, 12)
+  const missingEvidence = [
+    ...ai.checklist.hard.gaps,
+    ...ai.checklist.fit.gaps,
+  ].slice(0, 20)
+
+  const evidence: EvaluationEvidenceRef[] = ai.reasons.slice(0, 12).map((reason, index) => ({
+    refId: `recruiter:${input.submissionId}:reason:${index + 1}`,
+    source: "evaluator",
+    summary: reason.slice(0, 2_000),
+  }))
+
+  const explanation = (ai.summary?.trim() || `${ai.verdict}: recruiter submission evaluation`).slice(0, 4_000)
+
+  return {
+    schemaVersion: 1,
+    attemptId,
+    source: "recruiter_submission",
+    purpose: "candidate_job_fit",
+    ...(input.candidateId ? { candidateId: input.candidateId } : {}),
+    jobId: input.jobId,
+    ...(input.companyId ? { companyId: input.companyId } : {}),
+    externalEvaluationId: input.submissionId,
+    rubricVersion: RECRUITER_SUBMISSION_EVAL_RUBRIC_VERSION,
+    algorithmVersion: SCREENING_EVALUATION_ALGORITHM_VERSION,
+    evaluator: { kind: "llm_judge", model: ai.model, promptVersion: ai.version },
+    dimensions,
+    gates: [],
+    weightedFitScore: confidence,
+    evidenceConfidence: confidence,
+    missingEvidence,
+    riskFlags,
+    proposedOutcome,
+    reviewPriority: deriveReviewPriority({
+      proposedOutcome,
+      gates: [],
+      evidenceConfidence: confidence,
+      riskFlags,
+    }),
+    explanation,
+    evidence,
+    // Preserve any prior human review (including a gold label). Only refresh the
+    // AI fields on re-mirror; never resurrect a "pending" over a real label.
+    humanReview: input.existing?.humanReview ?? { status: "pending" },
+    createdAt: input.existing?.createdAt ?? input.nowIso,
+    updatedAt: input.nowIso,
+  }
+}
+
+/**
+ * Upsert the canonical eval-store mirror for a recruiter submission. Idempotent
+ * + additive: reads any existing attempt and preserves its `humanReview`.
+ * Best-effort — a mirror failure must NEVER fail the eval write.
+ */
+async function mirrorRecruiterEvalAttempt(
+  deps: RecruiterSubmissionEvalDeps,
+  input: {
+    submissionId: string
+    jobId: string
+    candidateId?: string
+    companyId?: string
+    aiEvaluation: SubmissionAiEvaluation
+    nowIso: string
+  },
+): Promise<string | null> {
+  try {
+    const attemptId = createEvaluationAttemptId({
+      source: "recruiter_submission",
+      jobId: input.jobId,
+      salt: input.submissionId,
+    })
+    const existing = await getEvaluationAttempt(deps.db, attemptId)
+    const attempt = recruiterSubmissionToEvaluationAttempt({ ...input, existing })
+    await saveEvaluationAttempt(deps.db, attempt)
+    deps.log?.("eval_attempt_mirrored", {
+      submissionId: input.submissionId,
+      attemptId,
+      verdict: input.aiEvaluation.verdict,
+      preservedLabel: Boolean(existing?.humanReview?.label),
+    })
+    return attemptId
+  } catch (err) {
+    deps.log?.("eval_attempt_mirror_failed", {
+      submissionId: input.submissionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
+
 export async function runRecruiterSubmissionEval(
-  raw: { submissionId: string; submission: Record<string, unknown> },
+  raw: { submissionId: string; submission: Record<string, unknown>; force?: boolean },
   deps: RecruiterSubmissionEvalDeps,
 ): Promise<RecruiterSubmissionEvalResult> {
   const now = deps.now ?? (() => new Date().toISOString())
@@ -639,9 +979,10 @@ export async function runRecruiterSubmissionEval(
 
   // Idempotent re-fire guard on the FRESH doc — onDocumentCreated re-fires
   // deliver the at-creation snapshot, which never contains aiEvaluation.
+  // `force` (admin re-eval) bypasses the guard to overwrite a stale evaluation.
   const fresh = await ref.get()
   const submission = fresh.exists ? (fresh.data() ?? {}) : raw.submission
-  if (asRecord(submission.aiEvaluation)) {
+  if (!raw.force && asRecord(submission.aiEvaluation)) {
     deps.log?.("skipped_existing_evaluation", { submissionId: raw.submissionId })
     return { status: "skipped_existing", submissionId: raw.submissionId }
   }
@@ -656,7 +997,15 @@ export async function runRecruiterSubmissionEval(
     const groups = extractChecklistGroups(job)
     const candidate = extractCandidate(submission)
     const ticks = extractChecklistTicks(submission)
-    const research = await researchCandidate(candidate.linkedinUrl ?? candidate.link, deps, raw.submissionId)
+    // Read the uploaded résumé (PRIMARY ground-truth evidence about THIS person)
+    // in parallel with the Coresignal research. Coresignal can be stale/wrong
+    // for a valid URL, so the résumé is the source of truth; research corroborates.
+    const resumeUrl = cleanString(asRecord(submission.candidate)?.resumeUrl)
+    const fetchResume = deps.fetchResumeText ?? ((u: string) => defaultFetchResumeText(u, deps.log))
+    const [research, resumeText] = await Promise.all([
+      researchCandidate(candidate.linkedinUrl ?? candidate.link, deps, raw.submissionId),
+      resumeUrl ? fetchResume(resumeUrl) : Promise.resolve(undefined),
+    ])
     const evaluatedAt = now()
     const tracking = await ensureRecruiterSubmissionCandidateTracked(deps.db, {
       submissionId: raw.submissionId,
@@ -676,7 +1025,7 @@ export async function runRecruiterSubmissionEval(
         }
       : {}
 
-    const userText = buildJudgeUserText({ jobId, job, groups, candidate, ticks, submission, research })
+    const userText = buildJudgeUserText({ jobId, job, groups, candidate, ticks, submission, research, resumeText })
     const { judgment, usedModel } = await judgeSubmission(deps, userText, raw.submissionId, groups)
 
     const aiEvaluation: SubmissionAiEvaluation = {
@@ -686,14 +1035,40 @@ export async function runRecruiterSubmissionEval(
       model: usedModel,
       version: SUBMISSION_EVAL_VERSION,
     }
-    await ref.set({ aiEvaluation, ...trackingPatch }, { merge: true })
+
+    // Mirror into the canonical eval store so the submission is labelable
+    // through the shared dual-pane label form. Best-effort — never blocks or
+    // fails the operator-facing eval write. NEVER touches submission `status`.
+    const candidateId = tracking.status === "tracked" && tracking.candidateId
+      ? tracking.candidateId
+      : cleanString(submission.candidateId)
+    const companyId = cleanString(asRecord(submission)?.companyId) ?? cleanString(job.companyId)
+    const evaluationAttemptId = await mirrorRecruiterEvalAttempt(deps, {
+      submissionId: raw.submissionId,
+      jobId,
+      candidateId,
+      companyId,
+      aiEvaluation,
+      nowIso: evaluatedAt,
+    })
+
+    await ref.set(
+      {
+        aiEvaluation,
+        ...trackingPatch,
+        // Stamp the canonical attemptId for a clean read by the dashboard.
+        ...(evaluationAttemptId ? { evaluationAttemptId } : {}),
+      },
+      { merge: true },
+    )
     deps.log?.("evaluation_written", {
       submissionId: raw.submissionId,
       verdict: aiEvaluation.verdict,
       model: usedModel,
       hasResearch: Boolean(research),
+      evaluationAttemptId,
     })
-    return { status: "written", submissionId: raw.submissionId, aiEvaluation }
+    return { status: "written", submissionId: raw.submissionId, aiEvaluation, evaluationAttemptId: evaluationAttemptId ?? undefined }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     deps.log?.("evaluation_failed_writing_error_shape", {
@@ -710,7 +1085,7 @@ export async function runRecruiterSubmissionEval(
 // Production CF — thin shim over runRecruiterSubmissionEval.
 // ---------------------------------------------------------------------------
 
-function makeProdEvalDeps(db: Firestore): RecruiterSubmissionEvalDeps {
+export function makeProdEvalDeps(db: Firestore): RecruiterSubmissionEvalDeps {
   const openai = getOpenAIConfig()
   const anthropic = getAnthropicConfig()
   return {
@@ -734,6 +1109,10 @@ function makeProdEvalDeps(db: Firestore): RecruiterSubmissionEvalDeps {
       searchEmployeeIdByLinkedinUrl,
       fetchEmployeeCollect,
     },
+    fetchResumeText: (resumeUrl) =>
+      defaultFetchResumeText(resumeUrl, (event, fields) =>
+        logger.info(`[recruiter-submission-eval] ${event}`, fields as Record<string, unknown>),
+      ),
     now: () => new Date().toISOString(),
     log: (event, fields) => logger.info(`[recruiter-submission-eval] ${event}`, fields),
   }

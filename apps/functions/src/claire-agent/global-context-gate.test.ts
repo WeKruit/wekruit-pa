@@ -107,7 +107,7 @@ test("WS-1a gate: a candidate WITH real résumé content gets NO no-résumé off
   assert.equal(/connect-linkedin\?token=/.test(ctx), false, "a candidate with a parsed résumé must NOT get the LinkedIn-connect offer")
 })
 
-test("WS-1a gate: NON-canary name-only candidate gets the upload link but NOT the canary-gated LinkedIn line", async () => {
+test("WS-1a gate (UNGATED 2026-06-16): NON-canary name-only candidate ALSO gets the LinkedIn one-tap line — it is now universal", async () => {
   const db = makeDb({
     [NON_CANARY_UID]: {
       id: NON_CANARY_UID,
@@ -118,7 +118,11 @@ test("WS-1a gate: NON-canary name-only candidate gets the upload link but NOT th
   })
   const ctx = await loadGlobalContext(db, NON_CANARY_UID, PHONE)
   assert.match(ctx, /Resume upload link/, "the upload link is universal (not canary-gated)")
-  assert.equal(/connect-linkedin\?token=/.test(ctx), false, "the LinkedIn one-tap line stays canary-only")
+  // Adam 2026-06-16: "LinkedIn login is proven; make it the universal path." The
+  // isCanaryUser gate on the one-tap connect line is removed — it now surfaces for
+  // ALL no-résumé / onboarding-not-done candidates, canary or not.
+  assert.match(ctx, /LinkedIn one-tap connect link/, "the LinkedIn one-tap line is now universal (canary gate removed)")
+  assert.match(ctx, /connect-linkedin\?token=/, "the one-tap link must carry a connect token")
 })
 
 test("WS-1a gate: once onboarding is complete, NO offer lines even for a name-only candidate", async () => {

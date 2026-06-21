@@ -124,6 +124,7 @@ export {
   buildHelloWekruitOpenerBody,
   buildBindCodeOpenerBody,
   parseHelloWekruitOpener,
+  looksLikeGarbledStartToken,
   BIND_CODE_ALPHABET,
   BIND_CODE_LENGTH,
   normalizeBindCode,
@@ -7606,6 +7607,8 @@ export {
 // by apps/functions pii-confirm-start.ts.
 export { OnboardingPipeline } from "./onboarding/pipeline.js"
 export type { PipelineState, PipelineStateProvider, RunTurnInput as OnboardingRunTurnInput, RunTurnResult as OnboardingRunTurnResult } from "./onboarding/pipeline.js"
+export { runOnboardingPipelineTurn } from "./onboarding/runtime-bridge.js"
+export type { PipelineEmitDeps, RunPipelineTurnInput, RunPipelineTurnResult } from "./onboarding/runtime-bridge.js"
 
 // 2026-05-18 — chat → tag + memory extractor runtime wrappers (concrete deps
 // for the pure functions in conversation-extractor.ts).

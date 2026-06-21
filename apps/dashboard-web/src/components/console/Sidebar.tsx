@@ -37,6 +37,14 @@ export type NavMode = NavSectionDef["mode"]
 export const CONSOLE_NAV: NavSectionDef[] = [
   // ───────────── OPS ─────────────
   {
+    id: "overview",
+    label: "Overview",
+    icon: "trending_up",
+    mode: "ops",
+    defaultOpen: true,
+    items: [{ to: "/admin/operations", label: "Operations overview" }],
+  },
+  {
     id: "prescreen",
     label: "Prescreen",
     icon: "list_check",
@@ -58,6 +66,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     items: [
       { to: "/admin/candidates", label: "All candidates", end: true },
       { to: "/admin/passed-candidates", label: "Passed candidates" },
+      { to: "/admin/rejected-candidates", label: "Rejected · by tier" },
       { to: "/admin/identity-conflicts", label: "Identity conflicts", hitl: true },
       { to: "/conversations", label: "iMessage conversations" },
     ],
@@ -89,6 +98,15 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/recruiter-hub", label: "Recruiter hub", hitl: true },
       { to: "/admin/recruiter-digests", label: "Digests" },
       { to: "/admin/recruiter-access", label: "Invites & roster" },
+    ],
+  },
+  {
+    id: "partners",
+    label: "Partners",
+    icon: "link2",
+    mode: "ops",
+    items: [
+      { to: "/admin/partner-stats", label: "Partner stats" },
     ],
   },
   // ───────────── DEV ─────────────
@@ -142,6 +160,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/eval/voice-review", label: "Voice review" },
       { to: "/eval/n-round-sim", label: "N-round sim" },
       { to: "/admin/flywheel-eval", label: "Flywheel eval" },
+      { to: "/admin/eval-labels", label: "Eval labels" },
       { to: "/admin/qa-evaluator", label: "QA evaluator" },
       { to: "/admin/prescreen-feedback", label: "Prescreen feedback" },
       { to: "/admin/external-supply/review", label: "Review queue" },

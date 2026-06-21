@@ -10,6 +10,7 @@ export const EvaluationSourceSchema = z.enum([
   "prescreen",
   "practice_question",
   "external_supply",
+  "recruiter_submission",
 ])
 export type EvaluationSource = z.infer<typeof EvaluationSourceSchema>
 
@@ -111,6 +112,73 @@ export const EvaluationEvaluatorSchema = z.object({
 })
 export type EvaluationEvaluator = z.infer<typeof EvaluationEvaluatorSchema>
 
+/**
+ * Data-labeling layer (2026-06-15, Adam directive). A human reviewer grades the
+ * AI evaluation itself so we can later review the quality of the evaluation
+ * process and build regression/gold datasets. This is ADDITIVE — it never
+ * overwrites the AI's {@link EvaluationAttempt.proposedOutcome} or `dimensions`;
+ * the AI verdict and the human label coexist, exactly as a modern annotation
+ * tool keeps the model prediction next to the gold label.
+ */
+export const EvaluationLabelDecisionSchema = z.enum(["agree", "disagree", "partial"])
+export type EvaluationLabelDecision = z.infer<typeof EvaluationLabelDecisionSchema>
+
+/**
+ * Closed vocabulary for WHY the AI evaluation was wrong, when a labeler diverges.
+ * This is the single most valuable flywheel signal — the delta between the AI
+ * verdict and the human label, categorized. Keep it a closed enum (Adam D5/D15):
+ * an open free-text field for nuance lives in `rationale`.
+ */
+export const EvaluationErrorCategorySchema = z.enum([
+  "missed_evidence", // evidence was present; the AI did not use it
+  "hallucinated_evidence", // the AI cited evidence that is not in the record
+  "wrong_weight", // a dimension was over- or under-weighted
+  "over_strict", // too harsh — would reject a candidate who should advance
+  "over_lenient", // too soft — would advance a candidate who should not
+  "misread_transcript", // misunderstood what the candidate actually said
+  "profile_ignored", // ignored LinkedIn/resume profile evidence
+  "rubric_mismatch", // applied the wrong or an outdated rubric
+  "other",
+])
+export type EvaluationErrorCategory = z.infer<typeof EvaluationErrorCategorySchema>
+
+export const EvaluationQualityRatingSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+  z.literal(4),
+  z.literal(5),
+])
+export type EvaluationQualityRating = z.infer<typeof EvaluationQualityRatingSchema>
+
+export const HumanEvalLabelSchema = z.object({
+  /** Did the human agree with the AI's proposed outcome? */
+  decision: EvaluationLabelDecisionSchema,
+  /** The human's corrected verdict — present when the labeler diverges. */
+  correctedOutcome: EvaluationOutcomeSchema.optional(),
+  /** Categorized reasons the AI was wrong (closed vocab). Empty on agreement. */
+  errorCategories: z.array(EvaluationErrorCategorySchema).max(8).default([]),
+  /** Overall AI-evaluation quality, 1 (bad) .. 5 (excellent). */
+  qualityRating: EvaluationQualityRatingSchema.optional(),
+  /** Evidence the human highlighted to justify the label (transcript turn, resume, etc.). */
+  evidenceRefs: z.array(EvaluationEvidenceRefSchema).max(20).default([]),
+  /** Free-text "why" — required by the callable when `decision !== "agree"`. */
+  rationale: z.string().max(4_000).optional(),
+  /** Rubric version the label was made against (so a later rubric change cannot silently invalidate it). */
+  rubricVersion: z.string().min(1).max(200).optional(),
+  labeledBy: z.string().min(1).max(200).optional(),
+  labeledAt: TimestampSchema.optional(),
+  /**
+   * Light gold-sampling marker (2026-06-15). When true, the labeler flagged this
+   * attempt as a high-quality "gold" example worth keeping in a curated
+   * regression/eval set. Additive + optional: a normal label leaves it unset.
+   * The export surfaces it so a gold-only dataset can be filtered out cheaply,
+   * and the queue can deliberately mix gold records back in.
+   */
+  isGoldSample: z.boolean().optional(),
+})
+export type HumanEvalLabel = z.infer<typeof HumanEvalLabelSchema>
+
 export const HumanReviewSchema = z.object({
   status: HumanReviewStatusSchema,
   reviewer: z.string().min(1).max(200).optional(),
@@ -119,6 +187,11 @@ export const HumanReviewSchema = z.object({
   correctedDimensions: z.array(EvaluationDimensionScoreSchema).optional(),
   note: z.string().max(2_000).optional(),
   correctionEventId: IdSchema.optional(),
+  /**
+   * Rich data-labeling annotation of the AI evaluation. Optional and additive —
+   * absent on every legacy review, present once a reviewer labels eval quality.
+   */
+  label: HumanEvalLabelSchema.optional(),
 })
 export type HumanReview = z.infer<typeof HumanReviewSchema>
 

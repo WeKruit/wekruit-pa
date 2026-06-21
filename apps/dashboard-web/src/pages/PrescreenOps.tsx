@@ -21,6 +21,7 @@ import type {
 import { AdminPrescreenSessionLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   BulkRejectDrawer,
+  EngagementBadge,
   PrescreenReviewDrawer,
   terminalTone,
   type Row,
@@ -484,9 +485,12 @@ export default function PrescreenOps() {
                                     </Badge>
                                   </td>
                                   <td style={cellStyle}>
-                                    <Badge tone={bucketTone(row.classification.bucket)}>
-                                      {row.classification.label}
-                                    </Badge>
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                      <Badge tone={bucketTone(row.classification.bucket)}>
+                                        {row.classification.label}
+                                      </Badge>
+                                      <EngagementBadge signal={row.review?.engagementSignal} />
+                                    </div>
                                   </td>
                                   <td style={cellStyle}>{scorePercent(row)}</td>
                                   <td style={cellStyle}>
@@ -512,16 +516,28 @@ export default function PrescreenOps() {
         )}
       </Panel>
 
-      {drawerSessionId ? (
-        <PrescreenReviewDrawer
-          sessionId={drawerSessionId}
-          onClose={() => setDrawerSessionId(null)}
-          onReviewed={() => {
-            setDrawerSessionId(null)
-            refreshAfterReview()
-          }}
-        />
-      ) : null}
+      {drawerSessionId ? (() => {
+        // Queue = the expanded job's pending rows, in display order, so ← / →
+        // and A=agree+next walk that job's review list.
+        const queue = expandedRows.map((r) => ({ sessionId: r.id }))
+        const queueIndex = queue.findIndex((q) => q.sessionId === drawerSessionId)
+        return (
+          <PrescreenReviewDrawer
+            sessionId={drawerSessionId}
+            queue={queue}
+            index={queueIndex}
+            onNavigate={(nextIndex) => {
+              const next = queue[nextIndex]
+              if (next) setDrawerSessionId(next.sessionId)
+            }}
+            onClose={() => setDrawerSessionId(null)}
+            onReviewed={() => {
+              setDrawerSessionId(null)
+              refreshAfterReview()
+            }}
+          />
+        )
+      })() : null}
       {bulkOpen ? (
         <BulkRejectDrawer
           rows={selectedRows.map(toDrawerRow)}

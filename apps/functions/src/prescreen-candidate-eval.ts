@@ -33,8 +33,10 @@ import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
 import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
 import {
   buildResearchFromEmployee,
+  buildSchoolPriorNote,
   extractChecklistGroups,
   renderChecklist,
+  roleFunctionsOf,
   looksLikeLinkedinUrl,
   EVAL_JUDGMENT_JSON_SCHEMA,
   EvalJudgmentSchema,
@@ -42,6 +44,9 @@ import {
   type SubmissionEvalResearch,
 } from "./recruiter-submission-eval.js"
 import { generateAndStorePrescreenAutoDraft } from "./evaluation-attempts.js"
+import { applyGlobalCandidateTier } from "./candidate-tier.js"
+import { suggestTierFromPrescreen } from "@pa/core-types"
+import { runPrescreenEngagementSignal } from "./prescreen-engagement-signal.js"
 
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
@@ -96,17 +101,20 @@ function buildChecklistDetail(
 const PRESCREEN_JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL prescreen candidate evaluator. A candidate COMPLETED a WeKruit prescreen interview for a specific role. Evaluate them against the job rubric using BOTH (a) their enriched profile research (Coresignal / LinkedIn / resume) and (b) the prescreen transcript. There are NO recruiter self-claims here — judge purely from the evidence in the research + transcript.
 
 Rules:
+- PRIMARY EVIDENCE = the prescreen transcript (the candidate's OWN first-person answers in this interview) + their résumé / merged profile. The Coresignal/LinkedIn research is CORROBORATION ONLY — it can be stale, sparse, or a wrong-identity match for the candidate's LinkedIn URL. When the transcript/résumé and the research disagree, TRUST THE TRANSCRIPT + RÉSUMÉ. NEVER reject because the research lacks or contradicts what the candidate clearly demonstrated in the interview or résumé.
+- WRONG-IDENTITY GUARD (check FIRST): the Coresignal research is fetched from a LinkedIn URL that CAN BE WRONG (mistyped/ambiguous URL or common-name collision resolves a DIFFERENT person). Before using research as evidence, sanity-check it plausibly belongs to THIS candidate: compare the research subject's name, profession/field, and seniority against the candidate's transcript answers and résumé. If the research SHARPLY CONFLICTS — a fundamentally different profession or field (e.g. research shows a pharmacist while the transcript + résumé are a software engineer) — treat the research as a LIKELY WRONG-IDENTITY match: **set \`identityConflict\`: true**, DO NOT use the research as disqualifying evidence, DO NOT reject on it, judge on the transcript + résumé alone, prefer verdict "borderline" (human review), and state the conflict in \`reasons\`. Set \`identityConflict\`: false otherwise (including when research is simply absent/sparse — that is "unverifiable", NOT a conflict and NOT disqualifying).
+- If NO job checklist is provided ("(no checklist)"), leave every checklist group's met/flagged and total at 0 with empty gaps/flags, and STILL assess the BACKGROUND pillars and give a holistic verdict + summary from the evidence — never skip the background assessment just because there is no checklist.
 - Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the research or transcript contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text.
 - Apply the same evidence bar to fit and bonus items; list unmet/unverifiable item texts in their gaps arrays.
 - For anti-signal items, flagged = items that plausibly apply to this candidate (from research OR transcript); list their exact item texts in checklist.anti.flags.
 - met/total (and flagged/total) must tally the rubric items per group; total = number of items in that group.
-- Be stingy. verdict "advance" ONLY when checklist.hard.gaps is empty AND the supporting evidence is concrete. Thin/generic/unverifiable evidence is "borderline". Clear hard gaps or applicable anti-signals push toward "reject".
+- Be stingy. verdict "advance" ONLY when checklist.hard.gaps is empty AND the supporting evidence is concrete. Thin/generic/unverifiable evidence is "borderline" (NOT "reject"). "reject" requires a clear, EVIDENCED MISMATCH against a hard requirement (the transcript/résumé positively shows the candidate does NOT meet it — e.g. clearly insufficient experience, wrong field) or an applicable anti-signal — never merely because a hard item could not be confirmed from a short transcript. A strong candidate who simply did not get to detail one requirement is "borderline" (human review), not "reject".
 - confidence is 0..1 — how confident you are given the evidence quality (note: if there is NO profile research and only a thin transcript, confidence should be low).
 - reasons: short concrete bullets citing the specific evidence (or its absence) that drove the verdict.
 - Also independently assess the candidate's BACKGROUND pillars from the research + transcript, and output \`background\` with one of strong / weak / unknown per pillar plus short \`evidence\`:
-  - school: "strong" for a target / strong / well-known university; "weak" for clearly non-target; "unknown" if no education info.
+  - school: "strong" for a target / well-known / brand-name university; "weak" for a real but non-target / lesser-known school. "unknown" ONLY when there is genuinely NO education info anywhere in the research/résumé/transcript. If ANY school is named, you MUST choose "strong" or "weak" (never "unknown") and name that school in \`evidence\` — an unranked or unfamiliar school is "weak", not "unknown".
   - degree: "strong" for a relevant degree/field for this role; "weak" if mismatched; "unknown" if absent.
-  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers; "unknown" if no work history.
+  - company: "strong" if the candidate has worked at fast-growing startups or strong / brand-name tech companies; "weak" if only unknown / no-name employers (a named-but-unfamiliar employer is "weak", not "unknown"); "unknown" only if no work history at all.
   - gpa: ALMOST ALWAYS "unknown". Set "strong"/"weak" ONLY if the transcript/resume explicitly states a GPA. NEVER infer GPA from the school.
 - Output STRICT JSON matching the schema. Nothing else.`
 
@@ -136,8 +144,13 @@ function renderResearch(research: SubmissionEvalResearch | undefined): string {
  * ONLY a résumé (no LinkedIn / no live Coresignal match) still gets a profile eval, and
  * a candidate with both is judged on the merged picture. Fail-open: "" when none.
  */
-async function loadResumeEvidence(db: Firestore, user: Record<string, unknown>, candidateId: string): Promise<string> {
+async function loadResumeEvidence(
+  db: Firestore,
+  user: Record<string, unknown>,
+  candidateId: string,
+): Promise<{ text: string; schools: string[] }> {
   const lines: string[] = []
+  const schools: string[] = []
   try {
     const highlights = Array.isArray(user.experienceHighlights) ? user.experienceHighlights : []
     for (const raw of highlights.slice(0, 12)) {
@@ -172,6 +185,7 @@ async function loadResumeEvidence(db: Firestore, user: Record<string, unknown>, 
         const e = (raw ?? {}) as Record<string, unknown>
         const school = str(e.school) || str(e.institution_name) || str(e.institution)
         if (!school) continue
+        schools.push(school)
         lines.push(`- résumé education: ${school}${str(e.degree) ? ` — ${str(e.degree)}` : ""}`)
       }
       const topSkills = Array.isArray(resume.topSkills) ? resume.topSkills : []
@@ -181,7 +195,7 @@ async function loadResumeEvidence(db: Firestore, user: Record<string, unknown>, 
   } catch {
     /* ignore — fail-open */
   }
-  return lines.join("\n").slice(0, 3_000)
+  return { text: lines.join("\n").slice(0, 3_000), schools }
 }
 
 async function loadTranscript(db: Firestore, sessionId: string): Promise<string> {
@@ -270,7 +284,10 @@ export async function runPrescreenCandidateEval(
     const user = (userSnap.data() ?? {}) as Record<string, unknown>
     const job = (jobSnap.data() ?? {}) as Record<string, unknown>
     const groups = extractChecklistGroups(job)
-    if (groups.length === 0) return { status: "skipped_no_job_checklist", sessionId }
+    // NOTE: a missing job checklist no longer skips the eval — the BACKGROUND pillars
+    // (school/degree/company/gpa) + the role-aware school prior don't need a checklist,
+    // and operators need that signal on every session (Adam 2026-06-15). We only skip
+    // below if there is ALSO no profile evidence at all (nothing to assess).
 
     // Enrich (cache-aware): the candidate's LinkedIn → Coresignal. Shared across this
     // candidate's other job sessions via the unified store (no re-fetch).
@@ -292,11 +309,23 @@ export async function runPrescreenCandidateEval(
       log("prescreen_eval.no_linkedin", { sessionId, candidateId })
     }
 
-    const [transcript, resumeEvidence] = await Promise.all([
+    const [transcript, resume] = await Promise.all([
       loadTranscript(deps.db, sessionId),
       loadResumeEvidence(deps.db, user, candidateId),
     ])
+    const resumeEvidence = resume.text
     const hasProfileEvidence = Boolean(research) || resumeEvidence.length > 0
+    // Run for the background pillars even with no checklist; only skip when there is
+    // genuinely nothing to assess (no checklist AND no profile evidence).
+    if (groups.length === 0 && !hasProfileEvidence) {
+      return { status: "skipped_no_job_checklist", sessionId }
+    }
+    // Role-aware school-strength prior (advisory soft signal for the school pillar; never a
+    // gate). Schools from Coresignal research + résumé; scoped to the job's roleFunction lens.
+    const schoolPriorNote = buildSchoolPriorNote(
+      [...(research?.education ?? []).map((e) => e.school), ...resume.schools],
+      roleFunctionsOf(job),
+    )
     const recruiterBoard = (job.recruiterBoard ?? {}) as Record<string, unknown>
     const label = (recruiterBoard.label ?? {}) as Record<string, unknown>
     const roleLine = [str(label.title) || str(job.title), str(label.company) || str(job.company)].filter(Boolean).join(" @ ")
@@ -313,6 +342,10 @@ export async function runPrescreenCandidateEval(
       "Candidate résumé / merged LinkedIn+résumé profile:",
       resumeEvidence || "(no résumé / merged profile on file)",
       "",
+      schoolPriorNote
+        ? "School-strength prior (ADVISORY — WeKruit role-aware target-school list; a SOFT signal, NEVER a gate or reject reason):\n" + schoolPriorNote
+        : null,
+      schoolPriorNote ? "" : null,
       "Prescreen transcript:",
       transcript,
     ].filter((l): l is string => l !== null).join("\n")
@@ -324,6 +357,20 @@ export async function runPrescreenCandidateEval(
       schema: EVAL_JUDGMENT_JSON_SCHEMA as unknown as Record<string, unknown>,
     })
     const parsed = EvalJudgmentSchema.parse(JSON.parse(judged.rawJson))
+
+    // Deterministic safety clamp: a wrong-identity research match can NEVER be a
+    // confident reject — the prompt guard is advisory (LLM may still emit reject
+    // while flagging the conflict), so force borderline + cap confidence and
+    // route to human review. Mirrors the recruiter-submission eval clamp.
+    if (parsed.identityConflict && parsed.verdict === "reject") {
+      log("prescreen_eval.identity_conflict_clamp", { sessionId, was: parsed.confidence })
+      parsed.verdict = "borderline"
+      parsed.confidence = Math.min(parsed.confidence, 0.5)
+      parsed.reasons = [
+        "Likely wrong-identity research match (LinkedIn profile appears to be a different person); not used as disqualifying evidence — routed to human review.",
+        ...(parsed.reasons ?? []),
+      ]
+    }
 
     const evaluation: PrescreenCandidateChecklistEval = {
       ...parsed,
@@ -346,6 +393,40 @@ export async function runPrescreenCandidateEval(
     // Fold the profile checklist eval into the rejection/next-step draft so the
     // operator-only notes combine the TRANSCRIPT eval + the PROFILE checklist eval.
     const terminal = str(review.proposedTerminal) || str(session.terminal)
+    // Auto-stamp the candidate's global tier on a prescreen rejection (incl.
+    // Claire auto-FAILs, which never reach an operator commit) so they surface
+    // in the Rejected-by-tier browse. AI-suggested (humanConfirmed:false) —
+    // operator can confirm/override via Re-evaluate. Best-wins, fail-open.
+    if (terminal === "FAIL" || terminal === "HARD_STOP") {
+      try {
+        const fit =
+          typeof session.score === "number" && typeof session.scoreMax === "number" && session.scoreMax > 0
+            ? session.score / session.scoreMax
+            : undefined
+        // strong school OR strong company (role-aware judge in the eval) → the
+        // non-top-5% reusable signal that drives tier_2 (else tier_3).
+        const bg = (evaluation as { background?: Record<string, { verdict?: string }> }).background
+        const strongBackground = bg?.school?.verdict === "strong" || bg?.company?.verdict === "strong"
+        const tier = suggestTierFromPrescreen({ terminal, weightedFitScore: fit, strongBackground })
+        if (tier) {
+          await applyGlobalCandidateTier(
+            {
+              candidateId,
+              tier,
+              source: "prescreen",
+              jobId,
+              reason: str(session.terminalReason) || undefined,
+              aiSuggestedTier: tier,
+              humanConfirmed: false,
+              actor: "system",
+            },
+            { db: deps.db, now: () => now },
+          )
+        }
+      } catch {
+        // fail-open — tiering must never block the prescreen eval
+      }
+    }
     if (terminal === "PASS" || terminal === "FAIL" || terminal === "HARD_STOP") {
       await (deps.regenerateDraft ?? generateAndStorePrescreenAutoDraft)({
         db: deps.db,
@@ -391,6 +472,58 @@ function pendingReviewJustEntered(
   return before?.terminalActionPendingReview !== true
 }
 
+/**
+ * Build prod deps for the prescreen candidate eval — loads the OpenAI / Anthropic /
+ * Coresignal secrets into env so the judge + enrichment work. Shared by the
+ * onDocumentWritten trigger and the admin backlog re-eval callable.
+ */
+export function makeProdPrescreenEvalDeps(db: Firestore): PrescreenCandidateEvalDeps {
+  for (const s of [PA_OPENAI_AGENT_API_KEY, CORESIGNAL_API_KEY] as const) {
+    try {
+      const v = s.value().trim()
+      if (v) process.env[s.name] = v
+    } catch {
+      /* unset → judge / enrich fail open */
+    }
+  }
+  try {
+    const a = ANTHROPIC_API_KEY.value().trim()
+    if (a && a !== "__UNSET__") process.env.ANTHROPIC_API_KEY = a
+  } catch {
+    /* no anthropic fallback */
+  }
+  const openai = getOpenAIConfig()
+  const anthropic = getAnthropicConfig()
+  let coresignalKey: string | null = null
+  try {
+    coresignalKey = CORESIGNAL_API_KEY.value().trim() || null
+  } catch {
+    coresignalKey = null
+  }
+  return {
+    db,
+    callJudge: async (args) => {
+      if (!openai.apiKey) throw new Error("PA_OPENAI_AGENT_API_KEY missing")
+      const out = await callWithFallback({
+        apiKey: openai.apiKey,
+        baseURL: openai.baseURL,
+        anthropicApiKey: anthropic.apiKey ?? undefined,
+        systemPrompt: args.systemPrompt,
+        userText: args.userText,
+        schemaName: args.schemaName,
+        schema: args.schema,
+      })
+      return { rawJson: out.rawJson, usedModel: out.usedModel ?? "unknown" }
+    },
+    research: {
+      apiKey: coresignalKey,
+      searchEmployeeIdByLinkedinUrl,
+      fetchEmployeeCollect,
+    },
+    log: (event2, fields) => logger.info(`[prescreen-candidate-eval] ${event2}`, fields ?? {}),
+  }
+}
+
 export const paPrescreenCandidateEval = onDocumentWritten(
   {
     document: "pa-prescreen-sessions/{sessionId}",
@@ -404,52 +537,18 @@ export const paPrescreenCandidateEval = onDocumentWritten(
     const after = event.data?.after?.data() as Record<string, unknown> | undefined
     if (!pendingReviewJustEntered(before, after)) return
 
-    for (const s of [PA_OPENAI_AGENT_API_KEY, CORESIGNAL_API_KEY] as const) {
-      try {
-        const v = s.value().trim()
-        if (v) process.env[s.name] = v
-      } catch {
-        /* unset → judge / enrich fail open */
-      }
-    }
-    try {
-      const a = ANTHROPIC_API_KEY.value().trim()
-      if (a && a !== "__UNSET__") process.env.ANTHROPIC_API_KEY = a
-    } catch {
-      /* no anthropic fallback */
-    }
-
-    const openai = getOpenAIConfig()
-    const anthropic = getAnthropicConfig()
-    let coresignalKey: string | null = null
-    try {
-      coresignalKey = CORESIGNAL_API_KEY.value().trim() || null
-    } catch {
-      coresignalKey = null
-    }
-
-    const result = await runPrescreenCandidateEval(event.params.sessionId, {
+    // Advisory engagement (effort) signal — pure metric over the candidate's replies,
+    // no LLM/Coresignal. Runs independently so a session with no job checklist (which
+    // skips the checklist eval below) still gets an engagement signal. Fail-open.
+    await runPrescreenEngagementSignal(event.params.sessionId, {
       db: getFirestore(),
-      callJudge: async (args) => {
-        if (!openai.apiKey) throw new Error("PA_OPENAI_AGENT_API_KEY missing")
-        const out = await callWithFallback({
-          apiKey: openai.apiKey,
-          baseURL: openai.baseURL,
-          anthropicApiKey: anthropic.apiKey ?? undefined,
-          systemPrompt: args.systemPrompt,
-          userText: args.userText,
-          schemaName: args.schemaName,
-          schema: args.schema,
-        })
-        return { rawJson: out.rawJson, usedModel: out.usedModel ?? "unknown" }
-      },
-      research: {
-        apiKey: coresignalKey,
-        searchEmployeeIdByLinkedinUrl,
-        fetchEmployeeCollect,
-      },
-      log: (event2, fields) => logger.info(`[prescreen-candidate-eval] ${event2}`, fields ?? {}),
+      log: (e2, f) => logger.info(`[prescreen-engagement] ${e2}`, f ?? {}),
     })
+
+    const result = await runPrescreenCandidateEval(
+      event.params.sessionId,
+      makeProdPrescreenEvalDeps(getFirestore()),
+    )
     logger.info("[prescreen-candidate-eval] done", { sessionId: event.params.sessionId, status: result.status })
   },
 )

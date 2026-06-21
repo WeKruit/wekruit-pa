@@ -29,7 +29,9 @@
  * failure CANNOT taint the parsedCandidateResumes write.
  */
 
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
+import { getStorage } from "firebase-admin/storage"
+import { detectResumeUploadKind } from "../resume-upload-parser.js"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   INDUSTRY_TAGS,
@@ -45,6 +47,10 @@ import {
   type WorkHistorySummary,
 } from "./industry-second-pass.js"
 import { checkResumeGate } from "./cv-gate.js"
+import {
+  extractResumeTextViaVision,
+  primaryTextLooksUsable,
+} from "./vision-text-fallback.js"
 import {
   isQuotaExhausted,
   readQuotaCount,
@@ -182,6 +188,16 @@ export type IngestCvDeps = {
   fetchPdf?: (url: string) => Promise<{ bytes: Uint8Array; contentType?: string }>
   /** Inject for tests; defaults to pdf-parse npm extraction. */
   parsePdf?: (bytes: Uint8Array) => Promise<{ text: string; numPages?: number }>
+  /**
+   * Inject for tests; defaults to Anthropic vision/OCR on the raw PDF bytes.
+   * Second extractor used ONLY when the primary text layer is empty or garbled
+   * (image/scanned/CID-font PDFs). Fail-soft: null = unavailable/unusable.
+   */
+  extractTextViaVision?: (
+    bytes: Uint8Array,
+    log: (event: string, payload?: Record<string, unknown>) => void,
+    userId: string | undefined,
+  ) => Promise<string | null>
   /** Inject for tests; defaults to OpenAI Responses API + json_schema. */
   llmExtract?: (text: string) => Promise<{
     parsed: StructuredCv
@@ -376,6 +392,47 @@ const PA_USERS_COLLECTION = "pa-users"
 function nonEmptyTrimmed(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim()
   return trimmed && trimmed.length > 0 ? trimmed : undefined
+}
+
+function extractFirstResumeEmail(text: string): string | null {
+  const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
+  return match?.[0]?.toLowerCase() ?? null
+}
+
+function extractFirstLinkedInUrl(text: string): string | null {
+  const match = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/[^\s)>,;"'|]+/i)
+  if (!match?.[0]) return null
+  const raw = match[0].replace(/[.,;]+$/g, "")
+  return raw.startsWith("http://") || raw.startsWith("https://")
+    ? raw
+    : `https://${raw}`
+}
+
+function applyDeterministicContactFallback(
+  parsed: StructuredCv,
+  text: string
+): { parsed: StructuredCv; emailFallback: string | null; linkedInFallback: string | null } {
+  const emailFallback = nonEmptyTrimmed(parsed.candidateProfile.email)
+    ? null
+    : extractFirstResumeEmail(text)
+  const linkedInFallback = nonEmptyTrimmed(parsed.candidateProfile.linkedIn)
+    ? null
+    : extractFirstLinkedInUrl(text)
+  if (!emailFallback && !linkedInFallback) {
+    return { parsed, emailFallback: null, linkedInFallback: null }
+  }
+  return {
+    parsed: {
+      ...parsed,
+      candidateProfile: {
+        ...parsed.candidateProfile,
+        email: emailFallback ?? parsed.candidateProfile.email,
+        linkedIn: linkedInFallback ?? parsed.candidateProfile.linkedIn,
+      },
+    },
+    emailFallback,
+    linkedInFallback,
+  }
 }
 
 /**
@@ -739,6 +796,60 @@ function deriveOriginalFileName(mediaUrl: string): string {
   } catch {
     const tail = mediaUrl.split("/").pop() ?? ""
     return tail || "resume.pdf"
+  }
+}
+
+/**
+ * BULLETPROOF résumé-file persistence. The single chokepoint EVERY ingest path
+ * passes through (wekruit.com onboarding, public job page, iMessage attachment,
+ * ATS inbound) — store the actual file to Storage + stamp
+ * `pa-users.resumeFileUrl` on the CANONICAL candidate so review UIs render the
+ * PDF inline. Content-addressed by sha256 (idempotent). Fail-open: a storage
+ * error logs loudly but never blocks résumé ingestion.
+ */
+export async function persistResumeFileForUser(
+  db: Firestore,
+  userId: string,
+  bytes: Uint8Array,
+  sha256: string,
+  mediaUrl: string,
+  log: (event: string, payload?: Record<string, unknown>) => void,
+): Promise<string | null> {
+  try {
+    if (!userId || !sha256 || bytes.length === 0) return null
+    const fileName = deriveOriginalFileName(mediaUrl)
+    const kind = detectResumeUploadKind(bytes, fileName) ?? "pdf"
+    const ext = kind === "docx" ? "docx" : "pdf"
+    const bucket = getStorage().bucket()
+    const objectPath = `candidate-resumes/${userId.replace(/[^\w.-]/g, "_")}/${sha256}.${ext}`
+    const file = bucket.file(objectPath)
+    if (typeof file.save !== "function") return null
+    const token = randomUUID()
+    const safeName = fileName.replace(/[^\w.-]/g, "_")
+    await file.save(Buffer.from(bytes), {
+      resumable: false,
+      contentType:
+        kind === "docx"
+          ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          : "application/pdf",
+      metadata: {
+        contentDisposition: `inline; filename="${safeName}"`,
+        metadata: { firebaseStorageDownloadTokens: token, candidateId: userId, sha256 },
+      },
+    })
+    const resumeFileUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${token}`
+    await db
+      .collection(PA_USERS_COLLECTION)
+      .doc(userId)
+      .set({ resumeFileUrl, resumeStorageUri: `gs://${bucket.name}/${objectPath}` }, { merge: true })
+    log("pa.cv_ingest.resume_file_persisted", { userId, objectPath })
+    return resumeFileUrl
+  } catch (err) {
+    log("pa.cv_ingest.resume_file_persist_failed", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
   }
 }
 
@@ -1720,12 +1831,45 @@ type ParserV2Output = {
   usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }
 }
 
+function canonicalLinkedInFromResumeWebsite(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) return null
+  let candidate = trimmed
+  if (/^\/\//.test(candidate)) {
+    candidate = `https:${candidate}`
+  } else if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`
+  }
+  let url: URL
+  try {
+    url = new URL(candidate)
+  } catch {
+    return null
+  }
+  if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return null
+  let path = url.pathname
+  const localeMatch = /^\/[a-z]{2,3}\/in\//i.exec(path)
+  if (localeMatch) path = path.slice(localeMatch[0].length - "/in/".length)
+  const match = /^\/in\/([A-Za-z0-9\-_%]+)\/?$/i.exec(path)
+  return match ? `https://linkedin.com/in/${match[1]!.toLowerCase()}` : null
+}
+
+function linkedInFromParserV2Websites(websites: string[]): string | null {
+  for (const website of websites) {
+    const linkedIn = canonicalLinkedInFromResumeWebsite(website)
+    if (linkedIn) return linkedIn
+  }
+  return null
+}
+
 function adaptV2ToStructuredCv(v2: ParserV2Output["parsed"]): StructuredCv {
   const candidateProfile: CandidateProfile = {
     name: v2.fullName,
     email: v2.email,
     phone: v2.phone,
-    linkedIn: null,
+    linkedIn: linkedInFromParserV2Websites(v2.websites),
     location: v2.location ?? "",
     skills: v2.skills,
   }
@@ -1994,6 +2138,7 @@ export async function ingestCv(
   const nowIso = deps?.nowIso ?? (() => new Date().toISOString())
   const fetchPdf = deps?.fetchPdf ?? defaultFetchPdf
   const parsePdf = deps?.parsePdf ?? defaultParsePdf
+  const extractTextViaVision = deps?.extractTextViaVision ?? extractResumeTextViaVision
   const llmExtract = deps?.llmExtract ?? defaultLlmExtract
   const mem0AddFn = deps?.mem0Add ?? defaultMem0Add
   const lookupUserForFollowup =
@@ -2216,21 +2361,49 @@ export async function ingestCv(
   // 3-min black box is observable — pa.cv_ingest.timing {step, ms} per step + usedTier on the LLM parse.
   let text: string
   const tPdf0 = Date.now()
+  let primaryText = ""
+  let primaryThrew = false
   try {
     const out = await parsePdf(bytes)
-    text = (out.text ?? "").slice(0, MAX_TEXT_BYTES)
+    primaryText = (out.text ?? "").slice(0, MAX_TEXT_BYTES)
     log("pa.cv_ingest.timing", { step: "parse_pdf", ms: Date.now() - tPdf0, userId: args.userId })
-    if (!text.trim()) {
-      log("pa.cv_ingest.error", { stage: "parse", error: "empty_text", userId: args.userId })
-      return { ok: false, reason: "pdf_parse_failed" }
-    }
   } catch (err) {
+    primaryThrew = true
     log("pa.cv_ingest.error", {
       stage: "parse",
       error: err instanceof Error ? err.message : String(err),
       userId: args.userId,
     })
-    return { ok: false, reason: "pdf_parse_failed" }
+  }
+
+  // The primary text layer (pdf-parse) has NO OCR and silently returns empty or
+  // garbled text on image/scanned résumés and broken-font (CID/Type0) PDFs —
+  // dead-ending the candidate forever (Adam 2026-06-15, Chang Shu incident). When
+  // the primary result is unusable, recover via a vision/OCR pass over the raw
+  // bytes. Fail-soft: vision unavailable/unusable → original pdf_parse_failed.
+  if (primaryThrew || !primaryTextLooksUsable(primaryText)) {
+    const tVision0 = Date.now()
+    const recovered = await extractTextViaVision(bytes, log, args.userId)
+    log("pa.cv_ingest.timing", {
+      step: "vision_fallback",
+      ms: Date.now() - tVision0,
+      recovered: Boolean(recovered),
+      primaryEmpty: !primaryText.trim(),
+      primaryThrew,
+      userId: args.userId,
+    })
+    if (recovered && recovered.trim()) {
+      text = recovered.slice(0, MAX_TEXT_BYTES)
+    } else if (primaryText.trim()) {
+      // Vision unavailable but the primary returned *some* text — fall back to it
+      // rather than hard-failing a borderline-garbled extract.
+      text = primaryText
+    } else {
+      log("pa.cv_ingest.error", { stage: "parse", error: "empty_text", userId: args.userId })
+      return { ok: false, reason: "pdf_parse_failed" }
+    }
+  } else {
+    text = primaryText
   }
 
   // 3. LLM structured extraction.
@@ -2282,6 +2455,16 @@ export async function ingestCv(
       parserV2: parserV2On,
     })
     return { ok: false, reason: "llm_parse_failed" }
+  }
+
+  const contactFallback = applyDeterministicContactFallback(parsed, text)
+  parsed = contactFallback.parsed
+  if (contactFallback.emailFallback || contactFallback.linkedInFallback) {
+    log("pa.cv_ingest.contact_fallback_applied", {
+      userId: args.userId,
+      email: Boolean(contactFallback.emailFallback),
+      linkedIn: Boolean(contactFallback.linkedInFallback),
+    })
   }
 
   const extractedEmail = nonEmptyTrimmed(parsed.candidateProfile.email)
@@ -2351,6 +2534,10 @@ export async function ingestCv(
         outcome: resolution.outcome,
         source,
       })
+      // BULLETPROOF: store the actual résumé file on the canonical candidate so
+      // every upload path (website onboarding included) renders the PDF inline.
+      // Fail-open inside the helper — never blocks ingestion.
+      await persistResumeFileForUser(dbHandle, userId, bytes, pdfSha256, args.mediaUrl, log)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       log("pa.cv_ingest.identity_error", {
@@ -2851,39 +3038,37 @@ export async function ingestCv(
       log,
     })
 
-    // v1.9 hotfix (Adam directive 2026-05-12) — write phoneE164 from parsed CV
-    // phone to pa-users, only if not already set. Enables:
-    //   - ATS Pattern B (CV → match/runtime event) without prior inbound.
-    //   - Pattern A returning user where PII was not yet collected but CV is.
-    // Never overwrite an existing phone (PII-confirmed user-provided phone wins).
-    // Fail-open: never throws, never blocks parsedCandidateResumes write success.
+    // PHONE IDENTITY = INBOUND-PROVEN ONLY (Adam 2026-06-16: "only lock whatever
+    // phone texted us, not from the résumé — it's the real customer from the
+    // phone"). A résumé-extracted phone is an UNVERIFIED guess (often a stale or
+    // alternate number) and MUST NOT become the canonical SMS identity
+    // `phoneE164` — doing so blocked the candidate's real texting phone from
+    // binding (live 2026-06-15: José +17869150039, Aniket +918971155200 — résumé
+    // phone ≠ texting phone → "can't start from this phone" → dead silence). It
+    // is also a latent outbound-to-never-inbound hazard (RULE-1). So we store the
+    // parsed phone in an INFORMATIONAL field only (resumePhoneE164) and NEVER
+    // touch phoneE164 — that key is reserved for a phone that actually texted us
+    // (the inbound bind in candidate-inbound-resolve.ts). Fail-open.
     const parsedPhoneRaw = v2Output?.parsed.phone ?? parsed.candidateProfile.phone ?? null
     if (parsedPhoneRaw) {
       try {
         const normalized = normalizeCvPhoneToE164(parsedPhoneRaw)
         if (normalized) {
           const userRef = dbHandle.collection(PA_USERS_COLLECTION).doc(userId)
-          const userSnap = await userRef.get()
-          const existingPhone = userSnap.data()?.phoneE164
-          if (
-            !existingPhone ||
-            typeof existingPhone !== "string" ||
-            existingPhone.length === 0
-          ) {
-            await userRef.set(
-              {
-                phoneE164: normalized,
-                phoneE164Source: "cv_parsed",
-                updatedAt: nowIso(),
-              },
-              { merge: true }
-            )
-            log("pa.cv_ingest.phone_e164_written", {
-              userId: userId,
-              source: "cv_parsed",
-              raw_len: parsedPhoneRaw.length,
-            })
-          }
+          await userRef.set(
+            {
+              // Informational reference ONLY — not the SMS identity key.
+              resumePhoneE164: normalized,
+              resumePhoneE164Source: "cv_parsed",
+              updatedAt: nowIso(),
+            },
+            { merge: true }
+          )
+          log("pa.cv_ingest.resume_phone_recorded", {
+            userId: userId,
+            source: "cv_parsed",
+            raw_len: parsedPhoneRaw.length,
+          })
         } else {
           log("pa.cv_ingest.phone_e164_unparseable", {
             userId: userId,

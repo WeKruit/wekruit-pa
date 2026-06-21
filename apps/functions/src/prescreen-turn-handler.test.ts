@@ -384,6 +384,237 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     })
   })
 
+  const VOICE_DEV_PHONE = "+14243201960"
+
+  function seedActiveVoiceSession() {
+    const now = new Date().toISOString()
+    return makeFakeDb({
+      "pa-prescreen-sessions/ps_sekai": {
+        sessionId: "ps_sekai",
+        userId: "u_voice",
+        jobId: "sekai-ai-agent-engineer",
+        terminal: null,
+        currentQId: "technical_depth",
+        createdAt: now,
+        updatedAt: now,
+        score: 0,
+        scoreMax: 2,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 3,
+        qOrder: ["technical_depth", "ownership"],
+        questions: {
+          technical_depth: { qId: "technical_depth", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85, clarifyRounds: 0 },
+          ownership: { qId: "ownership", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85, clarifyRounds: 0 },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: now, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "technical_depth",
+              prompt: { en: "What's the closest coding-agent project you've built?", zh: "What's the closest coding-agent project you've built?" },
+              clarifyPrompt: { en: "Go deeper on the implementation.", zh: "Go deeper on the implementation." },
+              keywords: [{ keyword: "coding_agent", weight: 1 }],
+            },
+            {
+              qId: "ownership",
+              prompt: { en: "What did you personally own?", zh: "What did you personally own?" },
+              clarifyPrompt: { en: "Which part was yours end-to-end?", zh: "Which part was yours end-to-end?" },
+              keywords: [{ keyword: "ownership", weight: 1 }],
+            },
+          ],
+        },
+      },
+    })
+  }
+
+  it("yields an explicit phone-prescreen request to Claire's voice tools instead of scoring it as a text answer", async () => {
+    const { db, docs } = seedActiveVoiceSession()
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_voice",
+      toE164: VOICE_DEV_PHONE,
+      replyText: "I want to prescreen Sekai AI Agent Engineer (Coding Agent) on phone call",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued", from_number: null, number: args.to, content: args.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, false)
+    assert.equal(result.sessionId, "ps_sekai")
+    assert.equal(sent.length, 0)
+    // Session untouched — no terminal, no advance, no turn appended.
+    const session = docs.get("pa-prescreen-sessions/ps_sekai")?.data
+    assert.equal(session?.terminal, null)
+    assert.equal(session?.currentQId, "technical_depth")
+    const turns = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_sekai/turns/"))
+    assert.equal(turns.length, 0)
+  })
+
+  it("yields a yes that answers a live voice-call offer instead of scoring it as a text answer", async () => {
+    const { db, docs } = seedActiveVoiceSession()
+    docs.set("pa-voice-call-offers/offer-live", {
+      exists: true,
+      data: {
+        userId: "u_voice",
+        sessionId: "chat-voice",
+        purpose: "prescreen",
+        paJobId: "sekai-ai-agent-engineer",
+        phoneE164: VOICE_DEV_PHONE,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    })
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_voice",
+      toE164: VOICE_DEV_PHONE,
+      replyText: "yes",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued", from_number: null, number: args.to, content: args.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, false)
+    assert.equal(result.sessionId, "ps_sekai")
+    assert.equal(sent.length, 0)
+    const session = docs.get("pa-prescreen-sessions/ps_sekai")?.data
+    assert.equal(session?.currentQId, "technical_depth")
+  })
+
+  it("does NOT yield a normal prescreen answer on a dev phone (no voice intent, no offer)", async () => {
+    const { db, docs } = seedActiveVoiceSession()
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        return {
+          perKeyword: [{ keyword: "coding_agent", match: 0.95, confidence: 0.9, evidence: "built a coding agent", reasoning: "clear" }],
+          summary: "Strong.",
+          answered: true,
+        }
+      },
+    }
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_voice",
+      toE164: VOICE_DEV_PHONE,
+      replyText: "I built an autonomous coding agent that plans, edits files, and runs tests in a loop.",
+      keywordSetCaller: caller,
+      runTerminalAction: async () => ({ alreadyFired: false, level1Sent: false, jobRecsFired: false }),
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued", from_number: null, number: args.to, content: args.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    const session = docs.get("pa-prescreen-sessions/ps_sekai")?.data
+    assert.equal(session?.currentQId, "ownership")
+  })
+
+  it("does NOT yield a bare yes on a dev phone when there is no pending voice-call offer", async () => {
+    const { db } = seedActiveVoiceSession()
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        return { perKeyword: [{ keyword: "coding_agent", match: 0.2, confidence: 0.9, evidence: "", reasoning: "low" }], summary: "Weak.", answered: false }
+      },
+    }
+    const clarify: PreScreenClarifyComposer = async () => "Go deeper on the implementation."
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_voice",
+      toE164: VOICE_DEV_PHONE,
+      replyText: "yes",
+      keywordSetCaller: caller,
+      clarifyComposer: clarify,
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return { status: "queued", from_number: null, number: args.to, content: args.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+  })
+
+  function seedVoiceOptInTerminalSession() {
+    const now = new Date().toISOString()
+    return makeFakeDb({
+      "pa-prescreen-sessions/ps_voice_optin": {
+        sessionId: "ps_voice_optin",
+        userId: "u_vopt",
+        jobId: "sekai-ai-agent-engineer",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        voicePostCallJobRecOptInPending: true,
+        voicePostCallJobRecOptInAskedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", endedAt: now, boundary: "terminal" },
+      },
+    })
+  }
+
+  it("fires find_match recs when the candidate says yes to the voice post-call job-rec offer", async () => {
+    const { db, docs } = seedVoiceOptInTerminalSession()
+    const recs: Array<{ userId: string; toE164: string }> = []
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_vopt",
+      toE164: "+13054507715",
+      replyText: "yes",
+      fireJobRecs: async (a) => {
+        recs.push(a)
+        return { ok: true, jobCount: 3 }
+      },
+      sendSms: async (a) => {
+        sent.push(a.content)
+        return { status: "queued", from_number: null, number: a.to, content: a.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(recs.length, 1)
+    assert.equal(recs[0].userId, "u_vopt")
+    assert.match(sent[0] ?? "", /pulling a few roles/i)
+    const session = docs.get("pa-prescreen-sessions/ps_voice_optin")?.data
+    assert.equal(session?.voicePostCallJobRecOptInPending, false)
+  })
+
+  it("does not fire recs when the candidate declines the voice post-call job-rec offer", async () => {
+    const { db, docs } = seedVoiceOptInTerminalSession()
+    const recs: unknown[] = []
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_vopt",
+      toE164: "+13054507715",
+      replyText: "no thanks",
+      fireJobRecs: async (a) => {
+        recs.push(a)
+        return { ok: true, jobCount: 0 }
+      },
+      sendSms: async (a) => {
+        sent.push(a.content)
+        return { status: "queued", from_number: null, number: a.to, content: a.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(recs.length, 0)
+    assert.match(sent[0] ?? "", /on file/i)
+    const session = docs.get("pa-prescreen-sessions/ps_voice_optin")?.data
+    assert.equal(session?.voicePostCallJobRecOptInPending, false)
+  })
+
   it("ignores stale prescreen docs whose active question is already cleared", async () => {
     const now = new Date().toISOString()
     const { db } = makeFakeDb({
@@ -742,6 +973,118 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     const session = docs.get("pa-prescreen-sessions/ps_done")?.data
     assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "onboarding_started")
     assert.equal((session?.postPrescreenRetention as { basicOnboardingOptIn?: boolean } | undefined)?.basicOnboardingOptIn, true)
+  })
+
+  it("does NOT match on a COURTESY ACK after a prescreen terminal — offers instead (Adam 2026-06-15 live bug)", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+        onboardingStatus: "invited",
+        onboardingState: "pending",
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        // FIRST post-terminal turn — no proceed prompt asked yet (no postPrescreenRetention stage).
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    let firedRecs = false
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      // The EXACT live-bug reply: a courtesy ack of the pending review, NOT a match request.
+      replyText: "Sure. Looking forward for the update.",
+      fireJobRecs: async () => {
+        firedRecs = true
+        return { ok: true, jobCount: 3 }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    // OFFER is made; NO "pulling matches" / onboarding bridge fired.
+    assert.match(sent[0] ?? "", /Do you want to proceed/i)
+    assert.doesNotMatch(sent[0] ?? "", /pull a few matches/i)
+    assert.doesNotMatch(sent[0] ?? "", /thanks for completing the screen/i)
+    assert.equal(firedRecs, false, "a courtesy ack must NOT fire find_match")
+    // Stays in the offer stage so an explicit yes next turn can proceed.
+    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
+    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_basic_onboarding")
+  })
+
+  it("an EXPLICIT matching request after a terminal yields to the agent (find_match path), not the courtesy-ack offer", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+        onboardingStatus: "invited",
+        onboardingState: "pending",
+        tags: {
+          targetRoleFunction: ["software_engineering"],
+          targetLocations: ["san_francisco_bay_area"],
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      // An explicit new matching intent is recognized as such → the deterministic
+      // retention branch yields (handled:false) so the agent's find_match handles it.
+      // It must NOT be swallowed by the courtesy-ack offer prompt.
+      replyText: "yes, pull some roles for me",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    // Explicit intent → yields to runtime (the agent owns matching). The deterministic
+    // path does NOT send the "Do you want to proceed?" courtesy-ack offer here.
+    assert.equal(result.handled, false)
+    assert.equal(sent.length, 0)
   })
 
   it("converges to ONLY the location ask when role is already derived (LinkedIn/résumé enrich) — never re-asks role", async () => {
@@ -2393,8 +2736,11 @@ describe("stale-timeout PAUSE follow-up (universal copy-accuracy)", () => {
     })
     assert.equal(result.handled, true)
     assert.equal(sent.length, 1)
-    // Legacy retention flow still engages (here: 'ok' reads as a yes -> the post-screen onboarding
-    // bridge) — the stale-timeout suppression must NOT touch a deliberate user-exit pause.
-    assert.match(sent[0]!, /thanks for completing the screen/i)
+    // POST-TERMINAL MATCHING IS OPT-IN (Adam 2026-06-15): a bare "ok" on the FIRST
+    // post-terminal turn is a courtesy ack, NOT a request to match — Claire OFFERS
+    // ("Do you want to proceed?") instead of bridging into onboarding/matching. The
+    // retention flow still engages (offer is made); the stale-timeout suppression
+    // must NOT touch a deliberate user-exit pause (that part is unchanged).
+    assert.match(sent[0]!, /Do you want to proceed/i)
   })
 })

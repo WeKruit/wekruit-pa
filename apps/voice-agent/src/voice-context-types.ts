@@ -101,13 +101,34 @@ export interface VoicePrescreenConfig {
   missingFields: string[]
 }
 
+export type VoiceCallPurpose = "prescreen" | "onboarding"
+
+interface VoiceCallContextBase {
+  bookingId: string
+  purpose: VoiceCallPurpose
+  userProfile: VoiceUserProfile
+}
+
+/**
+ * Prescreen calls carry the job + prescreen config needed by the shared
+ * prescreen reducer.
+ */
+export interface VoicePrescreenCallContext extends VoiceCallContextBase {
+  purpose: "prescreen"
+  prescreenSessionId: string
+  jobBrief: VoiceJobBrief
+  prescreenConfig: VoicePrescreenConfig
+}
+
+/**
+ * Onboarding calls use the shared onboarding reducer and are not tied to a job.
+ */
+export interface VoiceOnboardingCallContext extends VoiceCallContextBase {
+  purpose: "onboarding"
+}
+
 /**
  * The full per-call context the voice worker assembles before turn-loop
  * dispatch. `bookingId` is the room-metadata key from S3.
  */
-export interface VoiceCallContext {
-  bookingId: string
-  userProfile: VoiceUserProfile
-  jobBrief: VoiceJobBrief
-  prescreenConfig: VoicePrescreenConfig
-}
+export type VoiceCallContext = VoicePrescreenCallContext | VoiceOnboardingCallContext

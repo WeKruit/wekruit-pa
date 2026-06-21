@@ -495,6 +495,48 @@ test("resolveInboundUserId binds the texted phone via a valid bind-code opener",
   assert.equal(codeSnap.data()?.used, true)
 })
 
+test("REGRESSION (José/Aniket 2026-06-15): a valid bind-code OVERRIDES an unverified cv_parsed résumé phone — texting phone binds, not dead silence", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "cand_resume_phone_override_01"
+  // cv-ingest wrote a résumé-derived phone (unverified) that DIFFERS from the
+  // real phone the candidate is texting from. Pre-fix, bindPhoneToCandidate
+  // returned phone_mismatch_different_entity → fell to phone lookup → null →
+  // "can't start from this phone" → dead silence.
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, {
+    id: candidateId,
+    source: "candidate",
+    phoneE164: "+17867211987",
+    phoneE164Source: "cv_parsed",
+  })
+  const db = fakeDb as unknown as Firestore
+
+  const code = await issueBindCode(db, candidateId)
+  const textingPhone = "+17869150039"
+  const resolved = await resolveInboundUserId(db, textingPhone, buildBindCodeOpenerBody(code))
+  assert.equal(resolved, candidateId, "bind-code proves identity → real texting phone binds, never dead silence")
+
+  const u = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(u.data()?.phoneE164, textingPhone, "real SMS phone overwrites the unverified résumé guess")
+  assert.equal(u.data()?.phoneE164Source, "sms_bind", "marker flips to verified SMS bind")
+})
+
+test("a VERIFIED differing phone still blocks a bind-code cross-bind (guard intact — only cv_parsed is overridable)", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "cand_verified_phone_block_01"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, {
+    id: candidateId,
+    source: "candidate",
+    phoneE164: "+17867211987",
+    phoneE164Source: "sms_bind", // a real verified phone, NOT a résumé guess
+  })
+  const db = fakeDb as unknown as Firestore
+
+  const code = await issueBindCode(db, candidateId)
+  const resolved = await resolveInboundUserId(db, "+17869150039", buildBindCodeOpenerBody(code))
+  // Different VERIFIED phone → different entity → falls to phone lookup → null. No hijack.
+  assert.equal(resolved, null, "a verified differing phone must NOT be cross-bound")
+})
+
 test("a REUSED bind code (different phone) does NOT bind a wrong account → falls to phone lookup (null)", async () => {
   const fakeDb = new FakeFirestore()
   const candidateId = "cand_bindcode_reuse_01"

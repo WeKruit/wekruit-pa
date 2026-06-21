@@ -415,6 +415,8 @@ export const ResumeArtifactSchema = z.object({
   status: ResumeArtifactStatusSchema,
   source: z.enum(["candidate_upload", "employer_bulk", "ats", "admin", "system"]),
   storageUri: z.string().min(1).optional(),
+  /** Viewable https download URL (token-gated) for inline résumé preview in review UIs. */
+  resumeFileUrl: z.string().min(1).optional(),
   fileName: z.string().min(1).optional(),
   sha256: z.string().min(32).optional(),
   parsedCandidateResumeId: z.string().min(1).optional(),
@@ -516,6 +518,7 @@ export const CandidateJobStateDocSchema = z.object({
   outboundId: z.string().min(1).optional(),
   latestMatchId: z.string().min(1).optional(),
   archivedAt: TimestampSchema.optional(),
+  awaitingHmResponse: z.boolean().optional(),
 })
 export type CandidateJobStateDoc = z.infer<typeof CandidateJobStateDocSchema>
 

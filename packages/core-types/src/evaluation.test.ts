@@ -3,6 +3,8 @@ import test from "node:test"
 import {
   CorrectionEventSchema,
   EvaluationAttemptSchema,
+  HumanEvalLabelSchema,
+  HumanReviewSchema,
   calculateEvidenceConfidence,
   calculateWeightedFitScore,
   confidenceToScore,
@@ -69,6 +71,81 @@ test("evaluation attempt schema parses canonical pending review artifact", () =>
     updatedAt: "2026-05-20T00:00:00.000Z",
   })
   assert.equal(parsed.humanReview.status, "pending")
+})
+
+test("legacy human review without a label still parses (back-compat)", () => {
+  const review = HumanReviewSchema.parse({ status: "approved", reviewer: "ops@wekruit.com" })
+  assert.equal(review.status, "approved")
+  assert.equal(review.label, undefined)
+})
+
+test("human eval label captures agreement with no error categories", () => {
+  const label = HumanEvalLabelSchema.parse({
+    decision: "agree",
+    qualityRating: 5,
+    rubricVersion: "screening-eval-v1",
+    labeledBy: "ops@wekruit.com",
+    labeledAt: "2026-06-15T00:00:00.000Z",
+  })
+  assert.equal(label.decision, "agree")
+  assert.equal(label.qualityRating, 5)
+  assert.deepEqual(label.errorCategories, [])
+  assert.deepEqual(label.evidenceRefs, [])
+})
+
+test("human eval label captures a disagreement with corrected verdict, error categories, and highlighted evidence", () => {
+  const review = HumanReviewSchema.parse({
+    status: "overridden",
+    reviewer: "ops@wekruit.com",
+    finalOutcome: { kind: "pass", prescreenTerminal: "PASS" },
+    label: {
+      decision: "disagree",
+      correctedOutcome: { kind: "pass", prescreenTerminal: "PASS" },
+      errorCategories: ["over_strict", "missed_evidence"],
+      qualityRating: 2,
+      rationale: "Candidate clearly described shipping the payments integration; the AI ignored turn 4.",
+      evidenceRefs: [
+        { refId: "turn-4", source: "transcript_turn", summary: "Shipped Stripe integration end to end." },
+      ],
+      rubricVersion: "screening-eval-v1",
+      labeledBy: "ops@wekruit.com",
+      labeledAt: "2026-06-15T00:00:00.000Z",
+    },
+  })
+  assert.equal(review.label?.decision, "disagree")
+  assert.equal(review.label?.correctedOutcome?.prescreenTerminal, "PASS")
+  assert.deepEqual(review.label?.errorCategories, ["over_strict", "missed_evidence"])
+  assert.equal(review.label?.evidenceRefs[0]?.refId, "turn-4")
+  // The AI verdict is preserved alongside the human label — never overwritten.
+  assert.equal(review.finalOutcome?.prescreenTerminal, "PASS")
+})
+
+test("recruiter_submission is a valid evaluation source for labeling", () => {
+  const parsed = EvaluationAttemptSchema.parse({
+    schemaVersion: 1,
+    attemptId: createEvaluationAttemptId({ source: "recruiter_submission", candidateId: "cand-1", jobId: "job-1" }),
+    source: "recruiter_submission",
+    purpose: "candidate_job_fit",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    rubricVersion: "submission-eval-v2",
+    algorithmVersion: "screening-eval-v1",
+    evaluator: { kind: "llm_judge", model: "gpt-5.4-nano" },
+    dimensions: [],
+    gates: [],
+    weightedFitScore: 0.6,
+    evidenceConfidence: 0.7,
+    missingEvidence: [],
+    riskFlags: [],
+    proposedOutcome: { kind: "hold" },
+    reviewPriority: "normal",
+    explanation: "Recruiter-submitted candidate; borderline against the job checklist.",
+    evidence: [],
+    humanReview: { status: "pending" },
+    createdAt: "2026-06-15T00:00:00.000Z",
+    updatedAt: "2026-06-15T00:00:00.000Z",
+  })
+  assert.equal(parsed.source, "recruiter_submission")
 })
 
 test("weighted score and confidence keep score quality separate from evidence quality", () => {

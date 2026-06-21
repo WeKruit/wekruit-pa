@@ -1891,7 +1891,7 @@ export function applyV16HardFilters(
     // 6. atsApplyUrl present + not jobright.ai.
     if (!isCollabJob) {
       const url = job.atsApplyUrl ?? ""
-      if (!url || /jobright\.ai/i.test(url)) {
+      if (!url || /jobright/i.test(url)) {
         counters.atsApplyUrl++
         continue
       }
@@ -2082,7 +2082,7 @@ export function applyFallbackHardFilters(
     }
     // atsApplyUrl present + not jobright.ai
     const url = job.atsApplyUrl ?? ""
-    if (!url || /jobright\.ai/i.test(url)) {
+    if (!url || /jobright/i.test(url)) {
       counters.atsApplyUrl++
       continue
     }

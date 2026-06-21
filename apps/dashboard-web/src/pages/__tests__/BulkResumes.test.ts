@@ -5,13 +5,13 @@ import {
   canRetryBulkResumeItem,
   fileToResumeUploadPayload,
   maskEmailForDisplay,
-  sanitizePdfFileName,
+  sanitizeResumeFileName,
   summarizeItems,
   summarizeProcessResults,
-  validatePdfFile,
+  validateResumeFile,
 } from "../BulkResumes.helpers.js"
 
-test("fileToResumeUploadPayload sanitizes PDF name and emits base64", async () => {
+test("fileToResumeUploadPayload sanitizes resume name and emits base64", async () => {
   const file = new File(["%PDF-1.4\n"], "../Adam Resume.pdf", { type: "application/pdf" })
 
   const payload = await fileToResumeUploadPayload(file, "candidate@example.com")
@@ -21,10 +21,18 @@ test("fileToResumeUploadPayload sanitizes PDF name and emits base64", async () =
   assert.equal(payload.employerEmailHint, "candidate@example.com")
 })
 
-test("validatePdfFile rejects non-PDF names and empty files", () => {
-  assert.equal(validatePdfFile(new File(["x"], "resume.txt", { type: "text/plain" })), "PDF only")
-  assert.equal(validatePdfFile(new File([], "resume.pdf", { type: "application/pdf" })), "Empty file")
-  assert.equal(validatePdfFile(new File(["x"], "resume.pdf", { type: "application/pdf" })), null)
+test("validateResumeFile accepts PDF/DOCX and rejects other names or empty files", () => {
+  assert.equal(validateResumeFile(new File(["x"], "resume.txt", { type: "text/plain" })), "PDF or DOCX only")
+  assert.equal(validateResumeFile(new File([], "resume.pdf", { type: "application/pdf" })), "Empty file")
+  assert.equal(validateResumeFile(new File(["x"], "resume.pdf", { type: "application/pdf" })), null)
+  assert.equal(
+    validateResumeFile(
+      new File(["x"], "resume.docx", {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      })
+    ),
+    null
+  )
 })
 
 test("maskEmailForDisplay never returns the raw email", () => {
@@ -82,6 +90,6 @@ test("summarizeProcessResults is stable for empty and mixed batches", () => {
   )
 })
 
-test("sanitizePdfFileName strips path fragments and control characters", () => {
-  assert.equal(sanitizePdfFileName("..\\nested/\u0000 Resume.pdf"), "Resume.pdf")
+test("sanitizeResumeFileName strips path fragments and control characters", () => {
+  assert.equal(sanitizeResumeFileName("..\\nested/\u0000 Resume.pdf"), "Resume.pdf")
 })

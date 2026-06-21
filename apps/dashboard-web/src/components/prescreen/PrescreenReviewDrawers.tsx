@@ -6,14 +6,21 @@
  * - `terminalActionPendingReview=true` means no final employment-impacting
  *   action has been committed; only the neutral review-pending ack is allowed.
  */
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, ReactNode } from "react"
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import {
   classifyCandidateProfile,
+  computePrescreenEngagement,
   deriveCandidateSource,
+  engagementTone,
+  suggestTierFromPrescreen,
+  CANDIDATE_TIER_LABELS,
+  CANDIDATE_TIERS,
   type CandidateListUserDoc,
+  type CandidateTier,
   type EvaluationAttempt,
+  type PrescreenEngagementSignal,
 } from "@pa/core-types"
 import {
   AdminJobLink,
@@ -23,6 +30,7 @@ import {
 import { StrictReviewBadge } from "./PrescreenReviewControls.js"
 import { Badge, LoadingState } from "../ui.js"
 import { db } from "../../lib/firebase.js"
+import { CandidateResumePreview } from "../CandidateResumePreview.js"
 import {
   classifyPrescreenReviewRow,
   type PrescreenReviewQuestion,
@@ -32,6 +40,12 @@ import {
   reviewEvaluationAttempt,
   type DraftPrescreenReviewMessage,
 } from "../../lib/external-supply-client.js"
+import {
+  EvalLabelForm,
+  type EvalLabelEvidenceOption,
+  type EvalLabelFormHandle,
+} from "./EvalLabelForm.js"
+import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "./dual-pane.js"
 
 export type ReviewTerminal = "PASS" | "FAIL" | "HARD_STOP"
 
@@ -79,6 +93,8 @@ export type PrescreenSessionRow = {
     }
     /** Profile checklist eval (paPrescreenCandidateEval): LinkedIn/Coresignal + résumé vs the job rubric. Advisory. */
     candidateChecklistEval?: PrescreenCandidateChecklistEval
+    /** Effort/engagement signal — how much the candidate typed/shared. Advisory, never a gate. */
+    engagementSignal?: PrescreenEngagementSignal
   }
   createdAt: string
   updatedAt: string
@@ -341,9 +357,45 @@ export async function loadCandidateOtherSessions(
  *  can open the actual LinkedIn / read the résumé while reviewing. LinkedIn is a
  *  real external URL; candidate-upload résumés keep no downloadable file — only a
  *  fileName + parsed summary — so the résumé "link" expands that summary inline. */
+export type ParsedResumeView = {
+  profile?: string
+  experiences?: Array<{ title?: string; company?: string; startDate?: string; endDate?: string; location?: string; description?: string }>
+  education?: Array<{ school?: string; degree?: string; field?: string }>
+  skills?: string[]
+}
+
 export type CandidateSources = {
   linkedinUrl?: string
-  resume?: { fileName?: string; summary?: string }
+  resume?: { fileName?: string; summary?: string; url?: string; parsed?: ParsedResumeView }
+}
+
+function asArray(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object") : []
+}
+
+/** Project a parsedCandidateResumes doc into the lightweight view the drawer renders
+ *  when there is no PDF on file (backlog candidates uploaded before file-persist). */
+function buildParsedResumeView(data: Record<string, unknown>): ParsedResumeView | undefined {
+  const expSrc = asArray(data.experiences).length > 0 ? asArray(data.experiences) : asArray(data.workHistory)
+  const experiences = expSrc.slice(0, 12).map((e) => ({
+    title: firstString(e.title, e.role),
+    company: firstString(e.company, e.employer),
+    startDate: firstString(e.startDate),
+    endDate: firstString(e.endDate),
+    location: firstString(e.location),
+    description: firstString(e.description, e.summary),
+  }))
+  const education = asArray(data.education).slice(0, 6).map((e) => ({
+    school: firstString(e.school, e.institution),
+    degree: firstString(e.degree),
+    field: firstString(e.field, e.major),
+  }))
+  const skills = Array.isArray(data.topSkills)
+    ? (data.topSkills as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 24)
+    : []
+  const profile = firstString(data.candidateProfile, data.candidateProfileSummary)
+  if (!profile && experiences.length === 0 && education.length === 0 && skills.length === 0) return undefined
+  return { ...(profile ? { profile } : {}), experiences, education, skills }
 }
 
 export async function loadCandidateSources(userId: string): Promise<CandidateSources> {
@@ -359,14 +411,57 @@ export async function loadCandidateSources(userId: string): Promise<CandidateSou
       nestedString(u.identity, "linkedinUrl"),
       nestedString(u.contact, "linkedinUrl"),
     )
+    // Résumé file URL can be stamped under several field names depending on the upload
+    // path (candidate flow vs cv-ingest vs employer) — try them all + the user doc, so the
+    // inline iframe shows whenever a fetchable URL exists anywhere.
+    const userResumeUrl = firstString(
+      u.resumeFileUrl,
+      u.resumeUrl,
+      u.resumeDownloadUrl,
+      nestedString(u.resume, "url"),
+      nestedString(u.resume, "fileUrl"),
+    )
     const artId = firstString(u.latestResumeArtifactId)
+    let artFileName: string | undefined
+    let artSummary: string | undefined
+    let artUrl: string | undefined
+    let parsedId: string | undefined
     if (artId) {
       const artSnap = await getDoc(doc(db(), "pa-resume-artifacts", artId))
       if (artSnap.exists()) {
         const art = artSnap.data() as Record<string, unknown>
-        const fileName = firstString(art.fileName)
-        const summary = firstString(art.candidateProfileSummary)
-        if (fileName || summary) out.resume = { ...(fileName ? { fileName } : {}), ...(summary ? { summary } : {}) }
+        artFileName = firstString(art.fileName, art.originalFileName, art.name)
+        artSummary = firstString(art.candidateProfileSummary, art.summary)
+        parsedId = firstString(art.parsedCandidateResumeId)
+        artUrl = firstString(
+          art.resumeFileUrl,
+          art.fileUrl,
+          art.url,
+          art.downloadUrl,
+          art.downloadURL,
+          art.publicUrl,
+          art.signedUrl,
+          art.storageUrl,
+          art.resumeUrl,
+        )
+      }
+    }
+    const fileName = artFileName
+    const summary = artSummary
+    const url = artUrl ?? userResumeUrl
+    // No PDF on file (backlog uploaded before file-persist) → load the FULL parsed
+    // résumé so the drawer still shows a readable résumé, not just the 1-liner.
+    let parsed: ParsedResumeView | undefined
+    if (!url && parsedId) {
+      const parsedSnap = await getDoc(doc(db(), "parsedCandidateResumes", parsedId))
+      if (parsedSnap.exists()) parsed = buildParsedResumeView(parsedSnap.data() as Record<string, unknown>)
+    }
+    if (fileName || summary || url || parsed) {
+      out.resume = {
+        ...(fileName ? { fileName } : {}),
+        ...(summary ? { summary } : {}),
+        ...(url ? { url } : {}),
+        ...(parsed ? { parsed } : {}),
       }
     }
   } catch {
@@ -433,14 +528,26 @@ export function firstEvidenceSummary(detail: ReviewDetail): string | null {
   return null
 }
 
+/** An ordered queue item the drawer can navigate. */
+export type PrescreenQueueItem = { sessionId: string }
+
 export function PrescreenReviewDrawer({
   sessionId,
   onClose,
   onReviewed,
+  queue,
+  index,
+  onNavigate,
 }: {
   sessionId: string
   onClose: () => void
   onReviewed: () => void
+  /** Optional ordered row set for queue navigation (prev/next + ←/→). */
+  queue?: PrescreenQueueItem[]
+  /** Index of the current session within `queue`. */
+  index?: number
+  /** Open the drawer for the queue row at `nextIndex`. */
+  onNavigate?: (nextIndex: number) => void
 }) {
   const [detail, setDetail] = useState<ReviewDetail | null>(null)
   const [sources, setSources] = useState<CandidateSources | null>(null)
@@ -448,15 +555,35 @@ export function PrescreenReviewDrawer({
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [selectedTerminal, setSelectedTerminal] = useState<ReviewTerminal>("PASS")
+  // Operator-confirmed rejection tier (null = use the AI suggestion on commit).
+  const [tierOverride, setTierOverride] = useState<CandidateTier | null>(null)
   const [candidateMessageBody, setCandidateMessageBody] = useState("")
   const [decisionReason, setDecisionReason] = useState("")
   const [recommendedActionsText, setRecommendedActionsText] = useState("")
   const [internalReviewNotes, setInternalReviewNotes] = useState("")
   const [busy, setBusy] = useState(false)
   const [draftBusy, setDraftBusy] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
+  const [flagged, setFlagged] = useState(false)
+  const labelFormRef = useRef<EvalLabelFormHandle | null>(null)
+
+  // Queue navigation — derive a stable position + neighbors.
+  const queueLength = queue?.length ?? 0
+  const queueIndex = typeof index === "number" ? index : -1
+  const hasQueue = queueLength > 0 && queueIndex >= 0 && Boolean(onNavigate)
+  const canPrev = hasQueue && queueIndex > 0
+  const canNext = hasQueue && queueIndex < queueLength - 1
+
+  const goPrev = useCallback(() => {
+    if (canPrev && onNavigate) onNavigate(queueIndex - 1)
+  }, [canPrev, onNavigate, queueIndex])
+  const goNext = useCallback(() => {
+    if (canNext && onNavigate) onNavigate(queueIndex + 1)
+  }, [canNext, onNavigate, queueIndex])
 
   useEffect(() => {
     let cancelled = false
+    setFlagged(false)
     void (async () => {
       try {
         setLoading(true)
@@ -554,6 +681,9 @@ export function PrescreenReviewDrawer({
         decisionReason: reason,
         recommendedActions,
         ...(status === "overridden" ? { correctionReason: "operator_changed_prescreen_terminal" } : {}),
+        ...(isRejectionTerminal && effectiveTier
+          ? { tier: effectiveTier, ...(aiSuggestedTier ? { tierAiSuggested: aiSuggestedTier } : {}) }
+          : {}),
       })
       onReviewed()
     } catch (e) {
@@ -563,17 +693,145 @@ export function PrescreenReviewDrawer({
     }
   }
 
+  // The AI's proposed prescreen terminal — drives the label form's pre-seed.
+  const aiProposedTerminal =
+    cleanReviewTerminal(detail?.attempt?.proposedOutcome?.prescreenTerminal) ??
+    cleanReviewTerminal(detail?.session.terminal)
+
+  // Rejection tier — the AI suggests one from overall fit + checklist; the
+  // operator confirms/overrides. Only shown/sent for FAIL / HARD_STOP.
+  const isRejectionTerminal = selectedTerminal === "FAIL" || selectedTerminal === "HARD_STOP"
+  // candidateChecklistEval.verdict is advance/borderline/reject — map to the
+  // pass/reject/uncertain shape suggestTierFromPrescreen expects.
+  const rawChecklistVerdict = detail?.session.review?.candidateChecklistEval?.verdict
+  const mappedChecklistVerdict =
+    rawChecklistVerdict === "advance"
+      ? ("pass" as const)
+      : rawChecklistVerdict === "borderline"
+        ? ("uncertain" as const)
+        : rawChecklistVerdict === "reject"
+          ? ("reject" as const)
+          : undefined
+  const bgPillars = detail?.session.review?.candidateChecklistEval?.background as
+    | { school?: { verdict?: string }; company?: { verdict?: string } }
+    | undefined
+  const strongBackground = bgPillars?.school?.verdict === "strong" || bgPillars?.company?.verdict === "strong"
+  const aiSuggestedTier = suggestTierFromPrescreen({
+    terminal: selectedTerminal,
+    weightedFitScore: detail?.attempt?.weightedFitScore,
+    checklistVerdict: mappedChecklistVerdict,
+    strongBackground,
+  })
+  const effectiveTier: CandidateTier | null = tierOverride ?? aiSuggestedTier
+  const attemptId = detail?.attempt?.attemptId
+  // Selectable evidence for the label form = the candidate's transcript turns.
+  const evidenceOptions: EvalLabelEvidenceOption[] = (detail?.turns ?? [])
+    .filter((t) => typeof t.reply === "string" && t.reply.trim())
+    .map((t) => ({
+      refId: t.id,
+      source: "transcript_turn" as const,
+      summary: `${t.qId}: ${t.reply.trim().slice(0, 120)}`,
+      quote: t.reply.trim().slice(0, 2_000),
+    }))
+
+  // Keyboard-first labeling. Scoped to the drawer; ignored while the operator is
+  // typing in an input/textarea/select (so rationale typing never triggers hotkeys).
+  // Escape is owned by SideDrawer (close). ← / → navigate the queue.
+  useEffect(() => {
+    function isTyping(target: EventTarget | null): boolean {
+      const el = target as HTMLElement | null
+      if (!el) return false
+      const tag = el.tagName
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        e.preventDefault()
+        setShowHelp((v) => !v)
+        return
+      }
+      if (showHelp && e.key === "Escape") {
+        // Let SideDrawer's Escape close the help-less drawer; close help first.
+        setShowHelp(false)
+        return
+      }
+      // Navigation works even while typing (arrows don't conflict with text entry
+      // intent here) — but only when a queue is wired.
+      if (e.key === "ArrowLeft" && !isTyping(e.target)) {
+        if (canPrev) {
+          e.preventDefault()
+          goPrev()
+        }
+        return
+      }
+      if (e.key === "ArrowRight" && !isTyping(e.target)) {
+        if (canNext) {
+          e.preventDefault()
+          goNext()
+        }
+        return
+      }
+      if (isTyping(e.target)) return
+      const key = e.key.toLowerCase()
+      if (key === "a") {
+        e.preventDefault()
+        void labelFormRef.current?.agreeAndSave().then((res) => {
+          if (res) goNext()
+        })
+      } else if (key === "d") {
+        e.preventDefault()
+        labelFormRef.current?.setDecision("disagree")
+        labelFormRef.current?.focusRationale()
+      } else if (key === "s") {
+        e.preventDefault()
+        void labelFormRef.current?.save()
+      } else if (key === "f") {
+        e.preventDefault()
+        setFlagged((v) => !v)
+      } else if (key >= "1" && key <= "5") {
+        e.preventDefault()
+        labelFormRef.current?.setQuality(Number(key) as 1 | 2 | 3 | 4 | 5)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [canNext, canPrev, goNext, goPrev, showHelp])
+
   return (
-    <SideDrawer title="Prescreen quick review" subtitle={sessionId} onClose={onClose} wide>
+    <SideDrawer title="Prescreen review + label" subtitle={sessionId} onClose={onClose} xl>
+      <style>{DUAL_PANE_COLLAPSE_CSS}</style>
       {loading ? <LoadingState label="Loading review..." /> : null}
       {err ? <div className="notice notice-bad" style={{ fontSize: "0.85em" }}>{err}</div> : null}
       {detail ? (
         <div style={{ display: "grid", gap: 14 }}>
-          <ReviewSummary detail={detail} />
-          <CandidateSourcesCard sources={sources} />
-          <ChecklistEvalPanel evaluation={detail.session.review?.candidateChecklistEval} />
-          <TranscriptPreview turns={detail.turns} />
-          <OtherSessionsPanel sessions={otherSessions} />
+          <QueueNavBar
+            hasQueue={hasQueue}
+            queueIndex={queueIndex}
+            queueLength={queueLength}
+            canPrev={canPrev}
+            canNext={canNext}
+            onPrev={goPrev}
+            onNext={goNext}
+            flagged={flagged}
+            onToggleFlag={() => setFlagged((v) => !v)}
+            onToggleHelp={() => setShowHelp((v) => !v)}
+          />
+          {showHelp ? <HotkeyHelp onClose={() => setShowHelp(false)} /> : null}
+          <div className="pa-eval-dualpane" style={dualPaneStyle}>
+            {/* LEFT — AI evaluation, read-only */}
+            <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
+              <div style={paneHeaderStyle}>AI evaluation · read-only</div>
+              <ReviewSummary detail={detail} />
+              <CandidateSourcesCard sources={sources} />
+              <ChecklistEvalPanel evaluation={detail.session.review?.candidateChecklistEval} />
+              <EngagementPanel signal={detail.session.review?.engagementSignal} turns={detail.turns} />
+              <TranscriptPreview turns={detail.turns} />
+              <OtherSessionsPanel sessions={otherSessions} />
+            </div>
+            {/* RIGHT — operational approve (pending only) + the data-labeling form (always) */}
+            <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
+              <div style={paneHeaderStyle}>Human review</div>
           {detail.session.terminalActionPendingReview ? (
             <div style={{ display: "grid", gap: 8 }}>
               <label style={labelStyle}>
@@ -588,6 +846,27 @@ export function PrescreenReviewDrawer({
                   <option value="HARD_STOP">HARD_STOP</option>
                 </select>
               </label>
+              {isRejectionTerminal ? (
+                <label style={labelStyle}>
+                  Candidate tier{" "}
+                  <span style={{ fontWeight: 400, color: "#64748b", fontSize: "0.85em" }}>
+                    — re-review pool · tier 1 strong → tier 3 hard no
+                    {aiSuggestedTier ? ` · AI suggests ${aiSuggestedTier.replace("tier_", "Tier ")}` : ""}
+                  </span>
+                  <select
+                    value={effectiveTier ?? ""}
+                    onChange={(e) => setTierOverride((e.target.value || null) as CandidateTier | null)}
+                    style={inputStyle}
+                  >
+                    {CANDIDATE_TIERS.map((t) => (
+                      <option key={t} value={t}>
+                        {CANDIDATE_TIER_LABELS[t]}
+                        {aiSuggestedTier === t ? " (AI)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label style={labelStyle}>
                 Final candidate message
                 <textarea
@@ -682,10 +961,148 @@ export function PrescreenReviewDrawer({
               ) : null}
             </div>
           )}
+              {/* Data-labeling form — works on ANY record (pending or closed). It
+                  NEVER messages the candidate (commitAndSend:false). */}
+              {attemptId ? (
+                <EvalLabelForm
+                  ref={labelFormRef}
+                  attemptId={attemptId}
+                  aiProposedTerminal={aiProposedTerminal}
+                  aiProposedOutcomeKind={detail.attempt?.proposedOutcome?.kind}
+                  evidenceOptions={evidenceOptions}
+                  onSaved={onReviewed}
+                />
+              ) : (
+                <div style={{ fontSize: "0.85em", color: "#94a3b8" }}>
+                  No evaluation attempt linked to this session — nothing to label.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       ) : null}
     </SideDrawer>
   )
+}
+
+/** Queue position + prev/next + flag + shortcut help toggle. */
+function QueueNavBar({
+  hasQueue,
+  queueIndex,
+  queueLength,
+  canPrev,
+  canNext,
+  onPrev,
+  onNext,
+  flagged,
+  onToggleFlag,
+  onToggleHelp,
+}: {
+  hasQueue: boolean
+  queueIndex: number
+  queueLength: number
+  canPrev: boolean
+  canNext: boolean
+  onPrev: () => void
+  onNext: () => void
+  flagged: boolean
+  onToggleFlag: () => void
+  onToggleHelp: () => void
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        flexWrap: "wrap",
+        padding: "0.5rem 0.7rem",
+        background: "#f8fafc",
+        border: "1px solid #e2e8f0",
+        borderRadius: 8,
+      }}
+    >
+      {hasQueue ? (
+        <>
+          <button type="button" onClick={onPrev} disabled={!canPrev} style={subtleBtnStyle} aria-label="Previous (←)">
+            ← Prev
+          </button>
+          <span style={{ fontSize: "0.85em", color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+            {queueIndex + 1} / {queueLength}
+          </span>
+          <button type="button" onClick={onNext} disabled={!canNext} style={subtleBtnStyle} aria-label="Next (→)">
+            Next →
+          </button>
+        </>
+      ) : (
+        <span style={{ fontSize: "0.85em", color: "#94a3b8" }}>single record</span>
+      )}
+      <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={onToggleFlag}
+          style={{ ...subtleBtnStyle, ...(flagged ? { background: "#fffbeb", borderColor: "#f59e0b", color: "#b45309" } : {}) }}
+          aria-pressed={flagged}
+          title="Flag for follow-up (F)"
+        >
+          {flagged ? "⚑ Flagged" : "⚐ Flag"}
+        </button>
+        <button type="button" onClick={onToggleHelp} style={subtleBtnStyle} title="Keyboard shortcuts (?)">
+          ? Shortcuts
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Compact keyboard-shortcut legend overlay. */
+function HotkeyHelp({ onClose }: { onClose: () => void }) {
+  const rows: Array<[string, string]> = [
+    ["A", "Agree + save label + next"],
+    ["D", "Disagree (focus rationale)"],
+    ["1–5", "Set AI-quality rating"],
+    ["S", "Save label"],
+    ["F", "Flag for follow-up"],
+    ["← / →", "Previous / next in queue"],
+    ["?", "Toggle this help"],
+    ["Esc", "Close"],
+  ]
+  return (
+    <div
+      style={{
+        border: "1px solid #c7d2fe",
+        background: "#eef2ff",
+        borderRadius: 8,
+        padding: "0.8rem 1rem",
+        display: "grid",
+        gap: 6,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <strong style={{ fontSize: "0.92em", color: "#3730a3" }}>Keyboard shortcuts</strong>
+        <button type="button" onClick={onClose} style={subtleBtnStyle}>close</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", fontSize: "0.85em" }}>
+        {rows.map(([k, d]) => (
+          <div key={k} style={{ display: "contents" }}>
+            <kbd style={kbdStyle}>{k}</kbd>
+            <span style={{ color: "#334155" }}>{d}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const kbdStyle: CSSProperties = {
+  fontFamily: "monospace",
+  fontSize: "0.85em",
+  background: "#fff",
+  border: "1px solid #c7d2fe",
+  borderRadius: 4,
+  padding: "0 6px",
+  color: "#3730a3",
+  justifySelf: "start",
 }
 
 export function BulkRejectDrawer({
@@ -824,9 +1241,12 @@ export function BulkRejectDrawer({
                   {item.row.terminal ?? "IN_PROGRESS"}
                 </div>
               </div>
-              <Badge tone={item.status === "queued" ? "ok" : item.error ? "warn" : "info"}>
-                {item.status === "queued" ? "queued" : item.error ? "needs edit" : "draft"}
-              </Badge>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <EngagementBadge signal={item.row.review?.engagementSignal} />
+                <Badge tone={item.status === "queued" ? "ok" : item.error ? "warn" : "info"}>
+                  {item.status === "queued" ? "queued" : item.error ? "needs edit" : "draft"}
+                </Badge>
+              </div>
             </div>
             {item.evidenceSummary ? (
               <div style={{ color: "#334155", fontSize: "0.84em" }}>{item.evidenceSummary}</div>
@@ -907,6 +1327,7 @@ export function ReviewSummary({ detail }: { detail: ReviewDetail }) {
         <Badge tone="info">
           {detail.session.score?.toFixed(2)}/{detail.session.scoreMax?.toFixed(2)} ({(ratio * 100).toFixed(0)}%)
         </Badge>
+        <EngagementBadge signal={detail.session.review?.engagementSignal} />
       </div>
       <DrawerKV label="Job" value={<AdminJobLink jobId={detail.session.jobId} />} />
       <DrawerKV label="User" value={<AdminUserLink userId={detail.session.userId} />} />
@@ -1036,62 +1457,76 @@ function pillarTone(v?: string): "ok" | "warn" | "muted" {
   return v === "strong" ? "ok" : v === "weak" ? "warn" : "muted"
 }
 
-/** Candidate sources — LinkedIn (real external link) + résumé (fileName + parsed
- *  summary; candidate-upload résumés keep no downloadable file). Sits right above
- *  the checklist eval so the operator can cross-check the eval against the source. */
+/** Candidate sources — LinkedIn (real external link) + résumé. Résumés uploaded after
+ *  the persist-at-ingest change carry a viewable `resumeFileUrl` → inline iframe; older
+ *  uploads have only the parsed summary. Sits right above the checklist eval so the
+ *  operator can cross-check the eval against the source. */
 function CandidateSourcesCard({ sources }: { sources: CandidateSources | null }) {
-  const [showResume, setShowResume] = useState(false)
-  const linkedinUrl = sources?.linkedinUrl
-  const resume = sources?.resume
-  const hasResume = Boolean(resume?.fileName || resume?.summary)
-  // Render nothing only once we know there is genuinely nothing to show.
-  if (sources && !linkedinUrl && !hasResume) return null
-  return (
-    <div style={{ ...cardStyle, background: "#f8fafc" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: "0.95em", color: "#334155" }}>Candidate sources</strong>
-        {!sources ? <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>loading…</span> : null}
-        {linkedinUrl ? (
-          <a href={linkedinUrl} target="_blank" rel="noreferrer" style={sourceLinkStyle} title={linkedinUrl}>
-            in · LinkedIn ↗
-          </a>
-        ) : sources ? (
-          <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>no LinkedIn on file</span>
-        ) : null}
-        {hasResume ? (
-          <button
-            type="button"
-            onClick={() => setShowResume((v) => !v)}
-            style={{ ...sourceLinkStyle, cursor: "pointer", background: "#fff" }}
-            title={resume?.fileName ?? "résumé"}
-          >
-            📄 {resume?.fileName ?? "Résumé"} {showResume ? "▲" : "▼"}
-          </button>
-        ) : sources ? (
-          <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>no résumé on file</span>
-        ) : null}
+  if (sources === null) {
+    return (
+      <div style={{ ...cardStyle, background: "#f8fafc" }}>
+        <span style={{ fontSize: "0.82em", color: "#94a3b8" }}>loading candidate sources…</span>
       </div>
-      {showResume ? (
-        resume?.summary ? (
-          <div
-            style={{
-              marginTop: 4,
-              fontSize: "0.9em",
-              lineHeight: 1.55,
-              color: "#334155",
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              borderTop: "1px solid rgba(0,0,0,0.08)",
-              paddingTop: 10,
-            }}
-          >
-            {resume.summary}
-          </div>
-        ) : (
-          <div style={{ marginTop: 4, fontSize: "0.85em", color: "#94a3b8", borderTop: "1px solid rgba(0,0,0,0.08)", paddingTop: 10 }}>
-            Résumé on file{resume?.fileName ? ` (${resume.fileName})` : ""}; no parsed summary stored. The checklist eval below still uses it.
-          </div>
-        )
+    )
+  }
+  // Shared résumé/candidate UI with the recruiter submission review — same component,
+  // one source of truth. With a résumé URL it shows the inline document; without one
+  // (older candidate uploads) it falls back to LinkedIn + the parsed summary.
+  return (
+    <CandidateResumePreview
+      resumeUrl={sources.resume?.url}
+      linkedinUrl={sources.linkedinUrl}
+      fileName={sources.resume?.fileName}
+      parsedSummary={sources.resume?.summary}
+      parsed={sources.resume?.parsed}
+    />
+  )
+}
+
+/** Compact badge for the engagement (effort) level — reused in the row + bulk views. */
+export function EngagementBadge({ signal }: { signal?: PrescreenEngagementSignal }) {
+  if (!signal) return null
+  const emoji = signal.level === "high" ? "✍️" : signal.level === "low" ? "💤" : "·"
+  return (
+    <Badge tone={engagementTone(signal.level)} >
+      {emoji} effort: {signal.level}
+    </Badge>
+  )
+}
+
+/**
+ * Engagement (effort) signal — how much the candidate actually typed / shared across
+ * their answers. ADVISORY: it ranks/triages effort, it is NEVER a gate or a reject
+ * reason. Shows the persisted `review.engagementSignal`; if a session hasn't been
+ * signalled yet, it computes a live estimate from the transcript so the operator always
+ * sees something.
+ */
+function EngagementPanel({ signal, turns }: { signal?: PrescreenEngagementSignal; turns: PrescreenTurn[] }) {
+  const persisted = Boolean(signal)
+  const effective: PrescreenEngagementSignal =
+    signal ?? computePrescreenEngagement(turns.map((t) => t.reply))
+  if (effective.answeredCount === 0) return null
+  const tone = engagementTone(effective.level)
+  const accent = tone === "ok" ? "#15803d" : tone === "warn" ? "#b45309" : "#475569"
+  const bg = tone === "ok" ? "#f0fdf4" : tone === "warn" ? "#fffbeb" : "#f8fafc"
+  return (
+    <div style={{ border: `1px solid ${accent}33`, borderLeft: `5px solid ${accent}`, borderRadius: 10, background: bg, padding: "1rem 1.2rem", display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: "1.05em", color: accent }}>Engagement · effort signal</strong>
+        <EngagementBadge signal={effective} />
+        <span style={{ fontSize: "0.85em", color: "#64748b" }}>
+          {effective.label} · advisory — ranking only, never a reject reason
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: "0.95em", color: "#1e293b" }}>
+        <span><strong>{effective.answeredCount}</strong> answers</span>
+        <span><strong>{effective.totalWords}</strong> words</span>
+        <span>avg <strong>{effective.avgWordsPerAnswer}</strong> w/answer</span>
+        <span><strong>{effective.detailedAnswerCount}</strong> detailed</span>
+        <span><strong>{effective.shortAnswerCount}</strong> very short</span>
+      </div>
+      {!persisted ? (
+        <div style={{ fontSize: "0.8em", color: "#94a3b8" }}>live estimate from the transcript — not yet saved on the session</div>
       ) : null}
     </div>
   )
@@ -1127,12 +1562,23 @@ function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChe
                 {(g.kind ?? "").toUpperCase()}{g.heading ? ` · ${g.heading}` : ""}
               </div>
               {(g.items ?? []).map((it, ii) => {
-                const bad = it.status === "gap" || it.status === "flag"
-                const mark = it.status === "gap" ? "✗" : it.status === "flag" ? "⚑" : "✓"
+                // An anti item that is FLAGGED = the candidate matches a not-a-fit
+                // pattern = a DOWN signal (bad). An anti item that is CLEAR = the
+                // pattern is simply absent — neutral, NOT a positive win, so it must
+                // not render as a celebratory green ✓ inside a "not a fit" section.
+                const isFlag = it.status === "flag"
+                const isGap = it.status === "gap"
+                const isClear = it.status === "clear"
+                const bad = isGap || isFlag
+                const mark = isGap ? "✗" : isFlag ? "⚑" : isClear ? "○" : "✓"
+                const markColor = bad ? "#b91c1c" : isClear ? "#94a3b8" : "#15803d"
                 return (
                   <div key={ii} style={{ display: "flex", gap: 9, fontSize: "1.02em", lineHeight: 1.45, color: "#1e293b", alignItems: "flex-start" }}>
-                    <span style={{ color: bad ? "#b91c1c" : "#15803d", fontWeight: 700, width: 18, flexShrink: 0 }}>{mark}</span>
-                    <span style={bad ? { color: "#1e293b" } : { color: "#64748b" }}>{it.text}</span>
+                    <span style={{ color: markColor, fontWeight: 700, width: 18, flexShrink: 0 }}>{mark}</span>
+                    <span style={bad ? { color: "#1e293b" } : { color: "#94a3b8" }}>
+                      {it.text}
+                      {isFlag ? <span style={{ color: "#b91c1c", fontWeight: 600 }}> · down signal</span> : null}
+                    </span>
                   </div>
                 )
               })}
@@ -1153,10 +1599,27 @@ function ChecklistEvalPanel({ evaluation }: { evaluation?: PrescreenCandidateChe
           ) : null}
         </>
       )}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: "0.95em", paddingTop: 4 }}>
-        {(["school", "degree", "company", "gpa"] as const).map((k) => (
-          <Badge key={k} tone={pillarTone(evaluation.background?.[k]?.verdict)}>{k}: {evaluation.background?.[k]?.verdict ?? "—"}</Badge>
-        ))}
+      <div style={{ display: "grid", gap: 6, paddingTop: 4 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: "0.95em" }}>
+          {(["school", "degree", "company", "gpa"] as const).map((k) => {
+            const p = evaluation.background?.[k]
+            return (
+              <span key={k} title={p?.evidence ?? ""}>
+                <Badge tone={pillarTone(p?.verdict)}>{k}: {p?.verdict ?? "—"}</Badge>
+              </span>
+            )
+          })}
+        </div>
+        {/* Surface the evidence behind the school/company verdicts so the named
+            school/employer is visible (a verdict word alone hides what we read). */}
+        {(["school", "company"] as const).map((k) => {
+          const ev = evaluation.background?.[k]?.evidence
+          return ev ? (
+            <div key={k} style={{ fontSize: "0.9em", color: "#64748b", lineHeight: 1.4 }}>
+              <strong style={{ color: "#475569", textTransform: "capitalize" }}>{k}:</strong> {ev}
+            </div>
+          ) : null
+        })}
       </div>
       {evaluation.research?.companies?.length ? (
         <div style={{ fontSize: "0.95em", color: "#475569" }}>
@@ -1174,12 +1637,15 @@ export function SideDrawer({
   onClose,
   children,
   wide,
+  xl,
 }: {
   title: string
   subtitle: string
   onClose: () => void
   children: ReactNode
   wide?: boolean
+  /** Extra-wide workspace — for the dual-pane prescreen review (résumé + transcript left, decision right). */
+  xl?: boolean
 }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1204,7 +1670,7 @@ export function SideDrawer({
           top: 0,
           right: 0,
           height: "100vh",
-          width: wide ? "min(1180px, 94vw)" : "min(560px, 96vw)",
+          width: xl ? "min(1680px, 98vw)" : wide ? "min(1180px, 94vw)" : "min(560px, 96vw)",
           background: "var(--cream-3, #fff)",
           borderLeft: "1px solid var(--border, #e2e8f0)",
           boxShadow: "-12px 0 32px rgba(15, 23, 42, 0.18)",

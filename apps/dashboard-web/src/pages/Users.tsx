@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
+import { cachedLoad } from "../lib/unified-cache.js"
 import { normalizePhoneLookup } from "./Users.helpers.js"
 
 type RiskLevel = "low" | "medium" | "high"
@@ -89,6 +90,9 @@ export function Users() {
   useEffect(() => {
     ;(async () => {
       try {
+        // Cache-through (3-min TTL): re-opening this page serves the derived
+        // rows from the in-memory cache instead of re-reading ~2.2k docs.
+        const cachedList = await cachedLoad("users:list", async () => {
         const [userSnap, messageSnap, inboundSnap, outboundSnap, turnSnap, abuseSnap] = await Promise.all([
           getDocs(query(collection(db(), PA_COLLECTIONS.users), limit(500))),
           getDocs(query(collection(db(), PA_COLLECTIONS.messages), orderBy("createdAt", "desc"), limit(500))),
@@ -154,7 +158,9 @@ export function Users() {
           (a, b) =>
             String(b.latestAt || b.createdAt || "").localeCompare(String(a.latestAt || a.createdAt || ""), undefined, { numeric: true })
         )
-        setRows(list.slice(0, 200))
+          return list
+        })
+        setRows(cachedList.slice(0, 200))
       } catch (e: unknown) {
         setErr(e instanceof Error ? e.message : String(e))
       } finally {

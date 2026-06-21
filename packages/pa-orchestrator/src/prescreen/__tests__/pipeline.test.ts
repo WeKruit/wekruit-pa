@@ -1741,3 +1741,51 @@ test("ALWAYS_ASK: MULTIPLE ALWAYS_ASK questions are ALL asked before the termina
   assert.equal(final?.action.kind, "terminal")
   if (final?.action.kind === "terminal") assert.equal(final.action.terminal, "PASS")
 })
+
+// ── recordRecentClarifyText (anti-repetition persistence, Adam 2026-06-19) ──
+import { recordRecentClarifyText } from "../pipeline.js"
+import type { PreScreenState } from "../state.js"
+
+function blankState(): PreScreenState {
+  return {
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "j1",
+    currentQId: "q1",
+    questions: {},
+    qOrder: ["q1"],
+    score: 0,
+    scoreMax: 1,
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 2,
+    terminal: null,
+    createdAt: "2026-06-19T00:00:00.000Z",
+    updatedAt: "2026-06-19T00:00:00.000Z",
+  } as PreScreenState
+}
+
+test("recordRecentClarifyText appends trimmed non-empty lines in order", () => {
+  const s = blankState()
+  recordRecentClarifyText(s, "  Got it - tell me more.  ")
+  recordRecentClarifyText(s, "The ownership piece matters here - what did you build?")
+  assert.deepEqual(s.recentClarifyTexts, [
+    "Got it - tell me more.",
+    "The ownership piece matters here - what did you build?",
+  ])
+})
+
+test("recordRecentClarifyText ignores empty/whitespace lines", () => {
+  const s = blankState()
+  recordRecentClarifyText(s, "real line")
+  recordRecentClarifyText(s, "   ")
+  recordRecentClarifyText(s, "")
+  assert.deepEqual(s.recentClarifyTexts, ["real line"])
+})
+
+test("recordRecentClarifyText caps the list at the 6 most recent", () => {
+  const s = blankState()
+  for (let i = 1; i <= 9; i++) recordRecentClarifyText(s, `line ${i}`)
+  assert.equal(s.recentClarifyTexts?.length, 6)
+  assert.deepEqual(s.recentClarifyTexts, ["line 4", "line 5", "line 6", "line 7", "line 8", "line 9"])
+})

@@ -7,6 +7,8 @@ import { AgentBuilder } from "./pages/AgentBuilder.js"
 import Legal from "./pages/Legal.js"
 import { Login } from "./pages/Login.js"
 import { Operations } from "./pages/Operations.js"
+import OperationsOverview from "./pages/OperationsOverview.js"
+import RejectedCandidates from "./pages/RejectedCandidates.js"
 import { Overview } from "./pages/Overview.js"
 import { UserDetail } from "./pages/UserDetail.js"
 import { Users } from "./pages/Users.js"
@@ -43,6 +45,7 @@ import LayoffEmployers from "./pages/LayoffEmployers.js"
 import CoresignalPlayground from "./pages/CoresignalPlayground.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
 import FlywheelEval from "./pages/FlywheelEval.js"
+import EvalLabels from "./pages/EvalLabels.js"
 import LaunchReadiness from "./pages/LaunchReadiness.js"
 // v1.7 Phase 70 (MATCHDEBUG-01..04) — admin live debugger for the V16 cascade
 // with score-weight sandbox sliders. Backed by paAdminMatchDebug callable.
@@ -76,6 +79,7 @@ import { QrCampaigns } from "./pages/QrCampaigns.js"
 import OutreachOps from "./pages/OutreachOps.js"
 // Batch human-approve-then-send queue (pa-pending-outbound). Send is gated.
 import PendingOutbound from "./pages/PendingOutbound.js"
+import PartnerStats from "./pages/PartnerStats.js"
 // v2.0 S7 - job-scoped passed candidate snapshots.
 import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
@@ -166,6 +170,7 @@ export default function App() {
     >
         <Routes>
           <Route path="/" element={<Overview />} />
+          <Route path="/admin/operations" element={<OperationsOverview />} />
           <Route path="/conversations" element={<Users />} />
           {/* v2.0 marketplace candidate browser — replaces /conversations
               as the canonical "All candidates" surface. Reads pa-users +
@@ -211,6 +216,7 @@ export default function App() {
           <Route path="/eval/voice-review" element={<VoiceReview />} />
           <Route path="/eval/n-round-sim" element={<NRoundSim />} />
           <Route path="/admin/flywheel-eval" element={<FlywheelEval />} />
+          <Route path="/admin/eval-labels" element={<EvalLabels />} />
           {/* Phase 49 (v1.5 Stream-H D9) — operator reverse-match dashboard. Admin-only;
               CF gates on paReverseMatchEnabled flag (default OFF). */}
           <Route path="/match/candidates" element={<MatchCandidates />} />
@@ -229,6 +235,7 @@ export default function App() {
           <Route path="/admin/voice-test-dial" element={<VoiceTestDial />} />
           <Route path="/admin/voice-profiles" element={<VoiceProfiles />} />
           <Route path="/admin/passed-candidates" element={<PassedCandidates />} />
+          <Route path="/admin/rejected-candidates" element={<RejectedCandidates />} />
           {/* v1.8 Phase 78 — Job pre-screen config editor. */}
           <Route path="/admin/jobs/:jobId/prescreen" element={<JobPrescreen />} />
           <Route path="/admin/job-prescreen" element={<JobPrescreen />} />
@@ -244,6 +251,7 @@ export default function App() {
           <Route path="/admin/ats-inbound" element={<AtsInbound />} />
           <Route path="/admin/bulk-resumes" element={<BulkResumes />} />
           <Route path="/admin/outreach-ops" element={<OutreachOps />} />
+          <Route path="/admin/partner-stats" element={<PartnerStats />} />
           {/* Batch human-approve-then-send queue (pa-pending-outbound). */}
           <Route path="/admin/pending-outbound" element={<PendingOutbound />} />
           {/* v1.9 Phase 88 — Sendblue number pool admin. */}

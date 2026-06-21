@@ -163,22 +163,39 @@ export const parsedResumeData = z.object({
    * a free-form string array so the LLM may emit candidates that get
    * filtered to canonical at write-time.
    */
-  relevantIndustry: z.array(z.string()).max(6).default([]),
+  // Truncate (not reject) to 6 — benign over-generation of an enrichment
+  // array must never fail the whole parse (see proposedTags note below).
+  relevantIndustry: z
+    .array(z.string())
+    .default([])
+    .transform((arr) => (arr.length > 6 ? arr.slice(0, 6) : arr)),
 
   /**
    * Phase 53 (PARSE-04) — sub-domain expertise tokens (e.g.
    * `frontend_development`, `mlops`, `infrastructure_security`).
    */
-  relevantSpecialization: z.array(z.string()).max(6).default([]),
+  relevantSpecialization: z
+    .array(z.string())
+    .default([])
+    .transform((arr) => (arr.length > 6 ? arr.slice(0, 6) : arr)),
 
   /**
-   * Phase 53 (PARSE-05) — sandbox open-vocab tags (max 12). Must match
-   * the canonical pattern; abbreviations rejected at write-time by
-   * cv-ingest's shared-tags `validateRelevantTag`.
+   * Phase 53 (PARSE-05) — sandbox open-vocab tags (max 12). Re-validated at
+   * write-time by cv-ingest's shared-tags `validateRelevantTag`.
+   *
+   * RESILIENCE (2026-06-15, Chang Shu incident — cathyshu@andrew.cmu.edu): a
+   * model-emitted proposed tag with disallowed chars (e.g. "c++", "f#",
+   * "ci/cd", or any caps/space) previously FAILED THE WHOLE résumé parse via
+   * `.regex()` — and the error is non-retryable, so all 3 tiers threw the same
+   * ZodError → `llm_parse_failed` → the candidate saw "couldn't read this
+   * resume" forever and could never enter (her résumé parsed cleanly to text;
+   * only this enrichment tag killed it). proposedTags is sandbox enrichment,
+   * not core CV data — DROP invalid entries instead of rejecting, mirroring the
+   * skills truncation above. Never fail a parse over a benign enrichment tag.
    */
   proposedTags: z
-    .array(z.string().regex(PROPOSED_TAG_PATTERN, "must match [a-z][a-z0-9_]{1,79}"))
-    .max(12)
-    .default([]),
+    .array(z.string())
+    .default([])
+    .transform((arr) => arr.filter((t) => PROPOSED_TAG_PATTERN.test(t)).slice(0, 12)),
 })
 export type ParsedResumeData = z.infer<typeof parsedResumeData>

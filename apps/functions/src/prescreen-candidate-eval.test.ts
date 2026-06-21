@@ -121,6 +121,27 @@ describe("prescreen-candidate-eval", () => {
     assert.equal(redrafts[0]!.terminal, "HARD_STOP")
   })
 
+  it("identityConflict + reject → deterministically clamped to borderline (≤0.5 conf)", async () => {
+    const { db, stores } = makeDb(seed())
+    const conflictJudgment = JSON.stringify({
+      ...JSON.parse(JUDGMENT),
+      verdict: "reject",
+      confidence: 0.82,
+      identityConflict: true,
+    })
+    const res = await runPrescreenCandidateEval("ps-1", {
+      db, now: () => NOW,
+      callJudge: async () => ({ rawJson: conflictJudgment, usedModel: "m" }),
+      research: { apiKey: "k", searchEmployeeIdByLinkedinUrl: async () => 7, fetchEmployeeCollect: async () => employee },
+      regenerateDraft: (async () => ({ stored: true })) as never,
+    })
+    assert.equal(res.status, "written")
+    const stored = (stores.get("pa-prescreen-sessions")!.get("ps-1")!.review as Record<string, unknown>).candidateChecklistEval as Record<string, unknown>
+    assert.equal(stored.verdict, "borderline", "wrong-identity reject is clamped to borderline")
+    assert.ok((stored.confidence as number) <= 0.5, "confidence capped at 0.5")
+    assert.match(String((stored.reasons as string[])[0]), /wrong-identity/i)
+  })
+
   it("judges transcript-only when there is no LinkedIn (enriched=false), still stores", async () => {
     const s = seed()
     s["pa-users"]["cand-1"] = { recentRoleTitle: "Intern" } // no linkedinUrl
@@ -159,14 +180,35 @@ describe("prescreen-candidate-eval", () => {
     assert.equal(stored.enriched, true, "résumé-only candidate is still profile-grounded")
   })
 
-  it("skips a job with no checklist", async () => {
+  it("evaluates background pillars even with NO job checklist (profile evidence present)", async () => {
+    // A job with no recruiter checklist must STILL get the background pillars (school/degree/
+    // company/gpa) + school prior — the eval no longer skips just because there's no checklist.
     const s = seed()
     s["pa-jobs"]["job-1"] = { recruiterBoard: { label: { title: "X" } } } // no checklist groups
+    const { db, stores } = makeDb(s)
+    let judged = false
+    const res = await runPrescreenCandidateEval("ps-1", {
+      db, now: () => NOW,
+      callJudge: async () => { judged = true; return { rawJson: JUDGMENT, usedModel: "m" } },
+      research: { apiKey: "k", searchEmployeeIdByLinkedinUrl: async () => 7, fetchEmployeeCollect: async () => employee },
+      regenerateDraft: (async () => ({ stored: true })) as never,
+    })
+    assert.equal(res.status, "written")
+    assert.ok(judged, "the judge runs to produce background pillars even without a checklist")
+    const stored = (stores.get("pa-prescreen-sessions")!.get("ps-1")!.review as Record<string, unknown>).candidateChecklistEval as Record<string, unknown>
+    assert.ok(stored.background, "background pillars stored even with no checklist")
+  })
+
+  it("skips only when there is no checklist AND no profile evidence", async () => {
+    const s = seed()
+    s["pa-jobs"]["job-1"] = { recruiterBoard: { label: { title: "X" } } } // no checklist groups
+    s["pa-users"]["cand-1"] = {} // no LinkedIn, no merged experience → no profile evidence
     const { db } = makeDb(s)
     const res = await runPrescreenCandidateEval("ps-1", {
       db, now: () => NOW,
       callJudge: async () => { throw new Error("judge should not run") },
-      research: { apiKey: "k", searchEmployeeIdByLinkedinUrl: async () => 7, fetchEmployeeCollect: async () => employee },
+      // No linkedinUrl on the user → research is never fetched; these are type-valid no-ops.
+      research: { apiKey: null, searchEmployeeIdByLinkedinUrl: async () => null, fetchEmployeeCollect: async () => employee },
     })
     assert.equal(res.status, "skipped_no_job_checklist")
   })

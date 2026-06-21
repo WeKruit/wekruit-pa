@@ -31,11 +31,12 @@
  *   - apps/dashboard-web/src/pages/PublicJobCv.tsx (PublicJob page)
  *   - apps/functions/src/ats-inbound-webhook.ts (Handshake/ATS bind path)
  */
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { getAuth } from "firebase-admin/auth"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { getStorage } from "firebase-admin/storage"
 import {
   PA_COLLECTIONS,
   CandidateAuthMappingSchema,
@@ -221,6 +222,8 @@ export function buildCandidateUploadResumeArtifactWrites(input: {
   candidateProfileSummary?: string
   existingUserSource?: unknown
   uploadSource?: string
+  resumeFileUrl?: string
+  storageUri?: string
   now: string
 }): {
   artifact: ReturnType<typeof ResumeArtifactSchema.parse>
@@ -243,6 +246,8 @@ export function buildCandidateUploadResumeArtifactWrites(input: {
       sha256: input.sha256,
       parsedCandidateResumeId: input.parsedCandidateResumeId,
       candidateProfileSummary: input.candidateProfileSummary,
+      resumeFileUrl: input.resumeFileUrl,
+      storageUri: input.storageUri,
       createdAt: input.now,
       updatedAt: input.now,
     })
@@ -261,8 +266,79 @@ export function buildCandidateUploadResumeArtifactWrites(input: {
       latestResumeArtifactId: artifact.resumeId,
       resumeStatus: "parsed",
       profileSummary: input.candidateProfileSummary,
+      resumeFileUrl: input.resumeFileUrl,
       updatedAt: input.now,
     }),
+  }
+}
+
+/**
+ * Persist the uploaded résumé bytes to Storage so review UIs can show the actual
+ * document inline (the parse path is `inline://` — bytes were never stored). Returns a
+ * token-gated viewable https URL + the gs:// uri. FAIL-OPEN: any error returns null and
+ * the upload/parse flow continues untouched (this is a nice-to-have for review, never a
+ * gate). The token URL is unguessable and only surfaced to authenticated admins.
+ */
+async function persistCandidateResumeFile(args: {
+  candidateId: string
+  sha256: string
+  fileName?: string
+  bytes: Uint8Array
+  kind: ResumeUploadKind
+  log: (event: string, fields?: Record<string, unknown>) => void
+}): Promise<{ resumeFileUrl: string; storageUri: string } | null> {
+  try {
+    const bucket = getStorage().bucket()
+    const ext = args.kind === "docx" ? "docx" : "pdf"
+    const objectPath = `candidate-resumes/${idSafe(args.candidateId)}/${args.sha256}.${ext}`
+    const file = bucket.file(objectPath)
+    if (typeof file.save !== "function") return null
+    const token = randomUUID()
+    const safeName = (args.fileName ?? `resume.${ext}`).replace(/[^\w.-]/g, "_")
+    await file.save(Buffer.from(args.bytes), {
+      resumable: false,
+      contentType: args.kind === "docx"
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "application/pdf",
+      metadata: {
+        contentDisposition: `inline; filename="${safeName}"`,
+        metadata: { firebaseStorageDownloadTokens: token, candidateId: args.candidateId, sha256: args.sha256 },
+      },
+    })
+    const resumeFileUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${token}`
+    return { resumeFileUrl, storageUri: `gs://${bucket.name}/${objectPath}` }
+  } catch (err) {
+    args.log("public_cv_ingest.resume_file_persist_failed", {
+      candidateId: args.candidateId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
+}
+
+/**
+ * Fetch the résumé bytes from a (possibly short-lived) source URL — the
+ * iMessage/SMS path hands cv-ingest a mediaUrl that expires, so we re-fetch the
+ * file in-request to persist it durably. Bounded + fail-open (returns null).
+ */
+async function fetchResumeBytesForPersist(
+  url: string,
+  fileName: string | undefined,
+  log: (event: string, fields?: Record<string, unknown>) => void,
+): Promise<{ bytes: Uint8Array; sha256: string; kind: ResumeUploadKind } | null> {
+  try {
+    const resp = await fetch(url)
+    if (!resp.ok) return null
+    const buf = new Uint8Array(await resp.arrayBuffer())
+    if (buf.length === 0 || buf.length > 8 * 1024 * 1024) return null
+    const kind = detectResumeUploadKind(buf, fileName)
+    if (!kind) return null
+    return { bytes: buf, sha256: createHash("sha256").update(buf).digest("hex"), kind }
+  } catch (err) {
+    log("public_cv_ingest.resume_fetch_for_persist_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
   }
 }
 
@@ -274,6 +350,8 @@ async function recordCandidateUploadResumeArtifact(args: {
   sha256?: string
   candidateProfileSummary?: string
   uploadSource?: string
+  resumeFileUrl?: string
+  storageUri?: string
 }): Promise<string> {
   const userSnap = await args.db
     .collection(PA_COLLECTIONS.users)
@@ -287,6 +365,8 @@ async function recordCandidateUploadResumeArtifact(args: {
     candidateProfileSummary: args.candidateProfileSummary,
     existingUserSource: userSnap.data()?.source,
     uploadSource: args.uploadSource,
+    resumeFileUrl: args.resumeFileUrl,
+    storageUri: args.storageUri,
     now: new Date().toISOString(),
   })
   await Promise.all([
@@ -522,6 +602,33 @@ export const paPublicCvIngest = onRequest(
         await clearEnrichmentInFlight(db, userId, new Date().toISOString())
       }
       if (result.ok) {
+        // Persist the uploaded file so the actual résumé renders inline in review
+        // UIs (parse is `inline://`, so the bytes were never stored). Base64 path
+        // already has the bytes; the resumeUrl path (iMessage mediaUrl etc.) had its
+        // file fetched only by the parser — re-fetch + store it so it's durable (the
+        // source media URL expires). Fail-open. THIS is why ~81% of résumés had no
+        // inline preview: only the web base64 path was persisting.
+        let persistBytes = injectedBytes
+        let persistSha = resumeSha256
+        let persistKind = resumeKind
+        if (!persistBytes && body.resumeUrl) {
+          const fetched = await fetchResumeBytesForPersist(body.resumeUrl, body.resumeName, log)
+          if (fetched) {
+            persistBytes = fetched.bytes
+            persistSha = fetched.sha256
+            persistKind = fetched.kind
+          }
+        }
+        const persisted = persistBytes && persistSha && persistKind
+          ? await persistCandidateResumeFile({
+              candidateId: result.userId,
+              sha256: persistSha,
+              fileName: body.resumeName,
+              bytes: persistBytes,
+              kind: persistKind,
+              log,
+            })
+          : null
         const resumeArtifactId = await recordCandidateUploadResumeArtifact({
           db,
           candidateId: result.userId,
@@ -530,6 +637,8 @@ export const paPublicCvIngest = onRequest(
           sha256: resumeSha256,
           candidateProfileSummary: result.candidateProfileSummary,
           uploadSource: body.source,
+          resumeFileUrl: persisted?.resumeFileUrl,
+          storageUri: persisted?.storageUri,
         })
         log("public_cv_ingest.ok", {
           userId,

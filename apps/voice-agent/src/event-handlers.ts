@@ -51,7 +51,7 @@ export const EVENT_NAMES = {
   /** AgentSession event: VAD/agent-state detected a non-real interruption. */
   agent_false_interruption: "agent_false_interruption",
   /** Room event (NOT session): SIP/WS participant left. */
-  participant_disconnected: "participant_disconnected",
+  participant_disconnected: "participantDisconnected",
   /** AgentSession event: any error mid-session. */
   ErrorEvent: "error",
   /** AgentSession event: per-model billing/cost update. */

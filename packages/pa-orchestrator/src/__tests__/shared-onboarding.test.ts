@@ -7,6 +7,7 @@ import {
   buildHelloWekruitOpenerBody,
   buildBindCodeOpenerBody,
   parseHelloWekruitOpener,
+  looksLikeGarbledStartToken,
   isBindCode,
   normalizeBindCode,
   BIND_CODE_ALPHABET,
@@ -99,6 +100,70 @@ test("NEW job token carrying a BIND CODE (2026-06-14 web→phone bridge) parses 
     parseHelloWekruitOpener("WeKruit_photon-macos-devops_aBcD1eFgH2iJkLmNoPqR_Job"),
     { candidateId: "aBcD1eFgH2iJkLmNoPqR" },
   )
+})
+
+// ─────────── brand-corruption-tolerant job opener (2026-06-16 incident) ──────
+
+test("BRAND-CORRUPTED job token (autocorrect) still resolves the BIND CODE — live incident +16263623119", () => {
+  // iMessage autocorrect mangled the literal "WeKruit" → "WeKeuit". The bind code
+  // Z8SRWFQZ was VALID + unused, but the exact-brand matcher missed → cold opener
+  // → duplicate empty account + dead silence. The tolerant pass must resolve it
+  // exactly like the correctly-spelled token would.
+  assert.deepEqual(
+    parseHelloWekruitOpener("WeKeuit_wekruit-software-engineer-new-grad_Z8SRWFQZ_Job"),
+    { bindCode: "Z8SRWFQZ" },
+  )
+  // Other plausible autocorrect corruptions of the brand word, gated by a valid code.
+  assert.deepEqual(
+    parseHelloWekruitOpener("WeCruit_hs-10996795-invoko-product-manager_ABCDEF23_Job"),
+    { bindCode: "ABCDEF23" },
+  )
+  assert.deepEqual(
+    parseHelloWekruitOpener("wekruit_photon-macos-devops_abcdef23_Job"),
+    { bindCode: "ABCDEF23" },
+  )
+  // lowercased code on a corrupted brand still normalizes to the canonical code.
+  assert.deepEqual(
+    parseHelloWekruitOpener("Wekeuit_photon-macos-devops_z8srwfqz_Job"),
+    { bindCode: "Z8SRWFQZ" },
+  )
+})
+
+test("brand-corrupted job token does NOT accept a non-bind-code segment (no raw uid / codeless on tolerant path)", () => {
+  // A 20-char raw push-id uid carried on a CORRUPTED brand must NOT bind — the
+  // tolerant pass only accepts a structurally-valid bind code (else a corrupted
+  // brand could impersonate via a foreign uid). It falls through to null.
+  assert.equal(
+    parseHelloWekruitOpener("WeKeuit_photon-macos-devops_aBcD1eFgH2iJkLmNoPqR_Job"),
+    null,
+  )
+  // A segment with an EXCLUDED glyph (O) is not a valid bind code → no resolve.
+  assert.equal(
+    parseHelloWekruitOpener("WeKeuit_photon-macos-devops_ABCD234O_Job"),
+    null,
+  )
+  // Codeless corrupted token (no segment) → not a bind code → null.
+  assert.equal(parseHelloWekruitOpener("WeKeuit_photon-macos-devops_Job"), null)
+  // The CORRECTLY-spelled brand keeps its legacy raw-uid back-compat (unchanged).
+  assert.deepEqual(
+    parseHelloWekruitOpener("WeKruit_photon-macos-devops_aBcD1eFgH2iJkLmNoPqR_Job"),
+    { candidateId: "aBcD1eFgH2iJkLmNoPqR" },
+  )
+})
+
+test("looksLikeGarbledStartToken: true for token-ish structures, false for plain chat", () => {
+  // Corrupted brand + valid-shape segment.
+  assert.equal(looksLikeGarbledStartToken("WeKeuit_wekruit-software-engineer-new-grad_Z8SRWFQZ_Job"), true)
+  // Corrupted brand + bad code (excluded glyph) is STILL structurally token-ish.
+  assert.equal(looksLikeGarbledStartToken("WeKeuit_photon-macos-devops_ABCD234O_Job"), true)
+  // Codeless corrupted token.
+  assert.equal(looksLikeGarbledStartToken("WeKeuit_photon-macos-devops_Job"), true)
+  // The correctly-spelled token is also structurally token-ish.
+  assert.equal(looksLikeGarbledStartToken("WeKruit_photon-macos-devops_Job"), true)
+  // Plain chat / greetings are NOT token-ish.
+  assert.equal(looksLikeGarbledStartToken("hi claire, looking for a job"), false)
+  assert.equal(looksLikeGarbledStartToken("hey!"), false)
+  assert.equal(looksLikeGarbledStartToken(""), false)
 })
 
 // ───────────────────────── transit-safe bind code (2026-06-13) ──────────────

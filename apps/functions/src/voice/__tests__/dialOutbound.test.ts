@@ -21,6 +21,8 @@ import type { OutboundBookingRow, SipClientLike, SipParticipantInfo } from "../t
 
 const TRUNK_SID = "TKtest1234"
 const CALLER_IDS = ["+14157075057", "+16468594057"]
+const DEV_PHONE = "+14243201960"
+const NON_DEV_PHONE = "+15551234567"
 
 function makeFakeBookingRef(initial: OutboundBookingRow = {}): BookingDocRef & {
   data: OutboundBookingRow
@@ -119,7 +121,7 @@ describe("handleDialOutbound", () => {
     const ref = makeFakeBookingRef({
       paUserId: "U1",
       paJobId: "J1",
-      phoneE164: "+15551234567",
+      phoneE164: DEV_PHONE,
       voiceState: "dialing",
     })
     const deps = makeDeps()
@@ -136,7 +138,7 @@ describe("handleDialOutbound", () => {
     assert.equal(deps.sipClient.calls.length, 1)
     const opts = deps.sipClient.calls[0]!
     assert.equal(opts.sipTrunkId, TRUNK_SID)
-    assert.equal(opts.sipCallTo, "+15551234567")
+    assert.equal(opts.sipCallTo, DEV_PHONE)
     assert.equal(opts.roomName, "B-1") // room = bookingId
     assert.equal(opts.participantIdentity, "candidate-U1")
     assert.ok(CALLER_IDS.includes(opts.fromNumber))
@@ -155,7 +157,7 @@ describe("handleDialOutbound", () => {
       const ref = makeFakeBookingRef({
         paUserId: `U-${i}`,
         paJobId: "J1",
-        phoneE164: "+15551234567",
+        phoneE164: DEV_PHONE,
         voiceState: "dialing",
       })
       const res = await handleDialOutbound(
@@ -177,7 +179,7 @@ describe("handleDialOutbound", () => {
   it("short-circuits if paUserId missing — never calls SIP, transitions to failed", async () => {
     const ref = makeFakeBookingRef({
       paJobId: "J1",
-      phoneE164: "+15551234567",
+      phoneE164: DEV_PHONE,
       voiceState: "dialing",
     })
     const deps = makeDeps()
@@ -200,7 +202,8 @@ describe("handleDialOutbound", () => {
   it("short-circuits if paJobId missing — never calls SIP, transitions to failed", async () => {
     const ref = makeFakeBookingRef({
       paUserId: "U1",
-      phoneE164: "+15551234567",
+      purpose: "prescreen",
+      phoneE164: DEV_PHONE,
       voiceState: "dialing",
     })
     const deps = makeDeps()
@@ -217,6 +220,51 @@ describe("handleDialOutbound", () => {
     assert.equal(deps.sipClient.calls.length, 0)
     assert.equal(ref.data.voiceState, "failed")
     assert.match(String(ref.data.voiceLastError), /paJobId/)
+  })
+
+  it("allows onboarding bookings without paJobId", async () => {
+    const ref = makeFakeBookingRef({
+      paUserId: "U1",
+      purpose: "onboarding",
+      phoneE164: DEV_PHONE,
+      voiceState: "dialing",
+    })
+    const deps = makeDeps()
+    const result = await handleDialOutbound(
+      {
+        bookingId: "B-onboard",
+        before: { voiceState: "queued" },
+        after: { ...ref.data },
+        bookingRef: ref,
+      },
+      deps,
+    )
+    assert.equal(result.action, "dispatched")
+    assert.equal(deps.sipClient.calls.length, 1)
+    assert.equal(deps.sipClient.calls[0]!.participantIdentity, "candidate-U1")
+  })
+
+  it("blocks non-dev phone numbers before SIP dispatch", async () => {
+    const ref = makeFakeBookingRef({
+      paUserId: "U1",
+      paJobId: "J1",
+      phoneE164: NON_DEV_PHONE,
+      voiceState: "dialing",
+    })
+    const deps = makeDeps()
+    const result = await handleDialOutbound(
+      {
+        bookingId: "B-non-dev",
+        before: { voiceState: "queued" },
+        after: { ...ref.data },
+        bookingRef: ref,
+      },
+      deps,
+    )
+    assert.equal(result.action, "failed:dev_phone_gate")
+    assert.equal(deps.sipClient.calls.length, 0)
+    assert.equal(ref.data.voiceState, "failed")
+    assert.equal(ref.data.voiceOutcome, "failed:dev_phone_gate")
   })
 
   it("short-circuits if phoneE164 missing", async () => {
@@ -245,7 +293,7 @@ describe("handleDialOutbound", () => {
     const ref = makeFakeBookingRef({
       paUserId: "U1",
       paJobId: "J1",
-      phoneE164: "+15551234567",
+      phoneE164: DEV_PHONE,
       voiceState: "dialing",
     })
     const deps = makeDeps()
@@ -269,7 +317,7 @@ describe("handleDialOutbound", () => {
     const ref = makeFakeBookingRef({
       paUserId: "U1",
       paJobId: "J1",
-      phoneE164: "+15551234567",
+      phoneE164: DEV_PHONE,
       voiceState: "connected",
     })
     const deps = makeDeps()

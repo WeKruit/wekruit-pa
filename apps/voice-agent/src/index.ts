@@ -35,6 +35,9 @@ export {
 export { buildConsentPrompt } from "./consent-prompt.js"
 export type {
   VoiceCallContext,
+  VoiceCallPurpose,
+  VoicePrescreenCallContext,
+  VoiceOnboardingCallContext,
   VoiceUserProfile,
   VoiceJobBrief,
   VoicePrescreenConfig,

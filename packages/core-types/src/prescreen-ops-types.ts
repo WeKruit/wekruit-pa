@@ -1,7 +1,9 @@
 import type {
   PrescreenReviewQuestion,
   StrictReviewBucket,
+  StrictReviewSort,
 } from "./prescreen-review-classification.js"
+import type { PrescreenEngagementSignal } from "./prescreen-engagement.js"
 
 /**
  * Shared contract for the `paAdminPrescreenOpsSnapshot` admin callable
@@ -12,6 +14,7 @@ import type {
 export type PrescreenOpsSessionCursor = {
   createdAt: string
   docId: string
+  offset?: number
 }
 
 export type PrescreenOpsQueueFilter = "pending" | "committed" | "all"
@@ -24,6 +27,7 @@ export type PrescreenOpsSnapshotInput =
     queue?: PrescreenOpsQueueFilter
     bucket?: string
     includeTest?: boolean
+    sort?: StrictReviewSort
     limit?: number
     cursor?: PrescreenOpsSessionCursor
   }
@@ -97,6 +101,8 @@ export type PrescreenOpsSessionReview = {
   pendingAckOutboundId?: string
   decisionOutboundId?: string
   candidateDecision?: Record<string, unknown>
+  /** Advisory effort/engagement signal (review.engagementSignal). Never a gate. */
+  engagementSignal?: PrescreenEngagementSignal
   [key: string]: unknown
 }
 

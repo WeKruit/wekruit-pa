@@ -38,6 +38,7 @@ const APPROVED_RUNTIME_SOURCES = new Set([
   "pa_pii_runtime",
   "pa_identity_notice",
   "pa_operator_review",
+  "pa_voice_post_call",
   "test_runtime",
 ])
 

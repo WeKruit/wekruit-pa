@@ -272,6 +272,9 @@ export { paPendingOutboundAdmin } from "./pending-outbound/admin.js"
 // Coresignal Agentic Search proxy — admin-only callable forwarding to
 // /v2/agentic_search/reasoning. Backs the /admin/coresignal-playground page.
 export { paAdminCoresignalAgenticSearch } from "./admin-coresignal-agentic-search.js"
+// Chrome recruiter extension callable — LinkedIn-profile source → similar
+// candidate profiles via Coresignal agentic search.
+export { paExtensionFindSimilarCandidates } from "./extension-similar-candidates.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
 export {
   paAdminPassedCandidateIntroDecision,
@@ -281,6 +284,24 @@ export {
 // rollups, and paginated session pages over pa-prescreen-sessions (the
 // client-side limit(75) reads undercounted).
 export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
+export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats.js"
+// Operations Overview dashboard — daily time-series of new users (by channel),
+// interviews conducted, and candidates moved to client. Admin /admin/operations.
+export { paAdminOpsMetrics } from "./admin-ops-metrics.js"
+// Candidate pool TRUE counts (whole pool, not the 500-row browse sample) for
+// the /admin/candidates header cards + STATE/SOURCE/IDENTITY breakdowns.
+export { paAdminCandidatePoolCounts } from "./admin-candidate-pool-counts.js"
+// Trimmed list of EVERY recruiter submission (not just the recent 500) so the
+// /admin/recruiter-submissions search + state filter see the whole pool.
+export { paAdminRecruiterSubmissionsList } from "./admin-recruiter-submissions-list.js"
+// Algolia search: real-time sync triggers (submissions + candidates) + a
+// one-shot admin backfill. No-op until ALGOLIA_APP_ID + ALGOLIA_ADMIN_KEY are set.
+export { paAlgoliaSyncRecruiterSubmission, paAlgoliaSyncCandidate } from "./algolia/algolia-sync.js"
+export { paAlgoliaBackfill } from "./algolia/algolia-backfill.js"
+// Rejected-candidates-by-tier browse + AI re-evaluate-for-new-roles action.
+// Tier is stamped at rejection (prescreen + recruiter) via applyGlobalCandidateTier.
+export { paAdminRejectedCandidatesSnapshot } from "./admin-rejected-candidates.js"
+export { paAdminReevaluateCandidateTier } from "./admin-candidate-tier-actions.js"
 // Identity-conflict resolve/dismiss + true counts — client Firestore writes
 // to pa-candidate-identity-conflicts are rules-denied, so the dashboard
 // /admin/identity-conflicts page goes through this callable.
@@ -290,6 +311,12 @@ export { paAdminIdentityConflictsResolve } from "./admin-identity-conflicts.js"
 // critical-judge LLM call (callWithFallback 3-tier) → merges `aiEvaluation`
 // onto the submission doc. NEVER touches `status` (operator-only transitions).
 export { paRecruiterSubmissionEval } from "./recruiter-submission-eval.js"
+// Admin one-shot re-eval of existing submissions with the current (résumé-grounded)
+// judge — onDocumentCreated never re-fires, so stale verdicts need this backfill.
+export { paAdminReevaluateRecruiterSubmissions } from "./admin-reevaluate-submissions.js"
+// Admin backlog re-eval of prescreen sessions with the current (transcript-primary,
+// wrong-identity-aware) judge — onDocumentWritten never re-fires on evaluated sessions.
+export { paAdminReevaluatePrescreens } from "./admin-reevaluate-prescreens.js"
 // Operator decision callable for the recruiter-submission review board.
 // advance/reject/reviewing/duplicate set status + adminDecision; request_info
 // appends requestedInfo[]. The recruiter-board codebase's
@@ -341,6 +368,7 @@ export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 //   LiveKit room webhooks. Idempotent reconciliation against the
 //   `outbound-bookings/{id}` state machine (Locks L9 + L10).
 export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
+export { paVoicePostCallFollowup } from "./voice/post-call-followup.js"
 
 // v2.2 — Voice-side HTTP callable CFs (shared-brain prescreen).
 //   `paVoiceCallContext`   — assembles VoiceCallContext from S1B loaders.
@@ -350,6 +378,7 @@ export { paVoiceDialOutbound, paVoiceSipWebhook } from "./voice/index.js"
 // Auth: bearer header `X-Wekruit-Voice-CF-Secret` = PA_VOICE_CF_SECRET.
 export {
   paVoiceCallContext,
+  paVoiceOnboardingTurn,
   paVoicePrescreenTurn,
 } from "./voice/voice-prescreen-callable.js"
 
@@ -425,6 +454,7 @@ export {
   paBulkResumeCreateBatch,
   paBulkResumeAddItems,
   paBulkResumeProcessBatch,
+  paBulkResumeSubmitRecruiterBatch,
   paBulkResumeRetryItem,
 } from "./bulk-resume-intake.js"
 // v2.0 S4 — admin/operator-only job enrichment draft review and approval.
@@ -445,6 +475,9 @@ export {
   paDraftPrescreenReviewMessages,
   paReviewEvaluationAttempt,
 } from "./evaluation-attempts.js"
+// P4 — AI-vs-human agreement metric + labeled-dataset JSONL export. Admin-only,
+// read-only: never mutates the AI verdict, never messages a candidate.
+export { paExportEvaluationLabels } from "./export-evaluation-labels.js"
 export { paCandidateProfileCorrection } from "./flywheel-candidate-correction.js"
 // v2.0 S9 — production hardening and launch readiness controls.
 export {
@@ -1255,6 +1288,49 @@ async function processBrokerImessageEvent(
           updatedAt: nowIso(),
           routedTo: "prescreen_trigger_unauthorized",
           errorCode: "PRESCREEN_TRIGGER_UNAUTHORIZED",
+        },
+        { merge: true }
+      )
+      return 1
+    }
+    if (triggerDecision.kind === "garbled_token") {
+      // GARBLED START TOKEN (2026-06-16): the inbound looks like a prescreen link
+      // structurally, but the bind-code did NOT resolve (corrupted brand + bad/
+      // expired/unknown code, or codeless). Ask the candidate about a typo on the
+      // SAME notice seam (runtimeSource pa_identity_notice → direct reply into the
+      // thread this inbound arrived from) INSTEAD of dropping them into the
+      // stranger cold opener — which would mint a duplicate empty account + dead
+      // silence (live incident +16263623119). Deterministic copy, no LLM, NO new
+      // account. Idempotency keyed on the inbound event id so webhook replays
+      // collapse to one notice.
+      logger.info("[prescreen][onPaInbound][trigger] garbled_token — typo-ask notice", {
+        userId: user.id,
+        eventId: claimed.id,
+      })
+      try {
+        const { enqueueOutbound } = await import("@pa/pa-broker")
+        const { BROKER_PRESCREEN_GARBLED_TOKEN_NOTICE } = await import("./broker-prescreen-trigger.js")
+        await enqueueOutbound(db, {
+          userId: user.id,
+          toE164: payload.participant,
+          body: BROKER_PRESCREEN_GARBLED_TOKEN_NOTICE,
+          idempotencyKey: `out-prescreen-garbled-token-${claimed.id}`,
+          runtimeApproved: true,
+          runtimeSource: "pa_identity_notice",
+        })
+      } catch (noticeErr) {
+        logger.warn("[prescreen][onPaInbound][trigger] garbled_token notice enqueue FAILED", {
+          userId: user.id,
+          eventId: claimed.id,
+          err: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+        })
+      }
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "prescreen_trigger_garbled_token",
         },
         { merge: true }
       )

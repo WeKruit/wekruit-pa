@@ -48,6 +48,7 @@ import { formatPublicJobType } from "../lib/public-job-labels.js"
 import {
   listPublicJobOpeningsByCompany,
   stripJobSourceSection,
+  stripVisaLines,
   type PublicJobOpening,
 } from "../lib/public-jobs.js"
 import { canonicalPublicJobId } from "../lib/public-job-slugs.js"
@@ -214,7 +215,14 @@ export default function PublicJob() {
     // Stamp ?source=… into the wko_source cookie on first paint so the
     // subsequent CV-ingest POST has the right attribution available via
     // peekSource(). Idempotent — safe to run on every mount.
-    resolveSource()
+    const src = resolveSource()
+    if (src !== "candidate") {
+      void trackEvent("partner_page_view", {
+        source: src,
+        job_id: publicJobId ?? "",
+        path: window.location.pathname,
+      })
+    }
   }, [])
 
   useEffect(() => {
@@ -1186,7 +1194,7 @@ function ClaireInterviewContract({ compact = false }: { compact?: boolean }) {
 
 function renderJobDescription(descriptionMd?: string, company?: string, hideSource = false, jobTitle?: string): ReactNode {
   const raw = stripLeadingDuplicateDescriptionHeadings(
-    (hideSource ? stripJobSourceSection(descriptionMd) : descriptionMd)?.trim(),
+    stripVisaLines(hideSource ? stripJobSourceSection(descriptionMd) : descriptionMd)?.trim(),
     { company, jobTitle },
   )
   if (!raw) {
@@ -1430,7 +1438,6 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
               <div className="wk-pj-side-meta">
                 {job.location ? <Fact label="Location" value={`${job.location}${job.jobType ? ` (${job.jobType})` : ""}`} /> : null}
                 {job.salary ? <Fact label="Salary" value={job.salary} /> : null}
-                <Fact label="Work authorization" value="Sponsorship reviewed case by case" />
               </div>
             </aside>
           </div>

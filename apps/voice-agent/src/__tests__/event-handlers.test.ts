@@ -44,12 +44,12 @@ test("registerEventHandlers: registers 6 events on session", () => {
   ].sort())
 })
 
-test("registerEventHandlers: registers participant_disconnected on room", () => {
+test("registerEventHandlers: registers LiveKit participantDisconnected on room", () => {
   const session = makeStubEmitter()
   const room = makeStubEmitter()
   registerEventHandlers(session, room, defaultSinks())
   assert.equal(room.calls.length, 1)
-  assert.equal(room.calls[0].event, EVENT_NAMES.participant_disconnected)
+  assert.equal(room.calls[0].event, "participantDisconnected")
 })
 
 test("registerEventHandlers: all 7 spec events accounted for via returned 'registered' map", () => {

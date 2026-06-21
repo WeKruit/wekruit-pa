@@ -730,21 +730,36 @@ export class PreScreenPipeline {
       reason: args.reason,
     })
 
-    if (!this.opts.composeClarify) return fallbackText
-
-    try {
-      const text = (await this.opts.composeClarify({ ...args, fallbackText })).trim()
-      if (text) return clampClarifyText(text)
-    } catch (err) {
-      args.log("prescreen.pipeline.compose_clarify_failed", {
-        sessionId: args.state.sessionId,
-        qId: args.question.qId,
-        error: err instanceof Error ? err.message : String(err),
-      })
+    let emitted = fallbackText
+    if (this.opts.composeClarify) {
+      try {
+        const text = (await this.opts.composeClarify({ ...args, fallbackText })).trim()
+        if (text) emitted = clampClarifyText(text)
+      } catch (err) {
+        args.log("prescreen.pipeline.compose_clarify_failed", {
+          sessionId: args.state.sessionId,
+          qId: args.question.qId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
 
-    return fallbackText
+    // Record the line we're about to send so the NEXT clarify composer can avoid
+    // reusing its own opener/phrasing (kills the "that helps"/"Got it" repetition)
+    // and rotate openers off the cumulative session count, not a per-question round.
+    recordRecentClarifyText(args.state, emitted)
+    return emitted
   }
+}
+
+const MAX_RECENT_CLARIFY_TEXTS = 6
+
+/** Append an emitted clarify line to the session-cumulative recent list (cap 6). */
+export function recordRecentClarifyText(state: PreScreenState, text: string): void {
+  const clean = typeof text === "string" ? text.trim() : ""
+  if (!clean) return
+  const prior = Array.isArray(state.recentClarifyTexts) ? state.recentClarifyTexts : []
+  state.recentClarifyTexts = [...prior, clean].slice(-MAX_RECENT_CLARIFY_TEXTS)
 }
 
 const MAX_EVIDENCE_REPLIES = 8

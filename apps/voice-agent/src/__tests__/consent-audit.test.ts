@@ -14,6 +14,8 @@ import type { VoiceCallContext } from "../voice-context-types.js"
 function ctx(opts: { lang?: "en" | "zh"; mode?: "casual_onboarding" | "professional_prescreen" } = {}): VoiceCallContext {
   return {
     bookingId: "bk_test",
+    purpose: "prescreen",
+    prescreenSessionId: "ps_test",
     userProfile: { userId: "u_test", preferredLang: opts.lang, missingFields: [] },
     jobBrief: { jobId: "j_test", jobTitle: "T", companyName: "C", missingFields: [] },
     prescreenConfig: {

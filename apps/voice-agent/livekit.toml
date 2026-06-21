@@ -22,6 +22,7 @@
 #   PA_VOICE_CF_SECRET             — auth for paVoiceCallContext + paVoicePrescreenTurn CFs
 #   WEKRUIT_VOICE_CONTEXT_URL      — https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoiceCallContext
 #   WEKRUIT_VOICE_PRESCREEN_TURN_URL — https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoicePrescreenTurn
+#   WEKRUIT_VOICE_ONBOARDING_TURN_URL — https://us-central1-wekruit-5f89b.cloudfunctions.net/paVoiceOnboardingTurn
 #   WEKRUIT_VOICE_RECORDINGS_BUCKET = "wekruit-voice-recordings"
 #   PA_AGENT_RUNTIME_STREAM_ENABLED = "true"
 #

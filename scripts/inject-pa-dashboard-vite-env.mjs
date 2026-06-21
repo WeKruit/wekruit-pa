@@ -29,6 +29,8 @@ const REQUIRED = [
 // (not fail) so legacy Adam deploys still work.
 const OPTIONAL = [
   "VITE_CV_INGEST_URL", // paPublicCvIngest CF URL for /j/:jobId/cv upload
+  "VITE_ALGOLIA_APP_ID", // Algolia app for admin search (submissions + candidates)
+  "VITE_ALGOLIA_SEARCH_KEY", // Algolia search-only key (public, frontend)
 ]
 
 /** @param {string} path */

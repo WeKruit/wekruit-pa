@@ -44,6 +44,7 @@ import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm
 import { AI_QUESTION_QID } from "./claire-agent/prescreen-ai-question.js"
 import { isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
 import { isStaleClosedPrescreenSession } from "./prescreen-staleness.js"
+import { classifyInboundReplyNeed } from "./sendblue/ack-classifier.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
@@ -63,6 +64,9 @@ import {
   runAgenticPrescreenTurn,
   type AgenticRunTurnResult,
 } from "./prescreen-agentic-turn.js"
+import { isClaireVoiceDevPhone } from "./voice/dev-phone-gate.js"
+import { isExplicitVoicePrescreenRequest } from "./claire-agent/voice-prescreen-request-router.js"
+import { parseLowInfoCallConfirmation } from "./claire-agent/voice-call-ack-guard.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 21 * 24 * 60 * 60 * 1000
 const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
@@ -580,7 +584,82 @@ function hasIncompleteOnboardingQuestion(user: Record<string, unknown> | undefin
   return typeof pipeline?.currentQId === "string" || /^q_[a-z0-9_]+_asked$/.test(String(user.onboardingState ?? ""))
 }
 
-function detectSimpleYesNo(body: string): "yes" | "no" | "ambiguous" {
+/**
+ * POST-TERMINAL MATCHING IS OPT-IN (Adam 2026-06-15 live bug). After a prescreen
+ * reaches a terminal and Claire sends the handoff/next-step note, the candidate's
+ * reply must NOT bridge into matching unless it is an EXPLICIT matching request.
+ *
+ * The previous gate (detectSimpleYesNo) treated a bare "sure" / "ok" / "sounds
+ * good" — including a COURTESY ACK of the pending review like "Sure. Looking
+ * forward for the update." — as a "yes, proceed to matching", so Claire sent
+ * "pulling a few fresh matches 🔍" unrequested. That's the gap: gating existed
+ * (matching only after a settled terminal) but the proceed signal was a generic
+ * yes, not an explicit opt-in.
+ *
+ * Returns:
+ *   - "yes"       → an UNAMBIGUOUS request to find/see roles → proceed to matching.
+ *   - "no"        → an explicit decline.
+ *   - "ambiguous" → anything else, INCLUDING a polite acknowledgment of the review
+ *                   ("sure", "ok", "sounds good", "thanks", "looking forward to the
+ *                   update") → re-offer matching (warm hold); never auto-match.
+ *
+ * NOTE on no-regex-in-tagging: this is a deliver/control-flow decision (proceed to
+ * find_match vs warm hold), NOT a text→enum tag classification, so a deterministic
+ * matcher is allowed here (same scope as ack-classifier.ts). The "yes" allowlist
+ * mirrors the TRIAGE HARD RULE match-command list in claire-agent/prompt.ts.
+ */
+function detectPostTerminalMatchingIntent(body: string): "yes" | "no" | "ambiguous" {
+  const normalized = body.trim().toLowerCase()
+  if (!normalized) return "ambiguous"
+
+  // Explicit decline still respected (verbatim from the old yes/no detector).
+  if (
+    /^(no|nope|nah|pass|skip|later|not now|don'?t|do not|no thanks|no thank you)\b/i.test(normalized) ||
+    /\b(not right now|i'?m good|i am good|good for now|i'?ll pass|i will pass|don'?t want|do not want)\b/i.test(normalized)
+  ) {
+    return "no"
+  }
+
+  // A polite acknowledgment of the pending review is NOT an opt-in. Reuse the
+  // shared ack-classifier (pure_ack / greeting / stop) — a "thanks 👍" / "ok" /
+  // "sounds good" / bare emoji following Claire's handoff is an ack, not a request.
+  const ackNeed = classifyInboundReplyNeed(normalized, { followsClaireMessage: true })
+  if (ackNeed === "pure_ack" || ackNeed === "greeting" || ackNeed === "stop") {
+    return "ambiguous"
+  }
+
+  // EXPLICIT matching request only (mirrors prompt.ts TRIAGE match-command list).
+  // Multi-clause courtesy replies that merely START with "sure"/"ok" ("Sure.
+  // Looking forward for the update.") fall through to "ambiguous" — they are not
+  // a verb phrase asking for roles.
+  const wantsMatching =
+    /\b(find|pull|show|recommend|send|get)\b[^.!?]*\b(me\b[^.!?]*)?(role|roles|job|jobs|match|matches|position|positions|opening|openings|opportunit)/i.test(
+      normalized,
+    ) ||
+    /\b(match me|recommend (me )?(some )?(roles|jobs)|what (else|other).*(role|roles|job|jobs|have)|other (roles|jobs|matches|options))\b/i.test(
+      normalized,
+    ) ||
+    /\b(yes|yeah|yep|sure|ok|okay)\b[, ]+\b(pull|find|show|match|recommend|send|go|do it|please)\b/i.test(normalized) ||
+    /^(go ahead and (match|pull|find|recommend)|pull them|match me|lfg)\b/i.test(normalized)
+
+  if (wantsMatching) return "yes"
+
+  return "ambiguous"
+}
+
+/**
+ * SECOND-STAGE detector: used ONLY after Claire has already asked the explicit
+ * "Do you want to proceed?" offer (retentionStage await_basic_onboarding /
+ * await_daily_opt_in). Here the candidate is answering THAT offer, so a SHORT bare
+ * affirmative ("yes" / "sure" / "ok" / "sounds good") is a legitimate opt-in — but
+ * a MULTI-CLAUSE courtesy reply ("Sure. Looking forward for the update.") that only
+ * happens to start with an affirmative token is NOT, because it acknowledges the
+ * review rather than answering the proceed question. Decline still wins outright.
+ *
+ * Kept separate from detectPostTerminalMatchingIntent so the FIRST post-terminal
+ * turn (no offer asked yet) NEVER reaches this lenient bare-yes path.
+ */
+function detectSimpleYesNoForProceedOffer(body: string): "yes" | "no" | "ambiguous" {
   const normalized = body.trim().toLowerCase()
   if (!normalized) return "ambiguous"
   if (
@@ -589,7 +668,13 @@ function detectSimpleYesNo(body: string): "yes" | "no" | "ambiguous" {
   ) {
     return "no"
   }
-  if (/^(yes|yeah|yep|yup|sure|ok|okay|alright|all right|sounds good|please|go ahead|let'?s|down)\b/i.test(normalized)) {
+  // A SHORT bare affirmative answering the explicit offer is a yes. We reuse the
+  // ack-classifier's pure_ack judgment (it already maps short "yes"/"sure"/"ok"/
+  // "sounds good"/"yep" to pure_ack, and longer multi-clause replies to "other").
+  // This is what cleanly separates "yes"/"sure thank you" (a yes to the offer) from
+  // "Sure. Looking forward for the update." (a courtesy ack of the review → other →
+  // ambiguous → re-offer). No state-contradicting auto-match on a polite ack.
+  if (classifyInboundReplyNeed(normalized, { followsClaireMessage: true }) === "pure_ack") {
     return "yes"
   }
   return "ambiguous"
@@ -950,6 +1035,47 @@ export async function runPrescreenTurnIfActive(
   })
   if (safetyBlock) return safetyBlock
 
+  // ── VOICE-CALL GATE (Adam 2026-06-19, live E2E) ──────────────────────────────────────────────────
+  // An explicit phone-prescreen request ("I want to prescreen <role> on phone call"), or a yes/no
+  // answering a LIVE voice-call offer, must be owned by Claire's voice tools — NOT scored as a
+  // text-prescreen answer. This handler runs BEFORE the thin-Claire voice path (cutover.ts) in BOTH the
+  // coalescer (paMessageCoalescer step 3a) and the direct onPaInbound path, so without this yield an
+  // active prescreen session swallows the request into the keyword/agentic reducer. That was the live
+  // failure: "I want to prescreen Sekai … on phone call" got a text prescreen question instead of the
+  // "can I call you now?" offer. We yield the turn (handled:false) WITHOUT writing anything to the
+  // session — the cutover voice handlers (offer / resolve) then run. Dev-phone-only, matching the voice
+  // lane's own gate; non-dev phones keep the text-prescreen path byte-for-byte.
+  if (isClaireVoiceDevPhone(args.toE164)) {
+    if (isExplicitVoicePrescreenRequest(args.replyText)) {
+      log("prescreen.turn.yielded_to_voice_call", {
+        userId: args.userId,
+        sessionId: lookup.sessionId,
+        reason: "explicit_voice_prescreen_request",
+      })
+      return { handled: false, sessionId: lookup.sessionId }
+    }
+    const callAnswer = parseLowInfoCallConfirmation(args.replyText)
+    if (callAnswer !== null) {
+      try {
+        const { hasPendingVoiceCallOfferForUser } = await import("./claire-agent/tools/voice-call-tools.js")
+        if (await hasPendingVoiceCallOfferForUser(args.db, args.userId, Date.now())) {
+          log("prescreen.turn.yielded_to_voice_call", {
+            userId: args.userId,
+            sessionId: lookup.sessionId,
+            reason: "pending_offer_resolution",
+          })
+          return { handled: false, sessionId: lookup.sessionId }
+        }
+      } catch (err) {
+        log("prescreen.turn.voice_offer_check_failed", {
+          userId: args.userId,
+          sessionId: lookup.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+  }
+
   if (lookup.kind === "recent_terminal") {
     // Fetch the session up-front so the guard can see whether the terminal outcome is held for
     // human review. A pending-review session MUST keep ownership of the thread (within the recent-
@@ -971,6 +1097,88 @@ export async function runPrescreenTurnIfActive(
     if (!shouldGuard) return { handled: false }
     const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
     const nowIso = new Date().toISOString()
+
+    // ── VOICE POST-CALL JOB-REC OPT-IN (Adam 2026-06-19) ─────────────────────────────────────────
+    // The voice post-call followup (paVoicePostCallFollowup) asked "want me to pull a few roles that
+    // fit?" and flagged this session. Resolve the yes/no HERE — before the pending-review / retention
+    // machinery — so a yes deterministically fires the SAME find_match recs the FAIL terminal uses
+    // (the opt-in previously dead-ended with no consumer). The flag is only ever set by the voice
+    // followup, so this is inert for text-only prescreens. An ambiguous reply leaves the flag and
+    // falls through to normal handling.
+    if (sessData.voicePostCallJobRecOptInPending === true) {
+      const optIn = parseLowInfoCallConfirmation(args.replyText)
+      if (optIn !== null) {
+        await sessionRef.set(
+          {
+            voicePostCallJobRecOptInPending: false,
+            voicePostCallJobRecOptInResolvedAt: nowIso,
+            updatedAt: nowIso,
+          },
+          { merge: true },
+        )
+        await sessionRef.collection("turns").add({
+          qId: "terminal",
+          reply: args.replyText,
+          action: { kind: "voice_post_call_job_rec_opt_in", confirmed: optIn },
+          ts: nowIso,
+        })
+        if (optIn) {
+          const text = "on it — pulling a few roles that fit your screen now 🔍"
+          try {
+            await sendSms({
+              to: args.toE164,
+              content: text,
+              userId: args.userId,
+              db: args.db,
+              runtimeSource: "pa_prescreen_runtime",
+              idempotencyKey: `voice_post_call_optin_yes:${lookup.sessionId}`,
+            })
+          } catch (err) {
+            log("prescreen.turn.voice_post_call_optin_send_failed", {
+              sessionId: lookup.sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+          const fire = args.fireJobRecs ?? defaultGenerateJobRecs
+          try {
+            await fire({ userId: args.userId, toE164: args.toE164, lang: args.lang ?? "en" })
+          } catch (err) {
+            log("prescreen.turn.voice_post_call_optin_recs_failed", {
+              sessionId: lookup.sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+          log("prescreen.turn.voice_post_call_optin_recs_fired", {
+            sessionId: lookup.sessionId,
+            userId: args.userId,
+          })
+          return { handled: true, sessionId: lookup.sessionId, terminal: lookup.terminal, textSent: text }
+        }
+        const declineText =
+          "no problem — your screen's on file, and i'll reach out when something strong comes up."
+        try {
+          await sendSms({
+            to: args.toE164,
+            content: declineText,
+            userId: args.userId,
+            db: args.db,
+            runtimeSource: "pa_prescreen_runtime",
+            idempotencyKey: `voice_post_call_optin_no:${lookup.sessionId}`,
+          })
+        } catch (err) {
+          log("prescreen.turn.voice_post_call_optin_send_failed", {
+            sessionId: lookup.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+        log("prescreen.turn.voice_post_call_optin_declined", {
+          sessionId: lookup.sessionId,
+          userId: args.userId,
+        })
+        return { handled: true, sessionId: lookup.sessionId, terminal: lookup.terminal, textSent: declineText }
+      }
+    }
+
     if (pendingReview) {
       const text = pendingReviewFollowupAckText(args.lang ?? "en", lookup.terminal)
       await sessionRef.collection("turns").add({
@@ -1119,7 +1327,29 @@ export async function runPrescreenTurnIfActive(
 
     let text: string | undefined
     if (retentionStage === "await_basic_onboarding" || retentionStage === "await_daily_opt_in" || !alreadyAcked) {
-      const yn = detectSimpleYesNo(args.replyText)
+      // POST-TERMINAL MATCHING IS OPT-IN (Adam 2026-06-15 live bug): a courtesy ack
+      // of the pending review ("Sure. Looking forward for the update.", "sounds
+      // good", "thanks", "ok") must NOT bridge into matching.
+      //
+      // TWO STAGES:
+      //   (a) FIRST post-terminal reply (proceed prompt NOT yet asked): Claire only
+      //       sent the handoff/next-step note. A bare ack here is acknowledging the
+      //       review, NOT requesting matches — require an EXPLICIT matching request;
+      //       otherwise send the OFFER ("Do you want to proceed?"). This is the seam
+      //       that fired "pulling a few fresh matches 🔍" on a courtesy ack.
+      //   (b) Proceed prompt WAS asked (stage await_basic_onboarding/await_daily_opt_in):
+      //       the candidate is directly answering "Do you want to proceed?", so a bare
+      //       "yes"/"sure"/"ok" is a legitimate opt-in to that explicit offer.
+      const proceedPromptAlreadyAsked =
+        retentionStage === "await_basic_onboarding" || retentionStage === "await_daily_opt_in"
+      const matchIntent = detectPostTerminalMatchingIntent(args.replyText)
+      let yn: "yes" | "no" | "ambiguous" = matchIntent
+      // ONLY when the explicit proceed offer was already asked AND the intent is
+      // ambiguous (not an explicit yes/no), a SHORT bare affirmative answering that
+      // offer counts as opt-in. An explicit "no" / explicit match request is kept.
+      if (yn === "ambiguous" && proceedPromptAlreadyAsked) {
+        yn = detectSimpleYesNoForProceedOffer(args.replyText)
+      }
       if (yn === "ambiguous") {
         text = postPrescreenOnboardingPrompt(args.lang ?? "en", lookup.terminal)
         try {

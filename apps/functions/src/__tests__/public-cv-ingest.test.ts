@@ -5,6 +5,33 @@ import {
   __test_sourceForProfileCreate,
 } from "../public-cv-ingest.js"
 
+test("buildCandidateUploadResumeArtifactWrites persists resumeFileUrl + storageUri for inline preview", () => {
+  const writes = buildCandidateUploadResumeArtifactWrites({
+    candidateId: "cand-1",
+    parsedCandidateResumeId: "parsed-1",
+    fileName: "Resume.pdf",
+    sha256: "a".repeat(64),
+    resumeFileUrl: "https://firebasestorage.googleapis.com/v0/b/b/o/candidate-resumes%2Fcand-1%2Fx.pdf?alt=media&token=tok",
+    storageUri: "gs://b/candidate-resumes/cand-1/x.pdf",
+    now: "2026-06-16T12:00:00.000Z",
+  })
+  const artifact = writes.artifact as Record<string, unknown>
+  assert.equal(artifact.resumeFileUrl, "https://firebasestorage.googleapis.com/v0/b/b/o/candidate-resumes%2Fcand-1%2Fx.pdf?alt=media&token=tok")
+  assert.equal(artifact.storageUri, "gs://b/candidate-resumes/cand-1/x.pdf")
+  assert.equal(writes.selfProfilePatch.resumeFileUrl, artifact.resumeFileUrl)
+})
+
+test("buildCandidateUploadResumeArtifactWrites omits resumeFileUrl when not persisted (fail-open)", () => {
+  const writes = buildCandidateUploadResumeArtifactWrites({
+    candidateId: "cand-2",
+    parsedCandidateResumeId: "parsed-2",
+    fileName: "Resume.pdf",
+    now: "2026-06-16T12:00:00.000Z",
+  })
+  assert.equal("resumeFileUrl" in (writes.artifact as Record<string, unknown>), false)
+  assert.equal("resumeFileUrl" in writes.selfProfilePatch, false)
+})
+
 test("buildCandidateUploadResumeArtifactWrites preserves existing layoff source", () => {
   const writes = buildCandidateUploadResumeArtifactWrites({
     candidateId: "cand-1",
