@@ -107,6 +107,13 @@ export async function runCli(opts: RunCliOpts = {}): Promise<number> {
     lkCli.runApp(
       new WorkerOptions({
         agent: fileURLToPath(agentFile),
+        // Named agent → EXPLICIT dispatch (LiveKit telephony best practice:
+        // https://docs.livekit.io/sip/outbound-calls/). paVoiceDialOutbound
+        // dispatches this name to the room BEFORE creating the SIP participant, so
+        // the agent connects + warms during the ring and greets the instant the
+        // candidate answers (no ~20s cold-start on the live call). MUST match
+        // apps/functions/src/voice/index.ts WEKRUIT_VOICE_AGENT_NAME.
+        agentName: "wekruit-voice-agent",
         // Keep warm, pre-spawned job processes whose prewarm() has already
         // loaded Silero VAD — a dispatched call grabs a ready process instead of
         // cold-spawning + loading the model on the critical path (~20s dead air
