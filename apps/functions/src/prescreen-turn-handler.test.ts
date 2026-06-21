@@ -264,6 +264,134 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((session?.workSession as { boundary?: string }).boundary, "timeout")
   })
 
+  it("expires a ZOMBIE prescreen (stale createdAt, FRESH updatedAt) and does NOT capture the turn", async () => {
+    // Live +19196415056 / ps_hs-10996795-invoko-product-manager_…: createdAt days ago, but
+    // updatedAt seconds ago because every captured turn (clarify loop on Q1) re-bumped it.
+    // The updatedAt inactivity timeout therefore CANNOT fire — only the createdAt absolute
+    // age cap catches it. The candidate had moved on to job recs; this turn ("yes") must NOT
+    // be hijacked into a prescreen probe — the session is swept and we hand back a restart notice.
+    const createdStale = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() // 3 days
+    const updatedFresh = new Date(Date.now() - 30 * 1000).toISOString() // 30s ago
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_zombie": {
+        sessionId: "ps_zombie",
+        userId: "u_zombie",
+        jobId: "hs-10996795-invoko-product-manager",
+        terminal: null,
+        currentQId: "q_consumer_product_experience",
+        createdAt: createdStale,
+        updatedAt: updatedFresh,
+        workSession: { kind: "job_prescreen", status: "active", startedAt: createdStale, boundary: "trigger" },
+      },
+    })
+
+    const terminalCalls: Array<Record<string, unknown>> = []
+    const sent: string[] = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_zombie",
+      toE164: "+13054507715",
+      replyText: "yes", // job-rec follow-up reply, NOT a prescreen answer
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    // Swept to a stale-closed terminal (PAUSE / expired_inactive) — NOT advanced as a live answer.
+    assert.equal(result.terminal, "PAUSE")
+    const session = docs.get("pa-prescreen-sessions/ps_zombie")?.data
+    assert.equal(session?.terminal, "PAUSE")
+    assert.equal(session?.terminalReason, "expired_inactive_prescreen_session")
+    assert.equal((session?.workSession as { boundary?: string }).boundary, "timeout")
+    // The candidate's "yes" was NOT scored against q_consumer_product_experience.
+    assert.equal(session?.currentQId, null)
+
+    // (1) NOTIFY exactly once — the warm timeout copy went out.
+    assert.equal(sent.length, 1)
+    assert.match(sent[0], /timed out/)
+    assert.match(sent[0], /restart screen/)
+
+    // (2) STORE PROPERLY — expiry fields stamped on the session doc.
+    assert.equal(typeof session?.expiredAt, "string")
+    assert.equal(typeof session?.expiryNoticeSentAt, "string")
+
+    // (3) AUDIT — a session_expired_swept turn was written with the age + createdAt.
+    const auditTurns = [...docs.entries()].filter(
+      ([path]) => path.startsWith("pa-prescreen-sessions/ps_zombie/turns/"),
+    )
+    const sweepTurn = auditTurns
+      .map(([, doc]) => doc.data)
+      .find((d) => (d.action as { kind?: string } | undefined)?.kind === "session_expired_swept")
+    assert.ok(sweepTurn, "expected a session_expired_swept audit turn")
+    const action = sweepTurn!.action as { kind: string; detector: string; ageMs: number; createdAt: string }
+    assert.equal(action.detector, "find_active_session")
+    assert.equal(typeof action.ageMs, "number")
+    assert.equal(action.ageMs > 2 * 24 * 60 * 60 * 1000, true) // > 2 days old
+    assert.equal(action.createdAt, createdStale)
+  })
+
+  it("does NOT re-notify on a later turn once expiryNoticeSentAt is set (idempotent expiry)", async () => {
+    // Second stale turn after the screen was already swept + the candidate already told. The session
+    // is now terminal=null again only in a degenerate replay; we simulate the realistic case where a
+    // residual terminal=null doc carries expiryNoticeSentAt → the notice must NOT fire again.
+    const createdStale = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_zombie2": {
+        sessionId: "ps_zombie2",
+        userId: "u_zombie2",
+        jobId: "hs-10996795-invoko-product-manager",
+        terminal: null, // still resolves via findActiveSession → kind:"expired"
+        currentQId: "q_consumer_product_experience",
+        createdAt: createdStale,
+        updatedAt: new Date(Date.now() - 30 * 1000).toISOString(),
+        expiryNoticeSentAt: new Date(Date.now() - 60 * 1000).toISOString(), // already notified once
+        workSession: { kind: "job_prescreen", status: "active", startedAt: createdStale, boundary: "trigger" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_zombie2",
+      toE164: "+13054507715",
+      replyText: "yes",
+      runTerminalAction: async () => ({ alreadyFired: false, level1Sent: false, jobRecsFired: false }),
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    // NO second notice; the turn is released (handled:false) so the candidate's CURRENT intent
+    // ("yes" to job recs) still gets handled downstream by triage/matching.
+    assert.equal(sent.length, 0)
+    assert.equal(result.handled, false)
+    assert.equal(result.terminal, "PAUSE")
+    // Session stays swept (terminal set by the sweep), not re-opened.
+    const session = docs.get("pa-prescreen-sessions/ps_zombie2")?.data
+    assert.equal(session?.terminal, "PAUSE")
+  })
+
   it("keeps a two-hour-old active prescreen alive and advances to the next role question", async () => {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
     const { db, docs } = makeFakeDb({

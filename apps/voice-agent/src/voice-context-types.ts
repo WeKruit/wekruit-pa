@@ -107,6 +107,13 @@ interface VoiceCallContextBase {
   bookingId: string
   purpose: VoiceCallPurpose
   userProfile: VoiceUserProfile
+  /**
+   * Per-session time budget for the call in seconds (Adam 2026-06-21). The
+   * worker arms a hard graceful cutoff at this budget (and, for the
+   * conversational know-you-better mode, surfaces the remaining time so Claire
+   * paces herself). Absent → the worker's per-purpose default.
+   */
+  timeBudgetSec?: number
 }
 
 /**

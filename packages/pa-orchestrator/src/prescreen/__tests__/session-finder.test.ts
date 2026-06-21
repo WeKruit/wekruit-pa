@@ -3,6 +3,8 @@ import assert from "node:assert/strict"
 
 import {
   ACTIVE_PRESCREEN_TIMEOUT_MS,
+  ACTIVE_PRESCREEN_MAX_AGE_MS,
+  isPrescreenSessionPastMaxAge,
   RECENT_TERMINAL_PRESCREEN_GUARD_MS,
   FirestoreSessionFinder,
   InMemorySessionFinder,
@@ -388,4 +390,55 @@ test("FirestoreSessionFinder.loadById → returns record when present", async ()
   assert.equal(r!.activeQId, "q3")
   assert.equal(r!.terminal, null)
   assert.equal(r!.postTerminalFollowupAckAt, "2026-05-16T00:00:00.000Z")
+})
+
+/* ───────────────────────── zombie-prescreen max-age cap ───────────────────────── */
+// Adam 2026-06-21: a non-terminal session whose updatedAt keeps refreshing (clarify loop
+// captures unrelated turns) must STILL expire on its createdAt-keyed absolute age cap.
+
+test("isPrescreenSessionPastMaxAge → true past 24h, false within, false on missing createdAt", () => {
+  const now = Date.now()
+  assert.equal(isPrescreenSessionPastMaxAge(now - ACTIVE_PRESCREEN_MAX_AGE_MS - 1000, now), true)
+  assert.equal(isPrescreenSessionPastMaxAge(now - 60 * 60 * 1000, now), false) // 1h old → fresh
+  assert.equal(isPrescreenSessionPastMaxAge(null, now), false) // fail-open
+})
+
+test("InMemorySessionFinder → expired when createdAt past max-age even though updatedAt is FRESH (zombie)", async () => {
+  // Mirrors live +19196415056: createdAt days ago, updatedAt seconds ago (self-refreshed by
+  // the clarify loop capturing job-rec replies). The inactivity timeout (updatedAt) would NOT
+  // fire; the createdAt cap must.
+  const f = new InMemorySessionFinder()
+  const now = Date.now()
+  f.add({
+    sessionId: "ps_zombie",
+    userId: "u_zombie",
+    jobId: "hs-10996795-invoko-product-manager",
+    terminal: null,
+    currentQId: "q_consumer_product_experience",
+    createdAtMs: now - 3 * 24 * HOUR, // 3 days old
+    updatedAtMs: now - 30 * 1000, // refreshed 30s ago by the zombie capture
+  })
+  const r = await f.findForUser("u_zombie", { nowMs: now })
+  assert.equal(r.kind, "expired")
+  if (r.kind === "expired") assert.equal(r.sessionId, "ps_zombie")
+  const loaded = await f.loadById("ps_zombie")
+  assert.equal(loaded?.terminal, "PAUSE")
+  assert.equal(loaded?.activeQId, null)
+})
+
+test("InMemorySessionFinder → still ACTIVE when both createdAt and updatedAt are recent (no regression)", async () => {
+  const f = new InMemorySessionFinder()
+  const now = Date.now()
+  f.add({
+    sessionId: "ps_live",
+    userId: "u_live",
+    jobId: "j1",
+    terminal: null,
+    currentQId: "q1",
+    createdAtMs: now - 10 * 60 * 1000, // 10min ago — a real sitting
+    updatedAtMs: now - 30 * 1000,
+  })
+  const r = await f.findForUser("u_live", { nowMs: now })
+  assert.equal(r.kind, "active")
+  if (r.kind === "active") assert.equal(r.sessionId, "ps_live")
 })

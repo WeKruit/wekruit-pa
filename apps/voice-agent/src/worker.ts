@@ -237,6 +237,16 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       // Deferred terminal closer — set after the session exists so the pipeline
       // adapter's onPipelineTerminal can end the call once the final line plays.
       let closeForTerminal: () => Promise<void> = async () => {}
+      // Per-session time-budget cutoff (Adam 2026-06-21). Armed after the greeting;
+      // cleared whenever the call ends first (terminal / disconnect) so we never
+      // speak the "we're at time" close after a natural ending.
+      let callDeadlineTimer: ReturnType<typeof setTimeout> | undefined
+      const clearCallDeadline = () => {
+        if (callDeadlineTimer) {
+          clearTimeout(callDeadlineTimer)
+          callDeadlineTimer = undefined
+        }
+      }
       const lang = callContext.userProfile.preferredLang ?? "en"
       const pipelineSessionId =
         callContext.purpose === "prescreen" ? callContext.prescreenSessionId : callContext.bookingId
@@ -274,9 +284,12 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         // Deepgram, which AgentSession surfaces as `voice.error: 'Unexpected
         // server response: 400'` and immediately tears the session down
         // (no audio reaches the SIP candidate leg).
-        // speed < 1.0 slows Claire's delivery (Adam 2026-06-21: "make the tone
-        // slower"). Deepgram Aura supports a `speed` param (TTSOptions.speed).
-        const tts = new deepgramMod.TTS({ model: "aura-asteria-en", speed: 0.9 })
+        // aura-2-luna-en (Adam 2026-06-21) — Aura-2 calm/consistent-pacing voice.
+        // speed=0.9 slows delivery (Deepgram speed range 0.7–1.5; in-range so it
+        // won't error). NOTE: Deepgram's speed param is Early Access — if the
+        // account isn't enabled it's ignored (tone unchanged), not an error.
+        // `model` is typed TTSModels|string so the aura-2 slug is accepted.
+        const tts = new deepgramMod.TTS({ model: "aura-2-luna-en" as string, speed: 0.9 })
         // P0 single-brain (Adam 2026-06-19): WekruitLLM in PIPELINE-ADAPTER mode is
         // the SOLE in-call brain — every spoken line is the real prescreen/onboarding
         // pipeline output (runPrescreenTurn + KeywordSet judge + clarify composer).
@@ -314,6 +327,7 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         }
       }
       closeForTerminal = async () => {
+        clearCallDeadline()
         try {
           await session.aclose?.()
         } catch (err) {
@@ -362,6 +376,7 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         },
         shutdown: async () => {
           log("voice.shutdown", { bookingId })
+          clearCallDeadline()
           try {
             await session.aclose?.()
           } catch {
@@ -492,6 +507,37 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           error: err instanceof Error ? err.message : String(err),
         })
       }
+
+      // ── PER-SESSION TIME-BUDGET CUTOFF (Adam 2026-06-21) ─────────────────────
+      // Arm a graceful hard cap at the call's time budget. If the call runs long,
+      // Claire gives a warm close and we end the call (the post-call summary still
+      // sends). Cleared on any earlier ending (closeForTerminal / shutdown) so it
+      // never double-speaks. (Soft pacing — Claire wrapping herself up before this
+      // — rides on the conversational know-you-better mode that surfaces the
+      // remaining time to the LLM.)
+      if (!opts.defineAgent) {
+        const budgetSec = callContext.timeBudgetSec ?? 360
+        callDeadlineTimer = setTimeout(() => {
+          void (async () => {
+            log("voice.worker.time_budget_reached", { bookingId, budgetSec })
+            try {
+              const closeLine =
+                lang === "zh"
+                  ? "我们差不多到时间了——我会用短信跟你说下一步。今天非常感谢你抽时间！"
+                  : "we're about at time for today — i'll text you the next step. thanks so much for hopping on!"
+              const handle = session.say?.(closeLine, { allowInterruptions: false })
+              await waitForSpeechPlayout(handle, { timeoutMs: 8_000 })
+            } catch (err) {
+              log("voice.worker.time_budget_close_failed", {
+                bookingId,
+                error: err instanceof Error ? err.message : String(err),
+              })
+            }
+            await closeForTerminal()
+          })()
+        }, budgetSec * 1000)
+        log("voice.worker.time_budget_armed", { bookingId, budgetSec })
+      }
     },
   })
 
@@ -617,22 +663,27 @@ export async function defaultLoadContext(bookingId: string): Promise<VoiceCallCo
   const data = (await res.json()) as {
     bookingId: string
     purpose?: "prescreen" | "onboarding"
+    timeBudgetSec?: number
     userProfile: VoiceCallContext["userProfile"]
     prescreenSessionId?: string
     jobBrief?: unknown
     prescreenConfig?: unknown
   }
   const purpose = data.purpose === "onboarding" ? "onboarding" : "prescreen"
+  const timeBudgetSec =
+    typeof data.timeBudgetSec === "number" && data.timeBudgetSec > 0 ? data.timeBudgetSec : undefined
   if (purpose === "onboarding") {
     return {
       bookingId: data.bookingId,
       purpose,
+      ...(timeBudgetSec ? { timeBudgetSec } : {}),
       userProfile: data.userProfile,
     }
   }
   return {
     bookingId: data.bookingId,
     purpose,
+    ...(timeBudgetSec ? { timeBudgetSec } : {}),
     prescreenSessionId: data.prescreenSessionId ?? data.bookingId,
     userProfile: data.userProfile,
     jobBrief: data.jobBrief as VoicePrescreenCallContext["jobBrief"],
