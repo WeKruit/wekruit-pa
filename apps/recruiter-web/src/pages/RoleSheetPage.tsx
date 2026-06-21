@@ -58,6 +58,7 @@ type SheetColumn = {
   id: SheetCellId
   label: string
   required?: boolean
+  placeholder?: string
   // key columns stay visible when rows degrade to cards on small screens
   key?: boolean
 }
@@ -69,9 +70,9 @@ const CANDIDATE_COLUMNS: SheetColumn[] = [
   { id: "resume", label: "Resume", required: true },
   { id: "currentCompany", label: "Current company", key: true },
   { id: "currentTitle", label: "Current title", key: true },
-  { id: "location", label: "Location", key: true },
+  { id: "location", label: "Location", required: true, key: true, placeholder: "Open to anywhere/remote, or preferred location(s)" },
   { id: "yoe", label: "Years of exp" },
-  { id: "workAuthorization", label: "Work auth" },
+  { id: "workAuthorization", label: "Work auth", required: true, placeholder: "Citizen / Green card, or needs sponsorship" },
   { id: "employmentStatus", label: "Employment status" },
   { id: "compensationExpectation", label: "Comp expectation" },
   { id: "noticePeriod", label: "Notice period" },
@@ -486,6 +487,8 @@ function addRowBlockers(
   else if (!normalizeSheetUrl(linkedin)) blockers.push("LinkedIn URL must be a valid URL.")
   if (!resume) blockers.push("Resume is required — paste a link or drop a file.")
   else if (!normalizeSheetUrl(resume) && !draft.resumeFileName) blockers.push("Resume must be a valid URL or an uploaded file.")
+  if (!draft.cells.location.trim()) blockers.push("Location is required — open to anywhere/remote, or preferred location(s).")
+  if (!draft.cells.workAuthorization.trim()) blockers.push("Working status is required — work authorization / sponsorship need.")
   for (const field of fields) {
     const value = (draft.extraFields[field.id] ?? "").trim()
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
@@ -1290,7 +1293,7 @@ function AddCandidatePanel({
                 onChange={(url, name) => onChange({ ...draft, cells: { ...draft.cells, resume: url }, resumeFileName: name })}
               />
             ) : (
-              <input type="text" placeholder={col.label} value={draft.cells[col.id]} onChange={(e) => setCell(col.id, e.target.value)} />
+              <input type="text" placeholder={col.placeholder ?? col.label} value={draft.cells[col.id]} onChange={(e) => setCell(col.id, e.target.value)} />
             )}
           </label>
         ))}
