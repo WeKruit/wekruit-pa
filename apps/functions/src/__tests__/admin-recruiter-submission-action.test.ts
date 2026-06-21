@@ -208,6 +208,32 @@ describe("runAdminRecruiterSubmissionAction", () => {
     }
   })
 
+  it("company_send_upsert adds a send + flips status to client_review; update feedback; remove", async () => {
+    const mfs = new MockFirestore()
+    await seedSubmission(mfs)
+
+    const r1 = await run(mfs, { submissionId: "sub-1", action: "company_send_upsert", companySend: { company: "Acme" } })
+    const sends1 = (r1 as unknown as { companySends: Array<Record<string, unknown>> }).companySends
+    assert.equal(sends1.length, 1)
+    assert.equal(sends1[0]!.company, "Acme")
+    assert.equal(sends1[0]!.status, "sent")
+    const id = sends1[0]!.id as string
+    assert.equal((await readDoc(mfs)).status, "client_review", "first send promotes to with-client")
+
+    const r2 = await run(mfs, {
+      submissionId: "sub-1",
+      action: "company_send_upsert",
+      companySend: { id, company: "Acme", status: "waiting_hm", feedback: "HM reviewing" },
+    })
+    const sends2 = (r2 as unknown as { companySends: Array<Record<string, unknown>> }).companySends
+    assert.equal(sends2.length, 1, "update in place, not appended")
+    assert.equal(sends2[0]!.status, "waiting_hm")
+    assert.equal(sends2[0]!.feedback, "HM reviewing")
+
+    const r3 = await run(mfs, { submissionId: "sub-1", action: "company_send_remove", companySendId: id })
+    assert.equal((r3 as unknown as { companySends: unknown[] }).companySends.length, 0)
+  })
+
   it("pipeline progression appends history submitted → wekruit_interview → client_review → hired", async () => {
     const mfs = new MockFirestore()
     await seedSubmission(mfs)

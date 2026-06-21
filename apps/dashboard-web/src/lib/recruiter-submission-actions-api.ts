@@ -76,6 +76,52 @@ export async function runRecruiterSubmissionAction(
   }
 }
 
+// --- Company sends (per-company "waiting for hiring manager" tracking) ---
+export type CompanySendStatus = "sent" | "waiting_hm" | "interested" | "passed"
+
+export interface CompanySend {
+  id: string
+  company: string
+  status: CompanySendStatus
+  feedback?: string
+  sentAt: string
+  updatedAt: string
+  by?: string
+}
+
+export interface CompanySendInput {
+  id?: string
+  company: string
+  status?: CompanySendStatus
+  feedback?: string
+}
+
+export const COMPANY_SEND_STATUS_LABEL: Record<CompanySendStatus, string> = {
+  sent: "Sent to company",
+  waiting_hm: "Waiting for hiring manager",
+  interested: "HM interested",
+  passed: "HM passed",
+}
+
+async function callCompanySendAction(payload: Record<string, unknown>): Promise<CompanySend[]> {
+  const { functions } = await import("./firebase.js")
+  const fn = httpsCallable<Record<string, unknown>, { ok?: boolean; companySends?: CompanySend[] }>(
+    functions(),
+    RECRUITER_SUBMISSION_ACTION_CALLABLE,
+  )
+  const result = await fn(payload)
+  if (result.data?.ok !== true) throw new Error("company_send_action_failed")
+  return result.data.companySends ?? []
+}
+
+export async function upsertCompanySend(submissionId: string, companySend: CompanySendInput): Promise<CompanySend[]> {
+  return callCompanySendAction({ submissionId, action: "company_send_upsert", companySend })
+}
+
+export async function removeCompanySend(submissionId: string, companySendId: string): Promise<CompanySend[]> {
+  return callCompanySendAction({ submissionId, action: "company_send_remove", companySendId })
+}
+
 export interface RecruiterSubmissionCommentInput {
   submissionId: string
   message: string
