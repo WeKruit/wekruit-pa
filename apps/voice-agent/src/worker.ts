@@ -274,7 +274,9 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         // Deepgram, which AgentSession surfaces as `voice.error: 'Unexpected
         // server response: 400'` and immediately tears the session down
         // (no audio reaches the SIP candidate leg).
-        const tts = new deepgramMod.TTS({ model: "aura-asteria-en" })
+        // speed < 1.0 slows Claire's delivery (Adam 2026-06-21: "make the tone
+        // slower"). Deepgram Aura supports a `speed` param (TTSOptions.speed).
+        const tts = new deepgramMod.TTS({ model: "aura-asteria-en", speed: 0.9 })
         // P0 single-brain (Adam 2026-06-19): WekruitLLM in PIPELINE-ADAPTER mode is
         // the SOLE in-call brain — every spoken line is the real prescreen/onboarding
         // pipeline output (runPrescreenTurn + KeywordSet judge + clarify composer).
@@ -434,6 +436,11 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           bookingId,
           identity: candidateParticipantIdentity,
         })
+      }
+      // 2s of silence after the candidate joins before Claire speaks (Adam
+      // 2026-06-21) — a beat so the greeting doesn't talk over "hello?".
+      if (!opts.defineAgent) {
+        await new Promise((r) => setTimeout(r, 2_000))
       }
       const consentLine = buildConsentPrompt(callContext)
       try {
