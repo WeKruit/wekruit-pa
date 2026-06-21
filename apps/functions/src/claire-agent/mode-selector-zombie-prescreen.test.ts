@@ -27,12 +27,21 @@ function makeDb(session: Record<string, unknown>) {
   let sessionData = { ...session }
   const userDoc = { tags: {} as Record<string, unknown> }
 
+  const turnWrites: Array<Record<string, unknown>> = []
   const sessionDoc = {
     id: String(session.sessionId ?? "ps_zombie"),
     ref: {
       async set(patch: Record<string, unknown>, opts?: { merge?: boolean }) {
         prescreenWrites.push(patch)
         sessionData = opts?.merge ? { ...sessionData, ...patch } : { ...patch }
+      },
+      collection(_name: string) {
+        return {
+          async add(data: Record<string, unknown>) {
+            turnWrites.push(data)
+            return { id: `turn_${turnWrites.length}` }
+          },
+        }
       },
     },
     data: () => sessionData,
@@ -77,13 +86,18 @@ function makeDb(session: Record<string, unknown>) {
     },
   } as never
 
-  return { db, prescreenWrites: () => prescreenWrites, sessionData: () => sessionData }
+  return {
+    db,
+    prescreenWrites: () => prescreenWrites,
+    turnWrites: () => turnWrites,
+    sessionData: () => sessionData,
+  }
 }
 
 test("mode-selector → ZOMBIE prescreen (createdAt stale, updatedAt fresh) is swept + turn NOT routed to prescreen", async () => {
   const createdStale = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() // 3 days
   const updatedFresh = new Date(Date.now() - 30 * 1000).toISOString() // self-refreshed 30s ago
-  const { db, prescreenWrites, sessionData } = makeDb({
+  const { db, prescreenWrites, turnWrites, sessionData } = makeDb({
     sessionId: "ps_zombie",
     userId: NONCANARY_UID,
     jobId: "hs-10996795-invoko-product-manager",
@@ -99,13 +113,26 @@ test("mode-selector → ZOMBIE prescreen (createdAt stale, updatedAt fresh) is s
   assert.notEqual(decision.mode, "prescreen")
   assert.notEqual(decision.deferToLegacy, true)
 
-  // Stale session swept to a terminal so it stops interfering.
+  // Stale session swept to a stale-closed terminal so it stops interfering.
   const writes = prescreenWrites()
   assert.equal(writes.length >= 1, true)
   const sd = sessionData()
   assert.equal(sd.terminal, "PAUSE")
   assert.equal(sd.terminalReason, "expired_inactive_prescreen_session")
   assert.equal(sd.currentQId, null)
+  assert.equal(typeof sd.expiredAt, "string")
+  // NO send here — the SMS detector (runPrescreenTurnIfActive) owns the one-time candidate notice;
+  // this defensive sweep must NOT stamp expiryNoticeSentAt (it didn't send).
+  assert.equal(sd.expiryNoticeSentAt, undefined)
+
+  // Auditable expiry record written to the turns subcollection.
+  const turns = turnWrites()
+  const sweep = turns.find((t) => (t.action as { kind?: string } | undefined)?.kind === "session_expired_swept")
+  assert.ok(sweep, "expected a session_expired_swept audit turn")
+  const action = sweep!.action as { detector: string; ageMs: number; createdAt: string }
+  assert.equal(action.detector, "mode_selector")
+  assert.equal(typeof action.ageMs, "number")
+  assert.equal(action.createdAt, createdStale)
 })
 
 test("mode-selector → RECENT non-terminal prescreen still defers to legacy (no regression)", async () => {

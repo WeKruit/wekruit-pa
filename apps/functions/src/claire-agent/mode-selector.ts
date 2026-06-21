@@ -43,6 +43,10 @@ import { isThinPrescreenEnabled } from "./flags.js"
 import { buildThinPrescreenSeed, type AiQuestionOptions } from "./prescreen-config.js"
 import { loadPrescreenContext } from "./prescreen-context.js"
 import {
+  buildStalePrescreenSweepPatch,
+  buildStalePrescreenSweepTurn,
+} from "../prescreen-staleness.js"
+import {
   readUserPrescreenSharedAnswers,
   AI_USAGE_SHARED_KEY,
   isPrescreenSessionPastMaxAge,
@@ -204,25 +208,32 @@ async function hasActivePrescreen(
     // so it stops interfering, then let this turn fall through to triage/matching.
     if (isPrescreenSessionPastMaxAge(createdAtMs, nowMs)) {
       const nowIso = new Date(nowMs).toISOString()
+      const createdAtIso = createdAtMs !== null ? new Date(createdAtMs).toISOString() : null
+      const ageMs = createdAtMs !== null ? nowMs - createdAtMs : null
+      // CANCEL CONTEXT CLEANLY: same canonical stale-closed patch the SMS detector uses, so the
+      // session is closed identically regardless of which detector caught it. NO send here —
+      // runPrescreenTurnIfActive owns the one-time candidate notice (it runs BEFORE thin Claire on
+      // every inbound), and expiryNoticeSentAt is its idempotency gate; sending here too would risk
+      // a double-notify. This sweep is defense-in-depth for any path that reaches thin first.
       try {
-        await doc.ref.set(
-          {
-            terminal: "PAUSE",
-            terminalReason: "expired_inactive_prescreen_session",
-            currentQId: null,
-            updatedAt: nowIso,
-            workSession: { kind: "job_prescreen", status: "ended", endedAt: nowIso, boundary: "timeout" },
-          },
-          { merge: true },
-        )
+        await doc.ref.set(buildStalePrescreenSweepPatch(nowIso), { merge: true })
       } catch {
         /* best-effort sweep; even if it fails we still treat the session as inactive */
+      }
+      // STORE PROPERLY: auditable expiry record (mirrors the SMS detector's turns row).
+      try {
+        await doc.ref
+          .collection("turns")
+          .add(buildStalePrescreenSweepTurn({ createdAtIso, nowIso, ageMs, detector: "mode_selector" }))
+      } catch {
+        /* best-effort audit */
       }
       log("mode.prescreen_stale_swept", {
         userId,
         sessionId: doc.id,
         jobId: typeof d.jobId === "string" ? d.jobId : undefined,
-        ...(createdAtMs !== null ? { createdAt: new Date(createdAtMs).toISOString() } : {}),
+        ageMs,
+        ...(createdAtIso !== null ? { createdAt: createdAtIso } : {}),
       })
       return { active: false }
     }

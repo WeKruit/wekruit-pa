@@ -28,3 +28,58 @@ export function isStaleClosedPrescreenSession(
     d.workSession && typeof d.workSession === "object" ? (d.workSession as Record<string, unknown>) : null
   return workSession?.boundary === "timeout" || workSession?.boundary === "manual_review_required"
 }
+
+/**
+ * Canonical reason for the "stale / zombie" sweep terminal. Single source of truth so the
+ * three detectors (findActiveSession, hasActivePrescreen, session-finder) + isStaleClosedPrescreenSession
+ * all agree.
+ */
+export const STALE_PRESCREEN_TERMINAL_REASON = "expired_inactive_prescreen_session"
+
+/**
+ * The merge-patch that turns a stale non-terminal session into a CLEANLY-CANCELLED, stale-closed
+ * terminal that NONE of the three active-prescreen detectors will re-pick:
+ *   - terminal "PAUSE" (terminal != null → findActiveSession / hasActivePrescreen skip it)
+ *   - terminalReason expired_inactive_prescreen_session → isStaleClosedPrescreenSession === true
+ *   - currentQId null → the FSM has no active question to resume against
+ *   - workSession.boundary "timeout" → recent-terminal guards + stale-closed copy agree it timed out
+ *   - expiredAt stamp → auditable expiry instant (distinct from updatedAt, which the zombie self-bumped)
+ *
+ * `expiryNoticeSentAt` is written SEPARATELY by the caller that actually sends the candidate notice
+ * (the one-time idempotency gate) — it is NOT folded in here, so a detector that only cancels (no send)
+ * does not falsely claim the candidate was told.
+ */
+export function buildStalePrescreenSweepPatch(nowIso: string): Record<string, unknown> {
+  return {
+    terminal: "PAUSE",
+    terminalReason: STALE_PRESCREEN_TERMINAL_REASON,
+    currentQId: null,
+    expiredAt: nowIso,
+    updatedAt: nowIso,
+    workSession: { kind: "job_prescreen", status: "ended", endedAt: nowIso, boundary: "timeout" },
+  }
+}
+
+/**
+ * The auditable `turns` subcollection record for a staleness sweep. One row per sweep, so the
+ * session history shows WHY the screen closed (age in ms + createdAt vs sweep time) for HITL / eval.
+ */
+export function buildStalePrescreenSweepTurn(args: {
+  createdAtIso: string | null
+  nowIso: string
+  ageMs: number | null
+  detector: "find_active_session" | "mode_selector" | "session_finder"
+}): Record<string, unknown> {
+  return {
+    qId: "terminal",
+    action: {
+      kind: "session_expired_swept",
+      reason: STALE_PRESCREEN_TERMINAL_REASON,
+      detector: args.detector,
+      createdAt: args.createdAtIso,
+      expiredAt: args.nowIso,
+      ageMs: args.ageMs,
+    },
+    ts: args.nowIso,
+  }
+}

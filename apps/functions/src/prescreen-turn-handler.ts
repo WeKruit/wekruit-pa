@@ -44,7 +44,11 @@ import {
 import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm.js"
 import { AI_QUESTION_QID } from "./claire-agent/prescreen-ai-question.js"
 import { isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
-import { isStaleClosedPrescreenSession } from "./prescreen-staleness.js"
+import {
+  isStaleClosedPrescreenSession,
+  buildStalePrescreenSweepPatch,
+  buildStalePrescreenSweepTurn,
+} from "./prescreen-staleness.js"
 import { classifyInboundReplyNeed } from "./sendblue/ack-classifier.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
@@ -327,28 +331,34 @@ async function findActiveSession(
   const pastMaxAge = isPrescreenSessionPastMaxAge(createdAtMs, nowMs)
   if (inactivityExpired || pastMaxAge) {
     const nowIso = new Date(nowMs).toISOString()
-    await doc.ref.set(
-      {
-        terminal: "PAUSE",
-        terminalReason: "expired_inactive_prescreen_session",
-        currentQId: null,
-        updatedAt: nowIso,
-        workSession: {
-          kind: "job_prescreen",
-          status: "ended",
-          endedAt: nowIso,
-          boundary: "timeout",
-        },
-      },
-      { merge: true },
-    )
+    const createdAtIso = createdAtMs !== null ? new Date(createdAtMs).toISOString() : null
+    const ageMs = createdAtMs !== null ? nowMs - createdAtMs : null
+    // CANCEL CONTEXT CLEANLY (Adam 2026-06-21 #2): one canonical stale-closed terminal patch so the
+    // session is truly closed for routing — no detector re-picks it, and the stale-closed copy path
+    // narrates it as "timed out" (never "under review"). expiryNoticeSentAt is stamped LATER, on the
+    // turn that actually sends the candidate notice (the one-time idempotency gate).
+    await doc.ref.set(buildStalePrescreenSweepPatch(nowIso), { merge: true })
+    // STORE PROPERLY (Adam 2026-06-21 #3): an auditable expiry record in the session's turns
+    // subcollection — best-effort, never blocks the sweep.
+    try {
+      await doc.ref.collection("turns").add(
+        buildStalePrescreenSweepTurn({ createdAtIso, nowIso, ageMs, detector: "find_active_session" }),
+      )
+    } catch (err) {
+      opts.log?.("prescreen.turn.expired_audit_write_failed", {
+        userId,
+        sessionId: doc.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
     opts.log?.("prescreen.turn.expired_inactive_session", {
       userId,
       sessionId: doc.id,
       lastActiveAt: lastActiveMs !== null ? new Date(lastActiveMs).toISOString() : null,
       timeoutMinutes: ACTIVE_PRESCREEN_TIMEOUT_MS / 60_000,
       reason: pastMaxAge ? "max_age" : "inactivity",
-      ...(createdAtMs !== null ? { createdAt: new Date(createdAtMs).toISOString() } : {}),
+      ageMs,
+      ...(createdAtIso !== null ? { createdAt: createdAtIso } : {}),
     })
     return {
       kind: "expired",
@@ -1503,6 +1513,17 @@ export async function runPrescreenTurnIfActive(
     }
   }
   if (lookup.kind === "expired") {
+    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
+    // IDEMPOTENCY GATE (Adam 2026-06-21 #1): notify EXACTLY ONCE. A session that already carries
+    // expiryNoticeSentAt has told the candidate — do NOT re-send the timeout notice on a later turn
+    // that still resolves to this (now-terminal) session. expiryNoticeSentAt is the one-time gate.
+    let alreadyNotified = false
+    try {
+      const snap = await sessionRef.get()
+      alreadyNotified = typeof snap.data()?.expiryNoticeSentAt === "string"
+    } catch {
+      /* fail-open → treat as not-yet-notified; the send idempotencyKey is the secondary guard */
+    }
     try {
       await terminalAction({
         db: args.db,
@@ -1521,6 +1542,13 @@ export async function runPrescreenTurnIfActive(
       })
     }
     const text = expiredSessionText(args.lang ?? "en")
+    if (alreadyNotified) {
+      log("prescreen.turn.expired_notice_already_sent", { sessionId: lookup.sessionId })
+      // Already told them once — let this turn fall through to triage/matching so their CURRENT
+      // message intent (e.g. "yes" to job recs) still gets a coherent reply downstream.
+      return { handled: false, sessionId: lookup.sessionId, terminal: "PAUSE" }
+    }
+    let noticeSent = false
     try {
       await sendSms({
         to: args.toE164,
@@ -1530,11 +1558,24 @@ export async function runPrescreenTurnIfActive(
         runtimeSource: "pa_prescreen_runtime",
         idempotencyKey: `prescreen_expired:${lookup.sessionId}`,
       })
+      noticeSent = true
     } catch (err) {
       log("prescreen.turn.expired_notice_send_failed", {
         sessionId: lookup.sessionId,
         error: err instanceof Error ? err.message : String(err),
       })
+    }
+    if (noticeSent) {
+      // Stamp the one-time gate ONLY after the notice actually went out (a failed send leaves it
+      // unset so a retry can still notify).
+      try {
+        await sessionRef.set({ expiryNoticeSentAt: new Date().toISOString() }, { merge: true })
+      } catch (err) {
+        log("prescreen.turn.expired_notice_stamp_failed", {
+          sessionId: lookup.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
     return { handled: true, sessionId: lookup.sessionId, terminal: "PAUSE", textSent: text }
   }
