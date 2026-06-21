@@ -425,10 +425,26 @@ function submissionJobKey(submission: BoardSubmissionDoc): string {
   return (submission.inboundJobId || submission.jobId || submission.jobTitleSnapshot || "unknown-job").trim()
 }
 
+// Surface the best candidates first: AI verdict advance → borderline → reject →
+// unscored, then most-confident within each verdict.
+const VERDICT_RANK: Record<string, number> = { advance: 0, borderline: 1, reject: 2 }
+function verdictRank(s: BoardSubmissionDoc): number {
+  const v = s.aiEvaluation?.verdict
+  return v && v in VERDICT_RANK ? VERDICT_RANK[v]! : 3
+}
+
 function sortSubmissions(submissions: BoardSubmissionDoc[]): BoardSubmissionDoc[] {
   return [...submissions].sort((a, b) => {
+    // 1. Still-actionable (pending) above already-decided submissions.
     const pendingDelta = Number(isPending(b)) - Number(isPending(a))
     if (pendingDelta !== 0) return pendingDelta
+    // 2. AI verdict: advance → borderline → reject → unscored.
+    const rankDelta = verdictRank(a) - verdictRank(b)
+    if (rankDelta !== 0) return rankDelta
+    // 3. Most confident within the same verdict (high-confidence advances first).
+    const confDelta = (b.aiEvaluation?.confidence ?? 0) - (a.aiEvaluation?.confidence ?? 0)
+    if (confDelta !== 0) return confDelta
+    // 4. Newest first.
     return (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0)
   })
 }
