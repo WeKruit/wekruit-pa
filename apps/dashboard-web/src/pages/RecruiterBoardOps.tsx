@@ -20,7 +20,7 @@ import {
 } from "@pa/core-types"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
-import { boardSubmissionRankKey, compareRankKeys } from "./board-submission-rank.js"
+import { antiFlagRatio, boardSubmissionRankKey, checklistMetRatio, compareRankKeys } from "./board-submission-rank.js"
 import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
 import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "../components/prescreen/dual-pane.js"
 import { auth, db } from "../lib/firebase.js"
@@ -903,6 +903,10 @@ function suggestedCandidateTier(evaluation: SubmissionAiEvaluation | undefined):
   return suggestTierFromRecruiterAi(evaluation.verdict, hardGapCount(evaluation), {
     confidence: evaluation.confidence,
     strongBackground,
+    hardRatio: checklistMetRatio(evaluation.checklist?.hard),
+    fitRatio: checklistMetRatio(evaluation.checklist?.fit),
+    bonusRatio: checklistMetRatio(evaluation.checklist?.bonus),
+    antiRatio: antiFlagRatio(evaluation.checklist?.anti),
   })
 }
 

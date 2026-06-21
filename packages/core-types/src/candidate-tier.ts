@@ -61,39 +61,78 @@ export function isReusableTier(tier: CandidateTier): boolean {
 /** Recruiter `aiEvaluation.verdict` values (recruiter-submission-eval.ts). */
 export type RecruiterAiVerdict = "advance" | "borderline" | "reject"
 
-/** tier_1 needs a CONFIDENT advance (raw confidence ≥ this). */
-export const RECRUITER_TIER_1_CONFIDENCE = 0.8
+/**
+ * Live tier cutoffs on {@link recruiterQualityScore}, CALIBRATED to the pool
+ * (~3,850 scored submissions, 2026-06-21): p95 ≈ 0.97 (top ~5–6% → tier_1) and
+ * p20 ≈ 0.36 (bottom ~20% → tier_3). Fixed cutoffs for the live per-candidate
+ * path; a backfill can recompute true percentiles + re-norm on a schedule — same
+ * pattern as PRESCREEN_TIER_1_FIT_CUTOFF. Re-calibrate when the judge model/prompt changes.
+ */
+export const RECRUITER_TIER_1_SCORE_CUTOFF = 0.97
+export const RECRUITER_TIER_3_SCORE_CUTOFF = 0.36
 
 export interface RecruiterTierSignals {
-  /** AI confidence 0..1 — tier_1 requires a confident advance, not a thin one. */
+  /** AI confidence 0..1 (a secondary score term; LLM confidence is miscalibrated). */
   confidence?: number | null
   /** Strong school OR strong company (role-aware AI background pillars). */
   strongBackground?: boolean
+  /** Checklist met ratios 0..1 (met/total). */
+  hardRatio?: number
+  fitRatio?: number
+  bonusRatio?: number
+  /** Anti-signal flagged ratio 0..1 (flagged/total) — subtracts. */
+  antiRatio?: number
+}
+
+const clampUnit = (v: number): number => (Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0)
+
+/**
+ * Continuous 0..1 candidate quality score from the recruiter AI eval, used to
+ * TIER by percentile (ranking is separate + lexicographic). The composite
+ * weights set the ORDER; the tier cutoffs are population PERCENTILES, so the
+ * exact weights matter far less than the percentile cut (norm-referenced sizing).
+ */
+export function recruiterQualityScore(
+  verdict: RecruiterAiVerdict | undefined | null,
+  signals: RecruiterTierSignals = {},
+): number {
+  const verdictNorm = verdict === "advance" ? 1 : verdict === "borderline" ? 0.5 : 0
+  const raw =
+    0.4 * verdictNorm +
+    0.2 * clampUnit(Number(signals.confidence ?? 0)) +
+    0.2 * clampUnit(signals.hardRatio ?? 0) +
+    0.08 * clampUnit(signals.fitRatio ?? 0) +
+    0.04 * clampUnit(signals.bonusRatio ?? 0) -
+    0.12 * clampUnit(signals.antiRatio ?? 0) +
+    0.08 * (signals.strongBackground ? 1 : 0)
+  return clampUnit(raw)
 }
 
 /**
- * Suggest a tier from the recruiter AI eval. tier_1 is RARE (Adam 2026-06-21:
- * "we should be kinda harsh") — the old `advance || borderline → tier_1` made
- * ~88% of candidates tier_1. This mirrors the prescreen tiering: tier_1 is
- * reserved for a CONFIDENT `advance` from a STRONG background; everyone else is
- * tier_2 (reusable) unless they have a hard-requirement gap with no redeeming
- * background (tier_3).
- *  - advance + confidence ≥ 0.8 + strong school/company → tier_1 (the genuine top)
- *  - hard gap AND weak background                        → tier_3 (hard mismatch)
- *  - otherwise (close, or a gap rescued by strong bg)    → tier_2 (reusable)
+ * Suggest a tier — HYBRID (research-backed; Adam 2026-06-21: "normal
+ * distribution, allow outliers, only a few actually good"). A lenient LLM judge
+ * (≈88% advance/borderline) inflates ANY fixed verdict rule, so size the tiers by
+ * percentile of {@link recruiterQualityScore} and gate them with absolute floors
+ * so each band still MEANS something (norm-referenced size + criterion-referenced
+ * meaning):
+ *  - tier_1: score ≥ p95 cutoff AND a CLEAN advance (verdict advance + 0 hard
+ *    gaps). Never tier_1 for a borderline/reject, however high the pool ranks it.
+ *  - tier_3: score < p20 cutoff AND NOT a clean advance. A clean advance is never
+ *    curved into tier_3 (anti-stack-ranking floor — don't bury a strong candidate).
+ *  - tier_2: the reusable middle.
  *
- * The `signals` arg is optional for back-compat; WITHOUT it no candidate can be
- * tier_1 (callers should pass confidence + strongBackground from the eval).
+ * `signals` is optional for back-compat, but WITHOUT the score inputs nothing can
+ * reach tier_1 — callers should pass confidence + background + checklist ratios.
  */
 export function suggestTierFromRecruiterAi(
   verdict: RecruiterAiVerdict | undefined | null,
   hardGaps: number,
   signals: RecruiterTierSignals = {},
 ): CandidateTier {
-  const confident = (signals.confidence ?? 0) >= RECRUITER_TIER_1_CONFIDENCE
-  const strongBackground = signals.strongBackground === true
-  if (verdict === "advance" && confident && strongBackground) return "tier_1"
-  if (hardGaps > 0 && !strongBackground) return "tier_3"
+  const score = recruiterQualityScore(verdict, signals)
+  const cleanAdvance = verdict === "advance" && hardGaps === 0
+  if (score >= RECRUITER_TIER_1_SCORE_CUTOFF && cleanAdvance) return "tier_1"
+  if (score < RECRUITER_TIER_3_SCORE_CUTOFF && !cleanAdvance) return "tier_3"
   return "tier_2"
 }
 

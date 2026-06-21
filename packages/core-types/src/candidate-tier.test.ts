@@ -6,6 +6,8 @@ import {
   isReusableTier,
   tierRank,
   suggestTierFromRecruiterAi,
+  recruiterQualityScore,
+  RECRUITER_TIER_1_SCORE_CUTOFF,
   suggestTierFromPrescreen,
   GlobalCandidateTierSchema,
 } from "./candidate-tier.js"
@@ -40,26 +42,45 @@ describe("reconcileGlobalTier (best-wins)", () => {
   })
 })
 
-describe("suggestTierFromRecruiterAi (harsh: tier_1 is rare)", () => {
-  it("tier_1 ONLY for a confident advance from a strong background", () => {
-    assert.equal(suggestTierFromRecruiterAi("advance", 0, { confidence: 0.9, strongBackground: true }), "tier_1")
+describe("suggestTierFromRecruiterAi (HYBRID: percentile size + absolute floor)", () => {
+  // A "top" candidate: clean advance + all signals maxed → score 1.0 ≥ p95 cutoff.
+  const top = { confidence: 1, strongBackground: true, hardRatio: 1, fitRatio: 1, bonusRatio: 1, antiRatio: 0 }
+
+  it("tier_1 ONLY for a top-percentile CLEAN advance (score ≥ p95 cutoff)", () => {
+    assert.ok(recruiterQualityScore("advance", top) >= RECRUITER_TIER_1_SCORE_CUTOFF)
+    assert.equal(suggestTierFromRecruiterAi("advance", 0, top), "tier_1")
   })
-  it("advance that is not confident-and-strong is NOT tier_1", () => {
-    assert.equal(suggestTierFromRecruiterAi("advance", 0, { confidence: 0.9, strongBackground: false }), "tier_2", "weak background → tier_2")
-    assert.equal(suggestTierFromRecruiterAi("advance", 0, { confidence: 0.6, strongBackground: true }), "tier_2", "low confidence → tier_2")
-    assert.equal(suggestTierFromRecruiterAi("advance", 0), "tier_2", "no signals → never tier_1")
+
+  it("a top-scoring BORDERLINE is never tier_1 (absolute floor — must be a clean advance)", () => {
+    // borderline can't clear the floor regardless of how the pool ranks it
+    assert.equal(suggestTierFromRecruiterAi("borderline", 0, top), "tier_2")
   })
-  it("borderline is never tier_1 (was the inflation source)", () => {
-    assert.equal(suggestTierFromRecruiterAi("borderline", 0, { confidence: 0.95, strongBackground: true }), "tier_2")
-    assert.equal(suggestTierFromRecruiterAi("borderline", 1, { strongBackground: false }), "tier_3", "hard gap + weak bg → tier_3")
+
+  it("an advance WITH a hard gap is not a clean advance → not tier_1", () => {
+    assert.equal(suggestTierFromRecruiterAi("advance", 1, top), "tier_2")
   })
-  it("hard gap with weak background → tier_3; a strong background rescues to tier_2", () => {
-    assert.equal(suggestTierFromRecruiterAi("reject", 1, { strongBackground: false }), "tier_3")
-    assert.equal(suggestTierFromRecruiterAi("reject", 1, { strongBackground: true }), "tier_2")
-    assert.equal(suggestTierFromRecruiterAi("reject", 0), "tier_2")
+
+  it("a mid-scoring advance is tier_2, not tier_1 (below the percentile cutoff)", () => {
+    assert.equal(suggestTierFromRecruiterAi("advance", 0, { confidence: 0.5, hardRatio: 0.5 }), "tier_2")
+    assert.equal(suggestTierFromRecruiterAi("advance", 0), "tier_2", "no signals → score 0.4 → tier_2")
   })
-  it("unknown verdict, no hard gaps → tier_2", () => {
-    assert.equal(suggestTierFromRecruiterAi(null, 0), "tier_2")
+
+  it("a clean advance is NEVER curved into tier_3 (anti-stack-ranking floor)", () => {
+    // even with everything else zero, a clean advance scores ≥0.4 > p20 cutoff
+    assert.equal(suggestTierFromRecruiterAi("advance", 0), "tier_2")
+  })
+
+  it("a weak reject (bottom percentile, not a clean advance) → tier_3", () => {
+    assert.equal(suggestTierFromRecruiterAi("reject", 2, { confidence: 0.2 }), "tier_3")
+  })
+
+  it("a reject with strong signals clears the p20 floor → tier_2 (reusable)", () => {
+    assert.equal(suggestTierFromRecruiterAi("reject", 1, { hardRatio: 1, confidence: 0.8, strongBackground: true }), "tier_2")
+  })
+
+  it("unknown/unscored verdict → score 0 (bottom) and not a clean advance → tier_3", () => {
+    // In practice callers return null before this for a missing verdict; defensive.
+    assert.equal(suggestTierFromRecruiterAi(null, 0), "tier_3")
   })
 })
 
