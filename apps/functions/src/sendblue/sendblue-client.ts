@@ -22,6 +22,7 @@ import {
   recordSendblueSuccess,
   SendblueCircuitOpenError,
 } from "./circuit-breaker.js"
+import { isSyntheticRecipientNumber } from "./synthetic-recipient.js"
 
 const SEND_MESSAGE_URL = "https://api.sendblue.co/api/send-message"
 const TYPING_INDICATOR_URL = "https://api.sendblue.co/api/send-message/typing-indicator"
@@ -132,6 +133,19 @@ export async function sendImessage(
   input: SendImessageInput,
   creds: SendblueCredentials = getSendblueCreds()
 ): Promise<SendblueSendResponse> {
+  // ── 2026-06-19 incident hard backstop — synthetic/test recipient NEVER posts ──
+  // Reserved +1999999xxxx numbers are never deliverable. This is the lowest-level
+  // guard so EVERY caller (outbox sendText, transport sendStatus, any future
+  // direct caller) is covered, not just the pa-outbound outbox. Non-retryable
+  // 4xx so the outbox marks `failed` and never re-fires.
+  if (isSyntheticRecipientNumber(input.to)) {
+    throw new SendblueClientError(
+      400,
+      "blocked: synthetic/test recipient (reserved +1999999xxxx) — never deliverable",
+      null
+    )
+  }
+
   // Phase 40 prod — fail-fast when breaker OPEN. Maps to a transient server
   // error so the outbox marks status=pending, releasing for retry; by the
   // time the row re-fires, the 60s window has elapsed and we try HALF_OPEN.

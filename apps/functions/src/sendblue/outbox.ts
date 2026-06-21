@@ -34,6 +34,7 @@ import { countRecentSendsForNumber, effectiveSendCap, sendCapWindowCutoffIso } f
 import { outboundExpiresAtTs } from "./ttl.js"
 import { createHash } from "node:crypto"
 import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
+import { isSyntheticRecipientNumber } from "./synthetic-recipient.js"
 
 const OUT = PA_COLLECTIONS.outbound
 
@@ -145,14 +146,17 @@ export const OUTBOX_INBOUND_EVIDENCE_EXEMPT_PHONES: ReadonlySet<string> = new Se
  * the reserved synthetic phone range, or any row carrying an e2e/test marker, is
  * terminally blocked BEFORE any Sendblue POST. No exemption (not dev phones, not
  * runtime-approved) — synthetic numbers are never deliverable by construction.
+ *
+ * The reserved-range regex now lives in `./synthetic-recipient.ts`, the single
+ * source of truth also enforced as a hard backstop inside every low-level
+ * Sendblue `send*` function (sendImessage / typing / reaction / read-receipt),
+ * so no send path — outbox OR direct transport — can reach a synthetic number.
  */
-const RESERVED_SYNTHETIC_PHONE_RE = /^\+1999999\d{4}$/
-
 export function isSyntheticOutboundRecipient(
   toPeer: string,
   data: Record<string, unknown>,
 ): boolean {
-  if (RESERVED_SYNTHETIC_PHONE_RE.test(toPeer)) return true
+  if (isSyntheticRecipientNumber(toPeer)) return true
   if ((data as { e2eTest?: unknown }).e2eTest === true) return true
   const harness = (data as { harness?: unknown }).harness
   if (harness && typeof harness === "object" && "runner" in (harness as object)) return true
