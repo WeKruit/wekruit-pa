@@ -1009,9 +1009,37 @@ const SYNTHESIZED_SORT_ORDER = 1_000_000
  * marked `recruiterBoard.active === false` are untouched — a deliberate hide
  * always wins over synthesis.
  */
+/** First non-empty string at d[key]. */
+function str(d: Record<string, unknown>, key: string): string | undefined {
+  const v = d[key]
+  return typeof v === "string" && v.trim() ? v.trim() : undefined
+}
+/** prescreenConfig.level1Reveal.salaryRange — the candidate-side pay field. */
+function level1Salary(d: Record<string, unknown>): string | undefined {
+  const pc = d.prescreenConfig
+  if (!pc || typeof pc !== "object") return undefined
+  const lr = (pc as Record<string, unknown>).level1Reveal
+  if (!lr || typeof lr !== "object") return undefined
+  const sr = (lr as Record<string, unknown>).salaryRange
+  return typeof sr === "string" && sr.trim() ? sr.trim() : undefined
+}
+function prescreenRegion(d: Record<string, unknown>): string | undefined {
+  const pc = d.prescreenConfig
+  if (!pc || typeof pc !== "object") return undefined
+  return str(pc as Record<string, unknown>, "region")
+}
+/** Pay for the recruiter card/brief. `compSummary` is seed-only; real jobs carry
+ *  `salaryRange` / `prescreenConfig.level1Reveal.salaryRange` (what the candidate
+ *  site reads), so fall back to those. */
+function resolveCompSummary(d: Record<string, unknown>): string | undefined {
+  return str(d, "compSummary") ?? str(d, "salaryRange") ?? level1Salary(d)
+}
+
 function synthesizeRecruiterBoardPayload(d: Record<string, unknown>): RecruiterBoardPayload {
   const company = String(d.companyName ?? d.company ?? "").trim()
-  const location = typeof d.location === "string" ? d.location.trim() : ""
+  // location is seed-only on the recruiterBoard label; real jobs carry top-level
+  // `location` or `prescreenConfig.region` (the candidate-side field).
+  const location = str(d, "location") ?? prescreenRegion(d) ?? ""
   return {
     active: true,
     sortOrder: SYNTHESIZED_SORT_ORDER,
@@ -1101,15 +1129,23 @@ export async function fetchCollabJobs(
     // (omitted entirely for normal/unranked roles).
     const { priority: rawPriority, ...boardWithoutPriority } = recruiterBoardForCaller
     const priority = publicRecruiterBoardPriority(rawPriority)
+    // Backfill location from the real doc fields when the seed label left it
+    // blank (same fields the candidate site reads).
+    const resolvedLocation =
+      (recruiterBoardForCaller.label.location || "").trim() || str(d, "location") || prescreenRegion(d) || ""
     const revealedBoard: RecruiterBoardPayload = {
       ...boardWithoutPriority,
-      ...(companyRaw ? { label: { ...recruiterBoardForCaller.label, company: revealedCompany } } : {}),
+      label: {
+        ...recruiterBoardForCaller.label,
+        ...(companyRaw ? { company: revealedCompany } : {}),
+        location: resolvedLocation,
+      },
       ...(priority ? { priority } : {}),
     }
     allMatching.push({
       jobId: jobIdForCaller,
       title: String(d.title ?? ""),
-      compSummary: typeof d.compSummary === "string" ? d.compSummary : undefined,
+      compSummary: resolveCompSummary(d),
       // jdBlocks is a hand-seeded field that real collaborated jobs lack. Fall
       // back to deriving it from the job's descriptionMd (same field the
       // candidate site renders) so the recruiter JD panel is never blank.
