@@ -512,6 +512,87 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     })
   })
 
+  it("image-only reply on a scoring question asks for text instead of scoring 0 → HARD_STOP (Robert 2026-06-19)", async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_image_proof": {
+        sessionId: "ps_image_proof",
+        userId: "imgUser1",
+        jobId: "wekruit-x-twitter-growth-lead",
+        terminal: null,
+        currentQId: "q_operated_account_proof",
+        createdAt: twoHoursAgo,
+        updatedAt: twoHoursAgo,
+        score: 0,
+        scoreMax: 1,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 2,
+        qOrder: ["q_operated_account_proof"],
+        questions: {
+          q_operated_account_proof: {
+            qId: "q_operated_account_proof",
+            type: "MUST_HAVE",
+            weight: 1,
+            matchThreshold: 0.85,
+            clarifyRounds: 0,
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: twoHoursAgo, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "q_operated_account_proof",
+              prompt: { en: "Share a link or screenshot proving an X account you grew, with metrics.", zh: "" },
+              clarifyPrompt: { en: "Which account, and what were the numbers?", zh: "" },
+              keywords: [{ keyword: "operated_account_proof", weight: 1 }],
+            },
+          ],
+        },
+      },
+    })
+
+    let judgeCalled = false
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        judgeCalled = true
+        return { perKeyword: [], summary: "", answered: false }
+      },
+    }
+    const sent: string[] = []
+    const terminalCalls: Array<Record<string, unknown>> = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "imgUser1",
+      toE164: "+12025550133",
+      replyText: "", // image-only inbound: no usable text
+      mediaUrl: "https://cdn.sendblue.co/media/screenshot-analytics-1",
+      keywordSetCaller: caller,
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (a) => {
+        sent.push(a.content)
+        return { status: "queued", from_number: null, number: a.to, content: a.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, null, "must NOT terminal on an image-only reply")
+    assert.equal(judgeCalled, false, "the judge must NOT score an empty image-only reply")
+    assert.deepEqual(terminalCalls, [], "no terminal action fired")
+    assert.equal(sent.length, 1, "exactly one ask sent")
+    assert.match(sent[0], /screenshot|paste/i)
+    const session = docs.get("pa-prescreen-sessions/ps_image_proof")?.data
+    assert.equal(session?.terminal, null)
+    assert.equal(session?.currentQId, "q_operated_account_proof", "question NOT advanced")
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_image_proof/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.equal(turnEntries[0][1].data.action.kind, "image_proof_ask")
+  })
+
   const VOICE_DEV_PHONE = "+14243201960"
 
   function seedActiveVoiceSession() {

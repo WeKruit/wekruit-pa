@@ -89,6 +89,21 @@ function stablePrescreenSendKey(...parts: string[]): string {
   return createHash("sha256").update(parts.join("|"), "utf8").digest("hex").slice(0, 32)
 }
 
+/**
+ * True when an inbound media URL is an image attachment (screenshot proof),
+ * NOT a document we already ingest (PDF résumé). Conservative: any non-PDF
+ * media is treated as an image for the proof-guard. A PDF flows through the
+ * normal CV-ingest path and is not handled here.
+ */
+function isLikelyImageMediaUrl(mediaUrl: string | undefined | null): boolean {
+  if (typeof mediaUrl !== "string" || !mediaUrl.trim()) return false
+  const u = mediaUrl.trim().toLowerCase()
+  if (/\.pdf(\?|#|$)/.test(u)) return false
+  if (/\.(png|jpe?g|gif|heic|heif|webp|bmp|tiff?)(\?|#|$)/.test(u)) return true
+  // No extension (Sendblue CDN URLs often omit one) → assume image for the guard.
+  return true
+}
+
 /** Firestore-backed PreScreenStateProvider. */
 class FirestorePreScreenStore implements PreScreenStateProvider {
   constructor(private readonly db: Firestore) {}
@@ -515,6 +530,15 @@ export interface RunPrescreenTurnArgs {
   userId: string
   toE164: string
   replyText: string
+  /**
+   * Optional inbound media (iMessage image attachment URL). When a candidate
+   * answers a scoring prescreen question with ONLY a screenshot/image and no
+   * usable text, the reply would otherwise reach the judge as empty text →
+   * scored 0 → unfair HARD_STOP (live victim 2026-06-19: proof arrived as 3
+   * analytics screenshots). `runPrescreenTurnIfActive` uses this to ask for the
+   * text/link instead of hard-stopping. See the image-proof guard below.
+   */
+  mediaUrl?: string
   lang?: "zh" | "en"
   sendSms?: RuntimeSmsSender
   runTerminalAction?: typeof runPrescreenTerminalAction
@@ -1847,6 +1871,56 @@ export async function runPrescreenTurnIfActive(
       judgeCtx: { userId: args.userId, turnId: `t_${Date.now()}` },
     })
 
+  // ── Image-proof guard (live victim 2026-06-19) ───────────────────────────
+  // A candidate answered a scoring question with ONLY a screenshot (3 analytics
+  // images) and no text → the reply reached the judge empty → scored 0 →
+  // HARD_STOP. That's an unfair rejection for someone whose only sin was
+  // sending an image. When an image arrives with no usable text on a real
+  // scoring question, ask for the text/link INSTEAD of scoring it — never
+  // advance, never terminal. The outbox idempotency key (per session+qId) keeps
+  // a candidate who spams images from being re-pinged. Vision/OCR extraction
+  // (reuse cv-ingest, needs ANTHROPIC_API_KEY) can later slot in here to read
+  // the screenshot directly; until then the ask-guard is the correctness floor.
+  if (
+    isLikelyImageMediaUrl(args.mediaUrl) &&
+    args.replyText.trim().length < 3 &&
+    questions[activeQId] !== undefined
+  ) {
+    const askText =
+      "i can't read a screenshot directly here — can you paste the key numbers/text (or a link) so it counts toward your screen? that way i log it properly and it's credited."
+    try {
+      await sendSms({
+        to: args.toE164,
+        content: askText,
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_image_ask:${sessionId}:${activeQId}`,
+      })
+    } catch (err) {
+      log("prescreen.turn.image_ask_send_failed", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    try {
+      await args.db
+        .collection("pa-prescreen-sessions")
+        .doc(sessionId)
+        .collection("turns")
+        .add({
+          qId: activeQId,
+          reply: `[image attachment: ${args.mediaUrl ?? ""}]`,
+          action: { kind: "image_proof_ask", reason: "image_only_reply_no_text" },
+          ts: new Date().toISOString(),
+        })
+    } catch {
+      // observability only — never block
+    }
+    log("prescreen.turn.image_proof_ask", { sessionId, activeQId })
+    return { handled: true, sessionId, terminal: null, textSent: askText }
+  }
+
   // ── P3 scoped prescreen agent (flag `paAgenticPrescreenEnabled`, default OFF)
   // Flag OFF (default) → this whole block is skipped and the deterministic
   // reducer turn below runs byte-for-byte unchanged (zero regression).
@@ -1958,6 +2032,50 @@ async function finalizePrescreenTurnResult(params: {
       action: result.action,
       ts: new Date().toISOString(),
     })
+
+  // ── Mirror the turn into pa-messages (2026-06-21, P2 cross-pipeline) ───────
+  // Prescreen turns previously lived ONLY in pa-prescreen-sessions/{id}/turns,
+  // so the conversation extractor (reads pa-messages by userId) and thin-Claire
+  // never saw the screen — the runner started blind to what the candidate just
+  // told the screen. Mirror the inbound reply (role:user) + the outbound text
+  // (role:assistant) as the SAME pa-messages shape cutover.ts writes. Idempotent
+  // on content; fail-open (never block the turn). Carries the prescreen
+  // sessionId in rawMeta for audit.
+  try {
+    const mirrorIso = new Date().toISOString()
+    const replyText = args.replyText.trim()
+    if (replyText.length > 0) {
+      const userMsgId = `prescreen-msg-user:${sessionId}:${turnQId}:${stablePrescreenSendKey(replyText)}`
+      await args.db.collection(PA_COLLECTIONS.messages).doc(userMsgId).set({
+        id: userMsgId,
+        sessionId,
+        userId: args.userId,
+        role: "user",
+        body: replyText,
+        createdAt: mirrorIso,
+        idempotencyKey: userMsgId,
+        rawMeta: { source: "prescreen_persist", prescreenSessionId: sessionId, qId: turnQId },
+      })
+    }
+    if (result.text && result.text.trim().length > 0) {
+      const asstMsgId = `prescreen-msg-asst:${sessionId}:${turnQId}:${stablePrescreenSendKey(result.text)}`
+      await args.db.collection(PA_COLLECTIONS.messages).doc(asstMsgId).set({
+        id: asstMsgId,
+        sessionId,
+        userId: args.userId,
+        role: "assistant",
+        body: result.text.trim(),
+        createdAt: mirrorIso,
+        idempotencyKey: asstMsgId,
+        rawMeta: { source: "prescreen_persist", prescreenSessionId: sessionId, qId: turnQId },
+      })
+    }
+  } catch (mirrorErr) {
+    log("prescreen.turn.pa_messages_mirror_failed", {
+      sessionId,
+      error: mirrorErr instanceof Error ? mirrorErr.message : String(mirrorErr),
+    })
+  }
 
   // DEFAULT AI-acceleration question (Adam directive) — ASK-ONCE persist on the LEGACY/FSM path.
   // When the appended q_ai_acceleration was the question just answered on this turn (it is appended
