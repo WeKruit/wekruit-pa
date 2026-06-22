@@ -496,6 +496,59 @@ describe("runPreScreenForUser session boundaries", () => {
     assert.equal(updatedPending.status, "started")
     assert.equal(typeof updatedPending.sessionId, "string")
   })
+
+  it("a source:candidate with NO résumé on a strict screen is asked for a résumé first, NOT screened blind (Khloë 2026-06-21), then starts once it lands", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-new": { prescreenConfig },
+      "pa-users/khloe": { source: "candidate" }, // no résumé / linkedin / skills / enrichment
+    })
+    const sent: string[] = []
+    const okSend = async ({ content }: { content: string }) => {
+      sent.push(content)
+      return { status: "queued", content }
+    }
+
+    const held = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: "khloe",
+      toE164: "+12025550133",
+      allowMatchedBypass: true, // isolate the missing-profile gate from the matched gate
+      markStarted: async () => undefined,
+      sendSms: okSend,
+    })
+
+    assert.equal(held.ok, false)
+    assert.equal(held.reason, "awaiting_profile", "must ask for a résumé, not start a strict screen blind")
+    assert.equal(held.firstQuestionSent, false)
+    assert.match(sent[0] ?? "", /résumé|resume|LinkedIn/i)
+    // NO prescreen session was created.
+    const createdSession = [...docs.entries()].find(
+      ([path, doc]) => path.startsWith("pa-prescreen-sessions/") && doc.data.userId === "khloe",
+    )
+    assert.equal(createdSession, undefined, "no strict session created for a no-résumé candidate")
+    const pending = docs.get("pa-users/khloe")?.data.pendingPrescreenStart as Record<string, unknown>
+    assert.equal(pending.status, "waiting_profile")
+    assert.equal(pending.reason, "missing_profile")
+
+    // Résumé lands (parse writes a skill tag) → continuation auto-starts the screen WITH context.
+    docs.set("pa-users/khloe", {
+      exists: true,
+      data: {
+        ...(docs.get("pa-users/khloe")?.data ?? {}),
+        tags: { skills: ["growth marketing"] },
+      },
+    })
+    const resumed = await resumePendingProfileReadinessPrescreenStart({
+      db,
+      userId: "khloe",
+      markStarted: async () => undefined,
+      sendSms: okSend,
+    })
+    assert.equal(resumed.attempted, true)
+    assert.equal(resumed.result?.ok, true)
+    assert.equal(resumed.result?.reason, "started", "screen starts once the résumé is on file")
+  })
 })
 
 describe("runPreScreenForUser MATCHED-GATE (2026-05-31)", () => {
