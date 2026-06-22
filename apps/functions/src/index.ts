@@ -588,6 +588,10 @@ type BrokerImessageEvent = {
     chatId?: string
     messageRowId?: number
     text?: string
+    /** Inbound image/attachment URL (iMessage). An image-only message has empty `text` + a
+     * `mediaUrl`; it must NOT be rejected as empty_text (live victim: screenshot proof during a
+     * prescreen was dropped at the door, never reaching the image-proof guard). */
+    mediaUrl?: string
     /** Synthetic `[cv-parsed]` worker / E2E — must flow to orchestrator rawMeta. */
     triggerResumeId?: string
     cvParsedTrigger?: boolean
@@ -855,7 +859,7 @@ export function shouldCreateProvisionalUserForBrokerPayload(rawPayload: BrokerIm
   // system webhook can never auto-create a profile. The QR opener path still runs
   // FIRST in processBrokerImessageEvent, so scanToken + sticky-number binding is
   // preserved for genuine QR scans (this gate is the fallback for plain text).
-  const text = typeof payload.text === "string" ? payload.text.trim() : ""
+  const text = typeof payload.text === "string" ? (payload.text ?? "").trim() : ""
   if (text.length === 0) return false
   return true
 }
@@ -926,16 +930,20 @@ async function processBrokerImessageEvent(
   const claimed = await claimBrokerEvent(db, data)
   if (!claimed) return 0
   const payload = claimed.rawPayload
-  if (!payload?.participant || !payload.text || !payload.chatId) {
+  // An image-only iMessage (screenshot proof, photo) arrives with empty `text` + a `mediaUrl`. It is
+  // a VALID inbound — dropping it as empty_text strands the candidate (the screenshot never reaches
+  // the prescreen image-proof guard / cv-ingest). Accept empty text WHEN media is present.
+  const hasInboundMedia = typeof payload?.mediaUrl === "string" && payload.mediaUrl.trim().length > 0
+  if (!payload?.participant || (!payload.text && !hasInboundMedia) || !payload.chatId) {
     // V5 QA Agent-E 2026-05-04: when validation throws, the doc was already
     // claimed (status="running") so it leaks until the 120s lease expires.
     // Finalize the row here so dashboard / downstream observability see it
     // as failed instead of silently stuck.
     const reason = !payload?.participant
       ? "missing_participant"
-      : !payload.text
-        ? "empty_text"
-        : "missing_chatId"
+      : !payload.chatId
+        ? "missing_chatId"
+        : "empty_text"
     try {
       await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
         {
@@ -952,6 +960,8 @@ async function processBrokerImessageEvent(
     }
     throw new Error(`Invalid broker iMessage payload: ${reason}`)
   }
+  // Media-only inbound may carry no text — every downstream read uses `(payload.text ?? "")` so a
+  // screenshot-only message flows through as an empty-text turn (with mediaUrl) instead of crashing.
   let user: User | null = null
   const phoneE164 = normalizeImessageParticipant(payload.participant)
   // Never-silent-drop (Adam 2026-05-29): the opener-phone-wins + same-phone
@@ -1044,7 +1054,7 @@ async function processBrokerImessageEvent(
           errorCode: isE2eUnbound ? "E2E_UNBOUND_USER" : "SENDBLUE_UNBOUND_USER",
           externalChatId,
           from: payload.participant,
-          body: payload.text.trim(),
+          body: (payload.text ?? "").trim(),
         },
         { merge: true }
       )
@@ -1125,7 +1135,7 @@ async function processBrokerImessageEvent(
     channel: "imessage",
     externalChatId,
     from: payload.participant,
-    body: payload.text.trim(),
+    body: (payload.text ?? "").trim(),
     status: "pending",
     createdAt: claimed.createdAt,
     idempotencyKey: claimed.idempotencyKey,
@@ -1153,7 +1163,7 @@ async function processBrokerImessageEvent(
       sessionId: session.id,
       externalChatId,
       from: payload.participant,
-      body: payload.text.trim(),
+      body: (payload.text ?? "").trim(),
       // Persist rawMeta (incl. messageHandle) so the thin-Claire cutover below can read the
       // iMessage handle for tapbacks. Additive — legacy processInboundEvent uses the in-memory
       // `event` object, not this doc, so this only enriches observability + the thin read path.
@@ -1181,7 +1191,7 @@ async function processBrokerImessageEvent(
         userId: user.id,
         sessionId: session.id,
         toE164: payload.participant,
-        text: payload.text.trim(),
+        text: (payload.text ?? "").trim(),
         ...(typeof p.messageHandle === "string" ? { inboundMessageHandle: p.messageHandle } : {}),
       },
       { log: (e, pl) => logger.info(`[stop-gate][onPaInbound] ${e}`, pl ?? {}) },
@@ -1218,7 +1228,7 @@ async function processBrokerImessageEvent(
     const { runTapbackGate } = await import("./claire-agent/tapback-gate.js")
     const tapbackGate = await runTapbackGate(
       db,
-      { eventId: claimed.id, userId: user.id, text: payload.text.trim() },
+      { eventId: claimed.id, userId: user.id, text: (payload.text ?? "").trim() },
       { log: (e, pl) => logger.info(`[tapback-gate][onPaInbound] ${e}`, pl ?? {}) },
     )
     if (tapbackGate.handled) {
@@ -1248,7 +1258,7 @@ async function processBrokerImessageEvent(
   // the job prescreen.
   try {
     const { decideBrokerPrescreenTrigger } = await import("./broker-prescreen-trigger.js")
-    const triggerDecision = decideBrokerPrescreenTrigger(payload.text.trim(), user.id)
+    const triggerDecision = decideBrokerPrescreenTrigger((payload.text ?? "").trim(), user.id)
     if (triggerDecision.kind === "authorized") {
       const { runPreScreenForUser } = await import("./prescreen-session-start.js")
       const result = await runPreScreenForUser({
@@ -1355,7 +1365,7 @@ async function processBrokerImessageEvent(
       db,
       userId: user.id,
       toE164: payload.participant,
-      replyText: payload.text.trim(),
+      replyText: (payload.text ?? "").trim(),
       // Carry the inbound image attachment so a screenshot-only answer to a
       // scoring question gets an "paste the numbers/link" ask instead of being
       // scored 0 → unfair HARD_STOP (live victim 2026-06-19).
@@ -1401,7 +1411,7 @@ async function processBrokerImessageEvent(
         db,
         userId: user.id,
         toE164: payload.participant,
-        replyText: payload.text.trim(),
+        replyText: (payload.text ?? "").trim(),
         log: (event, payload) => logger.info(`[pii][onPaInbound] ${event}`, payload ?? {}),
       })
       if (piiResult.handled) {
