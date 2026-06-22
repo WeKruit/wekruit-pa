@@ -432,7 +432,7 @@ export function buildKeywordSetPrompt(args: {
     "  - summary: ≤120 char overall assessment",
     "  - answered: true|false — did the candidate substantively address the question?",
     "  - abortHint (optional): {kind: low_confidence|off_topic|decline|ambiguous, reason: string}",
-    "    set this whenever there is clear evidence of one of these modes — in particular set kind:decline whenever the candidate cannot or will not produce the requested artifact/proof.",
+    "    set kind:decline ONLY when the candidate communicates the requested evidence does not exist, they do not have it, or they refuse to provide it. A thin/vague/team-only/adjacent ATTEMPT is NOT a decline — score it low instead.",
     "",
     "CALIBRATION ANCHORS:",
     "- 0.95-1.00: top-5% evidence only: exact required skill/scope, direct ownership, concrete shipped outcome, and clear metrics/systems/constraints.",
@@ -455,7 +455,8 @@ export function buildKeywordSetPrompt(args: {
     "- Do NOT invent keywords not in the configured set.",
     "- Do NOT echo the reply text — only the short evidence excerpt.",
     "- Temperature is fixed at 0; be deterministic.",
-    "- If the candidate clearly signals they CANNOT or WILL NOT produce the requested artifact/proof (e.g. 'I don't have that', 'I can't share', 'I'm having difficulty', 'that's the smallest/only thing I have', 'I already told you', repeated inability), set abortHint:{kind:\"decline\",reason:...}. Do not keep scoring as if more probing will help.",
+    "- DECLINE is NARROW. Set abortHint:{kind:\"decline\",reason:...} ONLY when the candidate explicitly states the requested artifact/proof does not exist, that they do not have it, or that they refuse to share it (e.g. 'I don't have any of that', 'there's no analytics to share', 'I won't share my account', 'I already told you I can't produce it'). When a candidate DECLINES, more probing will not help — so end, do not keep asking.",
+    "- A reply that ATTEMPTS the question — however thin, vague, partial, team-only, adjacent, or off-target ('I helped my team with some posts', 'I worked on growth stuff') — is NOT a decline. Score it low per the caps and anchors; do NOT emit decline. If the reply contains ANY substantive attempt to address the topic, never set decline. When unsure between low-score and decline, choose low-score.",
     "- A candidate-context block may be provided (résumé / profile). CREDIT evidence already present there — do NOT penalize the reply for not re-stating what the profile already proves. Score the keyword as matched if the candidate context substantiates it.",
   ].join("\n")
 
