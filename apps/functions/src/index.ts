@@ -1356,6 +1356,10 @@ async function processBrokerImessageEvent(
       userId: user.id,
       toE164: payload.participant,
       replyText: payload.text.trim(),
+      // Carry the inbound image attachment so a screenshot-only answer to a
+      // scoring question gets an "paste the numbers/link" ask instead of being
+      // scored 0 → unfair HARD_STOP (live victim 2026-06-19).
+      ...(typeof p.mediaUrl === "string" && p.mediaUrl.trim() ? { mediaUrl: p.mediaUrl.trim() } : {}),
       lang: "en",
       log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
     })

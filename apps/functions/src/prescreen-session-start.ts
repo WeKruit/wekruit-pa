@@ -26,6 +26,7 @@ import {
 import { readUserPrescreenSharedAnswers, AI_USAGE_SHARED_KEY } from "@pa/pa-orchestrator"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { markFirstInterviewStarted } from "./prescreen-outcome-service.js"
+import { hasResumeOrLinkedInProfileSignal } from "./prescreen-terminal-action.js"
 import { isClaireEntryUxCanary } from "./claire-agent/canary.js"
 import { isEnrichmentInFlight } from "./claire-agent/enrichment-inflight.js"
 import {
@@ -978,9 +979,25 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     maxClarifyRounds: Math.max(effectiveCfg.maxClarifyRounds, MIN_PRESCREEN_PROBE_ROUNDS),
     nowIso,
   })
+  // cold_prescreen_no_profile flag (live victims Khloë/Robert 2026-06-19): a
+  // candidate with NO résumé/LinkedIn/skills on file token-pasted into a strict
+  // MUST_HAVE screen is structurally hard to score → near-guaranteed HARD_STOP
+  // that the operator should NOT read as a real reject. Flag the session so the
+  // human-review record / auto-draft is marked low-confidence. Best-effort; a
+  // read failure just leaves the flag off. (Does NOT change terminal routing —
+  // the deeper "collect résumé before screening" flow is an Adam decision.)
+  let lowConfidenceColdProfile = false
+  try {
+    const startUserSnap = await args.db.collection("pa-users").doc(args.userId).get()
+    const startUser = (startUserSnap.data() ?? {}) as Record<string, unknown>
+    lowConfidenceColdProfile = !hasResumeOrLinkedInProfileSignal(startUser)
+  } catch {
+    // default false — never block the start
+  }
   await sessRef.set({
     ...state,
     cfgSnapshot: effectiveCfg, // snapshot of (augmented) config at session start
+    ...(lowConfidenceColdProfile ? { lowConfidenceColdProfile: true } : {}),
     e164: args.toE164,
     workSession: {
       kind: "job_prescreen",

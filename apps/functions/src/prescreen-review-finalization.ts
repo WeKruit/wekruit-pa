@@ -54,6 +54,12 @@ export async function finalizePrescreenForHumanReview(args: {
 }> {
   const log = args.log ?? (() => {})
   const nowIso = args.state.updatedAt ?? new Date().toISOString()
+  // cold_prescreen_no_profile (set at session start when the candidate had no
+  // résumé/LinkedIn/skills on file). A near-guaranteed HARD_STOP for such a
+  // candidate is structurally low-confidence — surface it so the reviewer /
+  // auto-draft does NOT treat a blind rejection as a real "no".
+  const lowConfidenceColdProfile =
+    (args.state as unknown as { lowConfidenceColdProfile?: boolean }).lowConfidenceColdProfile === true
   await writePrescreenMemoryUpdate({
     db: args.db,
     sessionId: args.state.sessionId,
@@ -111,6 +117,7 @@ export async function finalizePrescreenForHumanReview(args: {
         pendingAt: nowIso,
         updatedAt: nowIso,
         ...(pendingAckOutboundId ? { pendingAckOutboundId } : {}),
+        ...(lowConfidenceColdProfile ? { lowConfidenceColdProfile: true } : {}),
       },
       updatedAt: nowIso,
     },
