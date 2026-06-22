@@ -590,7 +590,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(session?.currentQId, "q_operated_account_proof", "question NOT advanced")
     const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_image_proof/turns/"))
     assert.equal(turnEntries.length, 1)
-    assert.equal(turnEntries[0][1].data.action.kind, "image_proof_ask")
+    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "image_proof_ask")
   })
 
   const VOICE_DEV_PHONE = "+14243201960"
