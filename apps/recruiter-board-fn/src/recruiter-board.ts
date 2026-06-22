@@ -55,6 +55,7 @@ import { getFirestore, FieldValue, type DocumentReference, type Firestore, type 
 import { getAuth } from "firebase-admin/auth"
 import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
+import { descriptionMdToJdBlocks } from "./job-description.js"
 import {
   computeRecruiterDigest,
   selectRoles,
@@ -1109,7 +1110,13 @@ export async function fetchCollabJobs(
       jobId: jobIdForCaller,
       title: String(d.title ?? ""),
       compSummary: typeof d.compSummary === "string" ? d.compSummary : undefined,
-      jdBlocks: Array.isArray(d.jdBlocks) ? (d.jdBlocks as JdBlock[]) : [],
+      // jdBlocks is a hand-seeded field that real collaborated jobs lack. Fall
+      // back to deriving it from the job's descriptionMd (same field the
+      // candidate site renders) so the recruiter JD panel is never blank.
+      jdBlocks:
+        Array.isArray(d.jdBlocks) && d.jdBlocks.length
+          ? (d.jdBlocks as JdBlock[])
+          : descriptionMdToJdBlocks(typeof d.descriptionMd === "string" ? d.descriptionMd : undefined),
       recruiterBoard: revealedBoard,
       updatedAt: updatedAtIso,
     })

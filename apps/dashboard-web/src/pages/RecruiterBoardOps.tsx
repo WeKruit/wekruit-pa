@@ -10,10 +10,11 @@
  * emails with no matching recruiter profile land in an "Unclaimed
  * submitters" group.
  */
-import { useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, updateDoc } from "firebase/firestore"
 import {
   CANDIDATE_TIER_LABELS,
+  descriptionMdToJdBlocks,
   suggestTierFromRecruiterAi,
   type CandidateTier,
   type RecruiterAiVerdict,
@@ -188,6 +189,8 @@ interface BoardJobDoc {
   id: string
   title?: string
   company?: string
+  /** Raw JD on the pa-jobs doc — used to derive jdBlocks when hand-seeded blocks are absent. */
+  descriptionMd?: string
   jdBlocks?: BoardJdBlock[]
   recruiterBoard?: {
     label?: { company?: string }
@@ -1241,11 +1244,43 @@ function ReviewField({ label, value, href }: { label: string; value?: string; hr
   )
 }
 
+/** Render a jdBlock body: `- ` lines become a bulleted list, blank lines split paragraphs. */
+function JdBody({ body }: { body: string }) {
+  const out: ReactNode[] = []
+  let bullets: string[] = []
+  const flush = (key: string) => {
+    if (bullets.length) {
+      out.push(
+        <ul key={key} style={roleContextListStyle}>
+          {bullets.map((b, i) => <li key={i}>{b}</li>)}
+        </ul>,
+      )
+      bullets = []
+    }
+  }
+  body.split("\n").forEach((rawLine, i) => {
+    const line = rawLine.trim()
+    if (line.startsWith("- ")) {
+      bullets.push(line.slice(2))
+    } else if (line === "") {
+      flush(`ul-${i}`)
+    } else {
+      flush(`ul-${i}`)
+      out.push(<div key={`p-${i}`} style={roleContextTextStyle}>{line}</div>)
+    }
+  })
+  flush("ul-end")
+  return <>{out}</>
+}
+
 function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: BoardSubmissionDoc }) {
   const title = job?.title ?? submission.jobTitleSnapshot ?? submission.jobId ?? "Selected role"
   const company = job?.recruiterBoard?.label?.company ?? job?.company ?? submission.companyLabelSnapshot
   const groups = job?.recruiterBoard?.checklist?.groups ?? []
-  const blocks = job?.jdBlocks ?? []
+  // Hand-seeded jdBlocks are absent for real jobs; derive from descriptionMd
+  // (the same JD the candidate site renders) so the panel is never blank.
+  const blocks: BoardJdBlock[] =
+    job?.jdBlocks && job.jdBlocks.length ? job.jdBlocks : descriptionMdToJdBlocks(job?.descriptionMd)
   return (
     <div style={reviewContextStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
@@ -1279,9 +1314,7 @@ function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: B
           {blocks.slice(0, 6).map((block, index) => (
             <div key={`${block.heading ?? "block"}-${index}`}>
               {block.heading && <div style={roleContextSectionTitleStyle}>{block.heading}</div>}
-              {block.body && (
-                <div style={{ ...roleContextTextStyle, whiteSpace: "pre-wrap" }}>{block.body}</div>
-              )}
+              {block.body && <JdBody body={block.body} />}
               {Array.isArray(block.items) && block.items.length > 0 && (
                 <ul style={roleContextListStyle}>
                   {block.items.slice(0, 10).map((item, itemIndex) => <li key={`${index}-${itemIndex}`}>{item}</li>)}

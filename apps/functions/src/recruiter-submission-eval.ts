@@ -45,6 +45,8 @@ import {
   type EvaluationDimensionScore,
   type EvaluationEvidenceRef,
   type EvaluationOutcome,
+  descriptionMdToJdBlocks,
+  type JdBlock,
 } from "@pa/core-types"
 import { getEvaluationAttempt, saveEvaluationAttempt } from "@pa/pa-persistence"
 import { getOrFetchCoresignalByLinkedin } from "./lib/coresignal-cache.js"
@@ -461,7 +463,12 @@ async function researchCandidate(
 }
 
 function renderJdBlocks(job: Record<string, unknown>): string {
-  const blocks = Array.isArray(job.jdBlocks) ? job.jdBlocks : []
+  // jdBlocks is hand-seeded and empty for most real jobs; fall back to deriving
+  // it from descriptionMd so the AI judge always sees the JD context.
+  const blocks: JdBlock[] =
+    Array.isArray(job.jdBlocks) && job.jdBlocks.length
+      ? (job.jdBlocks as JdBlock[])
+      : descriptionMdToJdBlocks(typeof job.descriptionMd === "string" ? job.descriptionMd : undefined)
   return blocks
     .slice(0, 8)
     .flatMap((raw) => {
