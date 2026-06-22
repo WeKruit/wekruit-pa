@@ -192,11 +192,36 @@ interface BoardJobDoc {
   company?: string
   /** Raw JD on the pa-jobs doc — used to derive jdBlocks when hand-seeded blocks are absent. */
   descriptionMd?: string
+  /** Real doc fields the candidate site reads — used to show location + pay. */
+  location?: string
+  salaryRange?: string
+  compSummary?: string
+  jobType?: string
+  prescreenConfig?: { region?: string; jobType?: string; level1Reveal?: { salaryRange?: string } }
   jdBlocks?: BoardJdBlock[]
   recruiterBoard?: {
-    label?: { company?: string }
+    label?: { company?: string; location?: string }
     checklist?: { groups?: BoardChecklistGroupDoc[] }
   }
+}
+
+/** Location for the admin role panel — seed label first, then the real doc fields. */
+function jobLocation(job?: BoardJobDoc): string | undefined {
+  return (
+    job?.recruiterBoard?.label?.location?.trim() ||
+    job?.location?.trim() ||
+    job?.prescreenConfig?.region?.trim() ||
+    undefined
+  )
+}
+/** Pay — `compSummary` is seed-only; real jobs carry salaryRange / level1Reveal. */
+function jobPay(job?: BoardJobDoc): string | undefined {
+  return (
+    job?.compSummary?.trim() ||
+    job?.salaryRange?.trim() ||
+    job?.prescreenConfig?.level1Reveal?.salaryRange?.trim() ||
+    undefined
+  )
 }
 
 interface BoardJobGroup {
@@ -1244,6 +1269,8 @@ function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: B
   // (the same JD the candidate site renders) so the panel is never blank.
   const blocks: BoardJdBlock[] =
     job?.jdBlocks && job.jdBlocks.length ? job.jdBlocks : descriptionMdToJdBlocks(job?.descriptionMd)
+  const location = jobLocation(job)
+  const pay = jobPay(job)
   return (
     <div style={reviewContextStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
@@ -1251,6 +1278,12 @@ function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: B
           <div style={roleContextLabelStyle}>Role context</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: "#2b2119", lineHeight: 1.2 }}>{title}</div>
           {company && <div style={{ color: "#7b6f61", fontSize: 13, marginTop: 2 }}>{company}</div>}
+          {(location || pay) && (
+            <div style={{ color: "#7b6f61", fontSize: 13, marginTop: 4, display: "flex", flexWrap: "wrap", gap: "2px 10px" }}>
+              {location && <span>📍 {location}</span>}
+              {pay && <span>💰 {pay}</span>}
+            </div>
+          )}
         </div>
         <Badge tone="info">{selfScoreLabel(submission.score)}</Badge>
       </div>
