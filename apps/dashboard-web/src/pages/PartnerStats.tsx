@@ -93,7 +93,7 @@ function UserRow({ user, onViewUser, onToggleHm }: {
       </tr>
       {expanded && (
         <tr className="partner-row-detail">
-          <td colSpan={10}>
+          <td colSpan={12}>
             <div style={{ padding: "0.5rem 0" }}>
               <div style={{ marginBottom: "0.4rem" }}>
                 <strong>Skills:</strong> {user.topSkills.length ? user.topSkills.join(", ") : "—"}
@@ -110,6 +110,8 @@ function UserRow({ user, onViewUser, onToggleHm }: {
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Job</th>
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Company</th>
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>State</th>
+                      <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Verdict</th>
+                      <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Score</th>
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Updated</th>
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}></th>
                     </tr>
@@ -124,6 +126,16 @@ function UserRow({ user, onViewUser, onToggleHm }: {
                           <td style={{ padding: "0.2rem 0.5rem" }}>{j.company}</td>
                           <td style={{ padding: "0.2rem 0.5rem" }}>
                             <StageBadge stage={isAwaitingHm ? "awaiting_hm_response" : j.state} />
+                          </td>
+                          <td style={{ padding: "0.2rem 0.5rem" }}>
+                            {j.prescreenTerminal ? (
+                              <span className={`status-badge ${j.prescreenTerminal === "PASS" ? "good" : "bad"}`}>
+                                {j.prescreenTerminal}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td style={{ padding: "0.2rem 0.5rem" }}>
+                            {j.prescreenScore != null ? `${j.prescreenScore}%` : "—"}
                           </td>
                           <td style={{ padding: "0.2rem 0.5rem" }}>{formatDate(j.stateUpdatedAt)}</td>
                           <td style={{ padding: "0.2rem 0.5rem" }}>
@@ -219,8 +231,10 @@ export default function PartnerStats() {
           <FunnelCard label="Entered job flow" value={f.enteredJobFlow} />
           <FunnelCard label="Interviewing" value={f.prescreenStarted} tone="warn" />
           <FunnelCard label="Under review" value={f.prescreenReviewPending} tone="warn" />
+          <FunnelCard label="Pending human review" value={f.pendingHumanReview} tone="warn" />
           <FunnelCard label="Awaiting HM" value={f.awaitingHmResponse} tone="warn" />
           <FunnelCard label="Passed" value={f.passed} tone="good" />
+          <FunnelCard label="Rejected" value={f.rejected} tone="bad" />
           <FunnelCard label="Not passed" value={f.notPassed} tone="bad" />
           <FunnelCard label="Employer visible" value={f.employerVisible} tone="good" />
         </div>
@@ -239,8 +253,10 @@ export default function PartnerStats() {
             <option value="resume_submitted">Resume submitted</option>
             <option value="interviewing">Interviewing</option>
             <option value="review_pending">Under review</option>
+            <option value="pending_human_review">Pending human review</option>
             <option value="awaiting_hm_response">Awaiting HM</option>
             <option value="passed">Passed</option>
+            <option value="rejected">Rejected</option>
             <option value="not_passed">Not passed</option>
             <option value="employer_visible">Employer visible</option>
           </select>
