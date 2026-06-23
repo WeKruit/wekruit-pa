@@ -37,6 +37,7 @@ import {
   makeProductionClarifyComposer,
   makeProductionKeywordSetCaller,
 } from "../prescreen-deps.js"
+import { humanizeVoiceLine } from "./voice-line-humanizer.js"
 import {
   loadJobBriefForVoice,
   loadPrescreenConfigForVoice,
@@ -332,6 +333,15 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
       result.lifecycle.kind === "active_turn"
         ? result.lifecycle.pipelineResult.action
         : { kind: result.lifecycle.kind }
+    // Voice line humanizer (Adam 2026-06-22, "keep scoring + humanize"): rewrite the
+    // reducer's iMessage-tuned line into natural SPOKEN Claire. Only on active turns —
+    // terminal/complete lines are spoken by the worker's own conversational close.
+    // Fail-open inside humanizeVoiceLine; scoring already happened on the candidate's
+    // answer, so re-phrasing the question text never affects PASS/FAIL.
+    const spokenText =
+      result.lifecycle.kind === "active_turn"
+        ? await humanizeVoiceLine({ text: result.text ?? "", lang: body.lang ?? "en" })
+        : result.text
     try {
       await persistVoiceTurn(db, {
         bookingId: body.bookingId ?? body.sessionId,
@@ -339,7 +349,7 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
         userId: body.userId,
         purpose: "prescreen",
         userTranscript: body.reply,
-        claireReply: result.text,
+        claireReply: spokenText,
         action: action as Record<string, unknown>,
         createdAt: body.nowIso,
       })
@@ -354,7 +364,7 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
     res.status(200).json({
       ok: true,
       lifecycleKind: result.lifecycle.kind,
-      text: result.text,
+      text: spokenText,
       action,
       ...(result.terminalAction ? { terminalAction: result.terminalAction } : {}),
     })
@@ -472,6 +482,18 @@ export const paVoiceOnboardingTurn: HttpsFunction = onRequest(
         : { kind: "advance", currentQId: result.raw?.currentQId ?? null }
     const text = emitted.join(" ").trim() || (completed ? "That's it — thank you." : "")
 
+    // Voice line humanizer (Adam 2026-06-22): make onboarding questions sound spoken,
+    // not templated. Skip terminal lines and the q_tos consent step (it carries the
+    // legal URL + the required "agree" keyword — must be spoken verbatim). Fail-open.
+    const currentQId =
+      typeof (result.raw as { currentQId?: unknown })?.currentQId === "string"
+        ? (result.raw as { currentQId: string }).currentQId
+        : ""
+    const spokenText =
+      completed || halted || !text || currentQId === "q_tos" || /https?:\/\//i.test(text)
+        ? text
+        : await humanizeVoiceLine({ text, lang: body.lang ?? "en" })
+
     try {
       await persistVoiceTurn(db, {
         bookingId,
@@ -479,7 +501,7 @@ export const paVoiceOnboardingTurn: HttpsFunction = onRequest(
         userId,
         purpose: "onboarding",
         userTranscript: reply,
-        claireReply: text || null,
+        claireReply: spokenText || null,
         action,
         createdAt: nowIso,
       })
@@ -494,7 +516,7 @@ export const paVoiceOnboardingTurn: HttpsFunction = onRequest(
     res.status(200).json({
       ok: true,
       lifecycleKind: "onboarding_turn",
-      text,
+      text: spokenText,
       action,
     })
   },
