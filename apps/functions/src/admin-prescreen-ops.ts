@@ -433,10 +433,28 @@ async function runOpsMode(
   }
 }
 
+/** Candidate display name from the pa-users doc, so sessions are searchable by name. */
+function candidateDisplayName(userDoc: Record<string, unknown> | null | undefined): string | undefined {
+  if (!userDoc) return undefined
+  const direct = firstString(
+    userDoc.displayName,
+    userDoc.name,
+    userDoc.fullName,
+    userDoc.candidateName,
+    nestedString(userDoc.level1Info, "name"),
+    nestedString(userDoc.pii, "name"),
+  )
+  if (direct) return direct
+  const combined = [cleanString(userDoc.firstName), cleanString(userDoc.lastName)].filter(Boolean).join(" ").trim()
+  if (combined) return combined
+  return firstString(userDoc.email, userDoc.phone, userDoc.phoneNumber)
+}
+
 function buildSessionRow(
   session: SessionScanRecord,
   candidateClass: CandidateClass,
   job: Record<string, unknown>,
+  candidateName?: string,
 ): PrescreenOpsSessionRow {
   const classification = classifyPrescreenReviewRow(session)
   const jobTitle = firstString(job.title, job.roleTitle, job.jobTitle, nestedString(job.prescreenConfig, "jobTitle"))
@@ -444,6 +462,7 @@ function buildSessionRow(
   return {
     id: session.id,
     userId: session.userId,
+    ...(candidateName ? { candidateName } : {}),
     jobId: session.jobId,
     ...(jobTitle ? { jobTitle } : {}),
     ...(jobCompany ? { jobCompany } : {}),
@@ -549,7 +568,14 @@ async function runScoreSortedSessionsMode(
     page.map((item) => item.record.jobId).filter((jobId) => jobId.length > 0),
   )
   return {
-    rows: page.map((item) => buildSessionRow(item.record, item.candidateClass, jobDocs.get(item.record.jobId) ?? {})),
+    rows: page.map((item) =>
+      buildSessionRow(
+        item.record,
+        item.candidateClass,
+        jobDocs.get(item.record.jobId) ?? {},
+        candidateDisplayName(userDocs.get(item.record.userId)),
+      ),
+    ),
     ...(nextCursor ? { nextCursor } : {}),
   }
 }
@@ -592,7 +618,12 @@ async function runSessionsMode(
     const candidateClass = classifySessionCandidate(record, userDocs)
     if (input.includeTest !== true && candidateClass !== "candidate_account") return []
     if (input.queue === "committed" && !hasCommittedReview(record)) return []
-    const row = buildSessionRow(record, candidateClass, jobDocs.get(record.jobId) ?? {})
+    const row = buildSessionRow(
+      record,
+      candidateClass,
+      jobDocs.get(record.jobId) ?? {},
+      candidateDisplayName(userDocs.get(record.userId)),
+    )
     if (bucket && row.classification.bucket !== bucket) return []
     return [row]
   })
