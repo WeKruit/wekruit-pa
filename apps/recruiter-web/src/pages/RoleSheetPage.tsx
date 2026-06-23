@@ -28,6 +28,7 @@ import {
   type SubmissionCandidateCells,
   type SubmissionChecklistValue,
 } from "../lib/recruiter-board-api.js"
+import { resolveJobLogistics } from "../lib/job-logistics.js"
 import { trackEvent } from "../lib/analytics.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import { RecruiterShell } from "../components/RecruiterShell.js"
@@ -889,6 +890,13 @@ export default function RoleSheetPage() {
   }
 
   const label = job.recruiterBoard.label
+  // Structured logistics — pay/location are real fields; visa/benefits are
+  // extracted from the JD (jdBlocks). Recruiter is internal → visa is shown.
+  const logistics = resolveJobLogistics({
+    compSummary: job.compSummary,
+    location: label.location,
+    jdBlocks: job.jdBlocks,
+  })
 
   const selectedRow = roleSubmissions.find((row) => row.id === selectedRowId) ?? null
 
@@ -906,6 +914,13 @@ export default function RoleSheetPage() {
             {" · "}{label.location}
           </p>
           {job.compSummary && <p className="rs-brief__comp">{job.compSummary}</p>}
+
+          <dl className="rs-brief__logi">
+            <div><dt>Pay</dt><dd className={logistics.pay ? "" : "is-missing"}>{logistics.pay ?? "Not specified"}</dd></div>
+            <div><dt>Location</dt><dd className={logistics.location ? "" : "is-missing"}>{logistics.location ?? "Not specified"}</dd></div>
+            <div><dt>Visa</dt><dd className={logistics.visa ? "" : "is-missing"}>{logistics.visa ?? "Not specified"}</dd></div>
+            <div><dt>Benefits</dt><dd className={logistics.benefits ? "" : "is-missing"}>{logistics.benefits ?? "Not specified"}</dd></div>
+          </dl>
 
           <div className="rs-brief__rubric">
             <h3 className="rs-brief__rubric-h">What WeKruit screens for</h3>
