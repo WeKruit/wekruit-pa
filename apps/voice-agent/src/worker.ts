@@ -317,8 +317,8 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
                   redactProfile: callContext.userProfile,
                   terminalCloseText:
                     lang === "zh"
-                      ? "好的，我需要的就这些了——非常感谢你抽时间。我们很快会再联系你。"
-                      : "That's everything I needed — thank you so much for your time. We'll be in touch shortly.",
+                      ? "好啦，我想了解的就这些——真的很谢谢你抽时间跟我聊。我待会儿发短信告诉你下一步，好吗？"
+                      : "okay, that's everything on my end — i really appreciate you taking the time to talk. i'll text you the next steps in a bit, okay?",
                   onPipelineTerminal: async () => {
                     await closeForTerminal()
                   },
@@ -412,8 +412,8 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
             callContext.purpose === "know_you_better"
               ? buildKnowYouBetterInstructions(callContext.userProfile, callContext.timeBudgetSec ?? 360)
               : callContext.purpose === "onboarding"
-                ? "You are Claire, WeKruit's voice onboarding agent. Your job is to ask the short onboarding questions needed to understand the candidate. Speak warmly and concisely. Stay on the onboarding flow and do not recommend jobs during this call."
-                : "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
+                ? "You are Claire from WeKruit on a phone call — a warm, real person, NOT a form. Talk like a friend who happens to be great at this: short natural sentences, react to what they actually say, a little personality. You're getting to know the candidate. Keep it light and human, one thing at a time; never sound like you're reading a script."
+                : "You are Claire from WeKruit on a phone call — a warm, real recruiter, NOT a survey bot. Talk like a sharp friend in recruiting: short natural sentences, react to what they say, a touch of personality. Work through the prescreen you're given, but make it feel like a real conversation — never an interrogation, never robotic, one question at a time.",
           // "WeKruit" → "We-Cruit" (we + cruit as in re-cruit). Without the
           // remap, Deepgram aura pronounces the brand as a single mushed
           // syllable. Map applies before TTS synthesis to every variant.
@@ -465,10 +465,12 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           identity: candidateParticipantIdentity,
         })
       }
-      // A short 250ms beat so the greeting doesn't clip the candidate's "hello?".
-      // (Was 2s — that read as dead air on a phone call. Adam 2026-06-22.)
+      // 2s of intentional silence at the start of EVERY call (Adam 2026-06-22) so
+      // the greeting doesn't clip the candidate's "hello?". This is a deliberate
+      // beat — NOT the old dead-air bug (that was the 12s waitForSpeechPlayout block,
+      // now removed). The consent line is queued right after, no phantom wait.
       if (!opts.defineAgent) {
-        await new Promise((r) => setTimeout(r, 250))
+        await new Promise((r) => setTimeout(r, 2_000))
       }
       const consentLine = buildConsentPrompt(callContext)
       try {
@@ -506,8 +508,8 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         } else {
           kickoff =
             lang === "zh"
-              ? "我们开始吧——先跟我说说你在找什么样的机会？"
-              : "Let's get started — tell me a bit about the kind of role you're looking for."
+              ? "那我们就先聊聊吧——你最近在找什么样的工作呀？"
+              : "so — tell me, what kind of role are you hoping to land next?"
         }
         if (kickoff) {
           // Queue (don't await) so the entry fn proceeds to arm the budget timer;
