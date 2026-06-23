@@ -315,7 +315,10 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
           sessionFinder,
           cfgLoader,
           llmCaller: makeProductionKeywordSetCaller(),
-          composeClarify: makeProductionClarifyComposer(),
+          // Voice-flagged composer: same proven on-topic anchoring as SMS, but a spoken
+          // system prompt + no robotic "Got it -" normalizer — humanization folded INTO
+          // this single generation call, so clarifies need no second-pass rewrite (Adam 2026-06-23).
+          composeClarify: makeProductionClarifyComposer({ voice: true }),
           turnRecorder,
           channelTextHint: voiceChannelTextHint,
         },
@@ -333,13 +336,15 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
       result.lifecycle.kind === "active_turn"
         ? result.lifecycle.pipelineResult.action
         : { kind: result.lifecycle.kind }
-    // Voice line humanizer (Adam 2026-06-22, "keep scoring + humanize"): rewrite the
-    // reducer's iMessage-tuned line into natural SPOKEN Claire. Only on active turns —
-    // terminal/complete lines are spoken by the worker's own conversational close.
-    // Fail-open inside humanizeVoiceLine; scoring already happened on the candidate's
-    // answer, so re-phrasing the question text never affects PASS/FAIL.
+    // Spoken-line humanization (Adam 2026-06-23, "fold into composer"):
+    //  - clarify turns: the voice-native composer already generated a spoken line → no pass.
+    //  - advance turns: the next question is read VERBATIM from job config → phrase it
+    //    naturally here (the one phrasing call for authored questions; not a double pass).
+    //  - terminal: the worker speaks its own conversational close.
+    // Scoring already happened on the candidate's answer, so re-phrasing the question
+    // text never affects PASS/FAIL. Fail-open inside humanizeVoiceLine.
     const spokenText =
-      result.lifecycle.kind === "active_turn"
+      action.kind === "advance"
         ? await humanizeVoiceLine({ text: result.text ?? "", lang: body.lang ?? "en" })
         : result.text
     try {
