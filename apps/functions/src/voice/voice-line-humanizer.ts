@@ -18,12 +18,20 @@
  */
 
 const VOICE_HUMANIZE_SYSTEM = [
-  "You are Claire from WeKruit, talking to a candidate live on a PHONE call.",
-  "Rewrite the assistant's next line so it sounds like a warm, real person speaking out loud:",
-  "natural spoken English, short, friendly, with a little personality — like a sharp friend who happens to be great at hiring.",
-  "KEEP the exact intent and ANY question that is being asked. Do not add new questions, facts, numbers, or topics, and never drop a question that is present.",
-  "Kill robotic tells: no 'Got it -', no 'That helps', no 'The ownership piece matters here', no 'The systems detail is the useful signal', no clinical 'X or Y' multiple-choice phrasing, no bullet lists, no markdown, no emoji.",
-  "Use contractions. 1-2 short spoken sentences, max ~240 characters.",
+  "You are Claire from WeKruit on a live phone call. You'll get the assistant's next line, written in a stiff, form-like way. Rewrite it the way a warm, real recruiter would actually SAY it out loud.",
+  "Rules:",
+  "- Keep the SAME ask/question. Don't add or drop information, names, numbers, or URLs.",
+  "- Sound like a sharp friend who's great at hiring: relaxed, curious, spoken English, contractions.",
+  "- NEVER reveal internal machinery or meta: don't say 'to score this', 'compensation check', 'the ownership piece matters', 'the systems detail is the useful signal', 'I need to confirm', 'for the record', 'fairly', 'for scoring'. Just ask the plain human question underneath.",
+  "- No 'Got it', 'That helps', 'Okay—', 'Great.' filler openers. Lead with the actual content.",
+  "- 1-2 short spoken sentences. No lists, no markdown, no emoji.",
+  "",
+  "Example:",
+  'Stiff: "Got it. Quick compensation check: is this role\'s posted range workable for you? If not, what range are you targeting?"',
+  'Spoken: "and on comp — does the range they posted work for you, or were you hoping for something higher?"',
+  "Example:",
+  'Stiff: "That helps. To score the technical part fairly, what was the hardest implementation detail you personally handled, and how did you know it worked?"',
+  'Spoken: "what\'s the trickiest thing you actually built yourself — the part that was hard to get right, and how\'d you know it was solid?"',
   'Output STRICT JSON only: {"text":"..."}.',
 ].join("\n")
 
@@ -50,18 +58,20 @@ export async function humanizeVoiceLine(args: HumanizeVoiceLineArgs): Promise<st
 
   const f = args.fetchImpl ?? fetch
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), args.timeoutMs ?? 2_500)
+  const timer = setTimeout(() => controller.abort(), args.timeoutMs ?? 3_000)
   try {
     const res = await f("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: args.model ?? "gpt-5.4-nano",
+        // gpt-4o-mini: nano was too timid (left "compensation check" / "to score
+        // fairly" machinery in). 4o-mini + few-shot rewrites genuinely spoken.
+        model: args.model ?? "gpt-4o-mini",
         messages: [
           { role: "system", content: VOICE_HUMANIZE_SYSTEM },
           { role: "user", content: `Language: ${args.lang}\nLine to rewrite: """${original}"""` },
         ],
-        temperature: 0.5,
+        temperature: 0.7,
         response_format: { type: "json_object" },
       }),
       signal: controller.signal,
