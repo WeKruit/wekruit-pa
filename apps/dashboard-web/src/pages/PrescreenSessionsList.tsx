@@ -365,6 +365,16 @@ export default function PrescreenSessionsList() {
     }
   }
 
+  // Search filters fetched rows in-page, so a name in an unloaded page would never
+  // match. When a search is active, auto-load every page so the search covers the
+  // whole pool (loadAll caps at LOAD_ALL_MAX_PAGES pages — enough for the session set).
+  useEffect(() => {
+    if (search.trim() && nextCursor && !loadingAll && !loadingMore) {
+      void loadAll()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, nextCursor, loadingAll, loadingMore])
+
   function runBulkAction() {
     if (selectedPendingRows.length === 0) return
     if (bulkAction === "review") {
@@ -542,8 +552,10 @@ export default function PrescreenSessionsList() {
                         {r.jobTitle ? `${r.jobTitle}${r.jobCompany ? ` · ${r.jobCompany}` : ""}` : r.jobId}
                       </AdminJobLink>
                     </td>
-                    <td style={{ padding: "0.35rem", fontFamily: "monospace", fontSize: "0.75em" }}>
-                      <AdminUserLink userId={r.userId}>{r.userId?.slice(0, 8)}...</AdminUserLink>
+                    <td style={{ padding: "0.35rem", fontSize: "0.8em" }}>
+                      <AdminUserLink userId={r.userId}>
+                        {r.candidateName ?? <span style={{ fontFamily: "monospace", fontSize: "0.9em" }}>{r.userId?.slice(0, 8)}...</span>}
+                      </AdminUserLink>
                       {includeTest && r.candidateClass !== "candidate_account" ? (
                         <>
                           {" "}

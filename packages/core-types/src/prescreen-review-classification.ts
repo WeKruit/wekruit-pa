@@ -27,6 +27,7 @@ export type PrescreenReviewRowLike = {
   id?: string
   sessionId?: string
   userId?: string
+  candidateName?: string
   jobId?: string
   jobTitle?: string
   jobCompany?: string
@@ -201,6 +202,7 @@ export function filterAndSortPrescreenRows<T extends PrescreenReviewRowLike>(
         row.id,
         row.sessionId,
         row.userId,
+        row.candidateName,
         row.jobId,
         row.jobTitle,
         row.jobCompany,
