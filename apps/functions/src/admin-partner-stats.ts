@@ -43,8 +43,10 @@ export interface PartnerStatsFunnelSummary {
   enteredJobFlow: number
   prescreenStarted: number
   prescreenReviewPending: number
+  pendingHumanReview: number
   awaitingHmResponse: number
   passed: number
+  rejected: number
   notPassed: number
   employerVisible: number
 }
@@ -73,6 +75,8 @@ export interface PartnerStatsUserRow {
     stateUpdatedAt: string
     reviewStatus?: string
     aiVerdict?: string
+    prescreenTerminal?: string
+    prescreenScore?: number
   }>
   currentStage: string
 }
@@ -131,8 +135,10 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
     enteredJobFlow: 0,
     prescreenStarted: 0,
     prescreenReviewPending: 0,
+    pendingHumanReview: 0,
     awaitingHmResponse: 0,
     passed: 0,
+    rejected: 0,
     notPassed: 0,
     employerVisible: 0,
   }
@@ -209,9 +215,32 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
         })
       }
 
+      const prescreenSnap = await db.collection("pa-prescreen-sessions")
+        .where("userId", "==", id).get().catch(() => ({ docs: [] as Array<{ data: () => Record<string, unknown> }> }))
+      const prescreenByJob = new Map<string, { terminal?: string; score?: number; scoreMax?: number; proposedTerminal?: string }>()
+      for (const pd of prescreenSnap.docs) {
+        const ps = pd.data()
+        const jid = ps.jobId as string | undefined
+        if (!jid) continue
+        const existing = prescreenByJob.get(jid)
+        const terminal = typeof ps.terminal === "string" ? ps.terminal : undefined
+        if (!existing || terminal === "PASS" || (terminal && !existing.terminal)) {
+          const scoreVal = typeof ps.score === "number" ? ps.score : undefined
+          const maxVal = typeof ps.scoreMax === "number" ? ps.scoreMax : undefined
+          const review = ps.review && typeof ps.review === "object" ? ps.review as Record<string, unknown> : undefined
+          prescreenByJob.set(jid, {
+            terminal,
+            score: scoreVal != null && maxVal ? Math.round((scoreVal / maxVal) * 100) : undefined,
+            scoreMax: maxVal,
+            proposedTerminal: typeof review?.proposedTerminal === "string" ? review.proposedTerminal : undefined,
+          })
+        }
+      }
+
       const jobs = jobStates.map((s) => {
         const parsed = CandidateJobStateSchema.safeParse(s.state)
         const meta = jobMeta.get(s.jobId) ?? { title: "Unknown", company: "" }
+        const ps = prescreenByJob.get(s.jobId)
         return {
           jobId: s.jobId,
           jobTitle: meta.title,
@@ -219,6 +248,8 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
           state: (parsed.success ? parsed.data : s.state) as CandidateJobState,
           stateUpdatedAt: s.stateUpdatedAt,
           ...(s.awaitingHmResponse ? { reviewStatus: "awaiting_hm_response" as const } : {}),
+          ...(ps?.terminal ? { prescreenTerminal: ps.terminal } : {}),
+          ...(ps?.score != null ? { prescreenScore: ps.score } : {}),
         }
       })
 
@@ -231,6 +262,16 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
       if (jobStates.some((j) => j.state === "employer_visible")) currentStage = "employer_visible"
       if (jobStates.some((j) => j.state === "not_passed") && !jobStates.some((j) => j.state === "passed" || j.state === "employer_visible")) {
         currentStage = "not_passed"
+      }
+
+      const hasPassTerminal = jobs.some((j) => j.prescreenTerminal === "PASS")
+      const hasFailOrPause = jobs.some((j) => j.prescreenTerminal === "FAIL" || j.prescreenTerminal === "HARD_STOP" || j.prescreenTerminal === "PAUSE")
+      if (hasPassTerminal && (currentStage === "review_pending" || currentStage === "interviewing")) {
+        currentStage = "pending_human_review"
+        funnel.pendingHumanReview++
+      } else if (hasFailOrPause && !hasPassTerminal && (currentStage === "review_pending" || currentStage === "interviewing")) {
+        currentStage = "rejected"
+        funnel.rejected++
       }
 
       return {

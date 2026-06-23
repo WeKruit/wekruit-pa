@@ -8,8 +8,10 @@ export interface PartnerStatsFunnelSummary {
   enteredJobFlow: number
   prescreenStarted: number
   prescreenReviewPending: number
+  pendingHumanReview: number
   awaitingHmResponse: number
   passed: number
+  rejected: number
   notPassed: number
   employerVisible: number
 }
@@ -21,6 +23,9 @@ export interface PartnerStatsJobRow {
   state: string
   stateUpdatedAt: string
   reviewStatus?: string
+  aiVerdict?: string
+  prescreenTerminal?: string
+  prescreenScore?: number
 }
 
 export interface PartnerStatsUserRow {
@@ -51,15 +56,17 @@ export interface PartnerStatsSnapshot {
   allPartnerSources: string[]
 }
 
-export type StageFilter = "all" | "signed_up" | "resume_submitted" | "interviewing" | "review_pending" | "awaiting_hm_response" | "passed" | "not_passed" | "employer_visible"
+export type StageFilter = "all" | "signed_up" | "resume_submitted" | "interviewing" | "review_pending" | "pending_human_review" | "awaiting_hm_response" | "passed" | "rejected" | "not_passed" | "employer_visible"
 
 export const STAGE_LABELS: Record<string, string> = {
   signed_up: "Signed up",
   resume_submitted: "Resume submitted",
   interviewing: "Interviewing",
   review_pending: "Under review",
+  pending_human_review: "Pending human review",
   awaiting_hm_response: "Awaiting HM",
   passed: "Passed",
+  rejected: "Rejected",
   not_passed: "Not passed",
   employer_visible: "Employer visible",
 }
@@ -69,8 +76,10 @@ export const STAGE_TONES: Record<string, "good" | "bad" | "warn" | "muted"> = {
   resume_submitted: "muted",
   interviewing: "warn",
   review_pending: "warn",
+  pending_human_review: "warn",
   awaiting_hm_response: "warn",
   passed: "good",
+  rejected: "bad",
   not_passed: "bad",
   employer_visible: "good",
 }
