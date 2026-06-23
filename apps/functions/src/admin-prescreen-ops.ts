@@ -78,6 +78,9 @@ export const AdminPrescreenOpsSnapshotInputSchema = z.discriminatedUnion("mode",
   z.object({
     mode: z.literal("sessions"),
     jobId: z.string().optional(),
+    /** Restrict to these candidate userIds — used by the Algolia name search
+     *  (name → pa_candidates objectIDs → their sessions, whole pool, no scan). */
+    userIds: z.array(z.string()).max(200).optional(),
     queue: z.enum(["pending", "committed", "all"]).optional(),
     bucket: z.string().optional(),
     includeTest: z.boolean().optional(),
@@ -580,10 +583,61 @@ async function runScoreSortedSessionsMode(
   }
 }
 
+/**
+ * Whole-pool name search path: the dashboard resolves a typed name to candidate
+ * userIds via Algolia (pa_candidates) and passes them here. We fetch only those
+ * users' sessions (chunked `userId in` — single-field, auto-indexed, no scan),
+ * so the search covers every session without loading pages.
+ */
+async function runUserIdsSessionsMode(
+  deps: { db: Firestore },
+  input: Extract<AdminPrescreenOpsSnapshotInput, { mode: "sessions" }>,
+  userIds: string[],
+): Promise<PrescreenOpsSnapshotSessionsResponse> {
+  const uniqueIds = [...new Set(userIds.filter((id) => typeof id === "string" && id.trim()))].slice(0, 200)
+  if (uniqueIds.length === 0) return { rows: [] }
+  const jobIdFilter = cleanString(input.jobId)
+
+  const records: SessionScanRecord[] = []
+  for (let i = 0; i < uniqueIds.length; i += 10) {
+    const chunk = uniqueIds.slice(i, i + 10)
+    const snap = await deps.db.collection(PRESCREEN_SESSIONS).where("userId", "in", chunk).select(...SESSION_FIELD_MASK).get()
+    for (const doc of snap.docs) {
+      records.push(toSessionRecord(doc.id, (doc.data() ?? {}) as Record<string, unknown>))
+    }
+  }
+
+  const [userDocs, jobDocs] = await Promise.all([
+    loadDocsById(deps.db, PA_COLLECTIONS.users, uniqueIds),
+    loadDocsById(deps.db, PA_COLLECTIONS.jobs, records.map((r) => r.jobId).filter((j) => j.length > 0)),
+  ])
+  const bucket = cleanString(input.bucket)
+  const rows = records.flatMap((record) => {
+    if (jobIdFilter && record.jobId !== jobIdFilter) return []
+    const candidateClass = classifySessionCandidate(record, userDocs)
+    if (input.includeTest !== true && candidateClass !== "candidate_account") return []
+    if (input.queue === "pending" && record.terminalActionPendingReview !== true) return []
+    if (input.queue === "committed" && !hasCommittedReview(record)) return []
+    const row = buildSessionRow(
+      record,
+      candidateClass,
+      jobDocs.get(record.jobId) ?? {},
+      candidateDisplayName(userDocs.get(record.userId)),
+    )
+    if (bucket && row.classification.bucket !== bucket) return []
+    return [row]
+  })
+  rows.sort((a, b) => compareScoreDesc(a, b))
+  return { rows }
+}
+
 async function runSessionsMode(
   deps: { db: Firestore; now?: () => string },
   input: Extract<AdminPrescreenOpsSnapshotInput, { mode: "sessions" }>,
 ): Promise<PrescreenOpsSnapshotSessionsResponse> {
+  if (input.userIds && input.userIds.length) {
+    return runUserIdsSessionsMode(deps, input, input.userIds)
+  }
   const pageLimit = Math.max(1, Math.min(SESSIONS_MAX_LIMIT, input.limit ?? SESSIONS_DEFAULT_LIMIT))
   if (input.sort === "score_desc") {
     return runScoreSortedSessionsMode(deps, input, pageLimit)
