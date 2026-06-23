@@ -552,8 +552,10 @@ export default function PrescreenSessionsList() {
                         {r.jobTitle ? `${r.jobTitle}${r.jobCompany ? ` · ${r.jobCompany}` : ""}` : r.jobId}
                       </AdminJobLink>
                     </td>
-                    <td style={{ padding: "0.35rem", fontFamily: "monospace", fontSize: "0.75em" }}>
-                      <AdminUserLink userId={r.userId}>{r.userId?.slice(0, 8)}...</AdminUserLink>
+                    <td style={{ padding: "0.35rem", fontSize: "0.8em" }}>
+                      <AdminUserLink userId={r.userId}>
+                        {r.candidateName ?? <span style={{ fontFamily: "monospace", fontSize: "0.9em" }}>{r.userId?.slice(0, 8)}...</span>}
+                      </AdminUserLink>
                       {includeTest && r.candidateClass !== "candidate_account" ? (
                         <>
                           {" "}
