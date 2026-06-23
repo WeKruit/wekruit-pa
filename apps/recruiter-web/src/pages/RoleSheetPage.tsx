@@ -518,7 +518,23 @@ function formatSubmitFailure(reason?: string): string {
   return reason ?? "submission_failed"
 }
 
-function renderJdBody(text: string): ReactNode[] {
+function renderJdBody(text: string | null | undefined, items?: string[]): ReactNode[] {
+  // List-kind jdBlocks arrive as { heading, items } with a null/absent body —
+  // render the items array directly (2026-06-10 prod blank-page guard: a bare
+  // `text.split` on a null body crashed the whole route). Body-kind blocks
+  // (incl. descriptionMd-derived ones) carry markdown in `text`.
+  if (typeof text !== "string" || !text.trim()) {
+    if (items && items.length) {
+      return [
+        <ul key={0}>
+          {items.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>,
+      ]
+    }
+    return []
+  }
   const out: ReactNode[] = []
   let listBuffer: string[] = []
   let key = 0
@@ -903,13 +919,13 @@ export default function RoleSheetPage() {
             ))}
           </div>
 
-          <details className="rs-brief__jd">
+          <details className="rs-brief__jd" open>
             <summary>Full job description</summary>
             <div className="rs-brief__jd-body">
               {job.jdBlocks.map((block, i) => (
                 <section key={i}>
                   <h4>{block.heading}</h4>
-                  {renderJdBody(block.body ?? "")}
+                  {renderJdBody(block.body, block.items)}
                 </section>
               ))}
               {job.recruiterBoard.interviewProcess && (
