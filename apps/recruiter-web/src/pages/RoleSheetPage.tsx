@@ -28,6 +28,7 @@ import {
   type SubmissionCandidateCells,
   type SubmissionChecklistValue,
 } from "../lib/recruiter-board-api.js"
+import { resolveJobLogistics } from "../lib/job-logistics.js"
 import { trackEvent } from "../lib/analytics.js"
 import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import { RecruiterShell } from "../components/RecruiterShell.js"
@@ -58,6 +59,7 @@ type SheetColumn = {
   id: SheetCellId
   label: string
   required?: boolean
+  placeholder?: string
   // key columns stay visible when rows degrade to cards on small screens
   key?: boolean
 }
@@ -69,9 +71,9 @@ const CANDIDATE_COLUMNS: SheetColumn[] = [
   { id: "resume", label: "Resume", required: true },
   { id: "currentCompany", label: "Current company", key: true },
   { id: "currentTitle", label: "Current title", key: true },
-  { id: "location", label: "Location", key: true },
+  { id: "location", label: "Location", required: true, key: true, placeholder: "Open to anywhere/remote, or preferred location(s)" },
   { id: "yoe", label: "Years of exp" },
-  { id: "workAuthorization", label: "Work auth" },
+  { id: "workAuthorization", label: "Work auth", required: true, placeholder: "Citizen / Green card, or needs sponsorship" },
   { id: "employmentStatus", label: "Employment status" },
   { id: "compensationExpectation", label: "Comp expectation" },
   { id: "noticePeriod", label: "Notice period" },
@@ -112,13 +114,13 @@ const CHECKLIST_TIER_META: Record<
   { label: string; required: boolean; rule: string }
 > = {
   hard: { label: "Hard filters", required: true, rule: "Must mostly be met to be considered a match." },
-  fit: { label: "Strong fit signals", required: true, rule: "Ideal candidates hit 2 or more." },
+  fit: { label: "Strong fit signals", required: false, rule: "Ideal candidates hit 2 or more — optional, but it helps." },
   anti: { label: "Anti-signals", required: true, rule: "If any is present, likely NOT a match." },
   bonus: { label: "Bonuses", required: false, rule: "Nice to have — leave blank if unknown." },
 }
 
 // The tiers whose items must be answered before the row can be submitted.
-const CHECKLIST_REQUIRED_KINDS: ChecklistKind[] = ["hard", "fit", "anti"]
+const CHECKLIST_REQUIRED_KINDS: ChecklistKind[] = ["hard", "anti"]
 
 // Display order on screen: hard → fit → anti → bonus (matches the shared
 // contract; distinct from CHECKLIST_KIND_ORDER which keeps bonus before anti
@@ -486,6 +488,8 @@ function addRowBlockers(
   else if (!normalizeSheetUrl(linkedin)) blockers.push("LinkedIn URL must be a valid URL.")
   if (!resume) blockers.push("Resume is required — paste a link or drop a file.")
   else if (!normalizeSheetUrl(resume) && !draft.resumeFileName) blockers.push("Resume must be a valid URL or an uploaded file.")
+  if (!draft.cells.location.trim()) blockers.push("Location is required — open to anywhere/remote, or preferred location(s).")
+  if (!draft.cells.workAuthorization.trim()) blockers.push("Working status is required — work authorization / sponsorship need.")
   for (const field of fields) {
     const value = (draft.extraFields[field.id] ?? "").trim()
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
@@ -497,7 +501,7 @@ function addRowBlockers(
     (col) => CHECKLIST_REQUIRED_KINDS.includes(col.kind) && !(draft.checklist[col.id] ?? ""),
   )
   if (hasUnansweredRequired) {
-    blockers.push("Answer every hard, fit, and anti checklist item (bonuses optional).")
+    blockers.push("Answer every hard and anti checklist item (strong-fit signals and bonuses are optional).")
   }
   return blockers
 }
@@ -515,7 +519,23 @@ function formatSubmitFailure(reason?: string): string {
   return reason ?? "submission_failed"
 }
 
-function renderJdBody(text: string): ReactNode[] {
+function renderJdBody(text: string | null | undefined, items?: string[]): ReactNode[] {
+  // List-kind jdBlocks arrive as { heading, items } with a null/absent body —
+  // render the items array directly (2026-06-10 prod blank-page guard: a bare
+  // `text.split` on a null body crashed the whole route). Body-kind blocks
+  // (incl. descriptionMd-derived ones) carry markdown in `text`.
+  if (typeof text !== "string" || !text.trim()) {
+    if (items && items.length) {
+      return [
+        <ul key={0}>
+          {items.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>,
+      ]
+    }
+    return []
+  }
   const out: ReactNode[] = []
   let listBuffer: string[] = []
   let key = 0
@@ -870,6 +890,13 @@ export default function RoleSheetPage() {
   }
 
   const label = job.recruiterBoard.label
+  // Structured logistics — pay/location are real fields; visa/benefits are
+  // extracted from the JD (jdBlocks). Recruiter is internal → visa is shown.
+  const logistics = resolveJobLogistics({
+    compSummary: job.compSummary,
+    location: label.location,
+    jdBlocks: job.jdBlocks,
+  })
 
   const selectedRow = roleSubmissions.find((row) => row.id === selectedRowId) ?? null
 
@@ -888,6 +915,13 @@ export default function RoleSheetPage() {
           </p>
           {job.compSummary && <p className="rs-brief__comp">{job.compSummary}</p>}
 
+          <dl className="rs-brief__logi">
+            <div><dt>Pay</dt><dd className={logistics.pay ? "" : "is-missing"}>{logistics.pay ?? "Not specified"}</dd></div>
+            <div><dt>Location</dt><dd className={logistics.location ? "" : "is-missing"}>{logistics.location ?? "Not specified"}</dd></div>
+            <div><dt>Visa</dt><dd className={logistics.visa ? "" : "is-missing"}>{logistics.visa ?? "Not specified"}</dd></div>
+            <div><dt>Benefits</dt><dd className={logistics.benefits ? "" : "is-missing"}>{logistics.benefits ?? "Not specified"}</dd></div>
+          </dl>
+
           <div className="rs-brief__rubric">
             <h3 className="rs-brief__rubric-h">What WeKruit screens for</h3>
             {job.recruiterBoard.checklist.groups.map((group) => (
@@ -900,13 +934,13 @@ export default function RoleSheetPage() {
             ))}
           </div>
 
-          <details className="rs-brief__jd">
+          <details className="rs-brief__jd" open>
             <summary>Full job description</summary>
             <div className="rs-brief__jd-body">
               {job.jdBlocks.map((block, i) => (
                 <section key={i}>
                   <h4>{block.heading}</h4>
-                  {renderJdBody(block.body ?? "")}
+                  {renderJdBody(block.body, block.items)}
                 </section>
               ))}
               {job.recruiterBoard.interviewProcess && (
@@ -1290,7 +1324,7 @@ function AddCandidatePanel({
                 onChange={(url, name) => onChange({ ...draft, cells: { ...draft.cells, resume: url }, resumeFileName: name })}
               />
             ) : (
-              <input type="text" placeholder={col.label} value={draft.cells[col.id]} onChange={(e) => setCell(col.id, e.target.value)} />
+              <input type="text" placeholder={col.placeholder ?? col.label} value={draft.cells[col.id]} onChange={(e) => setCell(col.id, e.target.value)} />
             )}
           </label>
         ))}
@@ -1309,7 +1343,7 @@ function AddCandidatePanel({
       {checklistColumns.length > 0 && (
         <div className="rs-addpanel__checklist">
           <h4>Screening checklist</h4>
-          <p className="rs-cl-hint">Answer every hard, fit, and anti item — bonuses are optional.</p>
+          <p className="rs-cl-hint">Answer every hard and anti item — strong-fit signals and bonuses are optional.</p>
           <ChecklistTiers
             checklistColumns={checklistColumns}
             answers={draft.checklist}

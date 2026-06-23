@@ -288,6 +288,16 @@ export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats
 // Operations Overview dashboard — daily time-series of new users (by channel),
 // interviews conducted, and candidates moved to client. Admin /admin/operations.
 export { paAdminOpsMetrics } from "./admin-ops-metrics.js"
+// Candidate pool TRUE counts (whole pool, not the 500-row browse sample) for
+// the /admin/candidates header cards + STATE/SOURCE/IDENTITY breakdowns.
+export { paAdminCandidatePoolCounts } from "./admin-candidate-pool-counts.js"
+// Trimmed list of EVERY recruiter submission (not just the recent 500) so the
+// /admin/recruiter-submissions search + state filter see the whole pool.
+export { paAdminRecruiterSubmissionsList } from "./admin-recruiter-submissions-list.js"
+// Algolia search: real-time sync triggers (submissions + candidates) + a
+// one-shot admin backfill. No-op until ALGOLIA_APP_ID + ALGOLIA_ADMIN_KEY are set.
+export { paAlgoliaSyncRecruiterSubmission, paAlgoliaSyncCandidate } from "./algolia/algolia-sync.js"
+export { paAlgoliaBackfill } from "./algolia/algolia-backfill.js"
 // Rejected-candidates-by-tier browse + AI re-evaluate-for-new-roles action.
 // Tier is stamped at rejection (prescreen + recruiter) via applyGlobalCandidateTier.
 export { paAdminRejectedCandidatesSnapshot } from "./admin-rejected-candidates.js"
@@ -301,6 +311,12 @@ export { paAdminIdentityConflictsResolve } from "./admin-identity-conflicts.js"
 // critical-judge LLM call (callWithFallback 3-tier) → merges `aiEvaluation`
 // onto the submission doc. NEVER touches `status` (operator-only transitions).
 export { paRecruiterSubmissionEval } from "./recruiter-submission-eval.js"
+// Admin one-shot re-eval of existing submissions with the current (résumé-grounded)
+// judge — onDocumentCreated never re-fires, so stale verdicts need this backfill.
+export { paAdminReevaluateRecruiterSubmissions } from "./admin-reevaluate-submissions.js"
+// Admin backlog re-eval of prescreen sessions with the current (transcript-primary,
+// wrong-identity-aware) judge — onDocumentWritten never re-fires on evaluated sessions.
+export { paAdminReevaluatePrescreens } from "./admin-reevaluate-prescreens.js"
 // Operator decision callable for the recruiter-submission review board.
 // advance/reject/reviewing/duplicate set status + adminDecision; request_info
 // appends requestedInfo[]. The recruiter-board codebase's
@@ -572,6 +588,10 @@ type BrokerImessageEvent = {
     chatId?: string
     messageRowId?: number
     text?: string
+    /** Inbound image/attachment URL (iMessage). An image-only message has empty `text` + a
+     * `mediaUrl`; it must NOT be rejected as empty_text (live victim: screenshot proof during a
+     * prescreen was dropped at the door, never reaching the image-proof guard). */
+    mediaUrl?: string
     /** Synthetic `[cv-parsed]` worker / E2E — must flow to orchestrator rawMeta. */
     triggerResumeId?: string
     cvParsedTrigger?: boolean
@@ -839,7 +859,7 @@ export function shouldCreateProvisionalUserForBrokerPayload(rawPayload: BrokerIm
   // system webhook can never auto-create a profile. The QR opener path still runs
   // FIRST in processBrokerImessageEvent, so scanToken + sticky-number binding is
   // preserved for genuine QR scans (this gate is the fallback for plain text).
-  const text = typeof payload.text === "string" ? payload.text.trim() : ""
+  const text = typeof payload.text === "string" ? (payload.text ?? "").trim() : ""
   if (text.length === 0) return false
   return true
 }
@@ -910,16 +930,20 @@ async function processBrokerImessageEvent(
   const claimed = await claimBrokerEvent(db, data)
   if (!claimed) return 0
   const payload = claimed.rawPayload
-  if (!payload?.participant || !payload.text || !payload.chatId) {
+  // An image-only iMessage (screenshot proof, photo) arrives with empty `text` + a `mediaUrl`. It is
+  // a VALID inbound — dropping it as empty_text strands the candidate (the screenshot never reaches
+  // the prescreen image-proof guard / cv-ingest). Accept empty text WHEN media is present.
+  const hasInboundMedia = typeof payload?.mediaUrl === "string" && payload.mediaUrl.trim().length > 0
+  if (!payload?.participant || (!payload.text && !hasInboundMedia) || !payload.chatId) {
     // V5 QA Agent-E 2026-05-04: when validation throws, the doc was already
     // claimed (status="running") so it leaks until the 120s lease expires.
     // Finalize the row here so dashboard / downstream observability see it
     // as failed instead of silently stuck.
     const reason = !payload?.participant
       ? "missing_participant"
-      : !payload.text
-        ? "empty_text"
-        : "missing_chatId"
+      : !payload.chatId
+        ? "missing_chatId"
+        : "empty_text"
     try {
       await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
         {
@@ -936,6 +960,8 @@ async function processBrokerImessageEvent(
     }
     throw new Error(`Invalid broker iMessage payload: ${reason}`)
   }
+  // Media-only inbound may carry no text — every downstream read uses `(payload.text ?? "")` so a
+  // screenshot-only message flows through as an empty-text turn (with mediaUrl) instead of crashing.
   let user: User | null = null
   const phoneE164 = normalizeImessageParticipant(payload.participant)
   // Never-silent-drop (Adam 2026-05-29): the opener-phone-wins + same-phone
@@ -1028,7 +1054,7 @@ async function processBrokerImessageEvent(
           errorCode: isE2eUnbound ? "E2E_UNBOUND_USER" : "SENDBLUE_UNBOUND_USER",
           externalChatId,
           from: payload.participant,
-          body: payload.text.trim(),
+          body: (payload.text ?? "").trim(),
         },
         { merge: true }
       )
@@ -1109,7 +1135,7 @@ async function processBrokerImessageEvent(
     channel: "imessage",
     externalChatId,
     from: payload.participant,
-    body: payload.text.trim(),
+    body: (payload.text ?? "").trim(),
     status: "pending",
     createdAt: claimed.createdAt,
     idempotencyKey: claimed.idempotencyKey,
@@ -1137,7 +1163,7 @@ async function processBrokerImessageEvent(
       sessionId: session.id,
       externalChatId,
       from: payload.participant,
-      body: payload.text.trim(),
+      body: (payload.text ?? "").trim(),
       // Persist rawMeta (incl. messageHandle) so the thin-Claire cutover below can read the
       // iMessage handle for tapbacks. Additive — legacy processInboundEvent uses the in-memory
       // `event` object, not this doc, so this only enriches observability + the thin read path.
@@ -1165,7 +1191,7 @@ async function processBrokerImessageEvent(
         userId: user.id,
         sessionId: session.id,
         toE164: payload.participant,
-        text: payload.text.trim(),
+        text: (payload.text ?? "").trim(),
         ...(typeof p.messageHandle === "string" ? { inboundMessageHandle: p.messageHandle } : {}),
       },
       { log: (e, pl) => logger.info(`[stop-gate][onPaInbound] ${e}`, pl ?? {}) },
@@ -1191,13 +1217,48 @@ async function processBrokerImessageEvent(
     })
   }
 
+  // ── INBOUND TAPBACK NO-OP GATE (live 2026-06-19) ─────────────────────────
+  // An iMessage REACTION on one of Claire's own messages arrives as plaintext
+  // (`Loved "…"`). Before this gate it was treated as a fresh user turn → Claire
+  // re-acked AND re-ran find_match → duplicate batch. A reaction on OUR message
+  // is a no-op: nothing sent, no tool call. Same earliest common seam as STOP;
+  // mirrored in the coalescer path. Deterministic regex (tapback-parser.ts),
+  // verified against Claire's recent assistant messages in pa-messages.
+  try {
+    const { runTapbackGate } = await import("./claire-agent/tapback-gate.js")
+    const tapbackGate = await runTapbackGate(
+      db,
+      { eventId: claimed.id, userId: user.id, text: (payload.text ?? "").trim() },
+      { log: (e, pl) => logger.info(`[tapback-gate][onPaInbound] ${e}`, pl ?? {}) },
+    )
+    if (tapbackGate.handled) {
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+        {
+          status: "completed",
+          completedAt: nowIso(),
+          updatedAt: nowIso(),
+          routedTo: "tapback_reaction_noop",
+        },
+        { merge: true }
+      )
+      return 1
+    }
+  } catch (err) {
+    // runTapbackGate never throws by design; this guards the dynamic import only.
+    logger.warn("[tapback-gate][onPaInbound] gate FAILED — falling through", {
+      eventId: claimed.id,
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
   // Direct broker path can receive the same candidate trigger token as
   // Sendblue. Treat it as control-plane input here; never let it fall into
   // onboarding, where it would produce the q_lang prompt instead of starting
   // the job prescreen.
   try {
     const { decideBrokerPrescreenTrigger } = await import("./broker-prescreen-trigger.js")
-    const triggerDecision = decideBrokerPrescreenTrigger(payload.text.trim(), user.id)
+    const triggerDecision = decideBrokerPrescreenTrigger((payload.text ?? "").trim(), user.id)
     if (triggerDecision.kind === "authorized") {
       const { runPreScreenForUser } = await import("./prescreen-session-start.js")
       const result = await runPreScreenForUser({
@@ -1304,7 +1365,11 @@ async function processBrokerImessageEvent(
       db,
       userId: user.id,
       toE164: payload.participant,
-      replyText: payload.text.trim(),
+      replyText: (payload.text ?? "").trim(),
+      // Carry the inbound image attachment so a screenshot-only answer to a
+      // scoring question gets an "paste the numbers/link" ask instead of being
+      // scored 0 → unfair HARD_STOP (live victim 2026-06-19).
+      ...(typeof p.mediaUrl === "string" && p.mediaUrl.trim() ? { mediaUrl: p.mediaUrl.trim() } : {}),
       lang: "en",
       log: (event, payload) => logger.info(`[prescreen][onPaInbound] ${event}`, payload ?? {}),
     })
@@ -1346,7 +1411,7 @@ async function processBrokerImessageEvent(
         db,
         userId: user.id,
         toE164: payload.participant,
-        replyText: payload.text.trim(),
+        replyText: (payload.text ?? "").trim(),
         log: (event, payload) => logger.info(`[pii][onPaInbound] ${event}`, payload ?? {}),
       })
       if (piiResult.handled) {

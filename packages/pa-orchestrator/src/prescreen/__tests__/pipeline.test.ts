@@ -304,7 +304,10 @@ test("Phase 76: max-probed adjacent engineering evidence advances instead of har
     "The dashboard frontend was React and TypeScript, connected to Node endpoints and Postgres query results.",
   ]
 
-  for (let i = 0; i < replies.length - 1; i++) {
+  // Clamp caps probes at 2: round 1 (0.15) + round 2 (0.62) clarify, then the
+  // 3rd turn exhausts the clamped budget and soft-accepts the adjacent 0.62
+  // role_fit evidence (advances rather than hard-stopping a plausible candidate).
+  for (let i = 0; i < 2; i++) {
     const r = await pipeline.runTurn({
       sessionId: "s1",
       reply: replies[i],
@@ -318,9 +321,9 @@ test("Phase 76: max-probed adjacent engineering evidence advances instead of har
 
   const finalProbe = await pipeline.runTurn({
     sessionId: "s1",
-    reply: replies[3],
+    reply: replies[2],
     lang: "en",
-    nowIso: "2026-05-12T00:04:00Z",
+    nowIso: "2026-05-12T00:03:00Z",
     judgeCtx: ctx,
   })
 
@@ -373,7 +376,7 @@ test("Phase 76: hard-filter questions do not use role-fit adjacent soft accept",
   if (r2.action.kind === "terminal") assert.equal(r2.action.terminal, "HARD_STOP")
 })
 
-test("Phase 76: weak engineering evidence gets four probes before HARD_STOP", async () => {
+test("Phase 76: weak engineering evidence is clamped to two probes before HARD_STOP", async () => {
   const store = new InMemoryPreScreenStore()
   const pipeline = new PreScreenPipeline({
     questions: {
@@ -407,7 +410,9 @@ test("Phase 76: weak engineering evidence gets four probes before HARD_STOP", as
     "I cannot think of a closer example.",
   ]
 
-  for (let i = 0; i < 4; i++) {
+  // The clarify ceiling is clamped to 2 in-turn even though the job config
+  // allows maxClarifyRounds=4 — two blind probes max, then terminal.
+  for (let i = 0; i < 2; i++) {
     const r = await pipeline.runTurn({
       sessionId: "s1",
       reply: replies[i],
@@ -422,16 +427,16 @@ test("Phase 76: weak engineering evidence gets four probes before HARD_STOP", as
 
   const terminal = await pipeline.runTurn({
     sessionId: "s1",
-    reply: replies[4],
+    reply: replies[2],
     lang: "en",
-    nowIso: "2026-05-12T00:05:00Z",
+    nowIso: "2026-05-12T00:03:00Z",
     judgeCtx: ctx,
   })
 
   assert.equal(terminal.action.kind, "terminal")
   if (terminal.action.kind === "terminal") assert.equal(terminal.action.terminal, "HARD_STOP")
   assert.equal(terminal.state.questions.q1.terminalCause, "type_gate_fail")
-  assert.equal(terminal.state.questions.q1.clarifyRounds, 4)
+  assert.equal(terminal.state.questions.q1.clarifyRounds, 2)
 })
 
 test("Phase 76: PreScreenPipeline PROBING s<τ_m probes before HARD_STOP", async () => {
@@ -1018,7 +1023,10 @@ test("Phase 76: confirmed hard-filter mismatch stops after one direct clarify", 
   assert.equal(second.state.questions.location_alignment.finalS, 0.25)
   assert.equal(second.state.questions.location_alignment.finalC, 0.85)
   assert.match(second.text, /WeKruit team/i)
-  assert.match(second.text, /pitch the hiring manager/i)
+  // Trust bug 2026-06-19: a HARD_STOP must use verdict-aware honest holding copy,
+  // never the PASS pitch framing.
+  assert.doesNotMatch(second.text, /pitch the hiring manager/i)
+  assert.doesNotMatch(second.text, /nice work/i)
   assert.doesNotMatch(second.text, /force-fit|help find jobs|proceed/i)
 })
 
@@ -1785,4 +1793,152 @@ test("recordRecentClarifyText caps the list at the 6 most recent", () => {
   for (let i = 1; i <= 9; i++) recordRecentClarifyText(s, `line ${i}`)
   assert.equal(s.recentClarifyTexts?.length, 6)
   assert.deepEqual(s.recentClarifyTexts, ["line 4", "line 5", "line 6", "line 7", "line 8", "line 9"])
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// Decline gate + clarify-ceiling clamp (prescreen context-complete)
+// ════════════════════════════════════════════════════════════════════════════
+
+test("decline abortHint on a MUST_HAVE goes terminal (not another clarify)", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: makeQ("q1", [
+        {
+          perKeyword: [{ keyword: "q1", match: 0.2, confidence: 0.9, evidence: "no proof", reasoning: "cannot share" }],
+          abortHint: { kind: "decline", reason: "candidate said can't produce proof" },
+        },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "j1",
+    questions: [{ qId: "q1", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 }],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 4,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const r = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I don't have that, that's the only thing I can show you.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+
+  assert.equal(r.action.kind, "terminal")
+  if (r.action.kind === "terminal") assert.equal(r.action.terminal, "FAIL")
+  assert.equal(r.state.terminal, "FAIL")
+  assert.equal(r.state.questions.q1.terminalCause, "candidate_declined")
+})
+
+test("decline abortHint on a NON-gating question proceeds (not terminal, not clarify)", async () => {
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      g1: makeQ("g1", [
+        {
+          // Low confidence would normally clarify; decline must skip the probe.
+          perKeyword: [{ keyword: "g1", match: 0.2, confidence: 0.3, evidence: "no proof", reasoning: "cannot share" }],
+          abortHint: { kind: "decline", reason: "candidate said can't produce proof" },
+        },
+      ]),
+      q2: makeQ("q2", [
+        { perKeyword: [{ keyword: "q2", match: 1.0, confidence: 0.9, evidence: "ok", reasoning: "yes" }] },
+      ]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "j1",
+    questions: [
+      { qId: "g1", type: "GOOD_TO_HAVE", weight: 0 },
+      { qId: "q2", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 },
+    ],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 4,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  const r = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I don't have that, that's the only thing I can show you.",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+
+  // Non-gating decline: no terminal, no clarify — proceed (advance to next Q).
+  assert.notEqual(r.action.kind, "terminal")
+  assert.notEqual(r.action.kind, "clarify")
+  assert.equal(r.action.kind, "advance")
+  if (r.action.kind === "advance") assert.equal(r.action.toQId, "q2")
+  assert.equal(r.state.terminal, null)
+  assert.notEqual(r.state.questions.g1.terminalCause, "candidate_declined")
+})
+
+test("clarify ceiling is clamped to 2 even when maxClarifyRounds=5", async () => {
+  const store = new InMemoryPreScreenStore()
+  // A MUST_HAVE that never reaches threshold → would probe up to the ceiling.
+  const lowCell = {
+    perKeyword: [{ keyword: "q1", match: 0.3, confidence: 0.9, evidence: "weak", reasoning: "below" }],
+  }
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      q1: makeQ("q1", [lowCell, lowCell, lowCell, lowCell, lowCell, lowCell]),
+    },
+    store,
+  })
+  const state = emptyPreScreenState({
+    sessionId: "s1",
+    userId: "u1",
+    jobId: "j1",
+    questions: [{ qId: "q1", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 }],
+    threshold: 0.65,
+    confidenceThreshold: 0.7,
+    maxClarifyRounds: 5,
+    nowIso: "2026-05-12T00:00:00Z",
+  })
+  await store.save(state)
+
+  // Round 1 → clarify
+  const r1 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "weak answer 1",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r1.action.kind, "clarify")
+
+  // Round 2 → clarify (2nd and final probe)
+  const r2 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "weak answer 2",
+    lang: "en",
+    nowIso: "2026-05-12T00:02:00Z",
+    judgeCtx: ctx,
+  })
+  assert.equal(r2.action.kind, "clarify")
+
+  // Round 3 → must NOT clarify again; clamp forces terminal at 2 rounds.
+  const r3 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "weak answer 3",
+    lang: "en",
+    nowIso: "2026-05-12T00:03:00Z",
+    judgeCtx: ctx,
+  })
+  assert.notEqual(r3.action.kind, "clarify")
+  assert.equal(r3.action.kind, "terminal")
 })

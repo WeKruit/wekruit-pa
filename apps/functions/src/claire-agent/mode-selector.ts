@@ -42,7 +42,15 @@ import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-too
 import { isThinPrescreenEnabled } from "./flags.js"
 import { buildThinPrescreenSeed, type AiQuestionOptions } from "./prescreen-config.js"
 import { loadPrescreenContext } from "./prescreen-context.js"
-import { readUserPrescreenSharedAnswers, AI_USAGE_SHARED_KEY } from "@pa/pa-orchestrator"
+import {
+  buildStalePrescreenSweepPatch,
+  buildStalePrescreenSweepTurn,
+} from "../prescreen-staleness.js"
+import {
+  readUserPrescreenSharedAnswers,
+  AI_USAGE_SHARED_KEY,
+  isPrescreenSessionPastMaxAge,
+} from "@pa/pa-orchestrator"
 import {
   AI_QUESTION_QID,
   roleFunctionFromJob,
@@ -54,6 +62,27 @@ import { shouldNudgeGmail } from "./gmail-nudge.js"
 
 const USERS = "pa-users"
 const PRESCREEN_SESSIONS = "pa-prescreen-sessions"
+
+/** Parse an ISO string / epoch-ms / Firestore Timestamp into epoch ms (null when unparseable). */
+function parseMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : null
+  }
+  if (value && typeof value === "object") {
+    const maybe = value as { toMillis?: () => number; toDate?: () => Date }
+    if (typeof maybe.toMillis === "function") {
+      const ms = maybe.toMillis()
+      return Number.isFinite(ms) ? ms : null
+    }
+    if (typeof maybe.toDate === "function") {
+      const ms = maybe.toDate().getTime()
+      return Number.isFinite(ms) ? ms : null
+    }
+  }
+  return null
+}
 
 export interface ModeDecision {
   mode: ClaireMode
@@ -153,17 +182,61 @@ export interface SelectModeArgs {
 async function hasActivePrescreen(
   db: Firestore,
   userId: string,
+  log: (event: string, payload?: Record<string, unknown>) => void = () => {},
 ): Promise<{ active: boolean; jobId?: string; sessionId?: string; session?: Record<string, unknown> }> {
   try {
     const snap = await db
       .collection(PRESCREEN_SESSIONS)
       .where("userId", "==", userId)
       .where("terminal", "==", null)
-      .limit(1)
       .get()
     if (snap.empty) return { active: false }
-    const doc = snap.docs[0]!
+    // Most-recent first (createdAt-keyed; the primary SMS detector already sorts the same way).
+    const docs = [...snap.docs].sort((a, b) => {
+      const aMs = parseMs((a.data() as Record<string, unknown>).createdAt) ?? 0
+      const bMs = parseMs((b.data() as Record<string, unknown>).createdAt) ?? 0
+      return bMs - aMs
+    })
+    const doc = docs[0]!
     const d = doc.data() as Record<string, unknown>
+    const nowMs = Date.now()
+    const createdAtMs = parseMs(d.createdAt)
+    // Zombie-prescreen fix (Adam 2026-06-21): a non-terminal session past its absolute
+    // createdAt age cap is NOT active — it must not capture this (unrelated) turn. The
+    // updatedAt inactivity timeout is poisoned by the clarify-loop self-refresh, so the
+    // createdAt cap is the immune bound. Sweep it to a stale-closed terminal (timed_out)
+    // so it stops interfering, then let this turn fall through to triage/matching.
+    if (isPrescreenSessionPastMaxAge(createdAtMs, nowMs)) {
+      const nowIso = new Date(nowMs).toISOString()
+      const createdAtIso = createdAtMs !== null ? new Date(createdAtMs).toISOString() : null
+      const ageMs = createdAtMs !== null ? nowMs - createdAtMs : null
+      // CANCEL CONTEXT CLEANLY: same canonical stale-closed patch the SMS detector uses, so the
+      // session is closed identically regardless of which detector caught it. NO send here —
+      // runPrescreenTurnIfActive owns the one-time candidate notice (it runs BEFORE thin Claire on
+      // every inbound), and expiryNoticeSentAt is its idempotency gate; sending here too would risk
+      // a double-notify. This sweep is defense-in-depth for any path that reaches thin first.
+      try {
+        await doc.ref.set(buildStalePrescreenSweepPatch(nowIso), { merge: true })
+      } catch {
+        /* best-effort sweep; even if it fails we still treat the session as inactive */
+      }
+      // STORE PROPERLY: auditable expiry record (mirrors the SMS detector's turns row).
+      try {
+        await doc.ref
+          .collection("turns")
+          .add(buildStalePrescreenSweepTurn({ createdAtIso, nowIso, ageMs, detector: "mode_selector" }))
+      } catch {
+        /* best-effort audit */
+      }
+      log("mode.prescreen_stale_swept", {
+        userId,
+        sessionId: doc.id,
+        jobId: typeof d.jobId === "string" ? d.jobId : undefined,
+        ageMs,
+        ...(createdAtIso !== null ? { createdAt: createdAtIso } : {}),
+      })
+      return { active: false }
+    }
     return {
       active: true,
       jobId: typeof d.jobId === "string" ? d.jobId : undefined,
@@ -418,7 +491,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   const now = (args.nowIso ?? (() => new Date().toISOString()))()
 
   // 1. ACTIVE PRESCREEN.
-  const ps = await hasActivePrescreen(args.db, args.userId)
+  const ps = await hasActivePrescreen(args.db, args.userId, log)
   if (ps.active) {
     // Flag OFF (default) → defer this turn to the proven legacy prescreen runner (UNCHANGED).
     let thinOn = false

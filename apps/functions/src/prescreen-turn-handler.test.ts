@@ -264,6 +264,134 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((session?.workSession as { boundary?: string }).boundary, "timeout")
   })
 
+  it("expires a ZOMBIE prescreen (stale createdAt, FRESH updatedAt) and does NOT capture the turn", async () => {
+    // Live +19196415056 / ps_hs-10996795-invoko-product-manager_…: createdAt days ago, but
+    // updatedAt seconds ago because every captured turn (clarify loop on Q1) re-bumped it.
+    // The updatedAt inactivity timeout therefore CANNOT fire — only the createdAt absolute
+    // age cap catches it. The candidate had moved on to job recs; this turn ("yes") must NOT
+    // be hijacked into a prescreen probe — the session is swept and we hand back a restart notice.
+    const createdStale = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() // 3 days
+    const updatedFresh = new Date(Date.now() - 30 * 1000).toISOString() // 30s ago
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_zombie": {
+        sessionId: "ps_zombie",
+        userId: "u_zombie",
+        jobId: "hs-10996795-invoko-product-manager",
+        terminal: null,
+        currentQId: "q_consumer_product_experience",
+        createdAt: createdStale,
+        updatedAt: updatedFresh,
+        workSession: { kind: "job_prescreen", status: "active", startedAt: createdStale, boundary: "trigger" },
+      },
+    })
+
+    const terminalCalls: Array<Record<string, unknown>> = []
+    const sent: string[] = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_zombie",
+      toE164: "+13054507715",
+      replyText: "yes", // job-rec follow-up reply, NOT a prescreen answer
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    // Swept to a stale-closed terminal (PAUSE / expired_inactive) — NOT advanced as a live answer.
+    assert.equal(result.terminal, "PAUSE")
+    const session = docs.get("pa-prescreen-sessions/ps_zombie")?.data
+    assert.equal(session?.terminal, "PAUSE")
+    assert.equal(session?.terminalReason, "expired_inactive_prescreen_session")
+    assert.equal((session?.workSession as { boundary?: string }).boundary, "timeout")
+    // The candidate's "yes" was NOT scored against q_consumer_product_experience.
+    assert.equal(session?.currentQId, null)
+
+    // (1) NOTIFY exactly once — the warm timeout copy went out.
+    assert.equal(sent.length, 1)
+    assert.match(sent[0], /timed out/)
+    assert.match(sent[0], /restart screen/)
+
+    // (2) STORE PROPERLY — expiry fields stamped on the session doc.
+    assert.equal(typeof session?.expiredAt, "string")
+    assert.equal(typeof session?.expiryNoticeSentAt, "string")
+
+    // (3) AUDIT — a session_expired_swept turn was written with the age + createdAt.
+    const auditTurns = [...docs.entries()].filter(
+      ([path]) => path.startsWith("pa-prescreen-sessions/ps_zombie/turns/"),
+    )
+    const sweepTurn = auditTurns
+      .map(([, doc]) => doc.data)
+      .find((d) => (d.action as { kind?: string } | undefined)?.kind === "session_expired_swept")
+    assert.ok(sweepTurn, "expected a session_expired_swept audit turn")
+    const action = sweepTurn!.action as { kind: string; detector: string; ageMs: number; createdAt: string }
+    assert.equal(action.detector, "find_active_session")
+    assert.equal(typeof action.ageMs, "number")
+    assert.equal(action.ageMs > 2 * 24 * 60 * 60 * 1000, true) // > 2 days old
+    assert.equal(action.createdAt, createdStale)
+  })
+
+  it("does NOT re-notify on a later turn once expiryNoticeSentAt is set (idempotent expiry)", async () => {
+    // Second stale turn after the screen was already swept + the candidate already told. The session
+    // is now terminal=null again only in a degenerate replay; we simulate the realistic case where a
+    // residual terminal=null doc carries expiryNoticeSentAt → the notice must NOT fire again.
+    const createdStale = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_zombie2": {
+        sessionId: "ps_zombie2",
+        userId: "u_zombie2",
+        jobId: "hs-10996795-invoko-product-manager",
+        terminal: null, // still resolves via findActiveSession → kind:"expired"
+        currentQId: "q_consumer_product_experience",
+        createdAt: createdStale,
+        updatedAt: new Date(Date.now() - 30 * 1000).toISOString(),
+        expiryNoticeSentAt: new Date(Date.now() - 60 * 1000).toISOString(), // already notified once
+        workSession: { kind: "job_prescreen", status: "active", startedAt: createdStale, boundary: "trigger" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u_zombie2",
+      toE164: "+13054507715",
+      replyText: "yes",
+      runTerminalAction: async () => ({ alreadyFired: false, level1Sent: false, jobRecsFired: false }),
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    // NO second notice; the turn is released (handled:false) so the candidate's CURRENT intent
+    // ("yes" to job recs) still gets handled downstream by triage/matching.
+    assert.equal(sent.length, 0)
+    assert.equal(result.handled, false)
+    assert.equal(result.terminal, "PAUSE")
+    // Session stays swept (terminal set by the sweep), not re-opened.
+    const session = docs.get("pa-prescreen-sessions/ps_zombie2")?.data
+    assert.equal(session?.terminal, "PAUSE")
+  })
+
   it("keeps a two-hour-old active prescreen alive and advances to the next role question", async () => {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
     const { db, docs } = makeFakeDb({
@@ -382,6 +510,87 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       fromQId: "q_consumer_product_experience",
       toQId: "q_ship_taste",
     })
+  })
+
+  it("image-only reply on a scoring question asks for text instead of scoring 0 → HARD_STOP (Robert 2026-06-19)", async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_image_proof": {
+        sessionId: "ps_image_proof",
+        userId: "imgUser1",
+        jobId: "wekruit-x-twitter-growth-lead",
+        terminal: null,
+        currentQId: "q_operated_account_proof",
+        createdAt: twoHoursAgo,
+        updatedAt: twoHoursAgo,
+        score: 0,
+        scoreMax: 1,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 2,
+        qOrder: ["q_operated_account_proof"],
+        questions: {
+          q_operated_account_proof: {
+            qId: "q_operated_account_proof",
+            type: "MUST_HAVE",
+            weight: 1,
+            matchThreshold: 0.85,
+            clarifyRounds: 0,
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: twoHoursAgo, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "q_operated_account_proof",
+              prompt: { en: "Share a link or screenshot proving an X account you grew, with metrics.", zh: "" },
+              clarifyPrompt: { en: "Which account, and what were the numbers?", zh: "" },
+              keywords: [{ keyword: "operated_account_proof", weight: 1 }],
+            },
+          ],
+        },
+      },
+    })
+
+    let judgeCalled = false
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        judgeCalled = true
+        return { perKeyword: [], summary: "", answered: false }
+      },
+    }
+    const sent: string[] = []
+    const terminalCalls: Array<Record<string, unknown>> = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "imgUser1",
+      toE164: "+12025550133",
+      replyText: "", // image-only inbound: no usable text
+      mediaUrl: "https://cdn.sendblue.co/media/screenshot-analytics-1",
+      keywordSetCaller: caller,
+      runTerminalAction: async (args) => {
+        terminalCalls.push(args as unknown as Record<string, unknown>)
+        return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
+      },
+      sendSms: async (a) => {
+        sent.push(a.content)
+        return { status: "queued", from_number: null, number: a.to, content: a.content, service: "iMessage", is_outbound: true }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, null, "must NOT terminal on an image-only reply")
+    assert.equal(judgeCalled, false, "the judge must NOT score an empty image-only reply")
+    assert.deepEqual(terminalCalls, [], "no terminal action fired")
+    assert.equal(sent.length, 1, "exactly one ask sent")
+    assert.match(sent[0], /screenshot|paste/i)
+    const session = docs.get("pa-prescreen-sessions/ps_image_proof")?.data
+    assert.equal(session?.terminal, null)
+    assert.equal(session?.currentQId, "q_operated_account_proof", "question NOT advanced")
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_image_proof/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "image_proof_ask")
   })
 
   const VOICE_DEV_PHONE = "+14243201960"
@@ -2237,6 +2446,148 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     }
     assert.equal(attemptDoc.humanReview?.status, "pending")
     assert.equal(attemptDoc.proposedOutcome?.prescreenTerminal, "PASS")
+  })
+
+  it("a NOT_PASS (FAIL) terminal sends verdict-aware honest holding copy, never the PASS pitch framing", async () => {
+    // Live trust bug 2026-06-19 (+13055102017): a HARD_STOP/FAIL outcome held for human review was
+    // told "nice work — pitching you to the hiring manager" (a fabricated pass on a rejection).
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: null,
+        currentQId: "role_fit",
+        createdAt: now,
+        updatedAt: now,
+        score: 0,
+        scoreMax: 1,
+        threshold: 0.65,
+        confidenceThreshold: 0.7,
+        maxClarifyRounds: 2,
+        qOrder: ["role_fit"],
+        questions: {
+          role_fit: {
+            qId: "role_fit",
+            type: "MUST_HAVE",
+            weight: 1,
+            // clarify budget already exhausted → a confident low score terminates non-PASS now.
+            clarifyRounds: 2,
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "active", startedAt: now, boundary: "trigger" },
+        cfgSnapshot: {
+          questions: [
+            {
+              qId: "role_fit",
+              prompt: { en: "What recent work best matches this software engineering role?", zh: "What recent work best matches this software engineering role?" },
+              clarifyPrompt: { en: "Tell me more.", zh: "Tell me more." },
+              keywords: [{ keyword: "ownership", weight: 1 }],
+            },
+          ],
+        },
+      },
+    })
+
+    const caller: KeywordSetLlmCaller = {
+      async score() {
+        return {
+          perKeyword: [
+            {
+              keyword: "ownership",
+              match: 0,
+              confidence: 0.95,
+              evidence: "no relevant engineering ownership",
+              reasoning: "confident non-match",
+            },
+          ],
+          summary: "Confident mismatch.",
+          answered: true,
+        }
+      },
+    }
+    const sent: string[] = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "I have never done software engineering.",
+      keywordSetCaller: caller,
+      runTerminalAction: async () => ({ alreadyFired: false, level1Sent: false, jobRecsFired: false }),
+      markReviewPending: async () => ({ changed: true }),
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          id: "out-not-pass",
+          created: true,
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.notEqual(result.terminal, "PASS")
+    assert.equal(sent.length, 1)
+    // Honest holding copy: warm, review-pending, retention — but NEVER a fabricated pass.
+    assert.match(sent[0] ?? "", /WeKruit team/i)
+    assert.match(sent[0] ?? "", /review/i)
+    assert.doesNotMatch(sent[0] ?? "", /pitch the hiring manager/i)
+    assert.doesNotMatch(sent[0] ?? "", /pitch you to the hiring manager/i)
+    assert.doesNotMatch(sent[0] ?? "", /nice work/i)
+    const session = docs.get("pa-prescreen-sessions/ps_active")?.data
+    assert.equal(session?.terminalActionPendingReview, true)
+  })
+
+  it("a recent NOT_PASS pending-review follow-up ack is honest, never the PASS pitch framing", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-prescreen-sessions/ps_pending_review_notpass": {
+        sessionId: "ps_pending_review_notpass",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "HARD_STOP",
+        currentQId: null,
+        terminalActionPendingReview: true,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      // A non-explicit-new-intent follow-up: prescreen owns the thread (suppresses thin re-engagement).
+      replyText: "ok thanks",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.terminal, "HARD_STOP")
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /WeKruit team/i)
+    assert.doesNotMatch(sent[0] ?? "", /pitch the hiring manager/i)
+    assert.doesNotMatch(sent[0] ?? "", /pitch you to the hiring manager/i)
+    assert.doesNotMatch(sent[0] ?? "", /nice work/i)
   })
 
   it("yields an active prescreen when layoff onboarding owns the user turn", async () => {

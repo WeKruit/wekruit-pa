@@ -44,10 +44,13 @@ export function composePostCallFollowup(input: {
     .map((turn) => (typeof turn.userTranscript === "string" ? cleanSnippet(turn.userTranscript) : ""))
     .filter(Boolean)
     .slice(0, 3)
+  // No transcript captured (e.g. a short call) → clean generic thanks + opt-in,
+  // never the awkward "I got: your prescreen answers" with nothing after it.
+  if (snippets.length === 0) {
+    return "thanks for hopping on the call with me 🙏 want me to pull a few roles that fit from here?"
+  }
   const prefix = input.purpose === "prescreen" ? "your prescreen answers" : "your background and preferences"
-  const summary = snippets.length > 0
-    ? `${prefix}: ${truncate(snippets.join("; "), 170)}`
-    : prefix
+  const summary = `${prefix}: ${truncate(snippets.join("; "), 170)}`
   return `thanks for taking the time — I got: ${summary}. want me to pull a few roles that fit from here?`
 }
 
@@ -150,17 +153,12 @@ export async function handleVoicePostCallFollowup(input: {
 
   const turns = await readTurns(db, bookingId)
   const userTurns = turns.filter((turn) => typeof turn.userTranscript === "string" && turn.userTranscript.trim().length > 0)
-  if (userTurns.length === 0) {
-    await ref.set(
-      {
-        postCallFollowupStatus: "skipped",
-        postCallFollowupReason: "no_voice_turns",
-        postCallFollowupUpdatedAt: nowIso,
-      },
-      { merge: true },
-    )
-    return { action: "skipped", reason: "no_voice_turns" }
-  }
+  // Adam 2026-06-21: ALWAYS send a post-call text on hangup of a CONNECTED call
+  // (the transition reached "completed", so it connected — see isCompletedCallTransition).
+  // Previously a call with no recorded transcript turns was hard-skipped
+  // ("no_voice_turns") → the candidate got NOTHING after hanging up. Now an empty
+  // transcript just yields a generic thanks + job-rec opt-in (composePostCallFollowup
+  // handles the no-snippets case); a real transcript still produces the summary.
 
   const purpose = booking.purpose === "prescreen" || booking.purpose === "onboarding"
     ? booking.purpose

@@ -150,6 +150,48 @@ describe("handleDialOutbound", () => {
     assert.equal(ref.data.voiceState, "dialing")
   })
 
+  it("dispatches the agent to the room BEFORE creating the SIP participant (warm-first)", async () => {
+    const ref = makeFakeBookingRef({ paUserId: "U1", paJobId: "J1", phoneE164: DEV_PHONE, voiceState: "dialing" })
+    const order: string[] = []
+    const sipClient = makeFakeSipClient()
+    const origSip = sipClient.createSipParticipant.bind(sipClient)
+    sipClient.createSipParticipant = async (opts) => {
+      order.push("sip")
+      return origSip(opts)
+    }
+    const dispatchCalls: Array<{ roomName: string; metadata: string }> = []
+    const deps = makeDeps({ sipClient })
+    deps.dispatchAgent = async (args) => {
+      order.push("dispatch")
+      dispatchCalls.push(args)
+    }
+    const result = await handleDialOutbound(
+      { bookingId: "B-1", before: { voiceState: "queued" }, after: { ...ref.data }, bookingRef: ref },
+      deps,
+    )
+    assert.equal(result.action, "dispatched")
+    assert.deepEqual(order, ["dispatch", "sip"], "agent must be dispatched BEFORE the SIP call")
+    assert.equal(dispatchCalls.length, 1)
+    assert.equal(dispatchCalls[0]!.roomName, "B-1")
+    assert.match(dispatchCalls[0]!.metadata, /B-1/)
+  })
+
+  it("fails the booking and never dials when agent dispatch throws", async () => {
+    const ref = makeFakeBookingRef({ paUserId: "U1", paJobId: "J1", phoneE164: DEV_PHONE, voiceState: "dialing" })
+    const deps = makeDeps()
+    deps.dispatchAgent = async () => {
+      throw new Error("dispatch failed: agent worker unavailable")
+    }
+    const result = await handleDialOutbound(
+      { bookingId: "B-1", before: { voiceState: "queued" }, after: { ...ref.data }, bookingRef: ref },
+      deps,
+    )
+    assert.equal(result.action, "failed:agent_dispatch")
+    assert.equal(deps.sipClient.calls.length, 0, "must NOT place the call if no agent could be dispatched")
+    assert.equal(ref.data.voiceState, "failed")
+    assert.equal(ref.data.voiceOutcome, "failed:agent_dispatch_error")
+  })
+
   it("rotates caller IDs across distinct bookings (round-robin)", async () => {
     const deps = makeDeps()
     const usedNumbers: string[] = []

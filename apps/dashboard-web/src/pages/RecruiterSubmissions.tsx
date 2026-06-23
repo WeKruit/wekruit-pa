@@ -6,14 +6,23 @@
  * primitive + useTable hook.
  */
 import { Fragment, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
-import { arrayUnion, collection, doc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
-import { createEvaluationAttemptId } from "@pa/core-types"
+import { arrayUnion, collection, doc, getDoc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
 import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { EvalLabelForm } from "../components/prescreen/EvalLabelForm.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
+import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
+import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
+import {
+  upsertCompanySend,
+  removeCompanySend,
+  COMPANY_SEND_STATUS_LABEL,
+  type CompanySend,
+  type CompanySendStatus,
+} from "../lib/recruiter-submission-actions-api.js"
+import { getRecruiterSubmissionsList, type RecruiterSubmissionsListResult } from "../lib/recruiter-submissions-list-api.js"
 import { replaceRecruiterInviteCode, resendRecruiterInviteCodeEmail, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 import {
   buildRoleApplicationReview,
@@ -41,6 +50,8 @@ interface SubmissionDoc {
     name?: string
     email?: string
     link?: string
+    linkedinUrl?: string
+    resumeUrl?: string
     currentRole?: string
     yoe?: string
     notes?: string
@@ -51,6 +62,7 @@ interface SubmissionDoc {
   aiEvaluation?: {
     verdict?: "advance" | "borderline" | "reject"
     confidence?: number
+    identityConflict?: boolean
     summary?: string
     reasons?: string[]
     background?: {
@@ -92,6 +104,7 @@ interface SubmissionDoc {
     rating?: number
     reasons?: string[]
   }>
+  companySends?: CompanySend[]
   inboundJobId?: string
   recruiterId?: string | null
   recruiterEmail?: string
@@ -137,13 +150,12 @@ function recruiterVerdictToOutcomeKind(
   return "hold"
 }
 
-// Resolve the canonical attempt id: prefer the stamp written by the trigger;
-// fall back to recomputing the same deterministic hash for legacy rows that
-// predate the stamp (backfill will fill them in too).
+// Resolve the canonical attempt id from the STORED stamp only. The sha256
+// fallback (createEvaluationAttemptId) is server-only — node:crypto is shimmed
+// to throw in the dashboard bundle, so computing it here white-screens the
+// drawer. Legacy rows without the stamp resolve to null (eval just doesn't load).
 function resolveSubmissionAttemptId(row: SubmissionDoc): string | null {
-  if (row.evaluationAttemptId) return row.evaluationAttemptId
-  if (!row.jobId) return null
-  return createEvaluationAttemptId({ source: "recruiter_submission", jobId: row.jobId, salt: row.id })
+  return row.evaluationAttemptId ?? null
 }
 
 const CHECKLIST_TIER_DISPLAY_ORDER: ChecklistTierKind[] = ["hard", "fit", "anti", "bonus"]
@@ -926,6 +938,8 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
   const [rows, setRows] = useState<SubmissionDoc[]>([])
   const [jobsByKey, setJobsByKey] = useState<Map<string, RecruiterBoardAdminJobDoc>>(new Map())
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Full submission docs fetched on drawer-open (the list rows are trimmed).
+  const [fullById, setFullById] = useState<Map<string, SubmissionDoc>>(new Map())
 
   useEffect(() => {
     if (!isSubmissions) {
@@ -938,18 +952,16 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     void (async () => {
       try {
         setLoading(true)
-        const q = query(
-          collection(db(), "pa-recruiter-submissions"),
-          orderBy("createdAt", "desc"),
-          limit(500),
-        )
-        const [snap, jobSnap] = await Promise.all([
-          getDocs(q),
+        // ALL submissions (trimmed) via the admin callable — not the recent 500.
+        // Loading 3.8k full docs client-side is ~19.5MB; the callable returns
+        // ~2.6MB of just the table/search/filter fields so search + the state
+        // filter see the whole pool. Cached (in-mem 3-min) for instant re-open.
+        const [listResult, jobSnap] = await Promise.all([
+          cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
           getDocs(query(collection(db(), "pa-jobs"), limit(500))),
         ])
         if (cancelled) return
-        const all = snap.docs.map((d) => {
-          const data = d.data() as Omit<SubmissionDoc, "id">
+        const all = (listResult.rows as (Omit<SubmissionDoc, "id"> & { id: string })[]).map((data) => {
           const createdAtMs = data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0
           const triageSortMs = TRIAGE_FIRST_STATUSES.includes(data.status ?? "new")
             ? createdAtMs + TRIAGE_SORT_BOOST_MS
@@ -957,7 +969,7 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
           const hardScorePct = data.score?.hardTotal
             ? data.score.hardChecked / data.score.hardTotal
             : 0
-          return { id: d.id, ...data, createdAtMs, triageSortMs, hardScorePct }
+          return { ...data, createdAtMs, triageSortMs, hardScorePct }
         })
         const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
         for (const d of jobSnap.docs) {
@@ -1048,6 +1060,25 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
       },
     ],
   })
+
+  // The list is trimmed (no aiEvaluation / statusHistory / candidateBackground,
+  // to keep the payload ~2.6MB instead of ~19.5MB). Fetch the FULL submission
+  // doc when a row is opened so the detail drawer has everything. MUST stay
+  // above the early returns below so the hook count is stable (React #310).
+  useEffect(() => {
+    if (!expandedId || fullById.has(expandedId)) return
+    let cancel = false
+    void getDoc(doc(db(), "pa-recruiter-submissions", expandedId))
+      .then((s) => {
+        if (!cancel && s.exists()) {
+          setFullById((m) => new Map(m).set(s.id, { id: s.id, ...(s.data() as Omit<SubmissionDoc, "id">) }))
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancel = true
+    }
+  }, [expandedId, fullById])
 
   const header = (
     <>
@@ -1297,7 +1328,8 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     },
   ]
 
-  const selectedRow = expandedId ? rows.find((r) => r.id === expandedId) ?? null : null
+  const baseRow = expandedId ? rows.find((r) => r.id === expandedId) ?? null : null
+  const selectedRow = baseRow ? { ...baseRow, ...(fullById.get(baseRow.id ?? "") ?? {}) } : null
 
   return (
     <div>
@@ -1338,6 +1370,21 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
               onClose={() => setExpandedId(null)}
               onUpdated={(next) => {
                 setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next } : r))
+                setFullById((m) => {
+                  const cur = m.get(next.id ?? "")
+                  return cur ? new Map(m).set(next.id ?? "", { ...cur, ...next }) : m
+                })
+                // Keep the cached list in sync so re-opening the tab shows the
+                // new status immediately (server cache self-heals within 60s).
+                const cached = readCache<RecruiterSubmissionsListResult>("recruiter-submissions:list", 3 * 60_000)
+                if (cached) {
+                  writeCache("recruiter-submissions:list", {
+                    ...cached.data,
+                    rows: cached.data.rows.map((rr) =>
+                      (rr as { id?: string }).id === next.id ? { ...rr, ...next } : rr,
+                    ),
+                  })
+                }
               }}
             />
           ) : (
@@ -1455,25 +1502,36 @@ function RecruiterRolesPanel() {
   const [savingPriorityId, setSavingPriorityId] = useState<string | null>(null)
   const [priorityErr, setPriorityErr] = useState<string | null>(null)
 
-  const reload = async () => {
+  const reload = async (force = false) => {
     setLoading(true)
     setErr(null)
     try {
-      const [jobSnap, submissionSnap, candidateSnap, applicationSnap, feedbackSnap, questionSnap] = await Promise.all([
-        getDocs(query(collection(db(), "pa-jobs"), limit(500))),
-        getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-feedback"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-questions"), limit(1000))),
-      ])
-      const jobs = jobSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterBoardAdminJobDoc, "id">) }))
-      const submissions = submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) }))
-      const candidates = candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) }))
-      const applications = applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) }))
-      const feedback = feedbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleFeedbackDoc, "id">) }))
-      const questions = questionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleQuestionDoc, "id">) }))
-      setRows(buildRecruiterRoleOpsRows({ jobs, submissions, candidates, applications, feedback, questions }))
+      // Cache-through (3-min TTL): mount serves the built rows from cache (the
+      // ~5k-doc read is the slow part); mutations + the Refresh button pass
+      // force=true to re-read.
+      const built = await cachedLoad(
+        "recruiter-role-ops:rows",
+        async () => {
+          const [jobSnap, submissionSnap, candidateSnap, applicationSnap, feedbackSnap, questionSnap] = await Promise.all([
+            getDocs(query(collection(db(), "pa-jobs"), limit(500))),
+            getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-feedback"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-questions"), limit(1000))),
+          ])
+          const jobs = jobSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterBoardAdminJobDoc, "id">) }))
+          const submissions = submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) }))
+          const candidates = candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) }))
+          const applications = applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) }))
+          const feedback = feedbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleFeedbackDoc, "id">) }))
+          const questions = questionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleQuestionDoc, "id">) }))
+          return buildRecruiterRoleOpsRows({ jobs, submissions, candidates, applications, feedback, questions })
+        },
+        undefined,
+        force,
+      )
+      setRows(built)
     } catch (error) {
       setErr(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1517,7 +1575,7 @@ function RecruiterRolesPanel() {
         delete next[row.id]
         return next
       })
-      await reload()
+      await reload(true)
     } catch (error) {
       setPriorityErr(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1809,7 +1867,7 @@ function RecruiterRolesPanel() {
       <Panel
         title="Role priorities"
         eyebrow="pa-jobs, recruiterBoard, applications, calibration"
-        actions={<button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>}
+        actions={<button type="button" onClick={() => void reload(true)} disabled={loading}>Refresh</button>}
       >
         {priorityErr && (
           <div style={{ marginBottom: 12 }}>
@@ -4037,6 +4095,108 @@ function ChecklistTierMatrix({ review }: { review: ChecklistTierReview }) {
   )
 }
 
+const COMPANY_SEND_STATUS_OPTIONS: CompanySendStatus[] = ["sent", "waiting_hm", "interested", "passed"]
+const companySendTone = (s: CompanySendStatus): Parameters<typeof Badge>[0]["tone"] =>
+  s === "interested" ? "ok" : s === "passed" ? "warn" : s === "waiting_hm" ? "info" : "muted"
+
+/**
+ * Per-company "waiting for hiring manager" tracker. Lets ops mark which companies
+ * a candidate was sent to, each with its own status (sent → waiting HM →
+ * interested/passed) + hiring-manager feedback. Writes via the admin action
+ * callable; the FSM submission status flips to "with client" on the first send.
+ */
+function CompanySendsPanel({ submissionId, initial }: { submissionId: string; initial?: CompanySend[] }) {
+  const [sends, setSends] = useState<CompanySend[]>(initial ?? [])
+  const [newCompany, setNewCompany] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const run = async (fn: () => Promise<CompanySend[]>) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      setSends(await fn())
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const add = () => {
+    const c = newCompany.trim()
+    if (!c) return
+    setNewCompany("")
+    void run(() => upsertCompanySend(submissionId, { company: c, status: "sent" }))
+  }
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Company sends — waiting for hiring manager
+      </h4>
+      {err && <p style={{ color: "#c0392b", fontSize: 12, margin: "0 0 6px" }}>{err}</p>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {sends.length === 0 && (
+          <p style={{ margin: 0, fontSize: 13, color: "#999" }}>
+            No companies yet. Add each company you send this candidate to, then track the hiring-manager response.
+          </p>
+        )}
+        {sends.map((s) => (
+          <div key={s.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>{s.company}</strong>
+              <Badge tone={companySendTone(s.status)}>{COMPANY_SEND_STATUS_LABEL[s.status]}</Badge>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                disabled={busy}
+                value={s.status}
+                onChange={(e) => void run(() => upsertCompanySend(submissionId, { id: s.id, company: s.company, status: e.target.value as CompanySendStatus }))}
+              >
+                {COMPANY_SEND_STATUS_OPTIONS.map((o) => (
+                  <option key={o} value={o}>{COMPANY_SEND_STATUS_LABEL[o]}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(() => removeCompanySend(submissionId, s.id))}
+                style={{ marginLeft: "auto", fontSize: 12, color: "#c0392b", background: "none", border: "none", cursor: "pointer" }}
+              >
+                Remove
+              </button>
+            </div>
+            <textarea
+              defaultValue={s.feedback ?? ""}
+              placeholder="Hiring manager feedback…"
+              onBlur={(e) => {
+                const v = e.target.value.trim()
+                if (v !== (s.feedback ?? "")) void run(() => upsertCompanySend(submissionId, { id: s.id, company: s.company, feedback: v }))
+              }}
+              style={{ width: "100%", minHeight: 44, fontSize: 13, padding: 6, borderRadius: 6, border: "1px solid #ddd", boxSizing: "border-box" }}
+            />
+            <span style={{ fontSize: 11, color: "#999" }}>
+              Updated {formatOpsDate(s.updatedAt)}{s.by ? ` · ${s.by}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <input
+          type="text"
+          value={newCompany}
+          placeholder="Company name…"
+          disabled={busy}
+          onChange={(e) => setNewCompany(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") add() }}
+          style={{ flex: 1, fontSize: 13, padding: "6px 8px", borderRadius: 6, border: "1px solid #ddd" }}
+        />
+        <button type="button" disabled={busy || !newCompany.trim()} onClick={add} style={{ fontSize: 13, padding: "6px 12px" }}>
+          Add company
+        </button>
+      </div>
+    </>
+  )
+}
+
 function RowDetailPanel({
   row,
   role,
@@ -4165,6 +4325,25 @@ function RowDetailPanel({
         </button>
       }
     >
+      {row.aiEvaluation?.identityConflict && (
+        <div
+          style={{
+            margin: "0 0 12px",
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid #f0b429",
+            background: "#fffaf0",
+            color: "#8a5800",
+            fontSize: 13,
+            lineHeight: 1.45,
+          }}
+        >
+          <strong>⚠️ Possible wrong-identity research.</strong> The LinkedIn profile pulled for this
+          candidate appears to be a <strong>different person</strong> (or stale Coresignal data) than the
+          submitted résumé — so the AI verdict was set to <strong>review</strong> and the research was{" "}
+          <strong>not</strong> used to reject. Verify against the résumé below before deciding.
+        </div>
+      )}
       <div className="sub-detail__metrics">
         <OpsMetric label="Review verdict" value={reviewSummary.title} />
         <OpsMetric
@@ -4271,6 +4450,18 @@ function RowDetailPanel({
               <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{row.candidate.notes}</p>
             </>
           )}
+          {(row.candidate?.resumeUrl || row.candidate?.linkedinUrl || row.candidate?.link) && (
+            <>
+              <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+                Résumé
+              </h4>
+              <CandidateResumePreview
+                resumeUrl={row.candidate?.resumeUrl}
+                linkedinUrl={row.candidate?.linkedinUrl ?? row.candidate?.link}
+                height="60vh"
+              />
+            </>
+          )}
         </div>
 
         <div>
@@ -4313,6 +4504,8 @@ function RowDetailPanel({
           ) : (
             <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No status history stored.</p>
           )}
+
+          <CompanySendsPanel submissionId={row.id} initial={row.companySends} />
 
           <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
             Role evidence matrix
@@ -4379,7 +4572,12 @@ function RowDetailPanel({
                     {verdictLabel}
                   </span>
                   {typeof ai?.confidence === "number" && (
-                    <span style={{ fontSize: 12, color: "#777" }}>confidence {(ai.confidence * 100).toFixed(0)}%</span>
+                    <span
+                      style={{ fontSize: 12, color: "#777" }}
+                      title="How sure the AI is about THIS verdict — not a candidate score. e.g. 'reject · 92% sure' = 92% confident in rejecting, not a 92% rating."
+                    >
+                      {(ai.confidence * 100).toFixed(0)}% sure in this verdict
+                    </span>
                   )}
                 </div>
                 {ai?.summary && (

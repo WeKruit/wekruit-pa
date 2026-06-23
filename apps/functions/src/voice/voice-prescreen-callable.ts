@@ -37,6 +37,7 @@ import {
   makeProductionClarifyComposer,
   makeProductionKeywordSetCaller,
 } from "../prescreen-deps.js"
+import { humanizeVoiceLine } from "./voice-line-humanizer.js"
 import {
   loadJobBriefForVoice,
   loadPrescreenConfigForVoice,
@@ -45,8 +46,13 @@ import {
 } from "./context-loaders/index.js"
 
 const PA_VOICE_CF_SECRET = defineSecret("PA_VOICE_CF_SECRET")
+// The in-call prescreen/onboarding turn runs the KeywordSet judge + clarify
+// composer, which read PA_OPENAI_AGENT_API_KEY (fallback OPENAI_API_KEY). Without
+// this binding the judge threw "missing OpenAI API key" → every answer fell open
+// to ambiguous → HARD_STOP, so the voice prescreen scored nothing (Adam 2026-06-21).
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 
-type VoicePurpose = "prescreen" | "onboarding"
+type VoicePurpose = "prescreen" | "onboarding" | "know_you_better"
 
 function checkAuth(req: { get: (h: string) => string | undefined }, expected: string): boolean {
   if (!expected) return true // dev / unconfigured → permissive
@@ -154,19 +160,41 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
       (typeof booking.paUserId === "string" && booking.paUserId) ||
       (typeof booking.userId === "string" && booking.userId) ||
       ""
-    const purpose: VoicePurpose = booking.purpose === "onboarding" ? "onboarding" : "prescreen"
+    const purpose: VoicePurpose =
+      booking.purpose === "onboarding"
+        ? "onboarding"
+        : booking.purpose === "know_you_better"
+          ? "know_you_better"
+          : "prescreen"
     if (!userId) {
       res.status(400).json({ ok: false, reason: "booking_missing_user" })
       return
     }
 
+    // Per-session time budget (Adam 2026-06-21) — the worker arms a graceful hard
+    // cutoff at this many seconds. A booking may override via timeBudgetSec; else
+    // the per-purpose default: prescreen 10 min, know-you-better résumé drill 6 min,
+    // onboarding 4 min.
+    const DEFAULT_BUDGET_SEC: Record<VoicePurpose, number> = {
+      prescreen: 600,
+      know_you_better: 360,
+      onboarding: 240,
+    }
+    const timeBudgetSec =
+      typeof booking.timeBudgetSec === "number" && booking.timeBudgetSec > 0
+        ? Math.round(booking.timeBudgetSec)
+        : DEFAULT_BUDGET_SEC[purpose]
+
     try {
-      if (purpose === "onboarding") {
+      // Onboarding + know-you-better are not tied to a job — same context shape
+      // (profile only); the worker routes by purpose to the right runner/mode.
+      if (purpose === "onboarding" || purpose === "know_you_better") {
         const userProfile = await loadUserProfileForVoice(db, userId)
         res.status(200).json({
           ok: true,
           bookingId,
           purpose,
+          timeBudgetSec,
           userProfile,
         })
         return
@@ -191,6 +219,7 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
         ok: true,
         bookingId,
         purpose,
+        timeBudgetSec,
         prescreenSessionId,
         userProfile,
         jobBrief,
@@ -225,7 +254,7 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
  */
 export const paVoicePrescreenTurn: HttpsFunction = onRequest(
   {
-    secrets: [PA_VOICE_CF_SECRET],
+    secrets: [PA_VOICE_CF_SECRET, PA_OPENAI_AGENT_API_KEY],
     cors: false,
     region: "us-central1",
     memory: "512MiB",
@@ -286,7 +315,10 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
           sessionFinder,
           cfgLoader,
           llmCaller: makeProductionKeywordSetCaller(),
-          composeClarify: makeProductionClarifyComposer(),
+          // Voice-flagged composer: same proven on-topic anchoring as SMS, but a spoken
+          // system prompt + no robotic "Got it -" normalizer — humanization folded INTO
+          // this single generation call, so clarifies need no second-pass rewrite (Adam 2026-06-23).
+          composeClarify: makeProductionClarifyComposer({ voice: true }),
           turnRecorder,
           channelTextHint: voiceChannelTextHint,
         },
@@ -304,6 +336,17 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
       result.lifecycle.kind === "active_turn"
         ? result.lifecycle.pipelineResult.action
         : { kind: result.lifecycle.kind }
+    // Spoken-line humanization (Adam 2026-06-23, "fold into composer"):
+    //  - clarify turns: the voice-native composer already generated a spoken line → no pass.
+    //  - advance turns: the next question is read VERBATIM from job config → phrase it
+    //    naturally here (the one phrasing call for authored questions; not a double pass).
+    //  - terminal: the worker speaks its own conversational close.
+    // Scoring already happened on the candidate's answer, so re-phrasing the question
+    // text never affects PASS/FAIL. Fail-open inside humanizeVoiceLine.
+    const spokenText =
+      action.kind === "advance"
+        ? await humanizeVoiceLine({ text: result.text ?? "", lang: body.lang ?? "en" })
+        : result.text
     try {
       await persistVoiceTurn(db, {
         bookingId: body.bookingId ?? body.sessionId,
@@ -311,7 +354,7 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
         userId: body.userId,
         purpose: "prescreen",
         userTranscript: body.reply,
-        claireReply: result.text,
+        claireReply: spokenText,
         action: action as Record<string, unknown>,
         createdAt: body.nowIso,
       })
@@ -326,7 +369,7 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
     res.status(200).json({
       ok: true,
       lifecycleKind: result.lifecycle.kind,
-      text: result.text,
+      text: spokenText,
       action,
       ...(result.terminalAction ? { terminalAction: result.terminalAction } : {}),
     })
@@ -339,7 +382,7 @@ export const paVoicePrescreenTurn: HttpsFunction = onRequest(
 
 export const paVoiceOnboardingTurn: HttpsFunction = onRequest(
   {
-    secrets: [PA_VOICE_CF_SECRET],
+    secrets: [PA_VOICE_CF_SECRET, PA_OPENAI_AGENT_API_KEY],
     cors: false,
     region: "us-central1",
     memory: "512MiB",
@@ -444,6 +487,18 @@ export const paVoiceOnboardingTurn: HttpsFunction = onRequest(
         : { kind: "advance", currentQId: result.raw?.currentQId ?? null }
     const text = emitted.join(" ").trim() || (completed ? "That's it — thank you." : "")
 
+    // Voice line humanizer (Adam 2026-06-22): make onboarding questions sound spoken,
+    // not templated. Skip terminal lines and the q_tos consent step (it carries the
+    // legal URL + the required "agree" keyword — must be spoken verbatim). Fail-open.
+    const currentQId =
+      typeof (result.raw as { currentQId?: unknown })?.currentQId === "string"
+        ? (result.raw as { currentQId: string }).currentQId
+        : ""
+    const spokenText =
+      completed || halted || !text || currentQId === "q_tos" || /https?:\/\//i.test(text)
+        ? text
+        : await humanizeVoiceLine({ text, lang: body.lang ?? "en" })
+
     try {
       await persistVoiceTurn(db, {
         bookingId,
@@ -451,7 +506,7 @@ export const paVoiceOnboardingTurn: HttpsFunction = onRequest(
         userId,
         purpose: "onboarding",
         userTranscript: reply,
-        claireReply: text || null,
+        claireReply: spokenText || null,
         action,
         createdAt: nowIso,
       })
@@ -466,7 +521,7 @@ export const paVoiceOnboardingTurn: HttpsFunction = onRequest(
     res.status(200).json({
       ok: true,
       lifecycleKind: "onboarding_turn",
-      text,
+      text: spokenText,
       action,
     })
   },

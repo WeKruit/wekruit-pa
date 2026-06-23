@@ -116,7 +116,12 @@ export function normalizePrescreenClarifyTextForRound(text: string, round: numbe
   return replacement
 }
 
-export function makeProductionClarifyComposer(): PreScreenClarifyComposer {
+export function makeProductionClarifyComposer(opts?: { voice?: boolean }): PreScreenClarifyComposer {
+  // voice=true folds humanization INTO this single generation call (Adam 2026-06-23):
+  // a spoken-phone system prompt + we SKIP normalizePrescreenClarifyTextForRound (the
+  // robotic "Got it -" opener forcer), so the voice clarify needs no second-pass rewrite.
+  // SMS (voice=false, the default) is byte-for-byte unchanged.
+  const voice = opts?.voice === true
   return async (input) => {
     // Session-cumulative opener index + already-said list so openers rotate across
     // the WHOLE call (not reset to "Got it - " each question) and the model avoids
@@ -124,9 +129,17 @@ export function makeProductionClarifyComposer(): PreScreenClarifyComposer {
     const priorClarifyTexts = (input.state.recentClarifyTexts ?? []).slice(-5)
     const sessionClarifyIndex = (input.state.recentClarifyTexts?.length ?? 0) + 1
     const hardFilterText = hardFilterClarifyText(input.question.qId, input.lang)
-    if (hardFilterText) return normalizePrescreenClarifyTextForRound(hardFilterText, sessionClarifyIndex, input.lang)
+    // SMS: return the hard-filter line verbatim (normalized). Voice: fall through to the
+    // LLM so the same required ask is SPOKEN naturally (anchored on hardFilterText below).
+    if (hardFilterText && !voice) {
+      return normalizePrescreenClarifyTextForRound(hardFilterText, sessionClarifyIndex, input.lang)
+    }
     const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
-    if (!apiKey) throw new Error("missing OpenAI API key")
+    if (!apiKey) {
+      // Fail-safe: never wedge a live call — speak the deterministic ask if no key.
+      if (voice) return hardFilterText ?? input.fallbackText
+      throw new Error("missing OpenAI API key")
+    }
     const weakCells = [...input.merged.perKeyword]
       .filter((cell) => Number.isFinite(cell.match) && cell.match < 0.75)
       .sort((a, b) => a.match - b.match)
@@ -138,19 +151,31 @@ export function makeProductionClarifyComposer(): PreScreenClarifyComposer {
         evidence: cell.evidence,
         reasoning: cell.reasoning,
       }))
-    const system = [
-      "You are Claire, a candidate prescreening agent.",
-      "Write ONE warm iMessage follow-up that probes like a thoughtful recruiter friend learning the candidate's story.",
-      "Do not reject the candidate. Do not conclude fit. Do not repeat the prior generic clarify wording.",
-      "Do not start with the same generic acknowledgment every round; avoid repeated 'That's helpful' / 'That helps' openers.",
-      "Use the candidate's latest answer and weak evidence to ask the next most useful detail.",
-      "Do not ask a checklist. Pick one natural angle: their role, technical depth, systems touched, tradeoff, failure, user/customer impact, or measurable outcome.",
-      "Keep it under 360 characters. Output strict JSON only: {\"text\":\"...\"}.",
-    ].join("\n")
+    const system = voice
+      ? [
+          "You are Claire from WeKruit on a live PHONE call. Ask ONE warm, natural SPOKEN follow-up that probes like a thoughtful recruiter friend learning the candidate's story.",
+          "Do not reject the candidate. Do not conclude fit. Do not repeat your prior phrasing.",
+          "STAY ON the topic of the original question / required ask below — use the candidate's latest answer and the weak areas to ask the next most useful detail. Do NOT switch to an unrelated topic.",
+          "NEVER reveal machinery or meta: no 'Got it', 'That helps', 'to score', 'fairly', 'compensation check', 'the ownership piece', 'the systems detail is the useful signal', 'I need to confirm', 'for the record'.",
+          "No checklist, no 'X or Y' multiple-choice phrasing, no lists, no markdown, no emoji. Spoken English, contractions, 1-2 short sentences.",
+          'Output strict JSON only: {"text":"..."}.',
+        ].join("\n")
+      : [
+          "You are Claire, a candidate prescreening agent.",
+          "Write ONE warm iMessage follow-up that probes like a thoughtful recruiter friend learning the candidate's story.",
+          "Do not reject the candidate. Do not conclude fit. Do not repeat the prior generic clarify wording.",
+          "Do not start with the same generic acknowledgment every round; avoid repeated 'That's helpful' / 'That helps' openers.",
+          "Use the candidate's latest answer and weak evidence to ask the next most useful detail.",
+          "Do not ask a checklist. Pick one natural angle: their role, technical depth, systems touched, tradeoff, failure, user/customer impact, or measurable outcome.",
+          "Keep it under 360 characters. Output strict JSON only: {\"text\":\"...\"}.",
+        ].join("\n")
     const userMsg = [
       `Language: ${input.lang}`,
       `Question id: ${input.question.qId}`,
       `Original question: ${input.question.prompt[input.lang]}`,
+      ...(voice && hardFilterText
+        ? [`This is a HARD REQUIREMENT to confirm — ask this exact thing, just spoken naturally: ${hardFilterText}`]
+        : []),
       `Clarify round for this same question: ${input.clarifyRound}`,
       `Required probe angle for this round: ${prescreenClarifyRoundGuidance(input.clarifyRound, input.lang)}`,
       `Reason: ${input.reason}`,
@@ -170,16 +195,27 @@ export function makeProductionClarifyComposer(): PreScreenClarifyComposer {
           { role: "system", content: system },
           { role: "user", content: userMsg },
         ],
-        temperature: 0.2,
+        temperature: voice ? 0.5 : 0.2,
         response_format: { type: "json_object" },
       }),
     })
-    if (!res.ok) throw new Error(`OpenAI clarify ${res.status}: ${await res.text().catch(() => "?")}`)
+    if (!res.ok) {
+      if (voice) return hardFilterText ?? input.fallbackText
+      throw new Error(`OpenAI clarify ${res.status}: ${await res.text().catch(() => "?")}`)
+    }
     const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
     const content = json.choices?.[0]?.message?.content
-    if (!content) throw new Error("OpenAI clarify empty response")
+    if (!content) {
+      if (voice) return hardFilterText ?? input.fallbackText
+      throw new Error("OpenAI clarify empty response")
+    }
     const parsed = JSON.parse(content) as { text?: unknown }
-    if (typeof parsed.text !== "string" || !parsed.text.trim()) throw new Error("OpenAI clarify missing text")
+    if (typeof parsed.text !== "string" || !parsed.text.trim()) {
+      if (voice) return hardFilterText ?? input.fallbackText
+      throw new Error("OpenAI clarify missing text")
+    }
+    // Voice: no robotic opener normalizer — the spoken prompt already produced a natural line.
+    if (voice) return parsed.text.trim().slice(0, 400)
     return normalizePrescreenClarifyTextForRound(parsed.text, sessionClarifyIndex, input.lang)
   }
 }

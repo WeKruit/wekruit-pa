@@ -217,6 +217,23 @@ async function readEvaluation(mfs: MockFirestore): Promise<SubmissionAiEvaluatio
 }
 
 describe("runRecruiterSubmissionEval", () => {
+  it("identityConflict + reject → deterministically clamped to borderline (wrong LinkedIn)", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    // LLM detected a wrong-identity match (different person) but still said reject.
+    const deps = makeDeps(mfs, {
+      judgeResults: [judgmentFixture({ verdict: "reject", confidence: 0.76, identityConflict: true })],
+    })
+
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const evaluation = await readEvaluation(mfs)
+    assert.equal(evaluation.verdict, "borderline", "wrong-identity reject must clamp to borderline")
+    assert.ok(evaluation.confidence <= 0.5, "confidence capped at 0.5 on identity conflict")
+    assert.match(evaluation.reasons[0] ?? "", /different person|wrong\/mismatched LinkedIn/i)
+  })
+
   it("clean advance: writes the pinned aiEvaluation shape with research", async () => {
     const mfs = new MockFirestore()
     await seedJob(mfs)

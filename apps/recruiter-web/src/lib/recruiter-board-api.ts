@@ -210,6 +210,17 @@ export interface RecruiterSubmissionStatusHistoryItem {
   reasons?: string[]
 }
 
+// Per-company send (which companies the candidate was forwarded to + the
+// hiring-manager outcome). Read-only on the recruiter side.
+export interface RecruiterCompanySend {
+  id: string
+  company: string
+  status: "sent" | "waiting_hm" | "interested" | "passed"
+  feedback?: string
+  sentAt?: string
+  updatedAt?: string
+}
+
 // Appended by paAdminRecruiterSubmissionAction request_info.
 export interface RecruiterSubmissionRequestedInfoEntry {
   message?: string
@@ -250,6 +261,7 @@ export interface RecruiterSubmissionItem {
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
   statusHistory?: RecruiterSubmissionStatusHistoryItem[]
+  companySends?: RecruiterCompanySend[]
   requestedInfo?: RecruiterSubmissionRequestedInfoEntry[]
   extraFields?: Record<string, string>
   recruiterFeedbackNote?: string | null
@@ -508,20 +520,36 @@ export function isRecruiterProfileRejection(error: unknown): boolean {
 }
 
 export async function getRecruiterProfile(): Promise<RecruiterSession> {
-  const res = await fetch(RECRUITER_ME_URL, {
-    method: "GET",
-    headers: await recruiterAuthHeaders(),
-  })
-  const body = (await res.json().catch(() => ({}))) as {
-    ok?: boolean
-    reason?: string
-    recruiterId?: string
-    recruiter?: RecruiterProfile
+  // Auto-retry transient (non-401/403) failures. A single cold-start, 5xx, or
+  // network blip must NOT dump a signed-in recruiter to the hard-error screen —
+  // that was the "Couldn't load your recruiter profile" report. 401/403 is a
+  // deterministic identity rejection and is thrown immediately (no retry).
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 * attempt))
+    try {
+      const res = await fetch(RECRUITER_ME_URL, {
+        method: "GET",
+        headers: await recruiterAuthHeaders(),
+      })
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean
+        reason?: string
+        recruiterId?: string
+        recruiter?: RecruiterProfile
+      }
+      if (!res.ok || !body.ok || !body.recruiterId || !body.recruiter) {
+        throw new RecruiterApiError(body.reason ?? `paRecruiterMe HTTP ${res.status}`, res.status)
+      }
+      return { recruiterId: body.recruiterId, recruiter: body.recruiter }
+    } catch (error) {
+      if (error instanceof RecruiterApiError && (error.status === 401 || error.status === 403)) {
+        throw error
+      }
+      lastError = error
+    }
   }
-  if (!res.ok || !body.ok || !body.recruiterId || !body.recruiter) {
-    throw new RecruiterApiError(body.reason ?? `paRecruiterMe HTTP ${res.status}`, res.status)
-  }
-  return { recruiterId: body.recruiterId, recruiter: body.recruiter }
+  throw lastError instanceof Error ? lastError : new RecruiterApiError("paRecruiterMe transient failure", 0)
 }
 
 export async function fetchRecruiterSubmissions(): Promise<RecruiterSubmissionItem[]> {

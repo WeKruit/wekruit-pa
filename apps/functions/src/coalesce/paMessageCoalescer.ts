@@ -343,6 +343,7 @@ async function markSyntheticInboundCompleted(
       | "prescreen"
       | "pii_confirm"
       | "claire_orchestrator"
+      | "tapback_reaction_noop"
       | `stop_gate_${string}`
     userId: string
     turnSeq: number
@@ -741,6 +742,48 @@ export async function processCoalescedTurn(
   } catch (err) {
     // runStopGate never throws by design; this guards the dynamic import only.
     log("[coalesce] stop-gate FAILED (falling through)", {
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // 3-pre2. INBOUND TAPBACK NO-OP GATE (live 2026-06-19). A reaction on one of
+  // Claire's own messages arrives as `Loved "…"`; before this gate the coalesced
+  // turn re-acked AND re-ran find_match → duplicate roles. No-op it here at the
+  // same earliest common seam as the STOP gate (mirrors the direct broker seam
+  // in index.ts). Deterministic regex + verification against recent assistant
+  // messages in pa-messages; never throws.
+  try {
+    const { runTapbackGate } = await import("../claire-agent/tapback-gate.js")
+    const tapbackGate = await runTapbackGate(
+      deps.db,
+      { eventId: created.id, userId, text: fired.accumulatedBody },
+      { log: (e, pl) => log(`coalesce.tapback_gate.${e}`, pl ?? {}) },
+    )
+    if (tapbackGate.handled) {
+      await markSyntheticInboundCompleted(deps, created.id, {
+        routedTo: "tapback_reaction_noop",
+        userId,
+        turnSeq,
+      })
+      await Promise.allSettled(
+        fired.inboundEventIds.map((eventId) =>
+          deps.db.collection("pa-inbound-events").doc(eventId).set(
+            {
+              status: "coalesced",
+              coalesceTurnId: `${userId}__${turnSeq}`,
+              coalesceParentId: created.id,
+              routedTo: "tapback_reaction_noop",
+            },
+            { merge: true }
+          )
+        )
+      )
+      return { status: "fired", buffer: fired }
+    }
+  } catch (err) {
+    // runTapbackGate never throws by design; this guards the dynamic import only.
+    log("[coalesce] tapback-gate FAILED (falling through)", {
       userId,
       err: err instanceof Error ? err.message : String(err),
     })

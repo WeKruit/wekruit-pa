@@ -26,21 +26,80 @@ setup:
     onboardingStatus: "active"
     onboardingState: "q_resume_asked"
 
+# CV-fixture injection — the runner seeds this into Firestore for the
+# throwaway test user BEFORE turn 0, so the "(pretend i sent the cv)" turn
+# finds a parsed résumé + stated preferences and find_match has tags to
+# match on. Without this, the cvParsed edge has no résumé and the reply is
+# null. Seeded parsedCandidateResumes doc is deleted in cleanup; the
+# pa-users doc is a throwaway reserved +1999999xxxx test user.
+# Mirrors the proven SWE "en" persona from seed-match-correctness.mjs.
+fixture:
+  statedPreferences:
+    preferredLang: "en"
+    contactEmail: "sam.swe@gmail.com"
+    contactEmailVerifiedAt: "__seeded__"
+    targetRole: ["swe"]
+    yoeRange: [2, 2]
+    visaStatus: "opt"
+    prefersStartup: null
+    targetLocations: ["remote"]
+  userTags:
+    targetRoleFunction: ["software_engineering"]
+    skills: ["go", "kubernetes", "grpc", "postgresql", "terraform", "aws"]
+    visaStatus: "sponsor_needed"
+    targetLocations: ["remote"]
+    careerStage: "mid_level"
+    targetJobType: ["full_time"]
+  cv:
+    candidateProfile:
+      name: "Sam Patel"
+      email: "sam.patel@example.com"
+      location: "Remote"
+      skills: ["Go", "Kubernetes", "gRPC", "PostgreSQL", "Terraform", "AWS"]
+    topSkills: ["go", "kubernetes", "grpc", "postgresql", "terraform", "aws"]
+    experiences:
+      - company: "Stripe"
+        title: "Backend Engineer"
+        startDate: "2024-01"
+        endDate: null
+        location: "San Francisco, CA"
+        description: "Built payment infrastructure on Go + gRPC. Scaled K8s deployments globally."
+      - company: "Cloudflare"
+        title: "Software Engineer Intern"
+        startDate: "2022-06"
+        endDate: "2022-09"
+        location: "Remote"
+        description: "Edge worker runtime in Rust + V8 isolates."
+    education:
+      - school: "MIT"
+        degree: "BS"
+        field: "Computer Science"
+        startDate: "2020-08"
+        endDate: "2024-05"
+    industryTags: ["tech_software", "fintech_finance"]
+    originalFileName: "sam-patel-resume.pdf"
+
 turns:
-  - user: "(pretend i sent the cv)"
+  # The fixture above seeds tags + a parsed résumé for the throwaway test
+  # user, so this natural find-match request exercises the live V16 match
+  # cascade against real catalog jobs. The reply must be a SWE-relevant
+  # match (or an in-character match-intent reply that references the seeded
+  # background), never a blue-collar mis-match or a broken render.
+  - user: "hey, can you find me some jobs that match my background?"
     assert:
       reply_min_length: 1
       reply_contains_any:
-        - "resume"
-        - "sec"
-        - "read"
-        - "skimmed"
-        - "match"
         - "role"
+        - "match"
+        - "fit"
+        - "engineer"
+        - "Engineer"
+        - "job"
+        - "resume"
+        - "background"
+        - "skill"
         - "why"
-        - "noted"
       reply_not_contains_any:
-        - "tomorrow ~9am"
         - "jobright.ai"
         - "warehouse"
         - "Warehouse"

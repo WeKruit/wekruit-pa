@@ -76,10 +76,12 @@ describe("RecruiterBoardOps selected-review layout", () => {
     assert.match(source, /setBulkSelectionForSubmissions\(pageRows, e\.target\.checked\)/)
   })
 
-  it("sorts each role page by AI fit quality before paginating", () => {
-    assert.match(source, /function boardSubmissionQualityScore\(submission: BoardSubmissionDoc\): number/)
-    assert.match(source, /function sortSubmissions\(submissions: BoardSubmissionDoc\[\]\): BoardSubmissionDoc\[\] \{[\s\S]*boardSubmissionQualityScore\(b\) - boardSubmissionQualityScore\(a\)/)
-    assert.match(source, /if \(Math\.abs\(qualityDelta\) > 0\.000001\) return qualityDelta/)
+  it("sorts each role page lexicographically (verdict → confidence band → sub-score) before paginating", () => {
+    // The ranking math is unit-tested in board-submission-rank.test.ts; here we
+    // only assert the page wires the lexicographic comparator (not a weighted sum).
+    assert.match(source, /from "\.\/board-submission-rank\.js"/)
+    assert.match(source, /function sortSubmissions\(submissions: BoardSubmissionDoc\[\]\): BoardSubmissionDoc\[\] \{[\s\S]*compareRankKeys\(boardSubmissionRankKey\(a\), boardSubmissionRankKey\(b\)\)/)
+    assert.doesNotMatch(source, /boardSubmissionQualityScore/, "the arbitrary weighted-sum score must be gone")
     assert.match(source, /function buildJobGroups\(submissions: BoardSubmissionDoc\[\]\): BoardJobGroup\[\] \{[\s\S]*const sorted = sortSubmissions\(list\)/)
     assert.match(source, /submissions: sorted,\n\s+pendingCount: sorted\.filter\(isPending\)\.length,/)
     assert.match(source, /const pageRows = job\.submissions\.slice\(start, start \+ BOARD_SUBMISSION_PAGE_SIZE\)/)

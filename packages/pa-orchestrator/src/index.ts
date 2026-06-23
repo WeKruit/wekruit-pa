@@ -7492,7 +7492,7 @@ export {
   type PreScreenStateProvider,
   type PreScreenTerminal,
 } from "./prescreen/state.js"
-export { PreScreenPipeline, hardFilterClarifyText, prescreenReviewPendingAckText, terminalText } from "./prescreen/pipeline.js"
+export { PreScreenPipeline, hardFilterClarifyText, prescreenReviewPendingAckText, prescreenReviewPendingNotPassAckText, terminalText } from "./prescreen/pipeline.js"
 export type {
   ComposeClarifyInput,
   PreScreenClarifyComposer,
@@ -7505,6 +7505,8 @@ export type {
 // agent-behavior change lands once and propagates everywhere.
 export {
   ACTIVE_PRESCREEN_TIMEOUT_MS,
+  ACTIVE_PRESCREEN_MAX_AGE_MS,
+  isPrescreenSessionPastMaxAge,
   RECENT_TERMINAL_PRESCREEN_GUARD_MS,
   FirestoreSessionFinder,
   InMemorySessionFinder,

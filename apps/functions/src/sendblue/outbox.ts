@@ -27,13 +27,14 @@ import { normalizePeer } from "./peer.js"
 import { SendblueClientError, SendblueServerError, sendImessage as defaultSendImessage } from "./sendblue-client.js"
 import { sendTypingIndicator as defaultSendTypingIndicator, computeTypingDwellMs } from "./typing-indicator.js"
 import type { SendblueSendResponse } from "./types.js"
-import { getFlag, getDailyOutboundCount, incrementDailyOutbound } from "@pa/pa-persistence"
+import { getFlag, getDailyOutboundCount, isDailyContactKnown, incrementDailyOutbound } from "@pa/pa-persistence"
 import { recordAuditEvent } from "./audit.js"
 import { findSendbluePoolNumber, loadSendbluePool } from "./pool.js"
 import { countRecentSendsForNumber, effectiveSendCap, sendCapWindowCutoffIso } from "./send-cap.js"
 import { outboundExpiresAtTs } from "./ttl.js"
 import { createHash } from "node:crypto"
 import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
+import { isSyntheticRecipientNumber } from "./synthetic-recipient.js"
 
 const OUT = PA_COLLECTIONS.outbound
 
@@ -131,6 +132,46 @@ export const OUTBOX_INBOUND_EVIDENCE_EXEMPT_PHONES: ReadonlySet<string> = new Se
   "+12154034668",
 ])
 
+// ── 2026-06-19 incident — synthetic / test recipients must NEVER reach Sendblue ─
+/**
+ * The scenario harness (`tests/scenarios/runner.mjs`) mints synthetic users in
+ * the reserved `+1999999xxxx` range and injects `harness_`-prefixed inbound
+ * events. When the harness runs against the PROD project those synthetic inbound
+ * rows satisfy RULE 1 (prior-inbound evidence) and the orchestrator enqueues
+ * real `pa-outbound` rows — which POST to Sendblue and get rejected
+ * (`INBOUND_ONLY_PLAN`) on every retry, an unsolicited-cold-text path that could
+ * also hit a REAL never-inbound number.
+ *
+ * This is the last-line hard exclusion at the outbox choke point: any send to
+ * the reserved synthetic phone range, or any row carrying an e2e/test marker, is
+ * terminally blocked BEFORE any Sendblue POST. No exemption (not dev phones, not
+ * runtime-approved) — synthetic numbers are never deliverable by construction.
+ *
+ * The reserved-range regex now lives in `./synthetic-recipient.ts`, the single
+ * source of truth also enforced as a hard backstop inside every low-level
+ * Sendblue `send*` function (sendImessage / typing / reaction / read-receipt),
+ * so no send path — outbox OR direct transport — can reach a synthetic number.
+ */
+export function isSyntheticOutboundRecipient(
+  toPeer: string,
+  data: Record<string, unknown>,
+): boolean {
+  if (isSyntheticRecipientNumber(toPeer)) return true
+  if ((data as { e2eTest?: unknown }).e2eTest === true) return true
+  const harness = (data as { harness?: unknown }).harness
+  if (harness && typeof harness === "object" && "runner" in (harness as object)) return true
+  const rawMeta = (data as { rawMeta?: { harness?: unknown } }).rawMeta
+  if (
+    rawMeta &&
+    typeof rawMeta === "object" &&
+    rawMeta.harness &&
+    typeof rawMeta.harness === "object"
+  ) {
+    return true
+  }
+  return false
+}
+
 /**
  * Positive-evidence cache. A handle that EVER had inbound never loses that
  * property, so caching `true` across invocations of the same container is
@@ -190,7 +231,21 @@ function normalizedNonEmptyHandles(values: unknown[]): string[] {
   return handles
 }
 
+/**
+ * 2026-06-19 — a synthetic scenario-harness inbound row (`harness_` id,
+ * `rawPayload.harness.runner`, or `harness:` idempotencyKey) is NOT real
+ * candidate consent and must never satisfy the RULE 1 prior-inbound gate.
+ */
+export function isHarnessInboundEvent(data: Record<string, unknown>): boolean {
+  const harness = readDottedField(data, "rawPayload.harness")
+  if (harness && typeof harness === "object") return true
+  const idem = data.idempotencyKey
+  if (typeof idem === "string" && idem.startsWith("harness:")) return true
+  return false
+}
+
 export function inboundEventMatchesOutboundHandle(data: Record<string, unknown>, toHandle: string): boolean {
+  if (isHarnessInboundEvent(data)) return false
   const actualTransportHandles = normalizedNonEmptyHandles(
     INBOUND_PROVIDER_SENDER_FIELDS.map((field) => readDottedField(data, field))
   )
@@ -216,9 +271,10 @@ export async function hasPriorInboundEvidence(
       const snap = await db
         .collection(PA_COLLECTIONS.inboundEvents)
         .where(field, "==", toHandle)
-        .limit(1)
+        .limit(5)
         .get()
-      if (!snap.empty) {
+      // Synthetic harness rows are not consent — exclude them (2026-06-19).
+      if (snap.docs.some((doc) => !isHarnessInboundEvent(doc.data()))) {
         priorInboundEvidenceCache.add(toHandle)
         return { ok: true }
       }
@@ -670,6 +726,33 @@ export async function paSendblueOutboxHandler(
     return
   }
 
+  // ---- 3a. Synthetic / test recipient hard block (2026-06-19 incident) ----
+  // Reserved +1999999xxxx range or any e2e/harness-marked row is terminally
+  // blocked BEFORE any duplicate guard, quota, typing, evidence check, or POST.
+  // These numbers are never deliverable; the scenario harness must not leak
+  // unsolicited cold texts into Sendblue when run against prod.
+  if (isSyntheticOutboundRecipient(toPeer, data as Record<string, unknown>)) {
+    await ref.set(
+      {
+        status: "blocked_synthetic_recipient",
+        error: "blocked: synthetic/test recipient (reserved +1999999xxxx or e2e marker)",
+        blockedBySyntheticGate: true,
+        updatedAt: now().toISOString(),
+        expiresAtTs: outboundExpiresAtTs(now()),
+      },
+      { merge: true }
+    )
+    log("pa.outbox.blocked_synthetic_recipient", {
+      severity: "WARNING",
+      docId,
+      userId,
+      toE164: toPeer,
+      runtimeSource: String((data as { runtimeSource?: unknown }).runtimeSource ?? ""),
+      idempotencyKey: typeof data.idempotencyKey === "string" ? data.idempotencyKey : null,
+    })
+    return
+  }
+
   // ---- 3b. Duplicate-send guard (2026-06-10 trust audit, fix 3) ----------
   // Identical body to the same user within 5 minutes that already SENT →
   // terminal status "duplicate_skipped", no POST. Rows explicitly marked
@@ -864,29 +947,32 @@ export async function paSendblueOutboxHandler(
     }
   }
 
-  // ---- 5. Daily-quota gate (Phase 26 T2, flag-driven limit) -----------
-  // 2026-05-19 — moved BEFORE the typing indicator. With typing default-on
-  // (Adam directive), firing a typing bubble for a send that will be
-  // hard-blocked by quota would leak a phantom typing event to the user.
-  // Quota first, typing second, send third.
+  // ---- 5. Daily NEW-CONTACT quota gate (Phase 26 T2, flag-driven limit) ---
+  // Counts unique phone numbers contacted today, NOT total messages. A prescreen
+  // conversation with 5 Q&A rounds = 1 contact. Prevents mid-conversation drops
+  // that silenced Prabhnoor+Monika on 2026-06-16 (quota hit 1000/1000 messages
+  // while both were mid-prescreen → closing messages failed → "You there?").
   const quotaLimit = Number(await getFlag(deps.db, "sendblueDailyQuota", { env: process.env }, 1000))
-  const currentCount = await getDailyOutboundCount(deps.db, now())
-  if (currentCount >= quotaLimit) {
-    try { await recordAuditEvent(deps.db, { type: "quota_hardblock", channel: "imessage_sendblue", toNumber: toPeer, reason: `count=${currentCount} limit=${quotaLimit}` }) } catch {}
-    await ref.set({ status: "failed", error: `sendblue daily quota reached (${currentCount}/${quotaLimit})`, updatedAt: now().toISOString(), expiresAtTs: outboundExpiresAtTs(now()) }, { merge: true })
-    logOutboundFailure(log, {
-      docId,
-      userId,
-      idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
-      lastError: `sendblue daily quota reached (${currentCount}/${quotaLimit})`,
-      attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
-      body,
-      terminalStatus: "failed",
-    })
-    return
-  }
-  if (currentCount >= Math.floor(quotaLimit * 0.8)) {
-    try { await recordAuditEvent(deps.db, { type: "quota_soft", channel: "imessage_sendblue", toNumber: toPeer, reason: `count=${currentCount} limit=${quotaLimit}` }) } catch {}
+  const alreadyKnownContact = await isDailyContactKnown(deps.db, toPeer, now())
+  if (!alreadyKnownContact) {
+    const currentCount = await getDailyOutboundCount(deps.db, now())
+    if (currentCount >= quotaLimit) {
+      try { await recordAuditEvent(deps.db, { type: "quota_hardblock", channel: "imessage_sendblue", toNumber: toPeer, reason: `new_contacts=${currentCount} limit=${quotaLimit}` }) } catch {}
+      await ref.set({ status: "failed", error: `sendblue daily new-contact quota reached (${currentCount}/${quotaLimit})`, updatedAt: now().toISOString(), expiresAtTs: outboundExpiresAtTs(now()) }, { merge: true })
+      logOutboundFailure(log, {
+        docId,
+        userId,
+        idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+        lastError: `sendblue daily new-contact quota reached (${currentCount}/${quotaLimit})`,
+        attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+        body,
+        terminalStatus: "failed",
+      })
+      return
+    }
+    if (currentCount >= Math.floor(quotaLimit * 0.8)) {
+      try { await recordAuditEvent(deps.db, { type: "quota_soft", channel: "imessage_sendblue", toNumber: toPeer, reason: `new_contacts=${currentCount} limit=${quotaLimit}` }) } catch {}
+    }
   }
 
   // ---- 5b. Typing indicator (D-06) -----------------------------
@@ -1045,7 +1131,7 @@ export async function paSendblueOutboxHandler(
       },
       { merge: true }
     )
-    try { await incrementDailyOutbound(deps.db, now()) } catch {}
+    try { await incrementDailyOutbound(deps.db, now(), toPeer) } catch {}
     log("[sendblue][outbox] sent", { docId, toPeer, messageHandle, mediaDropped })
     return
   } catch (err) {

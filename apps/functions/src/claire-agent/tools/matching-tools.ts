@@ -76,6 +76,8 @@ import type { ClaireToolContext, FindMatchResult } from "../types.js"
 import { runCandidatePrivacyRequest } from "../../production-hardening.js"
 import { runPreScreenForUser } from "../../prescreen-session-start.js"
 import { isStaleClosedPrescreenSession } from "../../prescreen-staleness.js"
+import { getRecentSentMessages } from "../delivery.js"
+import { isNearDuplicateOfAny } from "../dedup.js"
 
 const PA_USERS_COLLECTION = "pa-users"
 const JOB_PROFILES_COLLECTION = "pa-job-profiles"
@@ -114,6 +116,11 @@ async function readMatchingSlice(
       ...(typeof tags.minSalary === "number" ? { minSalary: tags.minSalary } : {}),
       ...(asArrOrScalar(tags.companySize) ? { companySize: asArrOrScalar(tags.companySize) } : {}),
       ...(typeof tags.careerStage === "string" ? { careerStage: tags.careerStage } : {}),
+      ...(Array.isArray(tags.yoeRange) &&
+      tags.yoeRange.length === 2 &&
+      tags.yoeRange.every((n) => typeof n === "number" && Number.isFinite(n))
+        ? { yoeRange: [tags.yoeRange[0] as number, tags.yoeRange[1] as number] as [number, number] }
+        : {}),
     }
   } catch (err) {
     log("pa.claire.read_tags_error", {
@@ -1104,6 +1111,67 @@ export async function deliverRecBubbles(
           .filter((s) => typeof s === "string" && s.trim().length > 0)
           .map((text) => ({ text }))
   if (rows.length === 0) return { delivered: false, collabCount: 0 }
+
+  // RE-PULL SILENCE GUARD (Shivam incident, 2026-06-09): when find_match re-runs and the matcher
+  // returns the SAME roles it already sent (no fresh inventory), each role bubble is byte-identical to
+  // a recent send. We would POST them here (bumping the agent's sentTextCount, so the anti-silence
+  // backstop is SUPPRESSED), and then the OUTBOX silently drops every one as `duplicate_skipped` (a
+  // separate downstream CF the agent process can never observe) → the candidate gets ZERO message →
+  // total silence. The dedup is correct (we must NOT re-spam identical roles), but silence is not.
+  //
+  // So compare each role line against the last few messages Claire actually SENT this session. When
+  // EVERY deliverable role bubble is a recent near-dup (the pure re-pull case), do NOT post the
+  // identical batch (the outbox would eat it). Instead send ONE guaranteed-FRESH status-aware line so
+  // the candidate ALWAYS hears back — and report delivered:true so the agent doesn't ALSO narrate the
+  // same roles. Fail-open: the recent-sent read returns [] on any error → original delivery path runs
+  // unchanged (the outbox duplicate guard still protects against true double-sends).
+  try {
+    const recentSent = await getRecentSentMessages(ctx, 8)
+    if (recentSent.length > 0) {
+      const anyNewRole = rows.some((r) => !isNearDuplicateOfAny(r.text, recentSent))
+      if (!anyNewRole) {
+        // The last-resort line MUST itself clear BOTH dedup layers (the cross-turn near-dup guard AND
+        // the outbox byte-identical guard) on a rapid double re-pull ("Yeah" twice in minutes) — else
+        // we'd be silent again. Rotate among distinct phrasings by a coarse 1-minute clock bucket so
+        // two back-to-back re-pulls don't emit a byte-identical line, while a single trigger is stable.
+        const variants = [
+          "i pulled your matches again and it's the same set i already sent you above — no brand-new " +
+            "roles have landed since. want me to check where your screens stand, or widen what i'm " +
+            "searching for?",
+          "just re-ran your search — still the same roles i shared earlier, nothing newer has come in " +
+            "yet. i can look up the status of your screens, or broaden the criteria if you'd like?",
+          "checked again and there's nothing fresh beyond what i already sent you — same matches for " +
+            "now. happy to pull up where each of your screens stands, or open up the search wider?",
+        ]
+        const freshLine = variants[Math.floor(Date.now() / 60000) % variants.length]!
+        let fresh = false
+        try {
+          await ctx.transport.sendText(freshLine)
+          fresh = true
+        } catch (e) {
+          ctx.log("pa.claire.find_match.repull_fresh_send_failed", {
+            userId: ctx.userId,
+            err: e instanceof Error ? e.message : String(e),
+          })
+        }
+        ctx.log("pa.claire.find_match.repull_all_duplicate", {
+          userId: ctx.userId,
+          roles: rows.length,
+          freshLineSent: fresh,
+        })
+        // delivered:true ⇒ the agent stays silent (no duplicate narration). The fresh line is on the
+        // wire; if its own send failed, delivered:false lets the agent narrate the no-new-roles case.
+        return { delivered: fresh, collabCount: 0 }
+      }
+    }
+  } catch (e) {
+    // Fail-open: a recent-sent read error must NEVER block delivery. Fall through to the normal path.
+    ctx.log("pa.claire.find_match.repull_check_failed", {
+      userId: ctx.userId,
+      err: e instanceof Error ? e.message : String(e),
+    })
+  }
+
   const collab = (res.collab ?? []).filter((c) => c.prescreenReady)
   // 2026-06-10 trust audit (fix 1) — count ROLE bubbles that actually reached the transport so a
   // mid-batch send failure degrades correctly: if NO role bubble went out, delivered:false (the
@@ -1199,6 +1267,9 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "Durable visa / salary-floor / industry / company-size / career-stage statements go here too " +
       "(e.g. 'I need H1B sponsorship' → visaStatus:\"sponsor_needed\"; 'nothing under 140k' → minSalary:140000; " +
       "'healthcare, not fintech' → industrySector:[healthcare_and_life_sciences] AND avoidIndustrySector:[financial_technology]). " +
+      "When they state a years-of-experience requirement for the ROLES they want, set yoeMin and yoeMax " +
+      "('make sure these are all 3 to 4 years of experience' / '3-4 yrs' → yoeMin:3, yoeMax:4; a single number Y → " +
+      "yoeMin:max(0,Y-1), yoeMax:Y+1) — this hard-caps the seniority of matched jobs so 5+yr roles are dropped. " +
       "Pass null for anything not stated.",
     parameters: z.object({
       onlyRoleFunctions: z.array(RoleFunctionEnum).nullable(),
@@ -1213,6 +1284,13 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       avoidIndustrySector: z.array(IndustrySectorEnum).nullable(),
       companySize: z.array(CompanySizeEnum).nullable(),
       careerStage: CareerStageEnum.nullable(),
+      // yoeRange is expressed as two SCALAR params, not a z.tuple — OpenAI's
+      // function-schema validator rejects tuple/prefixItems shapes with a 400
+      // "Invalid schema for function 'set_matching_preferences'", which threw
+      // EVERY triage turn that loaded this tool (live SEV 2026-06-21). Scalars
+      // mirror minSalary (known-good). Rebuilt into [min,max] for the reducer.
+      yoeMin: z.number().nonnegative().nullable(),
+      yoeMax: z.number().nonnegative().nullable(),
     }),
     async execute({
       onlyRoleFunctions,
@@ -1227,7 +1305,15 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       avoidIndustrySector,
       companySize,
       careerStage,
+      yoeMin,
+      yoeMax,
     }) {
+      // Rebuild the [min,max] tuple the reducer expects from the two scalars.
+      // Only a valid pair (both finite) forms a range; otherwise leave unset.
+      const yoeRange: [number, number] | null =
+        typeof yoeMin === "number" && typeof yoeMax === "number"
+          ? [Math.min(yoeMin, yoeMax), Math.max(yoeMin, yoeMax)]
+          : null
       const current = await readMatchingSlice(ctx.db, ctx.userId, ctx.log)
       const { changed, removedFromPositive } = reduceMatchingPreferences(current, {
         onlyRoleFunctions,
@@ -1242,6 +1328,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
         avoidIndustrySector,
         companySize,
         careerStage,
+        yoeRange,
       })
       if (Object.keys(changed).length === 0) {
         return { ok: true, changed: {}, summary: "Nothing new to save." }

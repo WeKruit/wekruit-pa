@@ -1,14 +1,19 @@
 /**
- * Phase 26 T2 — Sendblue daily-outbound counter (P9-Prod-Ops).
+ * Phase 26 T2 — Sendblue daily NEW-CONTACT counter (P9-Prod-Ops).
  *
- * Doc shape: `pa-outbound-daily/{YYYYMMDD}` → `{ count, lastUpdatedAt }`.
+ * Counts unique phone numbers contacted per day, NOT total messages sent.
+ * A candidate who receives 5 prescreen questions counts as 1 contact.
+ * A new phone never messaged today counts as 1 new contact.
+ *
+ * Doc shape: `pa-outbound-daily/{YYYYMMDD}` → `{ count, contacts: string[], lastUpdatedAt }`.
  * Operator runs Firestore TTL on `expiresAt` (set to date+30d) so historic
  * counters self-collect after a month.
  *
- * `incrementDailyOutbound(db, date)` is transactional and returns the post-
- * increment count so callers can decide soft-warn vs hard-block in a single
- * round-trip. `getDailyOutboundCount(db, date)` is a read-only counterpart
- * for dashboards / pre-send observers.
+ * `incrementDailyOutbound(db, date, phone?)` only increments when `phone` is
+ * not already in today's contacts set. Without a phone arg, always increments
+ * (legacy compat — callers should migrate to pass phone).
+ *
+ * `getDailyOutboundCount(db, date)` returns the unique-contact count.
  */
 
 import type { Firestore } from "firebase-admin/firestore"
@@ -35,24 +40,54 @@ export async function getDailyOutboundCount(
   return Number(v?.count ?? 0)
 }
 
+/**
+ * Check whether `phone` is already a known contact for today's bucket.
+ * Used by the quota gate to skip the increment for existing contacts.
+ */
+export async function isDailyContactKnown(
+  db: Firestore,
+  phone: string,
+  date: Date = new Date()
+): Promise<boolean> {
+  const bucket = formatDailyBucket(date)
+  const ref = db.collection(OUTBOUND_QUOTA_COLLECTION).doc(bucket)
+  const snap = await ref.get()
+  if (!snap.exists) return false
+  const v = snap.data() as { contacts?: string[] } | undefined
+  return Array.isArray(v?.contacts) && v.contacts.includes(phone)
+}
+
+/**
+ * Record a new contact and increment the daily counter. If `phone` is provided
+ * and already in today's contact set, this is a no-op (returns current count
+ * without incrementing). Without `phone`, always increments (legacy compat).
+ */
 export async function incrementDailyOutbound(
   db: Firestore,
-  date: Date = new Date()
+  date: Date = new Date(),
+  phone?: string
 ): Promise<number> {
   const bucket = formatDailyBucket(date)
   const ref = db.collection(OUTBOUND_QUOTA_COLLECTION).doc(bucket)
   const nowIso = date.toISOString()
-  // expiresAt = bucket date + 30 days, for Firestore TTL eligibility
   const expiresAt = new Date(date.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
   return await db.runTransaction(async (t) => {
     const snap = await (
       t.get as (r: typeof ref) => Promise<{ exists: boolean; data: () => unknown }>
     )(ref)
-    const prev = snap.exists ? ((snap.data() as { count?: number }) ?? {}) : {}
+    const prev = snap.exists ? ((snap.data() as { count?: number; contacts?: string[] }) ?? {}) : {}
+    const contacts: string[] = Array.isArray(prev.contacts) ? prev.contacts : []
+
+    if (phone && contacts.includes(phone)) {
+      return Number(prev.count ?? 0)
+    }
+
     const next = Number(prev.count ?? 0) + 1
+    const nextContacts = phone ? [...contacts, phone] : contacts
     const payload = {
       bucket,
       count: next,
+      contacts: nextContacts,
       lastUpdatedAt: nowIso,
       expiresAt,
     }

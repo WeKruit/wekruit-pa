@@ -22,6 +22,7 @@
  * its job, NEVER this callable's.
  */
 
+import { randomUUID } from "node:crypto"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { defineSecret } from "firebase-functions/params"
 import { HttpsError, onCall } from "firebase-functions/v2/https"
@@ -42,10 +43,22 @@ function recruiterAiSuggestedTier(submission: Record<string, unknown>): ReturnTy
   const ai = submission.aiEvaluation
   if (!ai || typeof ai !== "object") return null
   const verdict = (ai as { verdict?: unknown }).verdict
-  const hardGaps =
-    ((ai as { checklist?: { hard?: { gaps?: unknown } } }).checklist?.hard?.gaps as unknown[] | undefined)?.length ?? 0
   if (verdict !== "advance" && verdict !== "borderline" && verdict !== "reject") return null
-  return suggestTierFromRecruiterAi(verdict as RecruiterAiVerdict, hardGaps)
+  const cl = (ai as { checklist?: Record<string, { met?: number; total?: number; flagged?: number; gaps?: unknown }> }).checklist ?? {}
+  const ratio = (t?: { met?: number; total?: number }) =>
+    t && Number(t.total) > 0 ? Math.max(0, Math.min(1, Number(t.met ?? 0) / Number(t.total))) : 0
+  const antiRatio = cl.anti && Number(cl.anti.total) > 0 ? Math.max(0, Math.min(1, Number(cl.anti.flagged ?? 0) / Number(cl.anti.total))) : 0
+  const hardGaps = (cl.hard?.gaps as unknown[] | undefined)?.length ?? 0
+  const bg = (ai as { background?: { school?: { verdict?: unknown }; company?: { verdict?: unknown } } }).background
+  const strongBackground = bg?.school?.verdict === "strong" || bg?.company?.verdict === "strong"
+  return suggestTierFromRecruiterAi(verdict as RecruiterAiVerdict, hardGaps, {
+    confidence: Number((ai as { confidence?: unknown }).confidence ?? 0),
+    strongBackground,
+    hardRatio: ratio(cl.hard),
+    fitRatio: ratio(cl.fit),
+    bonusRatio: ratio(cl.bonus),
+    antiRatio,
+  })
 }
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
@@ -67,14 +80,29 @@ const RecruiterCandidateRejectionSchema = z.object({
 // rubric item id/text. "save_marks" persists this without a status change.
 const ChecklistMarksSchema = z.record(z.string().max(400), z.enum(["met", "gap", "flag", "clear"]))
 
+// One "company send": a candidate forwarded to a specific company's hiring
+// manager, tracked independently so one candidate can be shopped to several
+// companies, each with its own waiting-for-HM state + feedback. Adam: "mark 给
+// 哪几个公司发了 ... track 每个公司都看了谁反馈是啥".
+export const COMPANY_SEND_STATUSES = ["sent", "waiting_hm", "interested", "passed"] as const
+export type CompanySendStatus = (typeof COMPANY_SEND_STATUSES)[number]
+const CompanySendInputSchema = z.object({
+  id: z.string().max(64).optional(),
+  company: z.string().transform((v) => v.trim()).pipe(z.string().min(1).max(200)),
+  status: z.enum(COMPANY_SEND_STATUSES).optional(),
+  feedback: z.string().max(4_000).optional(),
+})
+
 export const AdminRecruiterSubmissionActionInputSchema = z.object({
   submissionId: z.string().transform((value) => value.trim()).pipe(z.string().min(1)),
-  action: z.enum(["advance", "reject", "reviewing", "duplicate", "request_info", "wekruit_interview", "client_review", "hired", "comment", "save_marks"]),
+  action: z.enum(["advance", "reject", "reviewing", "duplicate", "request_info", "wekruit_interview", "client_review", "hired", "comment", "save_marks", "company_send_upsert", "company_send_remove"]),
   note: z.string().max(4_000).optional(),
   requestMessage: z.string().max(4_000).optional(),
   message: z.string().optional(),
   rejection: RecruiterCandidateRejectionSchema.optional(),
   checklistMarks: ChecklistMarksSchema.optional(),
+  companySend: CompanySendInputSchema.optional(),
+  companySendId: z.string().max(64).optional(),
   adminToken: z.string().optional(),
 })
 export type AdminRecruiterSubmissionActionInput = z.infer<typeof AdminRecruiterSubmissionActionInputSchema>
@@ -91,8 +119,18 @@ const ACTION_TO_STATUS = {
   hired: "hired",
 } as const
 
+export interface CompanySend {
+  id: string
+  company: string
+  status: CompanySendStatus
+  feedback?: string
+  sentAt: string
+  updatedAt: string
+  by?: string
+}
+
 export type AdminRecruiterSubmissionActionResult =
-  | { ok: true; submissionId: string; status: string }
+  | { ok: true; submissionId: string; status: string; companySends?: CompanySend[] }
   | { ok: true; submissionId: string; commentId: string }
 
 function cleanString(value: unknown): string | undefined {
@@ -173,6 +211,51 @@ export async function runAdminRecruiterSubmissionAction(
       { merge: true },
     )
     return { ok: true, submissionId, status: cleanString((snap.data() ?? {}).status) ?? "" }
+  }
+
+  if (action === "company_send_upsert" || action === "company_send_remove") {
+    const snap = await ref.get()
+    if (!snap.exists) throw new HttpsError("not-found", "submission_not_found")
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    const at = deps.now?.() ?? new Date().toISOString()
+    const by = cleanString(deps.actorEmail) ?? "admin_token"
+    const existing: CompanySend[] = Array.isArray(data.companySends)
+      ? (data.companySends as unknown[]).filter((x): x is CompanySend => Boolean(x) && typeof x === "object")
+      : []
+    let next: CompanySend[]
+    if (action === "company_send_remove") {
+      const id = cleanString(parsed.data.companySendId)
+      if (!id) throw new HttpsError("invalid-argument", "companySendId_required")
+      next = existing.filter((s) => s.id !== id)
+    } else {
+      const input = parsed.data.companySend
+      if (!input) throw new HttpsError("invalid-argument", "companySend_required")
+      const id = cleanString(input.id) ?? randomUUID()
+      const prior = existing.find((s) => s.id === id)
+      const feedback = input.feedback !== undefined ? input.feedback.trim() : prior?.feedback
+      next = (() => {
+        const send: CompanySend = {
+          id,
+          company: input.company,
+          status: input.status ?? prior?.status ?? "sent",
+          ...(feedback ? { feedback } : {}),
+          sentAt: prior?.sentAt ?? at,
+          updatedAt: at,
+          by,
+        }
+        return prior ? existing.map((s) => (s.id === id ? send : s)) : [...existing, send]
+      })()
+    }
+    const patch: Record<string, unknown> = { companySends: next, updatedAt: at }
+    // First company send promotes the submission into the "with client" stage
+    // (the waiting-for-hiring-manager middle state), unless already terminal.
+    const cur = cleanString(data.status) ?? ""
+    if (action === "company_send_upsert" && next.length > 0 && !["hired", "rejected", "duplicate", "client_review"].includes(cur)) {
+      patch.status = "client_review"
+      patch.statusHistory = appendStatusHistory(data, "client_review", at)
+    }
+    await ref.set(patch, { merge: true })
+    return { ok: true, submissionId, status: (patch.status as string | undefined) ?? cur, companySends: next }
   }
 
   const snap = await ref.get()

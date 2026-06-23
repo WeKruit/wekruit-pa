@@ -143,7 +143,7 @@ describe("post-call follow-up", () => {
     assert.equal(Array.from(db.docs.entries()).filter(([path]) => path.startsWith("pa-outbound/")).length, 1)
   })
 
-  it("does not thank failed or no-turn calls", async () => {
+  it("never thanks a failed call, but DOES thank a connected call with no transcript", async () => {
     const failed = await handleVoicePostCallFollowup({
       bookingId: "b-failed",
       before: { voiceState: "dialing" },
@@ -152,6 +152,9 @@ describe("post-call follow-up", () => {
     })
     assert.equal(failed.reason, "not_completed_transition")
 
+    // Connected call that ended with no recorded transcript → generic thanks +
+    // job-rec opt-in still sent (Adam 2026-06-21: a hangup must always send a text;
+    // a short/latency-test call previously got nothing via the no_voice_turns skip).
     const db = new FakeDb()
     const booking: OutboundBookingRow = {
       paUserId: "u1",
@@ -166,8 +169,11 @@ describe("post-call follow-up", () => {
       db: db as never,
       nowIso: "2026-06-01T00:00:00.000Z",
     })
-    assert.equal(empty.reason, "no_voice_turns")
-    assert.equal(db.docs.get("outbound-bookings/b-empty")!.postCallFollowupStatus, "skipped")
-    assert.equal(Array.from(db.docs.keys()).some((path) => path.startsWith("pa-outbound/")), false)
+    assert.equal(empty.action, "sent")
+    assert.match(empty.message ?? "", /pull a few roles/i)
+    const outbound = Array.from(db.docs.entries()).filter(([path]) => path.startsWith("pa-outbound/"))
+    assert.equal(outbound.length, 1)
+    assert.match(String(outbound[0]![1].body), /thanks for hopping on/i)
+    assert.equal(db.docs.get("outbound-bookings/b-empty")!.postCallFollowupStatus, "sent")
   })
 })

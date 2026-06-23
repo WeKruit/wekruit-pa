@@ -408,3 +408,33 @@ test("pipeline mode: speaks terminalCloseText (not the SMS-flavored terminal cop
   assert.ok(!text.includes("i'll text you"), "SMS-flavored close must not be spoken")
   assert.ok(fired, "onPipelineTerminal still fires")
 })
+
+// ── know-you-better drill persona ───────────────────────────────────────────
+import { buildKnowYouBetterInstructions } from "../worker.js"
+
+test("buildKnowYouBetterInstructions grounds the persona in the profile + budget", () => {
+  const out = buildKnowYouBetterInstructions(
+    {
+      userId: "u1",
+      displayName: "Jordan",
+      recentRoleTitle: "Senior SWE",
+      recentCompany: "Stripe",
+      skills: [{ name: "typescript" }, { name: "distributed systems" }],
+      yoeRange: [5, 7],
+      missingFields: [],
+    } as never,
+    360,
+  )
+  assert.match(out, /get to know you/i)
+  assert.match(out, /Senior SWE at Stripe/)
+  assert.match(out, /typescript/)
+  assert.match(out, /about 6 minute/i)
+  assert.match(out, /DRILL/)
+  assert.match(out, /do NOT recommend specific jobs/i)
+})
+
+test("buildKnowYouBetterInstructions handles an empty profile", () => {
+  const out = buildKnowYouBetterInstructions({ userId: "u1", missingFields: [] } as never, 120)
+  assert.match(out, /very little on file/i)
+  assert.match(out, /about 2 minute/i)
+})
