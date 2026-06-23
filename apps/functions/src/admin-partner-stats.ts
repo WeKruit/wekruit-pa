@@ -272,10 +272,10 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
 
       const hasPassTerminal = jobs.some((j) => j.prescreenTerminal === "PASS")
       const hasFailOrPause = jobs.some((j) => j.prescreenTerminal === "FAIL" || j.prescreenTerminal === "HARD_STOP" || j.prescreenTerminal === "PAUSE")
-      if (hasPassTerminal && (currentStage === "review_pending" || currentStage === "interviewing")) {
+      if (hasPassTerminal && (currentStage === "review_pending" || currentStage === "interviewing" || currentStage === "not_passed")) {
         currentStage = "pending_human_review"
         funnel.pendingHumanReview++
-      } else if (hasFailOrPause && !hasPassTerminal && (currentStage === "review_pending" || currentStage === "interviewing")) {
+      } else if (hasFailOrPause && !hasPassTerminal && (currentStage === "review_pending" || currentStage === "interviewing" || currentStage === "not_passed")) {
         currentStage = "rejected"
         funnel.rejected++
       }
