@@ -465,26 +465,25 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           identity: candidateParticipantIdentity,
         })
       }
-      // 2s of silence after the candidate joins before Claire speaks (Adam
-      // 2026-06-21) — a beat so the greeting doesn't talk over "hello?".
+      // A short 250ms beat so the greeting doesn't clip the candidate's "hello?".
+      // (Was 2s — that read as dead air on a phone call. Adam 2026-06-22.)
       if (!opts.defineAgent) {
-        await new Promise((r) => setTimeout(r, 2_000))
+        await new Promise((r) => setTimeout(r, 250))
       }
       const consentLine = buildConsentPrompt(callContext)
       try {
-        const speechHandle = session.say?.(consentLine, {
+        // Queue the consent line WITHOUT blocking on playout. The previous
+        // `await waitForSpeechPlayout(…, 12_000)` dead-aired the call for up to 12s
+        // whenever the SDK playout-complete event didn't fire — the real cause of
+        // the "20s to first message" (Adam 2026-06-22 live call: consent_prompt
+        // _failed:speech_playout_timeout). AgentSession serializes session.say()
+        // calls, so the Q1 kickoff below plays right after this — no phantom wait.
+        session.say?.(consentLine, {
           allowInterruptions: false,
           addToChatCtx: false,
         })
-        log("voice.consent_prompt_scheduled", {
-          bookingId,
-          lang: callContext.userProfile.preferredLang ?? "en",
-        })
-        await waitForSpeechPlayout(speechHandle, { timeoutMs: 12_000 })
         log("voice.consent_prompt_spoken", { bookingId, lang: callContext.userProfile.preferredLang ?? "en" })
-        // S5 — structured TCPA audit log capturing the consent-disclosure
-        // moment (paired with the prior-consent verification in
-        // voice-tcpa-checks/{bookingId}_<runId>).
+        // S5 — structured TCPA audit log capturing the consent-disclosure moment.
         emitConsentSpokenAudit(callContext, consentLine, log)
       } catch (err) {
         log("voice.consent_prompt_failed", {
@@ -511,7 +510,10 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
               : "Let's get started — tell me a bit about the kind of role you're looking for."
         }
         if (kickoff) {
-          await session.say?.(kickoff, { allowInterruptions: true })
+          // Queue (don't await) so the entry fn proceeds to arm the budget timer;
+          // AgentSession plays it right after the consent line. Awaiting the say
+          // handle risked the same never-firing playout hang as the consent line.
+          session.say?.(kickoff, { allowInterruptions: true })
           log("voice.worker.first_question_spoken", { bookingId, purpose: callContext.purpose })
         }
       } catch (err) {
