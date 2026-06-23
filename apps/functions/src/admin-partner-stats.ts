@@ -144,6 +144,34 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
   }
   funnel.signedUp = cohort.length
 
+  const cohortIds = cohort.map((c) => c.id)
+  const prescreenByUserJob = new Map<string, { terminal?: string; score?: number }>()
+  const CHUNK = 30
+  for (let i = 0; i < cohortIds.length; i += CHUNK) {
+    const chunk = cohortIds.slice(i, i + CHUNK)
+    const snap = await db.collection("pa-prescreen-sessions")
+      .where("userId", "in", chunk)
+      .select("userId", "jobId", "terminal", "score", "scoreMax")
+      .get().catch(() => ({ docs: [] as Array<{ data: () => Record<string, unknown> }> }))
+    for (const d of snap.docs) {
+      const ps = d.data()
+      const uid = ps.userId as string | undefined
+      const jid = ps.jobId as string | undefined
+      if (!uid || !jid) continue
+      const key = `${uid}__${jid}`
+      const existing = prescreenByUserJob.get(key)
+      const terminal = typeof ps.terminal === "string" ? ps.terminal : undefined
+      if (!existing || terminal === "PASS" || (terminal && !existing.terminal)) {
+        const scoreVal = typeof ps.score === "number" ? ps.score : undefined
+        const maxVal = typeof ps.scoreMax === "number" ? ps.scoreMax : undefined
+        prescreenByUserJob.set(key, {
+          terminal,
+          score: scoreVal != null && maxVal ? Math.round((scoreVal / maxVal) * 100) : undefined,
+        })
+      }
+    }
+  }
+
   const rows: PartnerStatsUserRow[] = await Promise.all(
     cohort.map(async ({ id, data: u }) => {
       const topMatch = u.source === targetSource
@@ -215,32 +243,10 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
         })
       }
 
-      const prescreenSnap = await db.collection("pa-prescreen-sessions")
-        .where("userId", "==", id).get().catch(() => ({ docs: [] as Array<{ data: () => Record<string, unknown> }> }))
-      const prescreenByJob = new Map<string, { terminal?: string; score?: number; scoreMax?: number; proposedTerminal?: string }>()
-      for (const pd of prescreenSnap.docs) {
-        const ps = pd.data()
-        const jid = ps.jobId as string | undefined
-        if (!jid) continue
-        const existing = prescreenByJob.get(jid)
-        const terminal = typeof ps.terminal === "string" ? ps.terminal : undefined
-        if (!existing || terminal === "PASS" || (terminal && !existing.terminal)) {
-          const scoreVal = typeof ps.score === "number" ? ps.score : undefined
-          const maxVal = typeof ps.scoreMax === "number" ? ps.scoreMax : undefined
-          const review = ps.review && typeof ps.review === "object" ? ps.review as Record<string, unknown> : undefined
-          prescreenByJob.set(jid, {
-            terminal,
-            score: scoreVal != null && maxVal ? Math.round((scoreVal / maxVal) * 100) : undefined,
-            scoreMax: maxVal,
-            proposedTerminal: typeof review?.proposedTerminal === "string" ? review.proposedTerminal : undefined,
-          })
-        }
-      }
-
       const jobs = jobStates.map((s) => {
         const parsed = CandidateJobStateSchema.safeParse(s.state)
         const meta = jobMeta.get(s.jobId) ?? { title: "Unknown", company: "" }
-        const ps = prescreenByJob.get(s.jobId)
+        const ps = prescreenByUserJob.get(`${id}__${s.jobId}`)
         return {
           jobId: s.jobId,
           jobTitle: meta.title,
@@ -308,7 +314,7 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
 export const paAdminPartnerStats = onCall(
   {
     region: "us-central1",
-    memory: "512MiB",
+    memory: "1GiB",
     maxInstances: 5,
     secrets: [PA_ADMIN_TOKEN],
   },
