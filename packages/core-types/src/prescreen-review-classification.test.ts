@@ -217,6 +217,19 @@ test("filterAndSortPrescreenRows supports review queue, terminal, action, draft,
     }).map((row) => row.id),
     ["pending-reject"],
   )
+  // Search matches candidate name (the whole point of attaching candidateName).
+  assert.deepEqual(
+    filterAndSortPrescreenRows([{ ...rows[0], candidateName: "Surbhit Agrawal" }], {
+      bucket: "all",
+      sort: "strict_priority",
+      search: "surbhit",
+      queue: "all",
+      terminal: "all",
+      action: "all",
+      draft: "all",
+    }).map((row) => row.id),
+    ["pending-reject"],
+  )
   assert.deepEqual(
     filterAndSortPrescreenRows(rows, {
       bucket: "all",

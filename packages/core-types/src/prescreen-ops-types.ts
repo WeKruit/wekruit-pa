@@ -109,6 +109,8 @@ export type PrescreenOpsSessionReview = {
 export type PrescreenOpsSessionRow = {
   id: string
   userId: string
+  /** Candidate display name (from pa-users) — so sessions are searchable by name. */
+  candidateName?: string
   jobId: string
   jobTitle?: string
   jobCompany?: string

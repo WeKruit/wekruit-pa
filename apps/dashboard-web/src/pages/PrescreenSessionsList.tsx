@@ -365,6 +365,16 @@ export default function PrescreenSessionsList() {
     }
   }
 
+  // Search filters fetched rows in-page, so a name in an unloaded page would never
+  // match. When a search is active, auto-load every page so the search covers the
+  // whole pool (loadAll caps at LOAD_ALL_MAX_PAGES pages — enough for the session set).
+  useEffect(() => {
+    if (search.trim() && nextCursor && !loadingAll && !loadingMore) {
+      void loadAll()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, nextCursor, loadingAll, loadingMore])
+
   function runBulkAction() {
     if (selectedPendingRows.length === 0) return
     if (bulkAction === "review") {
