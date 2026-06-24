@@ -24,6 +24,7 @@ import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { antiFlagRatio, boardSubmissionRankKey, checklistMetRatio, compareRankKeys } from "./board-submission-rank.js"
 import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
 import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "../components/prescreen/dual-pane.js"
+import { ReasonChips } from "../components/recruiter-reasons.js"
 import { auth, db } from "../lib/firebase.js"
 import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
@@ -896,17 +897,8 @@ function buildBoardChecklist(
     .sort((a, b) => CHECKLIST_TIER_ORDER.indexOf(a.kind) - CHECKLIST_TIER_ORDER.indexOf(b.kind))
 }
 
-/** Quick-reject chips grouped under candidate background, mirroring the recruiter
- *  submission screening design (school / GPA / degree / company pillars). */
-const BACKGROUND_REJECT_CHIPS: Array<{ id: string; label: string }> = [
-  { id: "weak_school", label: "Weak / non-target school" },
-  { id: "low_gpa", label: "Low GPA" },
-  { id: "degree_mismatch", label: "Degree / field mismatch" },
-  { id: "weak_company_pedigree", label: "Weak company pedigree" },
-  { id: "no_relevant_domain", label: "No relevant domain" },
-  { id: "over_leveled", label: "Over-leveled / too senior" },
-  { id: "under_leveled", label: "Under-leveled" },
-]
+// Reject reasons now come from the shared ../components/recruiter-reasons.js <ReasonChips>,
+// so the Board and the Submission view show the SAME full reason taxonomy (Adam 2026-06-23).
 
 const BACKGROUND_PILLARS: Array<{ key: "school" | "gpa" | "degree" | "company"; label: string }> = [
   { key: "school", label: "School" },
@@ -1584,31 +1576,8 @@ function CandidateReviewPanel({
               </label>
             </div>
             <div style={{ display: "grid", gap: 5 }}>
-              <div style={{ fontSize: 11, color: "#6f6256", fontWeight: 700 }}>Background quick-reject</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {BACKGROUND_REJECT_CHIPS.map((chip) => {
-                  const active = reasonChips.has(chip.id)
-                  return (
-                    <button
-                      key={chip.id}
-                      type="button"
-                      onClick={() => toggleReasonChip(chip.id)}
-                      style={{
-                        padding: "3px 10px",
-                        fontSize: 11,
-                        borderRadius: 999,
-                        cursor: "pointer",
-                        border: active ? "1px solid #d9a8a0" : "1px solid #e2d6cc",
-                        background: active ? "#fdeceA" : "#fff",
-                        color: active ? "#9c3a1d" : "#6f6256",
-                        fontWeight: active ? 700 : 500,
-                      }}
-                    >
-                      {active ? "✓ " : ""}{chip.label}
-                    </button>
-                  )
-                })}
-              </div>
+              <div style={{ fontSize: 11, color: "#6f6256", fontWeight: 700 }}>Reason — tap any that apply (saved with the rejection)</div>
+              <ReasonChips selected={reasonChips} onToggle={toggleReasonChip} />
             </div>
             <textarea
               value={rejectReason}
