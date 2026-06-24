@@ -116,6 +116,7 @@ export { paAdminBootstrap } from "./admin-bootstrap.js"
 // queries matching-jobs, formats per Bible v7.5.2, then hands the proposed
 // candidate message to Claire runtime.
 export { paJobRecDaily } from "./job-rec-daily.js"
+export { paReactivationSweepDaily } from "./reactivation-sweep.js"
 
 // Phase 51 (v1.5 / Stream-G.2) — TS-native tag cluster cache rebuild CF.
 // Triggered by pa-events doc {eventKind="matching:pipeline:completed"}.
@@ -1171,6 +1172,20 @@ async function processBrokerImessageEvent(
     },
     { merge: true }
   )
+
+  // Record last-inbound timestamp (Adam 2026-06-23) — the dormancy signal the 20-day reactivation
+  // sweep keys on. Best-effort; a write failure never blocks the turn. STOP messages also stamp it
+  // (harmless — doNotContact hard-excludes them from the sweep).
+  void db
+    .collection(PA_COLLECTIONS.users)
+    .doc(user.id)
+    .set({ lastInboundAt: nowIso() }, { merge: true })
+    .catch((err: unknown) =>
+      logger.warn("[onPaInbound] lastInboundAt stamp failed", {
+        userId: user.id,
+        err: err instanceof Error ? err.message : String(err),
+      }),
+    )
 
   // ── DETERMINISTIC SMS STOP/START GATE (Adam 2026-06-10, compliance) ──────
   // THE SEAM: this is the EARLIEST point on the direct broker path where userId,
