@@ -1828,22 +1828,21 @@ describe("recruiter submissions", () => {
     })
   })
 
-  it("requires the candidate expected salary range on recruiter submissions", () => {
-    assert.deepEqual(validateSubmission({
+  it("accepts missing expected salary range on recruiter submissions", () => {
+    const blankResult = validateSubmission({
       ...validSubmission,
       candidate: { ...validSubmission.candidate, compensationExpectation: " " },
-    }), {
-      ok: false,
-      reason: "missing_compensation_expectation",
     })
+    assert.equal(blankResult.ok, true)
+    if (blankResult.ok) assert.equal(blankResult.value.candidate.compensationExpectation, undefined)
+
     const { compensationExpectation: _salary, ...candidateWithoutSalary } = validSubmission.candidate
-    assert.deepEqual(validateSubmission({
+    const missingResult = validateSubmission({
       ...validSubmission,
       candidate: candidateWithoutSalary,
-    }), {
-      ok: false,
-      reason: "missing_compensation_expectation",
     })
+    assert.equal(missingResult.ok, true)
+    if (missingResult.ok) assert.equal(missingResult.value.candidate.compensationExpectation, undefined)
   })
 
   it("requires a LinkedIn profile URL and canonicalizes it for identity tracking", () => {
@@ -3497,13 +3496,16 @@ describe("recruiter submission update validation", () => {
     })
   })
 
-  it("does not allow clearing expected salary range on recruiter edits", () => {
+  it("allows clearing expected salary range on recruiter edits", () => {
     assert.deepEqual(validateRecruiterSubmissionUpdateInput({
       submissionId: "sub-1",
       candidate: { compensationExpectation: "  " },
     }), {
-      ok: false,
-      reason: "missing_compensation_expectation",
+      ok: true,
+      value: {
+        submissionId: "sub-1",
+        candidate: { compensationExpectation: "" },
+      },
     })
   })
 

@@ -1976,7 +1976,7 @@ export function coerceStoredSubmissionChecklist(raw: unknown): Record<string, Ch
  * Candidate "core cell" columns of the recruiter sheet. Free-text strings,
  * trimmed, capped at 300 chars; stored under `candidate.*` next to the
  * original name/email/link identity fields. `compensationExpectation` is
- * required when creating a recruiter submission.
+ * recommended, but never blocks a recruiter submission.
  */
 export const CANDIDATE_CORE_CELL_FIELDS = [
   "currentCompany",
@@ -1991,8 +1991,6 @@ export const CANDIDATE_CORE_CELL_FIELDS = [
 export type CandidateCoreCellField = (typeof CANDIDATE_CORE_CELL_FIELDS)[number]
 
 const CANDIDATE_CORE_CELL_MAX_LENGTH = 300
-const EXPECTED_SALARY_RANGE_FIELD = "compensationExpectation"
-const MISSING_EXPECTED_SALARY_RANGE_REASON = "missing_compensation_expectation"
 
 interface RecruiterSubmissionListItem {
   id: string
@@ -4405,7 +4403,6 @@ export function validateSubmission(input: unknown):
   const compensationExpectation = sanitizeOptionalString(c.compensationExpectation, CANDIDATE_CORE_CELL_MAX_LENGTH)
   const noticePeriod = sanitizeOptionalString(c.noticePeriod, CANDIDATE_CORE_CELL_MAX_LENGTH)
   const interviewAvailability = sanitizeOptionalString(c.interviewAvailability, CANDIDATE_CORE_CELL_MAX_LENGTH)
-  if (!compensationExpectation) return { ok: false, reason: MISSING_EXPECTED_SALARY_RANGE_REASON }
 
   return {
     ok: true,
@@ -4625,11 +4622,7 @@ export function validateRecruiterSubmissionUpdateInput(input: unknown):
       if (typeof c[field] !== "string") return { ok: false, reason: `invalid_${reasonKey}` }
       const raw = c[field] as string
       if (raw.length > max) return { ok: false, reason: `${reasonKey}_too_long` }
-      const trimmed = raw.trim()
-      if (field === EXPECTED_SALARY_RANGE_FIELD && !trimmed) {
-        return { ok: false, reason: MISSING_EXPECTED_SALARY_RANGE_REASON }
-      }
-      cleaned[field] = trimmed
+      cleaned[field] = raw.trim()
     }
     if (Object.keys(cleaned).length > 0) candidate = cleaned
   }

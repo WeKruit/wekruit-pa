@@ -47,7 +47,7 @@ test("candidate columns are declared in the founder's sheet order", () => {
     "Years of exp",
     "Work auth",
     "Employment status",
-    "Expected salary range",
+    "Expected salary range (recommended)",
     "Notice period",
     "Availability",
   ])
@@ -106,7 +106,7 @@ test("add form gates Submit on required identity URLs and required submit fields
   assert.match(blockersSlice, /else if \(!normalizeSheetUrl\(linkedin\)\) blockers\.push\("LinkedIn URL must be a valid URL\."\)/)
   assert.match(blockersSlice, /if \(!resume\) blockers\.push\("Resume is required — paste a link or drop a file\."\)/)
   assert.match(blockersSlice, /else if \(!normalizeSheetUrl\(resume\) && !draft\.resumeFileName\) blockers\.push\("Resume must be a valid URL or an uploaded file\."\)/)
-  assert.match(blockersSlice, /if \(!draft\.cells\.compensationExpectation\.trim\(\)\) blockers\.push\("Expected salary range is required\."\)/)
+  assert.doesNotMatch(blockersSlice, /compensationExpectation.*required/i)
   assert.doesNotMatch(blockersSlice, /LinkedIn URL or resume link is required/)
   assert.match(blockersSlice, /if \(field\.required && !value\) blockers\.push\(`\$\{field\.label\} is required for this role\.`\)/)
   assert.match(source, /const addRowReady = addBlockers\.length === 0/)
