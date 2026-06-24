@@ -1070,6 +1070,47 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.match(sent[1] ?? "", /Do you want to proceed/i)
   })
 
+  it("a bare 'Yes' accepting a post-terminal roles offer yields to runtime (find_match), not swallowed (Andrea 2026-06-23)", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-prescreen-sessions/ps_andrea": {
+        sessionId: "ps_andrea",
+        userId: "u1",
+        jobId: "wekruit-product-designer-ui-ux-new-grad",
+        terminal: "HARD_STOP",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        // held for human review — the pending-review guard would normally OWN a bare affirmative.
+        terminalActionPendingReview: true,
+        review: { status: "pending" },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+      // thin-Claire's post-terminal OFFER is the candidate's most recent context.
+      "pa-outbound/ob_offer": {
+        id: "ob_offer",
+        userId: "u1",
+        status: "sent",
+        createdAt: now,
+        body: "hey Andrea — totally, yes. you can apply to more than one WeKruit role. want me to pull a few other design roles that fit your UI/UX angle?",
+      },
+    })
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+16463292102",
+      replyText: "Yes",
+      sendSms: async (a) => {
+        sent.push(a.content)
+        return { status: "queued", from_number: null, number: a.to, content: a.content, service: "iMessage", is_outbound: true }
+      },
+    })
+    // The accepted offer must YIELD to runtime (thin-Claire find_match), NOT be swallowed as a
+    // terminal-ack. Before the fix this returned handled:true and sent nothing → candidate silence.
+    assert.equal(result.handled, false, "a 'Yes' accepting our roles offer must yield, not be swallowed")
+  })
+
   it("acknowledges a recent terminal prescreen pending WeKruit team review without sending retention outbound", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({

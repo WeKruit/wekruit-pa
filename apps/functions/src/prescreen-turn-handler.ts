@@ -1043,6 +1043,43 @@ function hasActiveUserPostMatchRetention(user: Record<string, unknown> | undefin
   return typeof stage === "string" && stage !== "complete"
 }
 
+// thin-Claire's post-terminal matching OFFER copy ("want me to pull a few other design roles?",
+// "i can line up other roles", "want me to surface more matches"). Used to detect that a following
+// bare affirmative is ACCEPTING an offer (→ fire find_match), not acking the terminal.
+const MATCH_OFFER_RE_A =
+  /\b(?:pull|line\s*up|surface|show\s+you|send\s+you|find\s+you|round\s+up)\b[^?]{0,55}\b(?:roles?|jobs?|positions?|openings?|matches|opportunities)\b/i
+const MATCH_OFFER_RE_B =
+  /\bwant\s+me\s+to\b[^?]{0,75}\b(?:roles?|jobs?|positions?|design|pull|matches|openings?|opportunities)\b/i
+
+/**
+ * True when a roles/matches OFFER we sent is the candidate's most recent context (within the
+ * recent-terminal window). Reads recent pa-outbound (no orderBy → no composite index needed; sorts
+ * in memory). Best-effort; false on any error.
+ */
+async function hasRecentMatchOfferForUser(
+  db: Firestore,
+  userId: string,
+  nowMs: number,
+): Promise<boolean> {
+  try {
+    const snap = await db.collection("pa-outbound").where("userId", "==", userId).limit(25).get()
+    const rows = (snap.docs ?? [])
+      .map((d) => d.data() as Record<string, unknown>)
+      .filter((r) => typeof r.createdAt === "string")
+      .sort((a, b) => Date.parse(String(b.createdAt)) - Date.parse(String(a.createdAt)))
+      .slice(0, 6)
+    for (const r of rows) {
+      const ageMs = nowMs - Date.parse(String(r.createdAt))
+      if (ageMs > RECENT_TERMINAL_PRESCREEN_GUARD_MS) continue
+      const body = String(r.body ?? "")
+      if (MATCH_OFFER_RE_A.test(body) || MATCH_OFFER_RE_B.test(body)) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 async function shouldHandleRecentTerminalSession(args: {
   db: Firestore
   userId: string
@@ -1063,6 +1100,22 @@ async function shouldHandleRecentTerminalSession(args: {
     })
   }
   if (isPrescreenOutcomeExplanationRequest(args.replyText)) return true
+  // OFFER-ACCEPTANCE ESCAPE (live 2026-06-23, Andrea 8PpvzWN0BSYhe6dKXh71): after a terminal,
+  // thin-Claire often makes a post-terminal matching OFFER ("want me to pull a few other design
+  // roles?"). A bare "yes" accepting it was classified as a terminal-ack (isShortTerminalAck) and
+  // SWALLOWED by this guard → the candidate said yes and got silence. When a short affirmative
+  // follows a roles offer we just made, yield to runtime so thin-Claire fires find_match. This wins
+  // even over pending-review ownership — an accepted offer is a deliberate request, not unsolicited.
+  if (
+    isShortTerminalAck(args.replyText) &&
+    (await hasRecentMatchOfferForUser(args.db, args.userId, Date.now()))
+  ) {
+    args.log("prescreen.turn.recent_terminal_yielded_to_accepted_match_offer", {
+      userId: args.userId,
+      terminal: args.terminal ?? null,
+    })
+    return false
+  }
   // PENDING-REVIEW THREAD OWNERSHIP (live bug 2026-06-19): while a just-terminated outcome (PASS or
   // NOT_PASS) is held for human review, prescreen owns the thread within the recent-terminal window so
   // thin-Claire does NOT re-engage with unsolicited matching offers ("say yes and i'll pull roles") +
