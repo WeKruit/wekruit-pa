@@ -75,7 +75,12 @@ const CANDIDATE_COLUMNS: SheetColumn[] = [
   { id: "yoe", label: "Years of exp" },
   { id: "workAuthorization", label: "Work auth", required: true, placeholder: "Citizen / Green card, or needs sponsorship" },
   { id: "employmentStatus", label: "Employment status" },
-  { id: "compensationExpectation", label: "Comp expectation" },
+  {
+    id: "compensationExpectation",
+    label: "Expected salary range",
+    required: true,
+    placeholder: "$160k-$190k base, flexible",
+  },
   { id: "noticePeriod", label: "Notice period" },
   { id: "interviewAvailability", label: "Availability" },
 ]
@@ -490,6 +495,7 @@ function addRowBlockers(
   else if (!normalizeSheetUrl(resume) && !draft.resumeFileName) blockers.push("Resume must be a valid URL or an uploaded file.")
   if (!draft.cells.location.trim()) blockers.push("Location is required — open to anywhere/remote, or preferred location(s).")
   if (!draft.cells.workAuthorization.trim()) blockers.push("Working status is required — work authorization / sponsorship need.")
+  if (!draft.cells.compensationExpectation.trim()) blockers.push("Expected salary range is required.")
   for (const field of fields) {
     const value = (draft.extraFields[field.id] ?? "").trim()
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
@@ -515,6 +521,7 @@ function formatSubmitFailure(reason?: string): string {
   }
   if (reason === "missing_candidate_email") return "Add the candidate email."
   if (reason === "invalid_candidate_email") return "Enter a valid candidate email."
+  if (reason === "missing_compensation_expectation") return "Expected salary range is required."
   if (reason === "recruiter_auth_required") return "Your session expired — sign in again from the recruiter home."
   return reason ?? "submission_failed"
 }

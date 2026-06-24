@@ -54,6 +54,7 @@ interface SubmissionDoc {
     resumeUrl?: string
     currentRole?: string
     yoe?: string
+    compensationExpectation?: string
     notes?: string
   }
   candidateConsentStatus?: string
@@ -500,6 +501,7 @@ interface SourcedCandidateDoc {
     link?: string
     currentRole?: string
     yoe?: string
+    compensationExpectation?: string
     notes?: string
   }
   calibrationStatus?: string
@@ -3916,6 +3918,11 @@ function SourcedCandidateDetailPanel({
               <a href={row.candidate.link} target="_blank" rel="noopener noreferrer">{row.candidate.link}</a>
             </p>
           )}
+          {row.candidate?.compensationExpectation && (
+            <p style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+              <strong>Expected salary:</strong> {row.candidate.compensationExpectation}
+            </p>
+          )}
           {row.candidate?.notes && (
             <>
               <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>Recruiter note</h4>
@@ -4430,6 +4437,11 @@ function RowDetailPanel({
               <a href={row.candidate.link} target="_blank" rel="noopener noreferrer">
                 {row.candidate.link}
               </a>
+            </p>
+          )}
+          {row.candidate?.compensationExpectation && (
+            <p style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+              <strong>Expected salary:</strong> {row.candidate.compensationExpectation}
             </p>
           )}
           <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>

@@ -153,6 +153,7 @@ async function seedSubmission(
       link: "https://www.linkedin.com/in/yue-h",
       currentRole: "Staff Backend Engineer",
       yoe: "7",
+      compensationExpectation: "$180k-$220k base",
       notes: "Met at KubeCon, very strong on infra.",
     },
     checklist: { h1: true, h2: true, f1: true, b1: false, a1: false },
@@ -268,6 +269,7 @@ describe("runRecruiterSubmissionEval", () => {
     assert.equal(evaluation.background.gpa.verdict, "unknown")
     assert.equal(evaluation.background.company.verdict, "strong")
     assert.deepEqual(deps.searchCalls, ["https://www.linkedin.com/in/yue-h"])
+    assert.match(deps.judgeCalls[0]!.userText, /Expected salary range: \$180k-\$220k base/)
     // v2: the live Coresignal pull is cached by canonical-LinkedIn hash
     const cacheSnap = await mfs.collection("pa-coresignal-cache").doc(coresignalCacheKey("https://www.linkedin.com/in/yue-h")).get()
     assert.ok(cacheSnap.exists, "coresignal response cached for reuse")
