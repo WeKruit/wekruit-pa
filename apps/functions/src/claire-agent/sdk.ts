@@ -107,6 +107,28 @@ export const run = ((...args: unknown[]) =>
 export const tool = ((...args: unknown[]) =>
   (loadSdk().tool as (...a: unknown[]) => unknown)(...args)) as unknown as AgentsSdkTool
 
+/**
+ * Remote MCP server over Streamable HTTP — lazy, from the SAME zod@4 SDK instance
+ * (used by the headhunter Slack agent to reach the paHeadhunterMcp tool surface).
+ * Construct, then `connect()` before use and pass to an Agent's `mcpServers`.
+ */
+export interface RemoteMcpServer {
+  connect(): Promise<void>
+  close(): Promise<void>
+}
+export const MCPServerStreamableHttp = new Proxy(function () {} as unknown as object, {
+  construct(_t, args) {
+    const Real = loadSdk().MCPServerStreamableHttp as new (...a: unknown[]) => unknown
+    return new Real(...args) as object
+  },
+}) as unknown as new (opts: {
+  url: string
+  name?: string
+  cacheToolsList?: boolean
+  requestInit?: { headers?: Record<string, string> }
+  timeout?: number
+}) => RemoteMcpServer
+
 /** instanceof works lazily via Symbol.hasInstance against the real class. */
 export const InputGuardrailTripwireTriggered = {
   [Symbol.hasInstance](inst: unknown): boolean {

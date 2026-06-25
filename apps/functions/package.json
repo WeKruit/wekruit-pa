@@ -38,6 +38,7 @@
     "@pa/pa-resume-parser": "0.0.1",
     "@pa/pa-safety": "0.0.1",
     "@resvg/resvg-wasm": "^2.6.2",
+    "@slack/bolt": "^4.7.3",
     "@wekruit/shared-tags": "0.1.1",
     "csv-parse": "^5.5.6",
     "ffmpeg-static": "^5.3.0",

@@ -284,6 +284,12 @@ export {
 // rollups, and paginated session pages over pa-prescreen-sessions (the
 // client-side limit(75) reads undercounted).
 export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
+// AI-headhunter MCP server (Streamable HTTP). Wraps existing admin run* runners
+// as MCP tools; admin-claim / PA_ADMIN_TOKEN gated; passed-candidate PII redacted
+// server-side for the untrusted LLM client. See headhunter-mcp/.
+export { paHeadhunterMcp } from "./headhunter-mcp/http.js"
+// AI-headhunter Slack receiver (Bolt + @openai/agents loop; tools = paHeadhunterMcp).
+export { paHeadhunterSlack } from "./headhunter-slack/http.js"
 export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats.js"
 // Operations Overview dashboard — daily time-series of new users (by channel),
 // interviews conducted, and candidates moved to client. Admin /admin/operations.

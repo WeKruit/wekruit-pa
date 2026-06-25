@@ -159,13 +159,26 @@ function candidateTagSnapshot(tags: Record<string, unknown>): Record<string, unk
   return out
 }
 
+// Lifecycle states with a usable parsed profile. The pool sits mostly in
+// `profile_created`; querying only profile_ready/retained loaded ~0 candidates
+// (the "find_candidates_for_job returns 0" bug). `prospect`/`opted_out`/
+// `deleted` stay excluded.
+const MATCHABLE_LIFECYCLE_STATES = [
+  "profile_created",
+  "reachable",
+  "claimed",
+  "profile_ready",
+  "active_job_seeker",
+  "retained",
+] as const
+
 async function loadCandidatePool(db: Firestore): Promise<MatchingCandidateRow[]> {
   const rows = new Map<string, MatchingCandidateRow>()
-  for (const lifecycle of ["profile_ready", "retained"] as const) {
+  for (const lifecycle of MATCHABLE_LIFECYCLE_STATES) {
     const snap = await db
       .collection("pa-users")
       .where("candidateLifecycleState", "==", lifecycle)
-      .limit(500)
+      .limit(600)
       .get()
     for (const doc of snap.docs) {
       const data = doc.data() as Record<string, unknown>
