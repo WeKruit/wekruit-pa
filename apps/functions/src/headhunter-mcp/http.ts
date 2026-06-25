@@ -21,6 +21,10 @@ import { buildHeadhunterMcpServer } from "./server.js"
 // Same-named secret as auth.ts; declared here so the function binds it (auth.ts
 // reads `.value()` at runtime). defineSecret is keyed by name → same secret.
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
+// Bound so the search_external_candidates tool can reach Coresignal (read via
+// process.env.CORESIGNAL_API_KEY at runtime). Optional — the tool returns
+// "coresignal_not_configured" if unset.
+const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
 
 function rpcError(id: unknown, code: number, message: string) {
   return { jsonrpc: "2.0" as const, error: { code, message }, id: id ?? null }
@@ -31,7 +35,7 @@ export const paHeadhunterMcp = onRequest(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 120,
-    secrets: [PA_ADMIN_TOKEN],
+    secrets: [PA_ADMIN_TOKEN, CORESIGNAL_API_KEY],
   },
   async (req, res) => {
     // Stateless Streamable HTTP only services POST (JSON-RPC). GET/DELETE are for

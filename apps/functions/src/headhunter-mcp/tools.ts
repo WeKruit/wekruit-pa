@@ -38,6 +38,9 @@ import {
   runSummarizePrescreen,
   runSchedulingStatus,
 } from "./extended.js"
+import { runDraftOutreach, runSendCandidateMessage } from "./outbound.js"
+import { runScheduleInterview } from "./scheduling.js"
+import { runCoresignalAgenticSearch } from "../admin-coresignal-agentic-search.js"
 
 type Db = ReturnType<typeof getFirestore>
 type Tier = "tier_1" | "tier_2" | "tier_3"
@@ -276,7 +279,63 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
     annotations: READ_ONLY,
   }, async (a) => jsonContent(await runSchedulingStatus(a, { db })))
 
+  register<{ userId: string; jobId?: string; timeZone?: string; partOfDay?: "morning" | "afternoon" | "evening" | "any" }>(
+    server, "schedule_interview", {
+    title: "Offer interview slots to a candidate",
+    description:
+      "Pull the interviewer's REAL open Cal.com times for a candidate and record the offer (so their later pick books against it). Returns numbered slots in the candidate's timezone — present them and/or send via send_candidate_message. Gated to the scheduling dev cohort (Adam/Noah) until paSchedulingEnabled. Sends no SMS and books nothing by itself.",
+    inputSchema: {
+      userId: z.string().min(1),
+      jobId: z.string().optional().describe("the job to schedule for; omit to let it resolve the candidate's passed/active job"),
+      timeZone: z.string().optional().describe("IANA tz, e.g. America/New_York"),
+      partOfDay: z.enum(["morning", "afternoon", "evening", "any"]).optional(),
+    },
+    annotations: READ_ONLY,
+  }, async (a) => jsonContent(await runScheduleInterview(a, { db })))
+
+  // ───────────────────────── EXTERNAL SOURCING / OUTREACH PREP ─────────────────────────
+  register<{ prompt: string; limit?: number }>(server, "search_external_candidates", {
+    title: "Search external candidates (Coresignal)",
+    description:
+      "Search the external talent index via Coresignal agentic search — natural-language prompt (title, skills, location, seniority) → candidate profiles NOT yet in our pool. Read-only discovery; importing/merging into pa-users is a separate operator step.",
+    inputSchema: {
+      prompt: z.string().min(1).max(4000).describe("natural-language sourcing brief"),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    annotations: READ_ONLY,
+  }, async (a) => {
+    const apiKey = process.env.CORESIGNAL_API_KEY?.trim()
+    if (!apiKey) return jsonContent({ error: "coresignal_not_configured", note: "CORESIGNAL_API_KEY secret not bound" })
+    return jsonContent(await runCoresignalAgenticSearch(
+      { prompt: a.prompt, returnData: true, allowClarification: false, limit: a.limit ?? 10 },
+      { db, apiKey, actorUid: principal.uid },
+    ))
+  })
+
+  register<{ userId: string; jobId?: string }>(server, "draft_outreach", {
+    title: "Draft outreach grounding (read-only)",
+    description:
+      "Gather the candidate + job facts to compose a personalized outreach SMS (first name, top skills, career stage, locations, job title/company, and whether they're sendable). Does NOT send and does NOT write the copy — YOU compose, then call send_candidate_message after the operator confirms.",
+    inputSchema: {
+      userId: z.string().min(1),
+      jobId: z.string().optional(),
+    },
+    annotations: READ_ONLY,
+  }, async (a) => jsonContent(await runDraftOutreach(a, { db })))
+
   // ───────────────────────── WRITE (operator actions) ─────────────────────────
+  // Outbound SMS — LOCKED safety: dev-phone-gated (ramp flag), suppression +
+  // prior-inbound + dedup checked before enqueue. Confirm-first per persona.
+  register<{ userId: string; text: string }>(server, "send_candidate_message", {
+    title: "Send a candidate an SMS",
+    description:
+      "Send one SMS to a candidate (via Sendblue, runtimeSource headhunter_mcp). SAFETY: dev-phone-only unless ramped; refuses if the candidate opted out / is suppressed, or never texted us first (no cold opens). Idempotent + audited. ALWAYS restate the exact userId + message and get operator confirmation before calling this.",
+    inputSchema: {
+      userId: z.string().min(1),
+      text: z.string().min(1).max(1200).describe("the exact message body to send"),
+    },
+    annotations: MUTATING,
+  }, async (a) => jsonContent(await runSendCandidateMessage(a, { db })))
   // Status transitions go through the canonical action runner (audit + statusHistory).
   register<{ submissionId: string; stage: "advance" | "wekruit_interview" | "client_review" | "hired" | "reviewing"; note?: string }>(
     server, "advance_recruiter_submission", {
