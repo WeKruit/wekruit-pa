@@ -40,6 +40,7 @@ import {
 } from "./extended.js"
 import { runDraftOutreach, runSendCandidateMessage } from "./outbound.js"
 import { runScheduleInterview } from "./scheduling.js"
+import { runIntakeJob } from "./job-intake.js"
 import { runCoresignalAgenticSearch } from "../admin-coresignal-agentic-search.js"
 
 type Db = ReturnType<typeof getFirestore>
@@ -292,6 +293,24 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
     },
     annotations: READ_ONLY,
   }, async (a) => jsonContent(await runScheduleInterview(a, { db })))
+
+  // ───────────────────────── JOB INTAKE (demand side) ─────────────────────────
+  register<{ title: string; jobDescription: string; companyName?: string; locationRaw?: string; salaryMin?: number; salaryMax?: number; currency?: string }>(
+    server, "intake_job", {
+    title: "Process a job description (enrich + clarify)",
+    description:
+      "Take a raw JD a client/recruiter sent and enrich it into canonical tags (roleFunction, industrySector, skills, seniorityLevel, locationBuckets, sponsorship, jobType), hard filters, auto-generated prescreen questions, a per-field confidence, and clarifyingQuestions for the gaps. Extract the title from the JD if not given. When clarifyingQuestions come back, ASK the client those, then call intake_job again with the answers folded in to re-enrich.",
+    inputSchema: {
+      title: z.string().min(1).describe("role title (extract from the JD if needed)"),
+      jobDescription: z.string().min(1).describe("the raw JD text the client sent"),
+      companyName: z.string().optional(),
+      locationRaw: z.string().optional(),
+      salaryMin: z.number().optional(),
+      salaryMax: z.number().optional(),
+      currency: z.string().optional(),
+    },
+    annotations: READ_ONLY,
+  }, async (a) => jsonContent(await runIntakeJob(a)))
 
   // ───────────────────────── EXTERNAL SOURCING / OUTREACH PREP ─────────────────────────
   register<{ prompt: string; limit?: number }>(server, "search_external_candidates", {

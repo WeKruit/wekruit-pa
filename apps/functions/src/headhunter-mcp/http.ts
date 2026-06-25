@@ -25,6 +25,14 @@ const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 // process.env.CORESIGNAL_API_KEY at runtime). Optional — the tool returns
 // "coresignal_not_configured" if unset.
 const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
+// Bound so intake_job's enrichJobTags (3-tier LLM router) can reach OpenAI
+// (read via process.env.PA_OPENAI_AGENT_API_KEY at runtime).
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+// Optional Anthropic secondary tier for the enricher; falls through if unset.
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY")
+// Bound so schedule_interview can pull real Cal.com availability (the offer core
+// reads process.env.CALCOM_API_KEY); missing → the tool returns calcom_unavailable.
+const CALCOM_API_KEY = defineSecret("CALCOM_API_KEY")
 
 function rpcError(id: unknown, code: number, message: string) {
   return { jsonrpc: "2.0" as const, error: { code, message }, id: id ?? null }
@@ -35,7 +43,7 @@ export const paHeadhunterMcp = onRequest(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 120,
-    secrets: [PA_ADMIN_TOKEN, CORESIGNAL_API_KEY],
+    secrets: [PA_ADMIN_TOKEN, CORESIGNAL_API_KEY, PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY, CALCOM_API_KEY],
   },
   async (req, res) => {
     // Stateless Streamable HTTP only services POST (JSON-RPC). GET/DELETE are for
