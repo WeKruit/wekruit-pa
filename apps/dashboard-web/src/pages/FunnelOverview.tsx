@@ -132,12 +132,20 @@ export default function FunnelOverview({
               value={data.stages.find((s) => s.state === "employer_visible")?.count ?? 0}
               color={VISIBLE_COLOR}
             />
-            <StatCard label="Passed · no snapshot (leak)" value={data.passedNotVisible} color={LEAK_COLOR} />
+            <StatCard
+              label="Passed · no employer snapshot (stuck)"
+              // Single source of truth (QA M3): prefer the snapshot-probed
+              // leak.total — the CONFIRMED stuck set the panel below lists — over
+              // the in-doc fast signal, so the headline matches the panel instead
+              // of showing two different numbers for the same concept.
+              value={leak ? leak.total : data.passedNotVisible}
+              color={LEAK_COLOR}
+            />
           </div>
 
           <Panel
             title="Stage ladder"
-            eyebrow="candidate_matched → … → employer_visible · counts + conversion %"
+            eyebrow="candidate_matched → … → employer_visible · counts + stage occupancy share (point-in-time, not pass-through)"
           >
             <div style={{ width: "100%", height: 420 }}>
               <ResponsiveContainer>

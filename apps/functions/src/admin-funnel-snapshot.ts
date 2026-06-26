@@ -189,22 +189,26 @@ async function scanOrdered(
   return { docs, truncated: docs.length >= cap }
 }
 
-/** Scan the users collection once → set of test/internal candidate ids to drop. */
+/**
+ * Scan the users collection once → set of test/internal candidate ids to drop.
+ *
+ * NO orderBy (QA L1): `orderBy("createdAt")` silently returns ONLY docs that have
+ * a `createdAt` field, so a test/internal/dev-phone user whose doc predates that
+ * field would be dropped from the scan → never added to the exclusion set → then
+ * counted as a REAL candidate in the funnel. A plain `.limit()` scan includes
+ * those docs. Ordering is irrelevant here — we're only building a Set.
+ */
 async function loadExcludedUserIds(db: Firestore): Promise<{ ids: Set<string>; truncated: boolean }> {
-  const scan = await scanOrdered(db, PA_COLLECTIONS.users, "createdAt", [
-    "createdAt",
-    "source",
-    "testMode",
-    "isDemo",
-    "demoSourcePool",
-    "phoneE164",
-    "email",
-  ])
+  const snap = await db
+    .collection(PA_COLLECTIONS.users)
+    .select("source", "testMode", "isDemo", "demoSourcePool", "phoneE164", "email")
+    .limit(SCAN_CAP)
+    .get()
   const ids = new Set<string>()
-  for (const { id, data } of scan.docs) {
-    if (isTestOrInternalUser(id, data)) ids.add(id)
+  for (const d of snap.docs) {
+    if (isTestOrInternalUser(d.id, d.data() as Record<string, unknown>)) ids.add(d.id)
   }
-  return { ids, truncated: scan.truncated }
+  return { ids, truncated: snap.docs.length >= SCAN_CAP }
 }
 
 /**
