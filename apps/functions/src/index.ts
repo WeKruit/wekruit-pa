@@ -3175,6 +3175,7 @@ export {
   openRegisterEmployer,
 } from "./openLayoff.js"
 export { paEmployerClaimVerification } from "./identity/employer-claim-verification.js"
+export { paEmployerIntakeJob } from "./employer-intake-job.js"
 
 // ============================================================
 // Candidate referral program (2026-05-27)

@@ -18,6 +18,10 @@
 import { useCallback, useState, type CSSProperties } from "react"
 import { Link } from "react-router-dom"
 import {
+  employerIntakeJob,
+  type EmployerIntakeJobOutput,
+} from "../../lib/onboarding-api.js"
+import {
   DEFAULT_SUCCESS_METRIC,
   SUCCESS_METRICS,
   WIZARD_STEPS,
@@ -151,6 +155,12 @@ export default function EmployerOnboarding() {
                   successMetric={state.successMetric}
                   onPickMetric={setSuccessMetric}
                   onContinue={() => setStepResult(0, "done")}
+                />
+              ) : activeStepDef.key === "calibrate_req" ? (
+                <CalibrateStep
+                  onDone={() => setStepResult(activeIndex, "done")}
+                  onSkip={() => setStepResult(activeIndex, "skipped")}
+                  onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
                 />
               ) : (
                 <ComingSoonStep
@@ -409,7 +419,276 @@ function SuccessMetricPicker({
 }
 
 // ---------------------------------------------------------------------------
-// Generic branded "coming soon" placeholder step (Steps 1–6 this slice)
+// Step 5 — Calibrate Pilot Req (REAL: enrich one role via the production
+// 3-tier LLM job enricher → canonical tags + prescreen draft + clarifiers)
+// ---------------------------------------------------------------------------
+
+function prettyToken(token: string): string {
+  return token
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function CalibrateStep({
+  onDone,
+  onSkip,
+  onPrev,
+}: {
+  onDone: () => void
+  onSkip: () => void
+  onPrev?: () => void
+}) {
+  const [title, setTitle] = useState("")
+  const [companyName, setCompanyName] = useState("")
+  const [locationRaw, setLocationRaw] = useState("")
+  const [jobDescription, setJobDescription] = useState("")
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle")
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<EmployerIntakeJobOutput | null>(null)
+
+  const canEnrich = title.trim().length > 0 && jobDescription.trim().length > 0
+
+  const onEnrich = useCallback(async () => {
+    if (!canEnrich || status === "loading") return
+    setStatus("loading")
+    setError(null)
+    try {
+      const out = await employerIntakeJob({
+        title: title.trim(),
+        jobDescription: jobDescription.trim(),
+        companyName: companyName.trim() || undefined,
+        locationRaw: locationRaw.trim() || undefined,
+      })
+      setResult(out)
+      setStatus("done")
+    } catch (err) {
+      setStatus("error")
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't reach the enricher. Try again in a moment.",
+      )
+    }
+  }, [canEnrich, status, title, jobDescription, companyName, locationRaw])
+
+  const tags = result?.enrichedTags
+  const skillChips = (tags?.skills ?? []).map((s) => s.name).filter(Boolean)
+  const overall = result?.confidence?.overall
+
+  return (
+    <div style={stepBody}>
+      <p style={stepLede}>
+        Pick one real role. Claire enriches it into canonical tags, drafts the
+        screening rubric, and asks 1–3 clarifying questions. You calibrate —
+        you don&apos;t configure.
+      </p>
+
+      <div style={calForm}>
+        <label style={calField}>
+          <span style={calLabel}>Role title</span>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Senior Frontend Engineer"
+            style={calInput}
+          />
+        </label>
+
+        <div style={calRow}>
+          <label style={calField}>
+            <span style={calLabel}>
+              Company <span style={calOptional}>(optional)</span>
+            </span>
+            <input
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="e.g. Acme"
+              style={calInput}
+            />
+          </label>
+          <label style={calField}>
+            <span style={calLabel}>
+              Location <span style={calOptional}>(optional)</span>
+            </span>
+            <input
+              type="text"
+              value={locationRaw}
+              onChange={(e) => setLocationRaw(e.target.value)}
+              placeholder="e.g. NYC or Remote (US)"
+              style={calInput}
+            />
+          </label>
+        </div>
+
+        <label style={calField}>
+          <span style={calLabel}>Job description / role brief</span>
+          <textarea
+            value={jobDescription}
+            onChange={(e) => setJobDescription(e.target.value)}
+            placeholder="Paste the JD or describe the role — scope, must-haves, seniority, location, comp…"
+            rows={8}
+            style={calTextarea}
+          />
+        </label>
+
+        <div style={calActionsRow}>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={!canEnrich || status === "loading"}
+            onClick={onEnrich}
+            style={{
+              textDecoration: "none",
+              opacity: !canEnrich || status === "loading" ? 0.55 : 1,
+              cursor: !canEnrich || status === "loading" ? "not-allowed" : "pointer",
+            }}
+          >
+            {status === "loading" ? "Enriching…" : "Enrich & calibrate"}
+          </button>
+          {status === "loading" ? (
+            <span style={calHint}>Running the job enricher — this can take ~10–20s.</span>
+          ) : null}
+        </div>
+      </div>
+
+      {status === "error" && error ? (
+        <div style={calErrorBox} role="alert">
+          <strong style={{ display: "block", marginBottom: 4 }}>Enrichment failed</strong>
+          {error}
+        </div>
+      ) : null}
+
+      {status === "done" && result ? (
+        <div style={calResultWrap}>
+          {/* Confidence + approval */}
+          <div style={calResultHead}>
+            <span style={calResultEyebrow}>Calibration result</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {typeof overall === "number" ? (
+                <span style={calBadge}>Confidence {Math.round(overall * 100)}%</span>
+              ) : null}
+              <span
+                style={{
+                  ...calBadge,
+                  ...(result.approvalReady ? calBadgeGood : calBadgeWarn),
+                }}
+              >
+                {result.approvalReady ? "Ready to sign off" : "Needs your input"}
+              </span>
+            </div>
+          </div>
+
+          {/* Canonical tags */}
+          <CalTagGroup label="Role function" tokens={tags?.roleFunction} />
+          <CalTagGroup label="Seniority" tokens={tags?.seniorityLevel ? [tags.seniorityLevel] : []} />
+          <CalTagGroup label="Job type" tokens={tags?.jobType ? [tags.jobType] : []} />
+          <CalTagGroup label="Industry" tokens={tags?.industrySector} />
+          <CalTagGroup label="Location" tokens={tags?.locationBuckets} />
+          <CalTagGroup label="Skills" tokens={skillChips} raw />
+          <CalTagGroup label="Relevant tags" tokens={tags?.relevantTags} raw />
+
+          {/* Prescreen questions */}
+          {result.prescreenQuestions && result.prescreenQuestions.length > 0 ? (
+            <div style={calSection}>
+              <span style={calSectionLabel}>Drafted screening questions</span>
+              <ol style={calQList}>
+                {result.prescreenQuestions.map((q) => (
+                  <li key={q.id} style={calQItem}>
+                    {q.prompt}
+                    {q.required ? <span style={calReqTag}>required</span> : null}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+
+          {/* Clarifying questions */}
+          {result.clarifyingQuestions && result.clarifyingQuestions.length > 0 ? (
+            <div style={calSection}>
+              <span style={calSectionLabel}>Claire needs you to clarify</span>
+              <ul style={calClarifyList}>
+                {result.clarifyingQuestions.map((q, i) => (
+                  <li key={i} style={calClarifyItem}>
+                    {q}
+                  </li>
+                ))}
+              </ul>
+              <p style={calClarifyHint}>
+                Fold the answers into the role brief above and re-run to tighten
+                the calibration.
+              </p>
+            </div>
+          ) : null}
+
+          <p style={calScopeNote}>
+            This enriches the role right now so you can review the tags and
+            screening draft. Connecting it to matching and saving it as a live,
+            matchable req comes after you sign off — nothing has been persisted
+            yet.
+          </p>
+        </div>
+      ) : null}
+
+      <div style={stepActions}>
+        {onPrev ? (
+          <button type="button" className="btn btn--ghost" onClick={onPrev}>
+            ← Back
+          </button>
+        ) : (
+          <span />
+        )}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button type="button" className="btn btn--secondary" onClick={onSkip}>
+            Skip for now
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={status !== "done"}
+            onClick={onDone}
+            style={{
+              textDecoration: "none",
+              opacity: status !== "done" ? 0.55 : 1,
+              cursor: status !== "done" ? "not-allowed" : "pointer",
+            }}
+          >
+            Looks right — sign off
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CalTagGroup({
+  label,
+  tokens,
+  raw,
+}: {
+  label: string
+  tokens?: string[]
+  raw?: boolean
+}) {
+  const items = (tokens ?? []).filter(Boolean)
+  if (items.length === 0) return null
+  return (
+    <div style={calSection}>
+      <span style={calSectionLabel}>{label}</span>
+      <div style={calChipWrap}>
+        {items.map((t) => (
+          <span key={t} style={calChip}>
+            {raw ? t : prettyToken(t)}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Generic branded "coming soon" placeholder step (remaining unwired steps)
 // ---------------------------------------------------------------------------
 
 const STEP_BLURB: Partial<Record<string, string>> = {
@@ -789,4 +1068,181 @@ const stepActions: CSSProperties = {
   justifyContent: "space-between",
   alignItems: "center",
   gap: 12,
+}
+
+// ---- Calibrate Pilot Req (Step 5) ----------------------------------------
+
+const calForm: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 16,
+  border: "1px solid var(--border)",
+  borderRadius: "var(--r-lg)",
+  padding: "20px 20px 22px",
+  background: "var(--cream)",
+}
+const calRow: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+  gap: 14,
+}
+const calField: CSSProperties = { display: "flex", flexDirection: "column", gap: 6 }
+const calLabel: CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: "var(--ink)",
+  letterSpacing: "0.01em",
+}
+const calOptional: CSSProperties = { fontWeight: 400, color: "var(--ink-3)" }
+const calInput: CSSProperties = {
+  font: "inherit",
+  fontSize: 14,
+  color: "var(--ink)",
+  padding: "10px 12px",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--r-md)",
+  background: "var(--cream-3)",
+  outline: "none",
+}
+const calTextarea: CSSProperties = {
+  ...calInput,
+  lineHeight: 1.5,
+  resize: "vertical",
+  minHeight: 140,
+}
+const calActionsRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+  flexWrap: "wrap",
+}
+const calHint: CSSProperties = { fontSize: 13, color: "var(--ink-3)" }
+
+const calErrorBox: CSSProperties = {
+  border: "1px solid var(--danger-border, #e7b4ad)",
+  background: "var(--danger-soft, #fbeae6)",
+  color: "var(--danger, #a33a28)",
+  borderRadius: "var(--r-md)",
+  padding: "12px 14px",
+  fontSize: 14,
+  lineHeight: 1.45,
+}
+
+const calResultWrap: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 18,
+  border: "1px solid var(--border)",
+  borderRadius: "var(--r-lg)",
+  padding: "20px 20px 22px",
+  background: "var(--cream-3)",
+  boxShadow: "var(--shadow-sm)",
+}
+const calResultHead: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  flexWrap: "wrap",
+}
+const calResultEyebrow: CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+  color: "var(--ink-3)",
+}
+const calBadge: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  padding: "4px 10px",
+  borderRadius: "var(--r-pill)",
+  border: "1px solid var(--border)",
+  background: "var(--cream)",
+  color: "var(--ink-2)",
+}
+const calBadgeGood: CSSProperties = {
+  color: "var(--live)",
+  background: "var(--live-soft)",
+  borderColor: "var(--live-border)",
+}
+const calBadgeWarn: CSSProperties = {
+  color: "var(--ink-2)",
+  background: "var(--peach-50)",
+  borderColor: "var(--peach-200)",
+}
+
+const calSection: CSSProperties = { display: "flex", flexDirection: "column", gap: 8 }
+const calSectionLabel: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "var(--ink-3)",
+}
+const calChipWrap: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 8 }
+const calChip: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: 13,
+  fontWeight: 500,
+  color: "var(--ink)",
+  background: "var(--peach-50)",
+  border: "1px solid var(--peach-200)",
+  borderRadius: "var(--r-pill)",
+  padding: "4px 12px",
+}
+const calQList: CSSProperties = {
+  margin: 0,
+  paddingLeft: 20,
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+}
+const calQItem: CSSProperties = {
+  fontSize: 14,
+  lineHeight: 1.45,
+  color: "var(--ink-2)",
+}
+const calReqTag: CSSProperties = {
+  marginLeft: 8,
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: "0.05em",
+  textTransform: "uppercase",
+  color: "var(--live)",
+  background: "var(--live-soft)",
+  border: "1px solid var(--live-border)",
+  borderRadius: "var(--r-pill)",
+  padding: "1px 7px",
+  verticalAlign: "middle",
+}
+const calClarifyList: CSSProperties = {
+  margin: 0,
+  paddingLeft: 20,
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+}
+const calClarifyItem: CSSProperties = {
+  fontSize: 14,
+  lineHeight: 1.45,
+  color: "var(--ink)",
+}
+const calClarifyHint: CSSProperties = {
+  margin: "2px 0 0",
+  fontSize: 13,
+  color: "var(--ink-3)",
+}
+const calScopeNote: CSSProperties = {
+  margin: 0,
+  fontSize: 13,
+  lineHeight: 1.5,
+  color: "var(--ink-3)",
+  borderTop: "1px solid var(--border)",
+  paddingTop: 14,
 }

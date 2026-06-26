@@ -104,6 +104,79 @@ export async function registerEmployer(
   return res.data
 }
 
+// ---------------------------------------------------------------------------
+// Employer onboarding Step 5 — Calibrate Pilot Req (job enrichment)
+// ---------------------------------------------------------------------------
+
+export type EmployerIntakeJobInput = {
+  title: string
+  jobDescription: string
+  companyName?: string
+  locationRaw?: string
+}
+
+/** Canonical skill the enricher attaches to a role. */
+export type IntakeSkill = {
+  name: string
+  bucket?: string
+  proficiency?: string
+}
+
+/** Canonical job tags returned by the enricher (subset rendered as chips). */
+export type IntakeEnrichedTags = {
+  roleFunction?: string[]
+  industrySector?: string[]
+  relevantTags?: string[]
+  skills?: IntakeSkill[]
+  seniorityLevel?: string
+  jobType?: string
+  locationBuckets?: string[]
+}
+
+export type IntakeHardFilters = {
+  roleFunction?: string[]
+  seniorityLevel?: string
+  jobType?: string
+  locationBuckets?: string[]
+  sponsorship?: boolean | null
+}
+
+export type IntakePrescreenQuestion = {
+  id: string
+  prompt: string
+  required: boolean
+  rubricDimensionId: string
+}
+
+export type EmployerIntakeJobOutput = {
+  enrichedTags?: IntakeEnrichedTags
+  hardFilters?: IntakeHardFilters
+  prescreenQuestions?: IntakePrescreenQuestion[]
+  clarifyingQuestions?: string[]
+  confidence?: { overall?: number }
+  approvalReady?: boolean
+  candidateBrief?: { title?: string; body?: string }
+  modelUsed?: string
+  note?: string
+}
+
+/**
+ * Enrich one real role through the production 3-tier LLM job enricher and get
+ * back canonical tags, hard filters, auto-drafted prescreen questions, and
+ * plain-English clarifying questions. Public callable (no auth), mirrors
+ * registerEmployer. In-memory only — creates no job and persists nothing.
+ */
+export async function employerIntakeJob(
+  input: EmployerIntakeJobInput,
+): Promise<EmployerIntakeJobOutput> {
+  const fn = httpsCallable<EmployerIntakeJobInput, EmployerIntakeJobOutput>(
+    functions(),
+    "paEmployerIntakeJob",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
 export function deriveFunction(title: string): "Design" | "Engineering" | "Product" | "GTM" | "Other" {
   const t = (title || "").toLowerCase()
   if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"
