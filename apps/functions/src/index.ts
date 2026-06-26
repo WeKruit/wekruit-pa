@@ -360,6 +360,11 @@ export { paExperienceExtractorOnParsedResume } from "./experience-extractor-trig
 // Handshake fully implemented; GH/Lever/LinkedIn return 501 stubs.
 export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 
+// TWO-WAY email — Mailgun inbound route catches candidate REPLIES at
+// `reply+<convToken>@<inbound-domain>`; resolves the thread via
+// pa-email-threads/{convToken} and (flag-gated) auto-replies contextually.
+export { paInboundEmailWebhook } from "./inbound-email-webhook.js"
+
 // v2.1 S3 — outbound voice prescreen dispatch + status callback reconciliation.
 // `paVoiceDialOutbound`: Firestore trigger on `outbound-bookings/{id}` writes;
 //   reacts to `→ dialing` and creates a LiveKit Cloud SIP participant routed

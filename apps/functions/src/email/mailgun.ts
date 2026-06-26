@@ -16,6 +16,18 @@ export interface MailgunSendInput {
   text: string
   html?: string
   from?: string
+  /**
+   * Reply-To address. Emitted as the Mailgun form field `h:Reply-To` (the
+   * `h:` prefix injects an arbitrary header). Used for VERP two-way threading
+   * so candidate replies land on the inbound route as `reply+<token>@...`.
+   * Additive + backward-compatible — omit it and behaviour is unchanged.
+   */
+  replyTo?: string
+  /**
+   * Arbitrary extra headers, emitted as `h:<Header-Name>` form fields.
+   * E.g. `{ "In-Reply-To": "<msgid>", "References": "<msgid>" }` for threading.
+   */
+  headers?: Record<string, string>
 }
 
 export interface MailgunSendResult {
@@ -48,6 +60,12 @@ export async function sendMailgun(
   body.set("subject", input.subject)
   body.set("text", input.text)
   if (input.html) body.set("html", input.html)
+  if (input.replyTo) body.set("h:Reply-To", input.replyTo)
+  if (input.headers) {
+    for (const [name, value] of Object.entries(input.headers)) {
+      if (value) body.set(`h:${name}`, value)
+    }
+  }
   const auth = "Basic " + Buffer.from(`api:${cfg.apiKey}`).toString("base64")
   const resp = await fetch(url, {
     method: "POST",

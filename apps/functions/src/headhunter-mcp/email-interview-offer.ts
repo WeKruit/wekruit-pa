@@ -23,6 +23,11 @@ import type { ClaireToolContext } from "../claire-agent/types.js"
 import { buildInterviewOffer } from "../claire-agent/tools/scheduling-tools.js"
 import { isSchedulingEligible } from "../claire-agent/scheduling-gate.js"
 import { sendMailgun, type MailgunConfig } from "../email/mailgun.js"
+import {
+  generateConvToken,
+  persistEmailThread,
+  verpReplyToAddress,
+} from "../email/email-thread.js"
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -159,6 +164,20 @@ export async function runEmailInterviewOffer(
 </div>`
   const text = `Hi,\n\nGreat news — the team would love to interview you. Pick whichever time works best and you're booked instantly:\n\n${textLines}\n\nAll times are shown in ${offer.timeZone}. Just open a link to confirm — if none of these work, reply and we'll find another time.\n\n— Claire @ WeKruit`
 
+  // Mint a VERP conversation token + persist the thread mapping so candidate
+  // replies route back to us (TWO-WAY). The token is the Reply-To local-part.
+  const convToken = generateConvToken()
+  const replyTo = verpReplyToAddress(convToken)
+  await persistEmailThread(deps.db, {
+    convToken,
+    userId,
+    jobId: offer.jobId,
+    candidateEmail: to,
+    subject,
+    lastDirection: "outbound",
+    source: "email_interview_offer",
+  }).catch(() => undefined) // fail-open: a missing thread doc only loses reply-threading
+
   // Audit FIRST (fail-open), then send.
   const ref = deps.db.collection("pa-headhunter-emails").doc()
   await ref.set({
@@ -167,6 +186,7 @@ export async function runEmailInterviewOffer(
     userId,
     jobId: offer.jobId,
     slotCount: offer.count,
+    convToken,
     status: "pending",
     source: "email_interview_offer",
     createdAt: FieldValue.serverTimestamp(),
@@ -179,7 +199,7 @@ export async function runEmailInterviewOffer(
   }
 
   try {
-    const res = await sendMailgun(cfg, { to, subject, text, html })
+    const res = await sendMailgun(cfg, { to, subject, text, html, replyTo })
     if (res.ok) {
       await ref.set(
         { status: "sent", mailgunMessageId: res.messageId ?? null, mailgunStatus: res.status, updatedAt: FieldValue.serverTimestamp() },

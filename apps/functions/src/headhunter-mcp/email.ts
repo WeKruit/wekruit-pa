@@ -15,6 +15,11 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { FieldValue } from "firebase-admin/firestore"
 import { sendMailgun, type MailgunConfig } from "../email/mailgun.js"
+import {
+  generateConvToken,
+  persistEmailThread,
+  verpReplyToAddress,
+} from "../email/email-thread.js"
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -76,11 +81,24 @@ export async function runSendEmail(args: SendEmailArgs, deps: { db: Firestore })
     }
   }
 
+  // Mint a VERP conversation token + persist the thread mapping so replies
+  // route back to us (TWO-WAY). The token is the Reply-To local-part.
+  const convToken = generateConvToken()
+  const replyTo = verpReplyToAddress(convToken)
+  await persistEmailThread(deps.db, {
+    convToken,
+    candidateEmail: to,
+    subject,
+    lastDirection: "outbound",
+    source: "headhunter_mcp",
+  }).catch(() => undefined) // fail-open: a missing thread doc only loses reply-threading
+
   const ref = deps.db.collection("pa-headhunter-emails").doc()
   await ref.set({
     to,
     subject,
     body: body.slice(0, 8000),
+    convToken,
     status: "pending",
     source: "headhunter_mcp",
     createdAt: FieldValue.serverTimestamp(),
@@ -96,7 +114,7 @@ export async function runSendEmail(args: SendEmailArgs, deps: { db: Firestore })
     const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;line-height:1.5;color:#1a1a1a">${escapeHtml(
       body,
     ).replace(/\n/g, "<br>")}</div>`
-    const res = await sendMailgun(cfg, { to, subject, text: body, html })
+    const res = await sendMailgun(cfg, { to, subject, text: body, html, replyTo })
     if (res.ok) {
       await ref.set(
         { status: "sent", mailgunMessageId: res.messageId ?? null, mailgunStatus: res.status, updatedAt: FieldValue.serverTimestamp() },
