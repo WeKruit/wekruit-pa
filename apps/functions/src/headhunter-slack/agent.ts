@@ -39,7 +39,8 @@ How to behave:
 - You serve the internal WeKruit operator team. Be concise and Slack-native: short messages, bullet lists, ids in \`backticks\`. No walls of text.
 - FORMAT FOR SLACK mrkdwn, NOT GitHub markdown: use *single asterisks* for bold (never **double**), never use \`#\`/\`##\`/\`###\` headers (make a section a *bold line* instead), bullets as \`- \`, ids/values in \`backticks\`, and links as <https://url|label>. Double-asterisk and \`#\` headers render as literal junk in Slack.
 - Use tools to answer — never invent candidate, job, or submission data. If a tool returns nothing, say so plainly.
-- For any WRITE / mutating action (advance, reject, request_info, comment, decide_employer_intro, reevaluate_candidate_tier): FIRST restate exactly what you will do (which submission / candidate, what change) and ask the operator to confirm. Only call the tool after they reply yes.
+- For any WRITE / mutating action (advance, reject, request_info, comment, decide_employer_intro, reevaluate_candidate_tier, confirm_interview_booking): FIRST restate exactly what you will do (which submission / candidate, what change, and the exact tool ARGS) and ask the operator to confirm. Only call the tool after they reply yes.
+- You see the FULL Slack thread as context, not just the latest message. When you asked the operator to confirm a write action and their latest message affirms it (e.g. "yes", "confirm", "go", "do it", "book it"), DO IT NOW: call that exact tool with the SAME args you restated, plus confirm=true (for confirm_interview_booking / send_candidate_message). Do NOT re-show the menu, do NOT ask again, do NOT start over — the affirmation refers to the action you just proposed earlier in this thread.
 - Passed-candidate PII may be redacted server-side — report what the tools return, don't try to reconstruct it.
 - When you need an id (jobId, submissionId, userId, candidateId) you don't have, look it up with a read/search tool first, or ask.`
 
@@ -78,12 +79,36 @@ export function toSlackMrkdwn(input: string): string {
     .join("")
 }
 
-/** Run one headhunter turn for a user message; returns the reply text. */
-export async function runHeadhunterTurn(userText: string): Promise<string> {
-  const text = (userText ?? "").trim()
-  if (!text) {
+/** One message item of Slack thread context fed to the agent. */
+export type HeadhunterTurnItem = { role: "user" | "assistant"; content: string }
+
+/**
+ * Run one headhunter turn; returns the reply text. Accepts EITHER a bare user
+ * string (single-shot) OR the reconstructed Slack thread as an array of
+ * user/assistant items (so the agent has conversational memory — the fix for
+ * multi-turn flows like "reply yes to proceed" → "yes", which were dropped when
+ * each message ran as a fresh, memoryless turn).
+ */
+export async function runHeadhunterTurn(input: string | HeadhunterTurnItem[]): Promise<string> {
+  const items: HeadhunterTurnItem[] = Array.isArray(input)
+    ? input.filter((it) => it && typeof it.content === "string" && it.content.trim().length > 0)
+    : [{ role: "user", content: (input ?? "").trim() }]
+  // The agent must respond to a final USER turn; if the last item isn't from the
+  // user (shouldn't happen in practice) we still run, but an all-empty input is
+  // the no-text greeting.
+  if (items.length === 0 || items.every((it) => it.content.trim().length === 0)) {
     return "What can I help with? Try: *find candidates for job `<jobId>`*, *recruiter submissions queue*, or *match candidate `<userId>`*."
   }
+  // Map our simple {role,content} items into the SDK's AgentInputItem shapes:
+  // a user message takes string content, but an assistant message REQUIRES
+  // `status` + an `output_text` content-part array (a plain string fails zod).
+  const runInput: unknown = Array.isArray(input)
+    ? items.map((it) =>
+        it.role === "assistant"
+          ? { role: "assistant", status: "completed", content: [{ type: "output_text", text: it.content }] }
+          : { role: "user", content: it.content },
+      )
+    : items[0].content
   configureClaireSdk()
   const url = process.env.PA_HEADHUNTER_MCP_URL?.trim() || DEFAULT_MCP_URL
   const adminToken = process.env.PA_ADMIN_TOKEN?.trim()
@@ -102,7 +127,7 @@ export async function runHeadhunterTurn(userText: string): Promise<string> {
       // The agent's tools are the live MCP tool surface.
       mcpServers: [mcp],
     } as never)
-    const result = await run(agent, text, { maxTurns: 14 })
+    const result = await run(agent, runInput as never, { maxTurns: 14 })
     const out = String((result as { finalOutput?: unknown }).finalOutput ?? "").trim()
     return toSlackMrkdwn(out) || "(no reply — try rephrasing)"
   } finally {

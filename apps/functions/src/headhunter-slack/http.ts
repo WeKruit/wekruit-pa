@@ -18,9 +18,44 @@ import { logger } from "firebase-functions/v2"
 import { defineSecret } from "firebase-functions/params"
 import type { Response } from "express"
 import pkg from "@slack/bolt"
-import { runHeadhunterTurn } from "./agent.js"
+import { runHeadhunterTurn, type HeadhunterTurnItem } from "./agent.js"
 
 const { App, ExpressReceiver, Assistant } = pkg
+
+/**
+ * Reconstruct the Slack thread as a user/assistant transcript so the agent has
+ * conversational memory (the fix for "reply yes to proceed" → "yes" being
+ * dropped). Falls back to a single user turn if the thread can't be read. Bot
+ * messages (our own replies) carry `bot_id` → mapped to "assistant".
+ */
+async function buildTurnInput(
+  client: { conversations: { replies: (a: Record<string, unknown>) => Promise<{ messages?: unknown[] }> } },
+  channel: string | undefined,
+  threadTs: string | undefined,
+  currentText: string,
+): Promise<string | HeadhunterTurnItem[]> {
+  const fallback = currentText
+  if (!channel || !threadTs) return fallback
+  try {
+    const res = await client.conversations.replies({ channel, ts: threadTs, limit: 24 })
+    const msgs = (res.messages ?? []) as Array<{ text?: string; bot_id?: string; subtype?: string }>
+    const items: HeadhunterTurnItem[] = msgs
+      .filter((m) => !m.subtype || m.subtype === "bot_message") // drop joins/system noise
+      .map((m) => ({
+        role: m.bot_id ? ("assistant" as const) : ("user" as const),
+        content: (m.text ?? "").slice(0, 2500),
+      }))
+      .filter((it) => it.content.trim().length > 0)
+    if (items.length === 0) return fallback
+    // Ensure the conversation ends on the operator's latest message so the agent
+    // responds to it (replies are chronological; the current msg is last).
+    if (items[items.length - 1].role !== "user") items.push({ role: "user", content: currentText })
+    return items
+  } catch (err) {
+    logger.warn("[headhunter-slack] thread history fetch failed; single-turn", err)
+    return fallback
+  }
+}
 
 const SLACK_BOT_TOKEN = defineSecret("SLACK_BOT_TOKEN")
 const SLACK_SIGNING_SECRET = defineSecret("SLACK_SIGNING_SECRET")
@@ -67,12 +102,19 @@ function buildSlackHandler(): ExpressHandler {
         logger.error("[headhunter-slack] threadStarted failed", err)
       }
     },
-    userMessage: async ({ message, say, setStatus }) => {
-      const text = (message as { text?: string }).text ?? ""
+    userMessage: async ({ message, say, setStatus, client }) => {
+      const m = message as { text?: string; channel?: string; thread_ts?: string; ts?: string }
+      const text = m.text ?? ""
       logger.info("[headhunter-slack] userMessage", { len: text.length })
       try {
         await setStatus("is thinking…")
-        const reply = await runHeadhunterTurn(text)
+        const input = await buildTurnInput(
+          client as never,
+          m.channel,
+          m.thread_ts ?? m.ts,
+          text,
+        )
+        const reply = await runHeadhunterTurn(input)
         await say(reply)
         logger.info("[headhunter-slack] replied", { len: reply.length })
       } catch (err) {
@@ -84,12 +126,13 @@ function buildSlackHandler(): ExpressHandler {
   app.assistant(assistant)
 
   // @-mentions in channels → reply in-thread.
-  app.event("app_mention", async ({ event, say }) => {
-    const e = event as unknown as { text?: string; ts?: string; thread_ts?: string }
+  app.event("app_mention", async ({ event, say, client }) => {
+    const e = event as unknown as { text?: string; ts?: string; thread_ts?: string; channel?: string }
     const text = (e.text ?? "").replace(/<@[^>]+>/g, "").trim()
     logger.info("[headhunter-slack] app_mention", { len: text.length })
     try {
-      const reply = await runHeadhunterTurn(text)
+      const input = await buildTurnInput(client as never, e.channel, e.thread_ts ?? e.ts, text)
+      const reply = await runHeadhunterTurn(input)
       await say({ text: reply, thread_ts: e.thread_ts ?? e.ts } as Parameters<typeof say>[0])
     } catch (err) {
       logger.error("[headhunter-slack] app_mention failed", err)
@@ -98,12 +141,13 @@ function buildSlackHandler(): ExpressHandler {
   })
 
   // Plain DMs (non-assistant) fallback.
-  app.message(async ({ message, say }) => {
-    const m = message as unknown as { text?: string; subtype?: string; bot_id?: string }
+  app.message(async ({ message, say, client }) => {
+    const m = message as unknown as { text?: string; subtype?: string; bot_id?: string; channel?: string; thread_ts?: string; ts?: string }
     if (m.subtype || m.bot_id) return
     logger.info("[headhunter-slack] app.message", { len: (m.text ?? "").length })
     try {
-      await say(await runHeadhunterTurn(m.text ?? ""))
+      const input = await buildTurnInput(client as never, m.channel, m.thread_ts ?? m.ts, m.text ?? "")
+      await say(await runHeadhunterTurn(input))
     } catch (err) {
       logger.error("[headhunter-slack] message failed", err)
       await say(errText(err))
