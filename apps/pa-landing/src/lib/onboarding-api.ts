@@ -215,6 +215,44 @@ export async function employerCreatePilotReq(
   return res.data
 }
 
+// ---------------------------------------------------------------------------
+// Employer onboarding Step 7 (Launch) — consent-safe pool-match COUNT
+// ---------------------------------------------------------------------------
+
+export type EmployerMatchPilotReqInput = {
+  /** The reqId persisted at Step 6 sign-off (matching-jobs/{reqId}). */
+  reqId: string
+}
+
+export type EmployerMatchPilotReqOutput = {
+  /** Role-relevant candidates scanned from the retained pool. */
+  roleRelevantLoaded: number
+  /** Top-N ranked candidates returned by the scorer (capped at 50). */
+  ranked: number
+  /** Ranked candidates that look like potential fits (not do_not_contact). */
+  potentialFits: number
+  /** True when scoring is still refining via the nightly LLM rerank. */
+  scoringPending: boolean
+}
+
+/**
+ * Fetch a CONSENT-SAFE pool-match count for a saved pilot req. Returns COUNTS
+ * ONLY — no candidate names, emails, ids, tags, or rows ever cross this
+ * boundary (CLAUDE.md v2.0 Product Rule #6). Public callable (no auth), mirrors
+ * employerCreatePilotReq. Does NOT contact any candidates. Counts are an early
+ * estimate that refines overnight (see scoringPending).
+ */
+export async function employerMatchPilotReq(
+  input: EmployerMatchPilotReqInput,
+): Promise<EmployerMatchPilotReqOutput> {
+  const fn = httpsCallable<EmployerMatchPilotReqInput, EmployerMatchPilotReqOutput>(
+    functions(),
+    "paEmployerMatchPilotReq",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
 export function deriveFunction(title: string): "Design" | "Engineering" | "Product" | "GTM" | "Other" {
   const t = (title || "").toLowerCase()
   if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"

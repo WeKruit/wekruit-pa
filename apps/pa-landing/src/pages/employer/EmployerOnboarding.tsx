@@ -15,12 +15,14 @@
  * 1–6 with Skip-for-now + Back, all navigable end-to-end via a numbered
  * vertical stepper. Server-state callable is a later slice.
  */
-import { useCallback, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useState, type CSSProperties } from "react"
 import { Link } from "react-router-dom"
 import {
   employerIntakeJob,
   employerCreatePilotReq,
+  employerMatchPilotReq,
   type EmployerIntakeJobOutput,
+  type EmployerMatchPilotReqOutput,
 } from "../../lib/onboarding-api.js"
 import {
   DEFAULT_SUCCESS_METRIC,
@@ -776,6 +778,33 @@ function LaunchStep({
   pilotReqTitle?: string
   onPrev?: () => void
 }) {
+  // Consent-safe pool-match COUNT for the saved pilot req. Counts only — no
+  // candidate names/PII ever cross the public callable boundary.
+  const [matchStatus, setMatchStatus] = useState<"idle" | "loading" | "done" | "error">(
+    "idle",
+  )
+  const [matchCounts, setMatchCounts] = useState<EmployerMatchPilotReqOutput | null>(null)
+
+  useEffect(() => {
+    if (!pilotReqId) return
+    let cancelled = false
+    setMatchStatus("loading")
+    setMatchCounts(null)
+    employerMatchPilotReq({ reqId: pilotReqId })
+      .then((counts) => {
+        if (cancelled) return
+        setMatchCounts(counts)
+        setMatchStatus("done")
+      })
+      .catch(() => {
+        if (cancelled) return
+        setMatchStatus("error")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [pilotReqId])
+
   // Defensive: if a user lands here without signing off (e.g. skipped Step 6),
   // point them back rather than implying something was saved.
   if (!pilotReqId) {
@@ -838,13 +867,31 @@ function LaunchStep({
 
       <div style={launchNextWrap}>
         <span style={calSectionLabel}>What happens next</span>
-        <p style={launchNextBody}>
-          The role is saved as a matchable pilot req. WeKruit will match it
-          against the candidate pool next — scoring and ranking candidates by
-          fit. Nobody has been contacted yet: reaching out to candidates is a
-          separate step you&apos;ll approve. You can close this page; your
-          progress is saved.
-        </p>
+        {matchStatus === "loading" ? (
+          <p style={launchNextBody}>
+            Scanning your retained candidate pool for this role…
+          </p>
+        ) : matchStatus === "done" && matchCounts ? (
+          <p style={launchNextBody}>
+            We scanned your retained pool: <strong>{matchCounts.roleRelevantLoaded}</strong>{" "}
+            role-relevant {matchCounts.roleRelevantLoaded === 1 ? "candidate" : "candidates"},{" "}
+            <strong>{matchCounts.potentialFits}</strong> look like potential fits.
+            {matchCounts.scoringPending
+              ? " (scoring refines as Claire ranks them.)"
+              : ""}{" "}
+            Claire screens them next — you&apos;ll only ever see candidates who
+            pass screening and consent. No one is contacted without your approval.
+          </p>
+        ) : (
+          // Loading-failed or idle fallback: keep the original honest copy.
+          <p style={launchNextBody}>
+            The role is saved as a matchable pilot req. WeKruit will match it
+            against the candidate pool next — scoring and ranking candidates by
+            fit. Nobody has been contacted yet: reaching out to candidates is a
+            separate step you&apos;ll approve. You can close this page; your
+            progress is saved.
+          </p>
+        )}
       </div>
 
       <div style={stepActions}>
