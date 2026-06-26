@@ -14,7 +14,7 @@ import {
 } from "./scheduling-tools.js"
 import type { ClaireToolContext } from "../types.js"
 import type { FlatSlot } from "../../calcom/calcom-client.js"
-import { interviewBookingDocId } from "@pa/core-types"
+import { interviewBookingDocId, createCandidateJobStateId, PA_COLLECTIONS } from "@pa/core-types"
 
 const DEV_UID = "8fEwIduUrzxZsblHHsNz" // Adam +14243201960 — in the gate set.
 const NON_DEV_UID = "someRandomCandidate"
@@ -55,12 +55,17 @@ class FakeDb {
       doc(id: string) {
         const path = `${name}/${id}`
         return {
+          // `id`/`path` exposed so runTransaction's tx.get/tx.set can resolve the
+          // same in-memory store entry (applyCandidateJobEvent passes the ref).
+          id,
+          path,
           async get() {
             let data: Doc | undefined
             if (name === "pa-interview-bookings") data = self.store.get(path)
             else if (name === "matching-jobs") data = self.matchingJobs.get(id)
             else if (name === "pa-jobs") data = self.paJobs.get(id)
             else if (name === "pa-users") data = self.paUsers.get(id)
+            else data = self.store.get(path)
             return { exists: data !== undefined, id, data: () => data }
           },
           async set(data: Doc, opts?: { merge?: boolean }) {
@@ -124,6 +129,31 @@ class FakeDb {
         }
       },
     }
+  }
+
+  // Minimal transaction support so applyCandidateJobEvent (the interview_booked
+  // FSM emit) runs for REAL against this in-memory store. doc refs created via
+  // collection().doc() carry a `path`; the tx reads/writes the same store map.
+  async runTransaction<T>(
+    fn: (tx: {
+      get: (ref: { path?: string }) => Promise<{ exists: boolean; data: () => Doc | undefined }>
+      set: (ref: { path?: string }, data: Doc) => void
+    }) => Promise<T>,
+  ): Promise<T> {
+    const self = this
+    const tx = {
+      async get(ref: { path?: string }) {
+        const data = ref.path ? self.store.get(ref.path) : undefined
+        return { exists: data !== undefined, data: () => data }
+      },
+      set(ref: { path?: string }, data: Doc) {
+        if (!ref.path) return
+        const prev = self.store.get(ref.path) ?? {}
+        self.writes.push({ path: ref.path, data })
+        self.store.set(ref.path, { ...prev, ...data })
+      },
+    }
+    return fn(tx)
   }
 }
 
@@ -359,6 +389,67 @@ test("re-offer REUSES the same offerToken so prior emailed links stay valid", as
     assert.equal(second.ok, true)
     assert.equal(second.offerToken, first.offerToken, "token reused across re-offer")
     assert.equal(db.store.get(BOOKING_PATH)!.offerToken, first.offerToken)
+  } finally {
+    restore()
+  }
+})
+
+test("successful booking emits interview_booked on the candidate×job FSM (parallel track, idempotent)", async () => {
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    const offerRes = await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null, jobChoice: null })
+    assert.equal(offerRes.ok, true)
+    const persisted = db.store.get(BOOKING_PATH)!
+    const offered = persisted.offeredSlots as Array<{ iso: string }>
+    const chosenIso = offered[0]!.iso
+
+    const book = await bookInterviewSlotCore(ctx, {
+      slotNumber: 1,
+      slotIso: null,
+      statedTime: null,
+      candidateEmail: null,
+      candidateName: null,
+      timeZone: null,
+    })
+    assert.equal(book.ok, true)
+    assert.equal((book as { action: string }).action, "booked")
+
+    // The candidate×job state doc carries the interview PARALLEL track.
+    const stateDocId = createCandidateJobStateId(DEV_UID, "job-1")
+    const statePath = `${PA_COLLECTIONS.candidateJobStates}/${stateDocId}`
+    const stateDoc = db.store.get(statePath)
+    assert.ok(stateDoc, "candidate×job state doc must exist after a successful booking")
+    assert.equal(stateDoc!.interviewState, "interview_booked")
+    assert.equal(stateDoc!.interviewBookingId, interviewBookingDocId({ userId: DEV_UID, jobId: "job-1" }))
+    assert.equal(stateDoc!.interviewSlotIso, chosenIso)
+    assert.equal(stateDoc!.interviewCalBookingUid, "cal-uid-xyz")
+    // Main pass/fail ladder MUST be untouched (no prescreen here → default entry).
+    assert.equal(stateDoc!.state, "candidate_matched", "interview track must not overwrite main state")
+
+    // An audit row was written (drives idempotency).
+    const auditWrites = db.writes.filter((w) => w.path.startsWith(`${PA_COLLECTIONS.auditEvents}/`))
+    assert.ok(auditWrites.length >= 1, "an FSM audit event must be written")
+
+    // Idempotent re-book → already_booked short-circuit; interview track unchanged.
+    const beforeUpdatedAt = stateDoc!.interviewUpdatedAt
+    const second = await bookInterviewSlotCore(ctx, {
+      slotNumber: 1,
+      slotIso: null,
+      statedTime: null,
+      candidateEmail: null,
+      candidateName: null,
+      timeZone: null,
+    })
+    assert.equal(second.ok, true)
+    assert.equal((second as { action: string }).action, "already_booked")
+    assert.equal(
+      db.store.get(statePath)!.interviewUpdatedAt,
+      beforeUpdatedAt,
+      "re-book must not re-emit / re-write the FSM interview track",
+    )
   } finally {
     restore()
   }

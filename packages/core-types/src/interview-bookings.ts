@@ -36,6 +36,13 @@ export const InterviewBookingStatusSchema = z.enum([
   "booked", // POST /bookings accepted; Cal.com booking created
   "confirmed", // our WeKruit Mailgun confirmation email sent (booked + emailed)
   "failed", // booking attempt failed (4xx) — recoverable, candidate can retry
+  // Post-confirmation lifecycle (additive — never reached by the Cal.com tools
+  // themselves; written by downstream interview-outcome producers / ops). The
+  // booking still "dead-ended" at confirmed for the booking tools; these extend
+  // the lifecycle so an interview can be marked done / missed / cancelled.
+  "completed", // the interview took place
+  "no_show", // candidate did not attend the booked interview
+  "cancelled", // the booked interview was cancelled (either side)
 ])
 export type InterviewBookingStatus = z.infer<typeof InterviewBookingStatusSchema>
 

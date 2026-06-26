@@ -216,6 +216,38 @@ export async function applyCandidateJobEvent(
           ? event.matchId ?? currentDoc?.latestMatchId
           : currentDoc?.latestMatchId,
       archivedAt: reduced.state === "archived" ? event.occurredAt : currentDoc?.archivedAt,
+      // Interview-booking PARALLEL track — annotated WITHOUT touching the main
+      // pass/fail `state` (the reducer treats these as self-transitions). Legacy
+      // fields preserved when the event is unrelated.
+      interviewState:
+        event.type === "interview_offered" ||
+        event.type === "interview_booked" ||
+        event.type === "interview_completed" ||
+        event.type === "interview_no_show"
+          ? event.type
+          : currentDoc?.interviewState,
+      interviewBookingId:
+        event.type === "interview_offered" ||
+        event.type === "interview_booked" ||
+        event.type === "interview_completed" ||
+        event.type === "interview_no_show"
+          ? event.interviewBookingId
+          : currentDoc?.interviewBookingId,
+      interviewSlotIso:
+        (event.type === "interview_offered" || event.type === "interview_booked") && event.slotIso
+          ? event.slotIso
+          : currentDoc?.interviewSlotIso,
+      interviewCalBookingUid:
+        event.type === "interview_booked" && event.calBookingUid
+          ? event.calBookingUid
+          : currentDoc?.interviewCalBookingUid,
+      interviewUpdatedAt:
+        event.type === "interview_offered" ||
+        event.type === "interview_booked" ||
+        event.type === "interview_completed" ||
+        event.type === "interview_no_show"
+          ? event.occurredAt
+          : currentDoc?.interviewUpdatedAt,
     })
     tx.set(stateRef, firestorePayload(nextDoc as Record<string, unknown>), { merge: true })
     tx.set(auditRef, {

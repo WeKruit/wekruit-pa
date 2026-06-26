@@ -49,6 +49,19 @@ export const CandidateJobStateSchema = z.enum([
 ])
 export type CandidateJobState = z.infer<typeof CandidateJobStateSchema>
 
+/**
+ * Interview-booking sub-track for a (candidate × job) — ORTHOGONAL to the main
+ * pass/fail `CandidateJobState` ladder. A candidate books their first-interview
+ * slot ALONGSIDE the prescreen decision; this never gates passed/employer_visible.
+ */
+export const InterviewTrackStateSchema = z.enum([
+  "interview_offered", // slots presented to the candidate
+  "interview_booked", // real Cal.com booking created
+  "interview_completed", // the interview took place
+  "interview_no_show", // candidate did not attend
+])
+export type InterviewTrackState = z.infer<typeof InterviewTrackStateSchema>
+
 export const MarketplaceActorSchema = z.enum([
   "system",
   "orchestrator",
@@ -519,6 +532,17 @@ export const CandidateJobStateDocSchema = z.object({
   latestMatchId: z.string().min(1).optional(),
   archivedAt: TimestampSchema.optional(),
   awaitingHmResponse: z.boolean().optional(),
+  /**
+   * Interview-booking PARALLEL track (orthogonal to the pass/fail decision
+   * spine). Annotated by interview_offered/interview_booked/interview_completed/
+   * interview_no_show events as reducer SELF-transitions — they NEVER overwrite
+   * the main `state`. Optional + nullable so legacy state docs still parse.
+   */
+  interviewState: InterviewTrackStateSchema.optional(),
+  interviewBookingId: z.string().min(1).optional(),
+  interviewSlotIso: z.string().min(1).optional(),
+  interviewCalBookingUid: z.string().min(1).optional(),
+  interviewUpdatedAt: TimestampSchema.optional(),
 })
 export type CandidateJobStateDoc = z.infer<typeof CandidateJobStateDocSchema>
 
@@ -1758,6 +1782,29 @@ export const CandidateJobEventSchema = z.discriminatedUnion("type", [
   }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("candidate_declined") }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("archive") }),
+  // Interview-booking PARALLEL track (orthogonal to pass/fail). These annotate
+  // the candidate×job state doc's interview sub-track WITHOUT changing the main
+  // ladder state — the reducer treats each as a self-transition.
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("interview_offered"),
+    interviewBookingId: IdSchema,
+    slotIso: z.string().min(1).optional(),
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("interview_booked"),
+    interviewBookingId: IdSchema,
+    slotIso: z.string().min(1),
+    calBookingUid: z.string().min(1).optional(),
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("interview_completed"),
+    interviewBookingId: IdSchema,
+    outcome: z.string().min(1).optional(),
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("interview_no_show"),
+    interviewBookingId: IdSchema,
+  }),
 ])
 export type CandidateJobEvent = z.infer<typeof CandidateJobEventSchema>
 
@@ -2057,6 +2104,16 @@ export function reduceCandidateJobState(
         return reduction(current, current, event.type, event.occurredAt, "intro_decision_already_recorded")
       }
       return reduction(current, current, event.type, event.occurredAt, "intro_decision_requires_employer_visible")
+    case "interview_offered":
+      // Parallel track — never changes the main pass/fail state. Annotates the
+      // interview sub-track only (persisted by applyCandidateJobEvent).
+      return reduction(current, current, event.type, event.occurredAt, "interview_offered")
+    case "interview_booked":
+      return reduction(current, current, event.type, event.occurredAt, "interview_booked")
+    case "interview_completed":
+      return reduction(current, current, event.type, event.occurredAt, "interview_completed")
+    case "interview_no_show":
+      return reduction(current, current, event.type, event.occurredAt, "interview_no_show")
     case "candidate_declined":
     case "archive":
       return reduction(current, "archived", event.type, event.occurredAt, "opportunity_archived")

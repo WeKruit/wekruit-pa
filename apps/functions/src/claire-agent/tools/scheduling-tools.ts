@@ -38,6 +38,8 @@ import { resolveEventTypeId } from "../../calcom/event-type-routing.js"
 import { sendInterviewConfirmationEmail } from "../../calcom/interview-confirmation-email.js"
 import type { ClaireToolContext } from "../types.js"
 import { SCHEDULING_DEV_UIDS, isSchedulingEligible } from "../scheduling-gate.js"
+import { commitCandidateJobEvent } from "../reducers/candidate-job-state.js"
+import type { CandidateJobEvent } from "@pa/core-types"
 
 const INTERVIEW_BOOKINGS_COLLECTION = "pa-interview-bookings"
 const PA_USERS_COLLECTION = "pa-users"
@@ -1030,6 +1032,40 @@ export async function bookInterviewSlotCore(
   } catch (err) {
     // The booking IS made — a write hiccup must not flip ok:false. Log + continue.
     ctx.log("pa.claire.book_interview_slot.persist_booked_failed", {
+      userId: ctx.userId,
+      jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // (7b) Marketplace candidate×job FSM — emit interview_booked on the PARALLEL
+  // interview track (orthogonal to pass/fail; a self-transition that never
+  // overwrites the main ladder state). FAIL-OPEN: any error here is swallowed so
+  // a successful booking turn is never broken. The eventId is DETERMINISTIC
+  // (keyed off jobId + chosen slot) so a re-entry / retry dedups to a no-op via
+  // applyCandidateJobEvent's audit-keyed transaction. actor:"orchestrator" per
+  // the Claire-agent → MarketplaceActor mapping (no parallel "agent" actor).
+  try {
+    const interviewBookedEvent: CandidateJobEvent = {
+      type: "interview_booked",
+      eventId: `interview_booked:${ctx.userId}:${jobId}:${calBookingUid || chosenIso}`,
+      candidateId: ctx.userId,
+      jobId,
+      actor: "orchestrator",
+      occurredAt: nowIso,
+      evidence: [
+        {
+          source: "system",
+          summary: `interview booked for ${chosenIso}`,
+        },
+      ],
+      interviewBookingId: docId,
+      slotIso: chosenIso,
+      ...(calBookingUid ? { calBookingUid } : {}),
+    }
+    await commitCandidateJobEvent(ctx.db, interviewBookedEvent)
+  } catch (err) {
+    ctx.log("pa.claire.book_interview_slot.fsm_emit_failed", {
       userId: ctx.userId,
       jobId,
       error: err instanceof Error ? err.message : String(err),
