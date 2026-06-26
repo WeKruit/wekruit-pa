@@ -8,6 +8,7 @@ import Legal from "./pages/Legal.js"
 import { Login } from "./pages/Login.js"
 import { Operations } from "./pages/Operations.js"
 import OperationsOverview from "./pages/OperationsOverview.js"
+import FunnelOverview from "./pages/FunnelOverview.js"
 import Interviews from "./pages/Interviews.js"
 import RejectedCandidates from "./pages/RejectedCandidates.js"
 import { Overview } from "./pages/Overview.js"
@@ -180,6 +181,9 @@ export default function App() {
               AppShell's authed Routes. */}
           <Route path="/admin/setup" element={<OnboardingWizard />} />
           <Route path="/admin/operations" element={<OperationsOverview />} />
+          {/* Candidate × job funnel — point-in-time ladder counts + the
+              "passed but not employer-visible" stuck-PASS leak list. */}
+          <Route path="/admin/funnel" element={<FunnelOverview />} />
           <Route path="/conversations" element={<Users />} />
           {/* v2.0 marketplace candidate browser — replaces /conversations
               as the canonical "All candidates" surface. Reads pa-users +

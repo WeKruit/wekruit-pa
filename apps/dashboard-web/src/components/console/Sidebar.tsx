@@ -45,6 +45,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     items: [
       { to: "/admin/setup", label: "Setup" },
       { to: "/admin/operations", label: "Operations overview" },
+      { to: "/admin/funnel", label: "Funnel" },
     ],
   },
   {

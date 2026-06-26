@@ -294,6 +294,10 @@ export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats
 // Operations Overview dashboard — daily time-series of new users (by channel),
 // interviews conducted, and candidates moved to client. Admin /admin/operations.
 export { paAdminOpsMetrics } from "./admin-ops-metrics.js"
+// Funnel snapshot — point-in-time group-count over the pa-candidate-job-states
+// ladder (candidate_matched → … → employer_visible) + interview sub-track, and
+// the "passed but not employer-visible" stuck-PASS leak list. Admin /admin/funnel.
+export { paAdminFunnelSnapshot, paAdminPassedNotVisibleList } from "./admin-funnel-snapshot.js"
 // Candidate pool TRUE counts (whole pool, not the 500-row browse sample) for
 // the /admin/candidates header cards + STATE/SOURCE/IDENTITY breakdowns.
 export { paAdminCandidatePoolCounts } from "./admin-candidate-pool-counts.js"
