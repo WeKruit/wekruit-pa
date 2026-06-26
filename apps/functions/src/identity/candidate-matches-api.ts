@@ -12,7 +12,11 @@ const COLLECTIONS = {
   users: "pa-users",
   matchingJobs: "matching-jobs",
   userJobRecommendations: "pa-user-job-recommendations",
+  interviewBookings: "pa-interview-bookings",
 } as const
+
+/** Booking statuses that mean a real interview time is locked in. */
+const SCHEDULED_BOOKING_STATUSES = new Set(["booked", "confirmed"])
 
 type CallableAuth = {
   uid?: string
@@ -38,6 +42,15 @@ type CandidateReviewDecision = {
   reviewedAt: string
 }
 
+/** A booked/confirmed interview surfaced onto the match card. */
+export type CandidateMatchBooking = {
+  bookingId: string
+  status: string
+  slotIso?: string
+  meetingUrl?: string
+  timeZone?: string
+}
+
 export type CandidateMatchCard = {
   matchId: string
   jobId: string
@@ -46,6 +59,7 @@ export type CandidateMatchCard = {
     | "recommended"
     | "invited"
     | "interview_started"
+    | "scheduled"
     | "review_pending"
     | "passed"
     | "intro_accepted"
@@ -59,6 +73,8 @@ export type CandidateMatchCard = {
   rank?: number
   computedAt: string
   reviewDecision?: CandidateReviewDecision
+  /** Present when a real interview slot is booked (status === "scheduled"). */
+  booking?: CandidateMatchBooking
 }
 
 export type CandidateListMatchesResult = {
@@ -183,7 +199,10 @@ function projectStatus(
   hasInvite: boolean,
   prescreenTerminal?: string,
   prescreenReviewPending?: boolean,
+  hasScheduledBooking?: boolean,
 ): CandidateMatchCard["status"] {
+  // Terminal pass/fail/review states win over a booking (the interview track is
+  // orthogonal — a passed candidate keeps the "passed" framing).
   if (stateValue === "prescreen_review_pending" || prescreenReviewPending) return "review_pending"
   if (stateValue === "passed") return "passed"
   if (stateValue === "employer_visible") return "passed"
@@ -194,6 +213,9 @@ function projectStatus(
   if (prescreenTerminal === "PASS") return "passed"
   if (prescreenTerminal === "FAIL" || prescreenTerminal === "HARD_STOP") return "not_passed"
   if (prescreenTerminal === "PAUSE") return "paused"
+  // A booked/confirmed interview (no terminal yet) → "scheduled". Slots above
+  // interview_started/invited/recommended so the locked-in time is what shows.
+  if (hasScheduledBooking) return "scheduled"
   if (stateValue === "candidate_matched") return "recommended"
   if (stateValue === "outbound_queued") return "invited"
   if (stateValue === "outbound_sent") return "invited"
@@ -232,6 +254,23 @@ function projectCandidateReviewDecision(
   }
 }
 
+function projectBooking(booking?: Record<string, unknown>): CandidateMatchBooking | undefined {
+  if (!booking) return undefined
+  const status = cleanString(booking.status, 40)
+  if (!status || !SCHEDULED_BOOKING_STATUSES.has(status)) return undefined
+  const bookingId = cleanString(booking.id, 240)
+  if (!bookingId) return undefined
+  return {
+    bookingId,
+    status,
+    ...(cleanString(booking.selectedSlotIso, 80) ? { slotIso: cleanString(booking.selectedSlotIso, 80) } : {}),
+    ...(cleanString(booking.meetingUrl, 1000) && /^https?:\/\//i.test(cleanString(booking.meetingUrl, 1000)!)
+      ? { meetingUrl: cleanString(booking.meetingUrl, 1000) }
+      : {}),
+    ...(cleanString(booking.timeZone, 80) ? { timeZone: cleanString(booking.timeZone, 80) } : {}),
+  }
+}
+
 function projectMatchCard(args: {
   matchId: string
   match?: Record<string, unknown>
@@ -242,11 +281,13 @@ function projectMatchCard(args: {
   prescreenTerminal?: string
   prescreenReviewPending?: boolean
   prescreenSession?: Record<string, unknown>
+  booking?: Record<string, unknown>
 }): CandidateMatchCard {
   const match = args.match
   const state = cleanString(args.state?.state, 80)
   const hasInvite = args.invite !== undefined
-  const bucket = hasInvite || (state !== undefined && state !== "candidate_matched") ? "invited" : "recommended"
+  const booking = projectBooking(args.booking)
+  const bucket = hasInvite || booking || (state !== undefined && state !== "candidate_matched") ? "invited" : "recommended"
   // "WHY CLAIRE MATCHED YOU" (Adam directive 2026-05-30): prefer the GROUNDED
   // pitch persisted on the match doc (`matchReason`, LLM-composed / rich-
   // deterministic at recommendation time). Fall back to the legacy `reasons`
@@ -255,7 +296,7 @@ function projectMatchCard(args: {
   const legacyReasons = cleanStringArray(match?.reasons, 4, 240)
   const whyMatched = storedReason ? [storedReason] : legacyReasons
   const jobDisplay = projectJobDisplay(args.jobId, args.job)
-  const status = projectStatus(state, hasInvite, args.prescreenTerminal, args.prescreenReviewPending)
+  const status = projectStatus(state, hasInvite, args.prescreenTerminal, args.prescreenReviewPending, booking !== undefined)
   const reviewDecision = projectCandidateReviewDecision(status, args.prescreenSession)
   const activityAt =
     latestIsoString(
@@ -285,6 +326,7 @@ function projectMatchCard(args: {
     ...(typeof match?.finalRank === "number" && Number.isInteger(match.finalRank) ? { rank: match.finalRank } : {}),
     computedAt: activityAt,
     ...(reviewDecision ? { reviewDecision } : {}),
+    ...(booking ? { booking } : {}),
   }
 }
 
@@ -568,15 +610,23 @@ export async function runCandidateListMatches(
   const candidateId = await getCandidateIdForAuth(deps.db, firebaseUid)
   const limit = parseLimit(data)
   const generatedAt = (deps.now ?? (() => new Date()))().toISOString()
-  const [matchSnap, inviteSnap, stateSnap] = await Promise.all([
+  const [matchSnap, inviteSnap, stateSnap, bookingSnap] = await Promise.all([
     deps.db.collection(COLLECTIONS.candidateJobMatches).where("candidateId", "==", candidateId).limit(limit).get(),
     deps.db.collection(COLLECTIONS.outboundInvites).where("candidateId", "==", candidateId).limit(limit).get(),
     deps.db.collection(COLLECTIONS.candidateJobStates).where("candidateId", "==", candidateId).limit(limit).get(),
+    // pa-interview-bookings is keyed by `userId` (== candidateId == pa-users id).
+    deps.db.collection(COLLECTIONS.interviewBookings).where("userId", "==", candidateId).limit(limit).get(),
   ])
 
   const byJobId = new Map<
     string,
-    { matchId?: string; match?: Record<string, unknown>; invite?: Record<string, unknown>; state?: Record<string, unknown> }
+    {
+      matchId?: string
+      match?: Record<string, unknown>
+      invite?: Record<string, unknown>
+      state?: Record<string, unknown>
+      booking?: Record<string, unknown>
+    }
   >()
   for (const doc of matchSnap.docs) {
     const row = doc.data() as Record<string, unknown>
@@ -602,6 +652,20 @@ export async function runCandidateListMatches(
     if (!jobId || rowCandidateId !== candidateId) continue
     if (state === "archived") continue
     byJobId.set(jobId, { ...(byJobId.get(jobId) ?? {}), state: row })
+  }
+  for (const doc of bookingSnap.docs) {
+    // Inject the doc id (projectBooking reads booking.id) — data() omits it.
+    const row: Record<string, unknown> = { id: doc.id, ...(doc.data() as Record<string, unknown>) }
+    const jobId = cleanString(row.jobId, 200)
+    if (!jobId) continue
+    // Prefer the booking that represents a locked-in slot; a later confirmed
+    // booking overwrites an earlier offered one for the same job.
+    const existing = byJobId.get(jobId)
+    const incomingScheduled = SCHEDULED_BOOKING_STATUSES.has(cleanString(row.status, 40) ?? "")
+    const existingScheduled =
+      existing?.booking && SCHEDULED_BOOKING_STATUSES.has(cleanString(existing.booking.status, 40) ?? "")
+    if (existingScheduled && !incomingScheduled) continue
+    byJobId.set(jobId, { ...(existing ?? {}), booking: row })
   }
 
   const rows = await Promise.all(
@@ -635,6 +699,7 @@ export async function runCandidateListMatches(
         prescreenTerminal,
         prescreenReviewPending,
         prescreenSession,
+        booking: row.booking,
       })
     })
   )

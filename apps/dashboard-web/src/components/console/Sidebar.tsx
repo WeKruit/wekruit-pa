@@ -58,6 +58,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       // pending-review count, so flagging both would double the section total.
       { to: "/admin/prescreen-ops", label: "Jobs board", hitl: true },
       { to: "/admin/prescreen-sessions", label: "All sessions" },
+      { to: "/admin/interviews", label: "Interviews" },
     ],
   },
   {

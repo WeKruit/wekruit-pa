@@ -8,6 +8,7 @@ import Legal from "./pages/Legal.js"
 import { Login } from "./pages/Login.js"
 import { Operations } from "./pages/Operations.js"
 import OperationsOverview from "./pages/OperationsOverview.js"
+import Interviews from "./pages/Interviews.js"
 import RejectedCandidates from "./pages/RejectedCandidates.js"
 import { Overview } from "./pages/Overview.js"
 import { UserDetail } from "./pages/UserDetail.js"
@@ -268,6 +269,8 @@ export default function App() {
           <Route path="/admin/qr-campaigns" element={<QrCampaigns />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
+          {/* Interview bookings (pa-interview-bookings) + operator outcome-stamp. */}
+          <Route path="/admin/interviews" element={<Interviews />} />
           {/* Recruiter board admin surfaces. */}
           <Route path="/admin/recruiter-hub" element={<RecruiterHub />} />
           <Route path="/admin/recruiter-digests" element={<RecruiterDigests />} />

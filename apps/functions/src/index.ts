@@ -300,6 +300,11 @@ export { paAdminCandidatePoolCounts } from "./admin-candidate-pool-counts.js"
 // Trimmed list of EVERY recruiter submission (not just the recent 500) so the
 // /admin/recruiter-submissions search + state filter see the whole pool.
 export { paAdminRecruiterSubmissionsList } from "./admin-recruiter-submissions-list.js"
+// All interview bookings (pa-interview-bookings) for /admin/interviews +
+// per-row operator outcome-stamp (completed/no_show/cancelled). The list reuses
+// the runSchedulingStatus projection; the outcome action writes the booking
+// status AND emits the parallel candidate×job FSM event (fail-open, idempotent).
+export { paAdminInterviewBookingsList, paAdminInterviewOutcome } from "./admin-interview-bookings.js"
 // Algolia search: real-time sync triggers (submissions + candidates) + a
 // one-shot admin backfill. No-op until ALGOLIA_APP_ID + ALGOLIA_ADMIN_KEY are set.
 export { paAlgoliaSyncRecruiterSubmission, paAlgoliaSyncCandidate } from "./algolia/algolia-sync.js"
