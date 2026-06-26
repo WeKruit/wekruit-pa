@@ -15,7 +15,7 @@
  * 1–6 with Skip-for-now + Back, all navigable end-to-end via a numbered
  * vertical stepper. Server-state callable is a later slice.
  */
-import { useCallback, useEffect, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import {
   employerIntakeJob,
@@ -23,11 +23,13 @@ import {
   employerMatchPilotReq,
   employerInviteTeam,
   employerConnectRequest,
+  employerAtsImportReqs,
   type EmployerIntakeJobOutput,
   type EmployerMatchPilotReqOutput,
   type EmployerInviteRole,
   type EmployerInviteTeamOutput,
   type EmployerConnectKind,
+  type AtsOpenReq,
 } from "../../lib/onboarding-api.js"
 import {
   DEFAULT_SUCCESS_METRIC,
@@ -1278,6 +1280,7 @@ function ConnectRequestStep({
   detailsPlaceholder,
   submitLabel,
   noun,
+  extra,
   onDone,
   onSkip,
   onPrev,
@@ -1290,6 +1293,8 @@ function ConnectRequestStep({
   detailsPlaceholder: string
   submitLabel: string
   noun: string
+  /** ATS-only self-serve affordance rendered inside the form card, above the provider select. */
+  extra?: ReactNode
   onDone: () => void
   onSkip: () => void
   onPrev?: () => void
@@ -1337,6 +1342,7 @@ function ConnectRequestStep({
       <p style={stepLede}>{lede}</p>
 
       <div style={calForm}>
+        {extra}
         {providerOptions && providerOptions.length > 0 ? (
           <div style={calRow}>
             <label style={calField}>
@@ -1512,6 +1518,142 @@ function ConnectSlackStep(props: { onDone: () => void; onSkip: () => void; onPre
   )
 }
 
+/**
+ * AtsBoardImport — REAL self-serve read-back of a PUBLIC ATS board.
+ *
+ * Paste a Greenhouse / Lever / Ashby public board URL → we fetch + normalize
+ * the open reqs live (read-only, no ATS connection, no candidates). Sits ABOVE
+ * the managed-connect request form: the fast self-serve path on top, the
+ * managed setup below. Mirrors CalibrateStep's fetch-state pattern.
+ */
+function AtsBoardImport() {
+  const [boardUrl, setBoardUrl] = useState("")
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle")
+  const [error, setError] = useState<string | null>(null)
+  const [reqs, setReqs] = useState<AtsOpenReq[]>([])
+  const [count, setCount] = useState(0)
+  const [provider, setProvider] = useState<string | null>(null)
+
+  const canPull = boardUrl.trim().length > 0 && status !== "loading"
+
+  const onPull = useCallback(async () => {
+    if (!canPull) return
+    setStatus("loading")
+    setError(null)
+    try {
+      const out = await employerAtsImportReqs({ board: boardUrl.trim() })
+      if (!out.ok) {
+        setStatus("error")
+        setError(
+          out.error === "unrecognized_board"
+            ? "Unrecognized board — paste a Greenhouse, Lever, or Ashby public board URL."
+            : out.error === "board_not_found"
+              ? "We couldn't find that board. Double-check the org/token in your URL."
+              : "Couldn't reach that board. Check the URL and try again.",
+        )
+        return
+      }
+      setReqs(out.reqs ?? [])
+      setCount(out.count ?? (out.reqs ?? []).length)
+      setProvider(out.provider ?? null)
+      setStatus("done")
+    } catch (err) {
+      setStatus("error")
+      setError(err instanceof Error ? err.message : "Couldn't reach that board. Check the URL.")
+    }
+  }, [canPull, boardUrl])
+
+  return (
+    <div style={atsImportWrap}>
+      <div style={calField}>
+        <span style={calLabel}>
+          Your public job board URL{" "}
+          <span style={calOptional}>(Greenhouse / Lever / Ashby)</span>
+        </span>
+        <div style={atsImportRow}>
+          <input
+            type="url"
+            value={boardUrl}
+            onChange={(e) => setBoardUrl(e.target.value)}
+            placeholder="e.g. boards.greenhouse.io/acme or jobs.lever.co/acme"
+            style={{ ...calInput, flex: "1 1 240px", minWidth: 0 }}
+          />
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={!canPull}
+            onClick={onPull}
+            style={{
+              textDecoration: "none",
+              opacity: !canPull ? 0.55 : 1,
+              cursor: !canPull ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {status === "loading" ? "Pulling…" : "Pull my open reqs"}
+          </button>
+        </div>
+        {status === "loading" ? (
+          <span style={calHint}>Reading your public board…</span>
+        ) : null}
+      </div>
+
+      {status === "error" && error ? (
+        <div style={calErrorBox} role="alert">
+          <strong style={{ display: "block", marginBottom: 4 }}>Couldn&apos;t pull reqs</strong>
+          {error}
+        </div>
+      ) : null}
+
+      {status === "done" ? (
+        <div style={calResultWrap}>
+          <div style={calResultHead}>
+            <span style={calResultEyebrow}>Open reqs</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ ...calBadge, ...calBadgeGood }}>{count} found</span>
+              {provider ? <span style={calBadge}>{provider}</span> : null}
+            </div>
+          </div>
+
+          {reqs.length > 0 ? (
+            <div style={atsReqScroll}>
+              <div style={inviteTableWrap}>
+                {reqs.map((r, i) => (
+                  <div key={`${r.url}-${i}`} style={inviteResultRow}>
+                    <a
+                      href={r.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ ...inviteResultEmail, color: "var(--live)", textDecoration: "none" }}
+                    >
+                      {r.title}
+                    </a>
+                    {r.location ? <span style={calChip}>{r.location}</span> : null}
+                    {r.department ? <span style={inviteRolePill}>{r.department}</span> : null}
+                    {r.jobType ? <span style={inviteRolePill}>{r.jobType}</span> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: 14, color: "var(--ink-2)" }}>
+              No open reqs found on that board right now.
+            </p>
+          )}
+
+          <p style={calScopeNote}>
+            This is a read-only preview of your PUBLIC board — pulling reqs here
+            does not connect your ATS. Syncing private candidates needs a secure
+            ATS connection our team sets up below.
+          </p>
+        </div>
+      ) : null}
+
+      <div style={atsImportDivider} />
+    </div>
+  )
+}
+
 function ConnectAtsStep(props: { onDone: () => void; onSkip: () => void; onPrev?: () => void }) {
   return (
     <ConnectRequestStep
@@ -1523,6 +1665,7 @@ function ConnectAtsStep(props: { onDone: () => void; onSkip: () => void; onPrev?
       detailsLabel="Anything we should know"
       detailsPlaceholder="e.g. admin contact for the integration, sandbox vs prod, multiple instances…"
       submitLabel="Request connection"
+      extra={<AtsBoardImport />}
       {...props}
     />
   )
@@ -2102,6 +2245,29 @@ const calScopeNote: CSSProperties = {
   color: "var(--ink-3)",
   borderTop: "1px solid var(--border)",
   paddingTop: 14,
+}
+
+// ---- ATS public-board self-serve read-back (Connect ATS step) -------------
+
+const atsImportWrap: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 14,
+}
+const atsImportRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  flexWrap: "wrap",
+}
+const atsReqScroll: CSSProperties = {
+  maxHeight: 320,
+  overflowY: "auto",
+  paddingRight: 4,
+}
+const atsImportDivider: CSSProperties = {
+  borderTop: "1px solid var(--border)",
+  margin: "2px 0 0",
 }
 
 // ---- Invite Team (Step 4) -------------------------------------------------

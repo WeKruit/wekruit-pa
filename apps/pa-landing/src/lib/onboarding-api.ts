@@ -332,6 +332,56 @@ export async function employerConnectRequest(
   return res.data
 }
 
+// ---------------------------------------------------------------------------
+// Connect ATS — pull open reqs from a PUBLIC board URL (read-only)
+// Fetches + normalizes the public ATS board (Greenhouse / Lever / Ashby),
+// returns reqs in-memory. Public callable (no auth). Persists nothing about
+// candidates and contacts no one — this is NOT the managed ATS connect.
+// ---------------------------------------------------------------------------
+
+export type AtsBoardProvider = "greenhouse" | "lever" | "ashby"
+
+export type AtsImportReqsInput = {
+  /** Pasted public board URL, or a bare "provider:org" / org handle. */
+  board: string
+}
+
+export type AtsOpenReq = {
+  title: string
+  location: string | null
+  url: string
+  department?: string | null
+  team?: string | null
+  jobType?: string | null
+}
+
+export type AtsImportReqsOutput = {
+  ok: boolean
+  provider?: AtsBoardProvider
+  org?: string
+  count?: number
+  /** Capped to first 50 for display. */
+  reqs?: AtsOpenReq[]
+  error?: string
+}
+
+/**
+ * Pull open reqs from a PUBLIC ATS job board URL (Greenhouse / Lever / Ashby).
+ * Read-only: fetches + normalizes the public board, returns reqs in-memory.
+ * Public callable (no auth), mirrors employerConnectRequest. Persists nothing
+ * about candidates and contacts no one — this is NOT the managed ATS connect.
+ */
+export async function employerAtsImportReqs(
+  input: AtsImportReqsInput,
+): Promise<AtsImportReqsOutput> {
+  const fn = httpsCallable<AtsImportReqsInput, AtsImportReqsOutput>(
+    functions(),
+    "paEmployerAtsImportReqs",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
 export function deriveFunction(title: string): "Design" | "Engineering" | "Product" | "GTM" | "Other" {
   const t = (title || "").toLowerCase()
   if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"
