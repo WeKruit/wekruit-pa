@@ -1533,8 +1533,44 @@ function AtsBoardImport() {
   const [reqs, setReqs] = useState<AtsOpenReq[]>([])
   const [count, setCount] = useState(0)
   const [provider, setProvider] = useState<string | null>(null)
+  const [org, setOrg] = useState<string | null>(null)
+  // Per-req "Use this req" state: index → created pilot reqId, or "error".
+  const [addedReqs, setAddedReqs] = useState<Record<number, string>>({})
+  const [addingReq, setAddingReq] = useState<number | null>(null)
 
   const canPull = boardUrl.trim().length > 0 && status !== "loading"
+
+  // Turn a pulled (read-only) req into a REAL matchable pilot req — reuses the
+  // same dual-write pipeline as Calibrate sign-off, so an ATS req the employer
+  // already posted becomes immediately retrievable by the matcher. Closes the
+  // "pulled reqs are an inert preview" gap.
+  const onUseReq = useCallback(
+    async (r: AtsOpenReq, i: number) => {
+      if (addingReq !== null || addedReqs[i]) return
+      setAddingReq(i)
+      try {
+        const out = await employerCreatePilotReq({
+          title: r.title,
+          jobDescription: [
+            `Imported from ${provider ?? "ATS"} public job board.`,
+            `Source: ${r.url}`,
+            r.location ? `Location: ${r.location}` : "",
+            r.department ? `Department: ${r.department}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          companyName: org ?? undefined,
+          locationRaw: r.location || undefined,
+        })
+        setAddedReqs((m) => ({ ...m, [i]: out.reqId }))
+      } catch {
+        setAddedReqs((m) => ({ ...m, [i]: "error" }))
+      } finally {
+        setAddingReq(null)
+      }
+    },
+    [addingReq, addedReqs, provider, org],
+  )
 
   const onPull = useCallback(async () => {
     if (!canPull) return
@@ -1556,6 +1592,8 @@ function AtsBoardImport() {
       setReqs(out.reqs ?? [])
       setCount(out.count ?? (out.reqs ?? []).length)
       setProvider(out.provider ?? null)
+      setOrg(out.org ?? null)
+      setAddedReqs({})
       setStatus("done")
     } catch (err) {
       setStatus("error")
@@ -1631,6 +1669,30 @@ function AtsBoardImport() {
                     {r.location ? <span style={calChip}>{r.location}</span> : null}
                     {r.department ? <span style={inviteRolePill}>{r.department}</span> : null}
                     {r.jobType ? <span style={inviteRolePill}>{r.jobType}</span> : null}
+                    <span style={{ marginLeft: "auto" }}>
+                      {addedReqs[i] === "error" ? (
+                        <span style={{ ...calChip, color: "var(--err, #b3261e)" }}>couldn&apos;t add</span>
+                      ) : addedReqs[i] ? (
+                        <span style={{ ...calBadge, ...calBadgeGood }}>✓ pilot req added</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onUseReq(r, i)}
+                          disabled={addingReq !== null}
+                          style={{
+                            ...inviteRolePill,
+                            cursor: addingReq !== null ? "not-allowed" : "pointer",
+                            opacity: addingReq !== null && addingReq !== i ? 0.5 : 1,
+                            border: "1px solid var(--live)",
+                            color: "var(--live)",
+                            background: "transparent",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {addingReq === i ? "Adding…" : "Use this req →"}
+                        </button>
+                      )}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1642,9 +1704,11 @@ function AtsBoardImport() {
           )}
 
           <p style={calScopeNote}>
-            This is a read-only preview of your PUBLIC board — pulling reqs here
-            does not connect your ATS. Syncing private candidates needs a secure
-            ATS connection our team sets up below.
+            Live read of your PUBLIC board. Hit <strong>Use this req</strong> to
+            turn one into a matchable WeKruit pilot role (Claire scores it against
+            your pool right away). Pulling reqs doesn&apos;t connect your ATS —
+            syncing private candidates needs the secure connection our team sets
+            up below.
           </p>
         </div>
       ) : null}
