@@ -123,6 +123,8 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     defaultOpen: true,
     items: [
       { to: "/admin/layoff-employers", label: "Layoff signups", hitl: true },
+      { to: "/admin/connect-requests", label: "Connect requests", hitl: true },
+      { to: "/admin/ops-inbox", label: "Team invites & email log" },
     ],
   },
   {

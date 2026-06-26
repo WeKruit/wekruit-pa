@@ -43,6 +43,10 @@ import { CanonicalTags } from "./pages/CanonicalTags.js"
 import { Companies } from "./pages/Companies.js"
 // Employer role packets — /admin/layoff-employers reviews candidate.wekruit.com /employer submissions.
 import LayoffEmployers from "./pages/LayoffEmployers.js"
+// Employer-ops admin surfaces — connect-request fulfillment inbox + team-invite
+// roster / outbound-email audit (all previously built-but-invisible collections).
+import ConnectRequests from "./pages/ConnectRequests.js"
+import OpsInbox from "./pages/OpsInbox.js"
 // Coresignal Agentic Search playground — calls /v2/agentic_search/reasoning via CF proxy.
 import CoresignalPlayground from "./pages/CoresignalPlayground.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
@@ -211,6 +215,10 @@ export default function App() {
           <Route path="/admin/companies" element={<Companies />} />
           {/* Employer role packets — review candidate.wekruit.com /employer submissions. */}
           <Route path="/admin/layoff-employers" element={<LayoffEmployers />} />
+          {/* Employer-ops: connect-request fulfillment inbox + team-invite roster /
+              outbound-email audit (built-but-invisible collections). */}
+          <Route path="/admin/connect-requests" element={<ConnectRequests />} />
+          <Route path="/admin/ops-inbox" element={<OpsInbox />} />
           {/* Coresignal Agentic Search playground — admin-only, CF proxy. */}
           <Route path="/admin/coresignal-playground" element={<CoresignalPlayground />} />
           <Route path="/admin/qa-evaluator" element={<QaEvaluator />} />

@@ -309,6 +309,17 @@ export { paAdminRecruiterSubmissionsList } from "./admin-recruiter-submissions-l
 // the runSchedulingStatus projection; the outcome action writes the booking
 // status AND emits the parallel candidate×job FSM event (fail-open, idempotent).
 export { paAdminInterviewBookingsList, paAdminInterviewOutcome } from "./admin-interview-bookings.js"
+// Employer-ops admin readers (+ one status action) over three built-but-invisible
+// top-level collections: pa-employer-connect-requests (managed-setup demand +
+// public-board audit; fulfillment status action), pa-employer-team-invites
+// (per-org roster), and pa-headhunter-emails (read-only outbound-email audit log,
+// no body PII). Admin /admin/connect-requests + /admin/ops-inbox.
+export {
+  paAdminConnectRequestsList,
+  paAdminConnectRequestSetStatus,
+  paAdminTeamInvitesList,
+  paAdminHeadhunterEmailsList,
+} from "./admin-employer-ops.js"
 // Algolia search: real-time sync triggers (submissions + candidates) + a
 // one-shot admin backfill. No-op until ALGOLIA_APP_ID + ALGOLIA_ADMIN_KEY are set.
 export { paAlgoliaSyncRecruiterSubmission, paAlgoliaSyncCandidate } from "./algolia/algolia-sync.js"
