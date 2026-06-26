@@ -100,12 +100,17 @@ export async function runSearchCandidatePool(
   const limit = Math.min(Math.max(filters.limit ?? 20, 1), 50)
 
   const rows = new Map<string, MatchingCandidateRow>()
-  for (const lifecycle of MATCHABLE_LIFECYCLE_STATES) {
-    const snap = await deps.db
-      .collection("pa-users")
-      .where("candidateLifecycleState", "==", lifecycle)
-      .limit(600)
-      .get()
+  // Parallel + bounded (was 6 sequential 600-doc reads → MCP timeout risk).
+  const perState = await Promise.all(
+    MATCHABLE_LIFECYCLE_STATES.map((lifecycle) =>
+      deps.db
+        .collection("pa-users")
+        .where("candidateLifecycleState", "==", lifecycle)
+        .limit(250)
+        .get(),
+    ),
+  )
+  for (const snap of perState) {
     for (const doc of snap.docs) rows.set(doc.id, toCandidateRow(doc.id, doc.data() as Rec))
   }
   const candidates = [...rows.values()]

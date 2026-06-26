@@ -174,13 +174,23 @@ const MATCHABLE_LIFECYCLE_STATES = [
 
 async function loadCandidatePool(db: Firestore): Promise<MatchingCandidateRow[]> {
   const rows = new Map<string, MatchingCandidateRow>()
-  for (const lifecycle of MATCHABLE_LIFECYCLE_STATES) {
-    const snap = await db
-      .collection("pa-users")
-      .where("candidateLifecycleState", "==", lifecycle)
-      .limit(600)
-      .get()
-    for (const doc of snap.docs) {
+  // Parallel state queries (NOT sequential) + a bounded per-state limit: six
+  // sequential 600-doc reads blew the MCP client timeout
+  // (find_candidates_for_job -32001). Parallel = ~1 round-trip; the cap bounds
+  // the scored set. (Pushing the roleFunction hard filter to the query layer is
+  // the proper next step — needs a composite index.)
+  const perState = await Promise.all(
+    MATCHABLE_LIFECYCLE_STATES.map((lifecycle) =>
+      db
+        .collection("pa-users")
+        .where("candidateLifecycleState", "==", lifecycle)
+        .limit(250)
+        .get()
+        .then((snap) => ({ lifecycle, docs: snap.docs })),
+    ),
+  )
+  for (const { lifecycle, docs } of perState) {
+    for (const doc of docs) {
       const data = doc.data() as Record<string, unknown>
       const tags = cleanTags(data.tags ?? data.globalTags)
       rows.set(doc.id, {
