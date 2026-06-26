@@ -291,6 +291,47 @@ export async function employerInviteTeam(
   return res.data
 }
 
+// ---------------------------------------------------------------------------
+// Connect Slack / Connect ATS / Import Pool — managed-setup connect requests.
+// Records a request + emails ops so a human does the managed connection. This
+// is NOT a live self-serve integration; it requests managed setup.
+// ---------------------------------------------------------------------------
+
+export type EmployerConnectKind = "ats" | "slack" | "pool"
+
+export type EmployerConnectRequestInput = {
+  kind: EmployerConnectKind
+  provider?: string
+  details?: string
+  orgName?: string
+  requesterEmail?: string
+}
+
+export type EmployerConnectRequestOutput = {
+  ok: true
+  requestId: string
+  opsNotified: boolean
+}
+
+/**
+ * Request managed setup of an ATS / Slack workspace / candidate pool import.
+ * Records a `pa-employer-connect-requests` doc and emails ops. Public callable
+ * (no auth), mirrors employerInviteTeam.
+ *
+ * HONEST SCOPE: this REQUESTS managed setup — our team connects it in the
+ * background. It does NOT perform OAuth or a live self-serve integration.
+ */
+export async function employerConnectRequest(
+  input: EmployerConnectRequestInput,
+): Promise<EmployerConnectRequestOutput> {
+  const fn = httpsCallable<EmployerConnectRequestInput, EmployerConnectRequestOutput>(
+    functions(),
+    "paEmployerConnectRequest",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
 export function deriveFunction(title: string): "Design" | "Engineering" | "Product" | "GTM" | "Other" {
   const t = (title || "").toLowerCase()
   if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"

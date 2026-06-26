@@ -22,10 +22,12 @@ import {
   employerCreatePilotReq,
   employerMatchPilotReq,
   employerInviteTeam,
+  employerConnectRequest,
   type EmployerIntakeJobOutput,
   type EmployerMatchPilotReqOutput,
   type EmployerInviteRole,
   type EmployerInviteTeamOutput,
+  type EmployerConnectKind,
 } from "../../lib/onboarding-api.js"
 import {
   DEFAULT_SUCCESS_METRIC,
@@ -189,6 +191,24 @@ export default function EmployerOnboarding() {
                 />
               ) : activeStepDef.key === "invite_team" ? (
                 <InviteTeamStep
+                  onDone={() => setStepResult(activeIndex, "done")}
+                  onSkip={() => setStepResult(activeIndex, "skipped")}
+                  onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
+                />
+              ) : activeStepDef.key === "connect_slack" ? (
+                <ConnectSlackStep
+                  onDone={() => setStepResult(activeIndex, "done")}
+                  onSkip={() => setStepResult(activeIndex, "skipped")}
+                  onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
+                />
+              ) : activeStepDef.key === "connect_ats" ? (
+                <ConnectAtsStep
+                  onDone={() => setStepResult(activeIndex, "done")}
+                  onSkip={() => setStepResult(activeIndex, "skipped")}
+                  onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
+                />
+              ) : activeStepDef.key === "import_pool" ? (
+                <ImportPoolStep
                   onDone={() => setStepResult(activeIndex, "done")}
                   onSkip={() => setStepResult(activeIndex, "skipped")}
                   onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
@@ -1206,6 +1226,321 @@ function InviteTeamStep({
         </div>
       </div>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Steps 1–3 — Connect Slack / Connect ATS / Import Pool (REAL: record a managed
+// -setup request via paEmployerConnectRequest + email ops). These are NOT live
+// self-serve integrations — they REQUEST managed setup. Our team connects it in
+// the background; the honest "runs in the background" posture is what ships.
+// ---------------------------------------------------------------------------
+
+// Kombo-supported ATS list (planning docs name Greenhouse/Ashby/Lever/Workday/
+// SmartRecruiters/iCIMS/Oracle) + common cohort ATS + escapes. MVP only RECORDS
+// the provider + emails ops, so the exact list is non-load-bearing.
+const ATS_PROVIDER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "ashby", label: "Ashby" },
+  { value: "greenhouse", label: "Greenhouse" },
+  { value: "lever", label: "Lever" },
+  { value: "workday", label: "Workday" },
+  { value: "workable", label: "Workable" },
+  { value: "smartrecruiters", label: "SmartRecruiters" },
+  { value: "icims", label: "iCIMS" },
+  { value: "oracle", label: "Oracle" },
+  { value: "bamboohr", label: "BambooHR" },
+  { value: "recruitee", label: "Recruitee" },
+  { value: "teamtailor", label: "Teamtailor" },
+  { value: "other", label: "Other / not listed" },
+  { value: "none", label: "No ATS — pool-only pilot" },
+]
+
+const POOL_SOURCE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "their_ats", label: "Export from our ATS" },
+  { value: "csv", label: "CSV / spreadsheet" },
+  { value: "pdf", label: "Resume PDFs" },
+  { value: "linkedin", label: "LinkedIn export" },
+  { value: "other", label: "Other / not listed" },
+]
+
+/**
+ * Shared "request managed setup" step. Renders a small form (optional provider
+ * <select>, free-text details, your email), posts to paEmployerConnectRequest,
+ * and shows an honest confirmation ("Requested — our team will connect your
+ * <provider> in the background"). Continue unlocks only after a successful POST.
+ */
+function ConnectRequestStep({
+  kind,
+  lede,
+  providerLabel,
+  providerOptions,
+  detailsLabel,
+  detailsPlaceholder,
+  submitLabel,
+  noun,
+  onDone,
+  onSkip,
+  onPrev,
+}: {
+  kind: EmployerConnectKind
+  lede: string
+  providerLabel?: string
+  providerOptions?: Array<{ value: string; label: string }>
+  detailsLabel: string
+  detailsPlaceholder: string
+  submitLabel: string
+  noun: string
+  onDone: () => void
+  onSkip: () => void
+  onPrev?: () => void
+}) {
+  const [provider, setProvider] = useState(() =>
+    providerOptions && providerOptions.length > 0 ? providerOptions[0].value : "",
+  )
+  const [details, setDetails] = useState("")
+  const [orgName, setOrgName] = useState("")
+  const [requesterEmail, setRequesterEmail] = useState("")
+  const [status, setStatus] = useState<"idle" | "sending" | "done" | "error">("idle")
+  const [error, setError] = useState<string | null>(null)
+
+  const providerLabelText =
+    providerOptions?.find((o) => o.value === provider)?.label ?? provider
+
+  const onSend = useCallback(async () => {
+    if (status === "sending") return
+    setStatus("sending")
+    setError(null)
+    try {
+      await employerConnectRequest({
+        kind,
+        provider: provider || undefined,
+        details: details.trim() || undefined,
+        orgName: orgName.trim() || undefined,
+        requesterEmail: requesterEmail.trim() || undefined,
+      })
+      setStatus("done")
+    } catch (err) {
+      setStatus("error")
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't send your request. Try again in a moment.",
+      )
+    }
+  }, [status, kind, provider, details, orgName, requesterEmail])
+
+  // Pool-only pilot escape: ATS "none" maps to Skip (the UX doc's "No ATS? Skip").
+  const isPoolOnlyEscape = kind === "ats" && provider === "none"
+
+  return (
+    <div style={stepBody}>
+      <p style={stepLede}>{lede}</p>
+
+      <div style={calForm}>
+        {providerOptions && providerOptions.length > 0 ? (
+          <div style={calRow}>
+            <label style={calField}>
+              <span style={calLabel}>{providerLabel ?? "Provider"}</span>
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+                style={{ ...calInput, cursor: "pointer" }}
+              >
+                {providerOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={calField}>
+              <span style={calLabel}>
+                Company / team name <span style={calOptional}>(optional)</span>
+              </span>
+              <input
+                type="text"
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                placeholder="e.g. Acme"
+                style={calInput}
+              />
+            </label>
+          </div>
+        ) : (
+          <div style={calField}>
+            <span style={calLabel}>
+              Company / team name <span style={calOptional}>(optional)</span>
+            </span>
+            <input
+              type="text"
+              value={orgName}
+              onChange={(e) => setOrgName(e.target.value)}
+              placeholder="e.g. Acme"
+              style={calInput}
+            />
+          </div>
+        )}
+
+        <div style={calField}>
+          <span style={calLabel}>
+            {detailsLabel} <span style={calOptional}>(optional)</span>
+          </span>
+          <textarea
+            value={details}
+            onChange={(e) => setDetails(e.target.value)}
+            placeholder={detailsPlaceholder}
+            style={{ ...calTextarea, minHeight: 96 }}
+          />
+        </div>
+
+        <div style={calField}>
+          <span style={calLabel}>
+            Your email <span style={calOptional}>(optional)</span>
+          </span>
+          <input
+            type="email"
+            value={requesterEmail}
+            onChange={(e) => setRequesterEmail(e.target.value)}
+            placeholder="you@company.com"
+            style={calInput}
+          />
+        </div>
+
+        {isPoolOnlyEscape ? (
+          <p style={calScopeNote}>
+            No ATS? No problem — skip this step and run a pool-only pilot. You can
+            import a candidate pool any time.
+          </p>
+        ) : null}
+
+        <div style={calActionsRow}>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={status === "sending" || status === "done"}
+            onClick={onSend}
+            style={{
+              textDecoration: "none",
+              opacity: status === "sending" || status === "done" ? 0.55 : 1,
+              cursor: status === "sending" || status === "done" ? "not-allowed" : "pointer",
+            }}
+          >
+            {status === "sending"
+              ? "Sending request…"
+              : status === "done"
+                ? "Requested ✓"
+                : submitLabel}
+          </button>
+          {status === "sending" ? (
+            <span style={calHint}>Sending your request…</span>
+          ) : null}
+        </div>
+      </div>
+
+      {status === "error" && error ? (
+        <div style={calErrorBox} role="alert">
+          <strong style={{ display: "block", marginBottom: 4 }}>Couldn&apos;t send</strong>
+          {error}
+        </div>
+      ) : null}
+
+      {status === "done" ? (
+        <div style={calResultWrap}>
+          <div style={calResultHead}>
+            <span style={calResultEyebrow}>Request</span>
+            <span style={{ ...calBadge, ...calBadgeGood }}>Request received</span>
+          </div>
+          <p style={{ margin: 0, fontSize: 15, lineHeight: 1.55, color: "var(--ink)" }}>
+            Requested — our team will connect your{" "}
+            <strong>
+              {providerLabelText && provider && provider !== "none"
+                ? `${providerLabelText} ${noun}`
+                : noun}
+            </strong>{" "}
+            in the background. Nothing else is needed from you.
+          </p>
+          <p style={calScopeNote}>
+            This is a managed setup — we do the connection for you and ping you
+            when it&apos;s live. It is not a self-serve integration you configure
+            here.
+          </p>
+        </div>
+      ) : null}
+
+      <div style={stepActions}>
+        {onPrev ? (
+          <button type="button" className="btn btn--ghost" onClick={onPrev}>
+            ← Back
+          </button>
+        ) : (
+          <span />
+        )}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button type="button" className="btn btn--secondary" onClick={onSkip}>
+            Skip for now
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={status !== "done"}
+            onClick={onDone}
+            style={{
+              textDecoration: "none",
+              opacity: status !== "done" ? 0.55 : 1,
+              cursor: status !== "done" ? "not-allowed" : "pointer",
+            }}
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ConnectSlackStep(props: { onDone: () => void; onSkip: () => void; onPrev?: () => void }) {
+  return (
+    <ConnectRequestStep
+      kind="slack"
+      noun="Slack workspace"
+      lede="Add WeKruit to Slack and Claire moves into your hiring channel — your first qualified candidates land where the team already works. Tell us your workspace and we'll set it up for you."
+      detailsLabel="Workspace + channel"
+      detailsPlaceholder="e.g. acme.slack.com — #hiring channel (or Microsoft Teams)"
+      submitLabel="Request setup"
+      {...props}
+    />
+  )
+}
+
+function ConnectAtsStep(props: { onDone: () => void; onSkip: () => void; onPrev?: () => void }) {
+  return (
+    <ConnectRequestStep
+      kind="ats"
+      noun="ATS"
+      lede="Authorize your ATS once and we read back your open reqs and candidate pool. Pick your ATS and we'll connect it for you in the background. No ATS? Choose pool-only and skip."
+      providerLabel="Your ATS"
+      providerOptions={ATS_PROVIDER_OPTIONS}
+      detailsLabel="Anything we should know"
+      detailsPlaceholder="e.g. admin contact for the integration, sandbox vs prod, multiple instances…"
+      submitLabel="Request connection"
+      {...props}
+    />
+  )
+}
+
+function ImportPoolStep(props: { onDone: () => void; onSkip: () => void; onPrev?: () => void }) {
+  return (
+    <ConnectRequestStep
+      kind="pool"
+      noun="candidate pool"
+      lede="Your past applicants and silver-medalists become a Day-1 asset — re-screenable against every open role. Tell us where the pool lives and we'll import it for you."
+      providerLabel="Pool source"
+      providerOptions={POOL_SOURCE_OPTIONS}
+      detailsLabel="How to access the pool"
+      detailsPlaceholder="e.g. ~2k past applicants in Greenhouse, or a CSV we can share…"
+      submitLabel="Request import"
+      {...props}
+    />
   )
 }
 
