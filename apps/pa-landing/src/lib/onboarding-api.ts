@@ -253,6 +253,44 @@ export async function employerMatchPilotReq(
   return res.data
 }
 
+// ---------------------------------------------------------------------------
+// Employer onboarding Step 4 — Invite Team (send real invite emails + record)
+// ---------------------------------------------------------------------------
+
+export type EmployerInviteRole = "admin" | "recruiter" | "hiring_manager" | "reviewer"
+
+export type EmployerInviteTeamInput = {
+  invites: Array<{ email: string; role: EmployerInviteRole }>
+  orgName?: string
+  inviterEmail?: string
+}
+
+export type EmployerInviteTeamOutput = {
+  sent: number
+  failed: Array<{ email: string; reason: string }>
+  invited: Array<{ email: string; role: string }>
+}
+
+/**
+ * Invite teammates at Step 4. For each valid email, records a pending invite
+ * (pa-employer-team-invites) and sends a real invite email via Mailgun.
+ * Returns counts + per-email failures (invalid/duplicate/delivery). Public
+ * callable (no auth), mirrors employerCreatePilotReq.
+ *
+ * HONEST SCOPE: this sends invite emails + records invites. It does NOT yet
+ * build teammate login or role-based access — that lands in a later slice.
+ */
+export async function employerInviteTeam(
+  input: EmployerInviteTeamInput,
+): Promise<EmployerInviteTeamOutput> {
+  const fn = httpsCallable<EmployerInviteTeamInput, EmployerInviteTeamOutput>(
+    functions(),
+    "paEmployerInviteTeam",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
 export function deriveFunction(title: string): "Design" | "Engineering" | "Product" | "GTM" | "Other" {
   const t = (title || "").toLowerCase()
   if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"

@@ -21,8 +21,11 @@ import {
   employerIntakeJob,
   employerCreatePilotReq,
   employerMatchPilotReq,
+  employerInviteTeam,
   type EmployerIntakeJobOutput,
   type EmployerMatchPilotReqOutput,
+  type EmployerInviteRole,
+  type EmployerInviteTeamOutput,
 } from "../../lib/onboarding-api.js"
 import {
   DEFAULT_SUCCESS_METRIC,
@@ -181,6 +184,12 @@ export default function EmployerOnboarding() {
                 <CalibrateStep
                   successMetric={state.successMetric}
                   onSignedOff={recordPilotReq}
+                  onSkip={() => setStepResult(activeIndex, "skipped")}
+                  onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
+                />
+              ) : activeStepDef.key === "invite_team" ? (
+                <InviteTeamStep
+                  onDone={() => setStepResult(activeIndex, "done")}
                   onSkip={() => setStepResult(activeIndex, "skipped")}
                   onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
                 />
@@ -915,6 +924,292 @@ function LaunchStep({
 }
 
 // ---------------------------------------------------------------------------
+// Step 4 — Invite Team (REAL: send invite emails via Mailgun + record invites)
+// ---------------------------------------------------------------------------
+
+const INVITE_ROLE_OPTIONS: Array<{ value: EmployerInviteRole; label: string }> = [
+  { value: "recruiter", label: "Recruiter" },
+  { value: "hiring_manager", label: "Hiring Manager" },
+  { value: "admin", label: "Admin" },
+  { value: "reviewer", label: "Reviewer" },
+]
+
+type InviteRow = { email: string; role: EmployerInviteRole }
+
+function emptyRow(): InviteRow {
+  return { email: "", role: "recruiter" }
+}
+
+const BASIC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function InviteTeamStep({
+  onDone,
+  onSkip,
+  onPrev,
+}: {
+  onDone: () => void
+  onSkip: () => void
+  onPrev?: () => void
+}) {
+  const [orgName, setOrgName] = useState("")
+  const [inviterEmail, setInviterEmail] = useState("")
+  const [rows, setRows] = useState<InviteRow[]>(() => [emptyRow(), emptyRow()])
+  const [status, setStatus] = useState<"idle" | "sending" | "done" | "error">("idle")
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<EmployerInviteTeamOutput | null>(null)
+
+  const filledRows = rows.filter((r) => r.email.trim().length > 0)
+  const hasAnyValid = filledRows.some((r) => BASIC_EMAIL_RE.test(r.email.trim().toLowerCase()))
+
+  const setRow = useCallback((index: number, patch: Partial<InviteRow>) => {
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  }, [])
+
+  const addRow = useCallback(() => {
+    setRows((prev) => (prev.length >= 25 ? prev : [...prev, emptyRow()]))
+  }, [])
+
+  const removeRow = useCallback((index: number) => {
+    setRows((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))
+  }, [])
+
+  const onSend = useCallback(async () => {
+    if (!hasAnyValid || status === "sending") return
+    setStatus("sending")
+    setError(null)
+    try {
+      const invites = filledRows.map((r) => ({
+        email: r.email.trim().toLowerCase(),
+        role: r.role,
+      }))
+      const out = await employerInviteTeam({
+        invites,
+        orgName: orgName.trim() || undefined,
+        inviterEmail: inviterEmail.trim() || undefined,
+      })
+      setResult(out)
+      setStatus("done")
+    } catch (err) {
+      setStatus("error")
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't send invites. Try again in a moment.",
+      )
+    }
+  }, [hasAnyValid, status, filledRows, orgName, inviterEmail])
+
+  return (
+    <div style={stepBody}>
+      <p style={stepLede}>
+        Bring recruiters and hiring managers in. We&apos;ll email each person an
+        invite now — optional, so you can pilot solo and add the team later.
+      </p>
+
+      <div style={calForm}>
+        <div style={calRow}>
+          <label style={calField}>
+            <span style={calLabel}>
+              Company / team name <span style={calOptional}>(optional)</span>
+            </span>
+            <input
+              type="text"
+              value={orgName}
+              onChange={(e) => setOrgName(e.target.value)}
+              placeholder="e.g. Acme"
+              style={calInput}
+            />
+          </label>
+          <label style={calField}>
+            <span style={calLabel}>
+              Your email <span style={calOptional}>(optional)</span>
+            </span>
+            <input
+              type="email"
+              value={inviterEmail}
+              onChange={(e) => setInviterEmail(e.target.value)}
+              placeholder="you@company.com"
+              style={calInput}
+            />
+          </label>
+        </div>
+
+        <div style={calField}>
+          <span style={calLabel}>Teammates</span>
+          <div style={inviteRowsWrap}>
+            {rows.map((row, i) => {
+              const trimmed = row.email.trim().toLowerCase()
+              const invalid = trimmed.length > 0 && !BASIC_EMAIL_RE.test(trimmed)
+              return (
+                <div key={i} style={inviteRow}>
+                  <input
+                    type="email"
+                    value={row.email}
+                    onChange={(e) => setRow(i, { email: e.target.value })}
+                    placeholder="teammate@company.com"
+                    aria-label={`Teammate email ${i + 1}`}
+                    style={{
+                      ...calInput,
+                      ...inviteEmailInput,
+                      ...(invalid ? inviteInputInvalid : null),
+                    }}
+                  />
+                  <select
+                    value={row.role}
+                    onChange={(e) =>
+                      setRow(i, { role: e.target.value as EmployerInviteRole })
+                    }
+                    aria-label={`Teammate role ${i + 1}`}
+                    style={{ ...calInput, ...inviteRoleSelect }}
+                  >
+                    {INVITE_ROLE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => removeRow(i)}
+                    disabled={rows.length <= 1}
+                    aria-label={`Remove teammate ${i + 1}`}
+                    style={{
+                      ...inviteRemoveBtn,
+                      opacity: rows.length <= 1 ? 0.35 : 1,
+                      cursor: rows.length <= 1 ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={addRow}
+            disabled={rows.length >= 25}
+            style={{
+              ...inviteAddBtn,
+              opacity: rows.length >= 25 ? 0.45 : 1,
+              cursor: rows.length >= 25 ? "not-allowed" : "pointer",
+            }}
+          >
+            + Add another
+          </button>
+        </div>
+
+        <div style={calActionsRow}>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={!hasAnyValid || status === "sending"}
+            onClick={onSend}
+            style={{
+              textDecoration: "none",
+              opacity: !hasAnyValid || status === "sending" ? 0.55 : 1,
+              cursor: !hasAnyValid || status === "sending" ? "not-allowed" : "pointer",
+            }}
+          >
+            {status === "sending" ? "Sending invites…" : "Send invites"}
+          </button>
+          {status === "sending" ? (
+            <span style={calHint}>Emailing your team…</span>
+          ) : null}
+        </div>
+      </div>
+
+      {status === "error" && error ? (
+        <div style={calErrorBox} role="alert">
+          <strong style={{ display: "block", marginBottom: 4 }}>Couldn&apos;t send</strong>
+          {error}
+        </div>
+      ) : null}
+
+      {status === "done" && result ? (
+        <div style={calResultWrap}>
+          <div style={calResultHead}>
+            <span style={calResultEyebrow}>Invites</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ ...calBadge, ...calBadgeGood }}>
+                {result.sent} sent
+              </span>
+              {result.failed.length > 0 ? (
+                <span style={{ ...calBadge, ...calBadgeWarn }}>
+                  {result.failed.length} skipped
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          {result.invited.length > 0 ? (
+            <div style={calSection}>
+              <span style={calSectionLabel}>Sent</span>
+              <div style={inviteTableWrap}>
+                {result.invited.map((inv) => (
+                  <div key={inv.email} style={inviteResultRow}>
+                    <span style={inviteResultEmail}>{inv.email}</span>
+                    <span style={inviteRolePill}>{prettyToken(inv.role)}</span>
+                    <span style={inviteSentTag}>✓ sent</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {result.failed.length > 0 ? (
+            <div style={calSection}>
+              <span style={calSectionLabel}>Skipped</span>
+              <div style={inviteTableWrap}>
+                {result.failed.map((f, i) => (
+                  <div key={`${f.email}-${i}`} style={inviteResultRow}>
+                    <span style={inviteResultEmail}>{f.email || "(no email)"}</span>
+                    <span style={inviteFailReason}>{f.reason}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <p style={calScopeNote}>
+            Teammates get an email now; full role-based access (teammate login +
+            permissions) lands soon. Nothing else is needed from you here.
+          </p>
+        </div>
+      ) : null}
+
+      <div style={stepActions}>
+        {onPrev ? (
+          <button type="button" className="btn btn--ghost" onClick={onPrev}>
+            ← Back
+          </button>
+        ) : (
+          <span />
+        )}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button type="button" className="btn btn--secondary" onClick={onSkip}>
+            Skip for now
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={status !== "done"}
+            onClick={onDone}
+            style={{
+              textDecoration: "none",
+              opacity: status !== "done" ? 0.55 : 1,
+              cursor: status !== "done" ? "not-allowed" : "pointer",
+            }}
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Generic branded "coming soon" placeholder step (remaining unwired steps)
 // ---------------------------------------------------------------------------
 
@@ -1472,6 +1767,101 @@ const calScopeNote: CSSProperties = {
   color: "var(--ink-3)",
   borderTop: "1px solid var(--border)",
   paddingTop: 14,
+}
+
+// ---- Invite Team (Step 4) -------------------------------------------------
+
+const inviteRowsWrap: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+}
+const inviteRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+}
+const inviteEmailInput: CSSProperties = { flex: "1 1 auto", minWidth: 0 }
+const inviteInputInvalid: CSSProperties = {
+  borderColor: "var(--danger-border, #e7b4ad)",
+  background: "var(--danger-soft, #fbeae6)",
+}
+const inviteRoleSelect: CSSProperties = {
+  flex: "0 0 auto",
+  width: 158,
+  cursor: "pointer",
+}
+const inviteRemoveBtn: CSSProperties = {
+  flex: "0 0 auto",
+  width: 34,
+  height: 34,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: 20,
+  lineHeight: 1,
+  color: "var(--ink-3)",
+  background: "var(--cream-3)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--r-md)",
+}
+const inviteAddBtn: CSSProperties = {
+  alignSelf: "flex-start",
+  marginTop: 4,
+  fontSize: 13,
+  fontWeight: 600,
+  color: "var(--ink-2)",
+  background: "transparent",
+  border: "1px dashed var(--border)",
+  borderRadius: "var(--r-pill)",
+  padding: "6px 14px",
+}
+const inviteTableWrap: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+}
+const inviteResultRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  flexWrap: "wrap",
+  fontSize: 14,
+  color: "var(--ink-2)",
+  padding: "6px 0",
+  borderBottom: "1px solid var(--border)",
+}
+const inviteResultEmail: CSSProperties = {
+  flex: "1 1 180px",
+  minWidth: 0,
+  color: "var(--ink)",
+  wordBreak: "break-all",
+}
+const inviteRolePill: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: 12,
+  fontWeight: 500,
+  color: "var(--ink)",
+  background: "var(--peach-50)",
+  border: "1px solid var(--peach-200)",
+  borderRadius: "var(--r-pill)",
+  padding: "2px 10px",
+}
+const inviteSentTag: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  color: "var(--live)",
+  background: "var(--live-soft)",
+  border: "1px solid var(--live-border)",
+  borderRadius: "var(--r-pill)",
+  padding: "2px 9px",
+}
+const inviteFailReason: CSSProperties = {
+  fontSize: 12,
+  color: "var(--danger, #a33a28)",
 }
 
 // ---- Launch (Step 7) ------------------------------------------------------

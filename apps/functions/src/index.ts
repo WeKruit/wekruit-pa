@@ -3178,6 +3178,7 @@ export { paEmployerClaimVerification } from "./identity/employer-claim-verificat
 export { paEmployerIntakeJob } from "./employer-intake-job.js"
 export { paEmployerCreatePilotReq } from "./employer-create-pilot-req.js"
 export { paEmployerMatchPilotReq } from "./employer-match-pilot-req.js"
+export { paEmployerInviteTeam } from "./employer-invite-team.js"
 
 // ============================================================
 // Candidate referral program (2026-05-27)
