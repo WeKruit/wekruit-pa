@@ -325,6 +325,20 @@ export async function runAdminPassedCandidateIntroDecision(
     db: Firestore
     now?: () => string
     actorEmail?: string
+    /**
+     * Marketplace actor stamped on the emitted FeedbackEvent + CandidateJobEvent.
+     * Defaults to "operator" (admin-token path). The employer-facing wrapper
+     * passes "employer" so the flywheel event is attributed to the hiring team,
+     * not an internal operator.
+     */
+    actor?: "operator" | "employer"
+    /**
+     * Optional pre-check run inside this runner BEFORE the decision is recorded.
+     * The employer wrapper uses it to enforce "the snapshot's jobId belongs to
+     * THIS employer's reqs" so one employer can't decide on another's candidate.
+     * Throw an HttpsError to reject. Receives the resolved snapshotId.
+     */
+    authorizeSnapshot?: (snapshotId: string) => Promise<void> | void
   },
 ): Promise<AdminPassedCandidateIntroDecisionResult> {
   const parsed = AdminPassedCandidateIntroDecisionInputSchema.safeParse(raw)
@@ -333,6 +347,9 @@ export async function runAdminPassedCandidateIntroDecision(
   }
   const reason = safeText(parsed.data.reason, 2_000)
   if (!reason) throw new HttpsError("invalid-argument", "reason_required")
+  if (deps.authorizeSnapshot) {
+    await deps.authorizeSnapshot(parsed.data.snapshotId)
+  }
   const decidedAt = deps.now?.() ?? new Date().toISOString()
   const decidedBy = cleanString(deps.actorEmail) ?? "operator"
   const result = await recordEmployerIntroDecision(deps.db, {
@@ -341,7 +358,7 @@ export async function runAdminPassedCandidateIntroDecision(
     reason,
     decidedAt,
     decidedBy,
-    actor: "operator",
+    actor: deps.actor ?? "operator",
   })
 
   if (result.state !== "intro_accepted" && result.state !== "intro_rejected") {

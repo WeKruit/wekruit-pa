@@ -190,6 +190,14 @@ export type EmployerCreatePilotReqInput = {
   hardFilters?: IntakeHardFilters
   prescreenQuestions?: IntakePrescreenQuestion[]
   successMetric?: string
+  /**
+   * Lightest viable employer key — the onboarding requester's work email. There
+   * is no real employer auth on this public wizard yet, so the email is the
+   * durable scoping key for "this employer's reqs" + the passed inbox. Stamped
+   * server-side as `createdByEmail` (normalized lowercase) on both job docs.
+   */
+  employerEmail?: string
+  orgName?: string
 }
 
 export type EmployerCreatePilotReqOutput = {
@@ -377,6 +385,182 @@ export async function employerAtsImportReqs(
   const fn = httpsCallable<AtsImportReqsInput, AtsImportReqsOutput>(
     functions(),
     "paEmployerAtsImportReqs",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
+// ---------------------------------------------------------------------------
+// Employer home — list the employer's own pilot reqs + server-persist wizard
+// state, keyed by the (self-asserted) onboarding work email.
+// ---------------------------------------------------------------------------
+
+export type EmployerReqRow = {
+  reqId: string
+  title: string
+  companyName: string | null
+  status: string
+  createdAt: string | null
+}
+
+export type EmployerMyReqsOutput = {
+  employerEmail: string
+  reqs: EmployerReqRow[]
+}
+
+/**
+ * List the pilot reqs created by this employer email (pa-jobs where
+ * createdByEmail == email AND source == "employer_onboarding"). Returns req
+ * metadata only — NO candidate data. Public callable (no auth), mirrors
+ * employerMatchPilotReq.
+ */
+export async function employerMyReqs(employerEmail: string): Promise<EmployerMyReqsOutput> {
+  const fn = httpsCallable<{ employerEmail: string }, EmployerMyReqsOutput>(
+    functions(),
+    "paEmployerMyReqs",
+  )
+  const res = await fn({ employerEmail })
+  return res.data
+}
+
+export type EmployerOnboardingWizardStateWire = {
+  activeStep?: number
+  completion?: Record<string, "done" | "skipped">
+  successMetric?: string
+  pilotReqId?: string
+  pilotReqTitle?: string
+  updatedAt?: number
+}
+
+export type EmployerOnboardingStateOutput = {
+  employerEmail: string
+  found: boolean
+  state: EmployerOnboardingWizardStateWire | null
+  updatedAt: string | null
+}
+
+/**
+ * Read or write the server mirror of the employer onboarding wizard state so
+ * progress survives a closed tab. Doc keyed by sha256(email). Public callable
+ * (no auth), mirrors employerMyReqs.
+ */
+export async function employerOnboardingState(input: {
+  mode: "get" | "save"
+  employerEmail: string
+  state?: EmployerOnboardingWizardStateWire
+  orgName?: string
+}): Promise<EmployerOnboardingStateOutput> {
+  const fn = httpsCallable<typeof input, EmployerOnboardingStateOutput>(
+    functions(),
+    "paEmployerOnboardingState",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
+// ---------------------------------------------------------------------------
+// Employer LIVE passed inbox — consent-gated, PII-redacted, scoped to the
+// employer's own reqs. Intro decision emits employer_intro_* FSM events.
+// ---------------------------------------------------------------------------
+
+export type PassedCandidateTranscriptTurn = {
+  id: string
+  role: "user" | "assistant" | "system"
+  body: string
+  qId?: string
+  actionKind?: string
+  scoreSummary?: string
+  createdAt?: string
+}
+
+export type PassedCandidateRow = {
+  id: string
+  snapshotId: string
+  candidateId: string
+  jobId: string
+  candidateJobStateId: string
+  state: "passed" | "employer_visible" | "intro_accepted" | "intro_rejected"
+  displayName: string
+  resumeSummary?: string
+  level1Snapshot?: Record<string, unknown>
+  passReason?: string
+  matchReason?: string
+  createdAt: string
+  latestEmployerAction?: {
+    status: "accepted" | "rejected"
+    reason?: string
+    decidedAt: string
+    decidedBy: string
+    feedbackEventId: string
+  }
+  profile: {
+    piiConsentAt?: string
+    consentStatus: "granted" | "missing"
+    level1Status?: string
+    level1CompletedAt?: string
+    onboardingStatus?: string
+    candidateLifecycleState?: string
+  }
+  transcript: {
+    prescreenSessionId?: string
+    turns: PassedCandidateTranscriptTurn[]
+  }
+}
+
+export type EmployerPassedCandidatesOutput = {
+  employerEmail: string
+  reqCount: number
+  summary: {
+    totalPassed: number
+    withConsent: number
+    missingConsent: number
+    hiddenMissingConsent: number
+  }
+  rows: PassedCandidateRow[]
+}
+
+/**
+ * Read the employer's LIVE passed-candidate inbox: pa-employer-visible-profiles
+ * for THIS employer's reqs only, consent-gated + PII-redacted server-side.
+ * Public callable (no auth), mirrors employerMatchPilotReq. Returns only passed
+ * snapshots the employer owns; no candidate contact info ever crosses.
+ */
+export async function employerPassedCandidates(input: {
+  employerEmail: string
+  jobId?: string
+  requireConsent?: boolean
+}): Promise<EmployerPassedCandidatesOutput> {
+  const fn = httpsCallable<typeof input, EmployerPassedCandidatesOutput>(
+    functions(),
+    "paEmployerPassedCandidates",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
+export type EmployerPassedCandidateIntroDecisionOutput = {
+  ok: true
+  snapshotId: string
+  decision: "accepted" | "rejected"
+  state: "intro_accepted" | "intro_rejected"
+  feedbackEventId: string
+}
+
+/**
+ * Record an employer's accept/decline-intro decision on a passed profile. Emits
+ * an employer_intro_accepted/rejected FSM + FeedbackEvent attributed to the
+ * employer. Verifies the snapshot belongs to one of the employer's reqs first.
+ * Public callable (no auth), mirrors employerPassedCandidates.
+ */
+export async function employerPassedCandidateIntroDecision(input: {
+  employerEmail: string
+  snapshotId: string
+  decision: "accepted" | "rejected"
+  reason: string
+}): Promise<EmployerPassedCandidateIntroDecisionOutput> {
+  const fn = httpsCallable<typeof input, EmployerPassedCandidateIntroDecisionOutput>(
+    functions(),
+    "paEmployerPassedCandidateIntroDecision",
   )
   const res = await fn(input)
   return res.data

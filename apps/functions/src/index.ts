@@ -3202,6 +3202,15 @@ export { paEmployerClaimVerification } from "./identity/employer-claim-verificat
 export { paEmployerIntakeJob } from "./employer-intake-job.js"
 export { paEmployerCreatePilotReq } from "./employer-create-pilot-req.js"
 export { paEmployerMatchPilotReq } from "./employer-match-pilot-req.js"
+// Employer home (Phase 4) — list the employer's own reqs + server-persist the
+// onboarding wizard state, keyed by the (self-asserted) onboarding work email.
+export { paEmployerMyReqs, paEmployerOnboardingState } from "./employer-home.js"
+// Employer LIVE passed inbox (Phase 4) — consent-gated, PII-redacted, scoped to
+// the employer's own reqs; intro decision emits employer_intro_* FSM events.
+export {
+  paEmployerPassedCandidates,
+  paEmployerPassedCandidateIntroDecision,
+} from "./employer-passed-candidates.js"
 export { paEmployerInviteTeam } from "./employer-invite-team.js"
 export { paEmployerConnectRequest } from "./employer-connect-request.js"
 export { paEmployerAtsImportReqs } from "./employer-ats-import-reqs.js"

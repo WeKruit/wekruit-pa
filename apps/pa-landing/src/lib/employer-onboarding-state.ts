@@ -69,6 +69,17 @@ export type WizardState = {
   /** Step 0 capture. */
   successMetric: SuccessMetric
   /**
+   * Lightest viable employer identity — the onboarding requester's work email,
+   * captured at the Welcome step. There is no real employer auth on this public
+   * wizard yet, so this self-asserted email is the durable key used to (1) stamp
+   * `createdByEmail` on every pilot req, (2) server-persist this wizard state,
+   * and (3) scope the `/employer/home` req list + passed inbox. Normalized
+   * lowercase. Empty until the employer enters it.
+   */
+  employerEmail?: string
+  /** Optional org label captured at the Welcome step (display only). */
+  orgName?: string
+  /**
    * Step 6 sign-off result — the persisted pilot-req id (shared by
    * matching-jobs/{reqId} + pa-jobs/{reqId}). Set once the employer signs off
    * on the calibrated req; read by the Launch step to confirm it's saved.
@@ -146,6 +157,19 @@ export function resolvedCount(state: WizardState): number {
 
 export function isSetupComplete(state: WizardState): boolean {
   return WIZARD_STEPS.every((s) => Boolean(state.completion[s.key]))
+}
+
+/**
+ * Normalize an employer work email into the stable scoping key (lowercase +
+ * trimmed). Returns null when absent or not plausibly an email — mirrors the
+ * server's `normalizeEmployerEmail` so the client never sends junk as a key.
+ */
+export function normalizeEmployerEmail(value: string | undefined | null): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim().toLowerCase()
+  if (!trimmed) return null
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return null
+  return trimmed.slice(0, 254)
 }
 
 export function isSetupStarted(state: WizardState): boolean {

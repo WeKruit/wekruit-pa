@@ -222,6 +222,17 @@ export const PA_COLLECTIONS = {
    * failed/wrong binds.
    */
   bindCodes: "pa-bind-codes",
+  /**
+   * Employer onboarding wizard server-state (Phase 4). Doc id is a hash of the
+   * onboarding requester's normalized work email (NEVER the raw email as a doc
+   * id — v2.0 identity rule). Mirrors the client `WizardState` (activeStep,
+   * per-step completion, successMetric, pilotReqIds[]) so wizard progress
+   * survives a closed tab and a returning employer gets a `/employer/home`.
+   * HONEST SCOPE: the email is self-asserted (no magic-link gate on the public
+   * wizard yet), so this is a convenience key, not a verified employer auth.
+   * Server-only (Admin SDK).
+   */
+  employerOnboarding: "pa-employer-onboarding",
 } as const
 
 /**

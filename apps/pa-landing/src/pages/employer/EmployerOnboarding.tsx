@@ -24,6 +24,7 @@ import {
   employerInviteTeam,
   employerConnectRequest,
   employerAtsImportReqs,
+  employerOnboardingState,
   type EmployerIntakeJobOutput,
   type EmployerMatchPilotReqOutput,
   type EmployerInviteRole,
@@ -36,6 +37,7 @@ import {
   SUCCESS_METRICS,
   WIZARD_STEPS,
   loadWizardState,
+  normalizeEmployerEmail,
   resolvedCount,
   saveWizardState,
   stepStatus,
@@ -52,12 +54,50 @@ const STATUS_LABEL: Record<StepStatus, string> = {
   locked: "Locked",
 }
 
+/**
+ * Fire-and-forget server mirror of the wizard state. Keyed by the (self-asserted)
+ * employer email — no-op until the employer has entered a valid email at the
+ * Welcome step. Never throws into the UI; localStorage stays the source of
+ * truth, this just lets a returning employer hydrate on another device/tab and
+ * powers /employer/home.
+ */
+function syncWizardStateToServer(next: WizardState): void {
+  const email = normalizeEmployerEmail(next.employerEmail)
+  if (!email) return
+  void employerOnboardingState({
+    mode: "save",
+    employerEmail: email,
+    orgName: next.orgName,
+    state: {
+      activeStep: next.activeStep,
+      completion: next.completion,
+      successMetric: next.successMetric,
+      ...(next.pilotReqId ? { pilotReqId: next.pilotReqId } : {}),
+      ...(next.pilotReqTitle ? { pilotReqTitle: next.pilotReqTitle } : {}),
+      updatedAt: next.updatedAt,
+    },
+  }).catch(() => {
+    /* server mirror is best-effort; localStorage already saved */
+  })
+}
+
 export default function EmployerOnboarding() {
   const [state, setState] = useState<WizardState>(() => loadWizardState())
 
   const update = useCallback((next: WizardState) => {
-    setState(saveWizardState(next))
+    const saved = saveWizardState(next)
+    setState(saved)
+    syncWizardStateToServer(saved)
   }, [])
+
+  const setEmployerEmail = useCallback(
+    (email: string) => update({ ...state, employerEmail: email }),
+    [state, update],
+  )
+  const setOrgName = useCallback(
+    (org: string) => update({ ...state, orgName: org }),
+    [state, update],
+  )
 
   const goToStep = useCallback(
     (index: number) => {
@@ -182,11 +222,17 @@ export default function EmployerOnboarding() {
                 <WelcomeStep
                   successMetric={state.successMetric}
                   onPickMetric={setSuccessMetric}
+                  employerEmail={state.employerEmail ?? ""}
+                  orgName={state.orgName ?? ""}
+                  onSetEmployerEmail={setEmployerEmail}
+                  onSetOrgName={setOrgName}
                   onContinue={() => setStepResult(0, "done")}
                 />
               ) : activeStepDef.key === "calibrate_req" ? (
                 <CalibrateStep
                   successMetric={state.successMetric}
+                  employerEmail={state.employerEmail}
+                  orgName={state.orgName}
                   onSignedOff={recordPilotReq}
                   onSkip={() => setStepResult(activeIndex, "skipped")}
                   onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
@@ -374,12 +420,21 @@ const WEKRUIT_DOES = [
 function WelcomeStep({
   successMetric,
   onPickMetric,
+  employerEmail,
+  orgName,
+  onSetEmployerEmail,
+  onSetOrgName,
   onContinue,
 }: {
   successMetric: SuccessMetric
   onPickMetric: (m: SuccessMetric) => void
+  employerEmail: string
+  orgName: string
+  onSetEmployerEmail: (email: string) => void
+  onSetOrgName: (org: string) => void
   onContinue: () => void
 }) {
+  const emailValid = normalizeEmployerEmail(employerEmail) !== null
   return (
     <div style={stepBody}>
       <p style={stepLede}>
@@ -387,6 +442,36 @@ function WelcomeStep({
         matching, calibration, and scoring. We&apos;ll measure everything against
         one number you choose below.
       </p>
+
+      <div style={calForm}>
+        <label style={calField}>
+          <span style={calLabel}>Your work email</span>
+          <input
+            type="email"
+            value={employerEmail}
+            onChange={(e) => onSetEmployerEmail(e.target.value)}
+            placeholder="you@company.com"
+            autoComplete="email"
+            style={calInput}
+          />
+          <span style={{ ...calOptional, fontSize: 12 }}>
+            We key your reqs and passed-candidate inbox to this email so you can
+            come back to your home. We won&apos;t email candidates.
+          </span>
+        </label>
+        <label style={calField}>
+          <span style={calLabel}>
+            Company <span style={calOptional}>(optional)</span>
+          </span>
+          <input
+            type="text"
+            value={orgName}
+            onChange={(e) => onSetOrgName(e.target.value)}
+            placeholder="e.g. Acme"
+            style={calInput}
+          />
+        </label>
+      </div>
 
       <div style={legendGrid}>
         <div style={legendCol}>
@@ -425,11 +510,18 @@ function WelcomeStep({
         <button
           type="button"
           className="btn btn--primary"
-          style={{ textDecoration: "none" }}
+          style={{ textDecoration: "none", opacity: emailValid ? 1 : 0.5 }}
           onClick={onContinue}
+          disabled={!emailValid}
+          title={emailValid ? undefined : "Enter a valid work email to continue."}
         >
           Continue
         </button>
+        {emailValid ? (
+          <Link to="/employer/home" className="btn btn--ghost" style={{ textDecoration: "none" }}>
+            Go to my home
+          </Link>
+        ) : null}
       </div>
     </div>
   )
@@ -490,11 +582,15 @@ function prettyToken(token: string): string {
 
 function CalibrateStep({
   successMetric,
+  employerEmail,
+  orgName,
   onSignedOff,
   onSkip,
   onPrev,
 }: {
   successMetric: SuccessMetric
+  employerEmail?: string
+  orgName?: string
   onSignedOff: (reqId: string, reqTitle: string) => void
   onSkip: () => void
   onPrev?: () => void
@@ -552,6 +648,10 @@ function CalibrateStep({
         hardFilters: result.hardFilters,
         prescreenQuestions: result.prescreenQuestions,
         successMetric,
+        // Employer scoping key — stamps createdByEmail on the dual-write so the
+        // req is listable on /employer/home and scopes the passed inbox.
+        employerEmail: employerEmail || undefined,
+        orgName: orgName || undefined,
       })
       onSignedOff(out.reqId, title.trim())
     } catch (err) {
@@ -571,6 +671,8 @@ function CalibrateStep({
     companyName,
     locationRaw,
     successMetric,
+    employerEmail,
+    orgName,
     onSignedOff,
   ])
 

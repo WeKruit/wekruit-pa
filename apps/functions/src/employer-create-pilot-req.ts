@@ -77,6 +77,18 @@ export type EmployerCreatePilotReqInput = {
   hardFilters?: IntakeHardFilters
   prescreenQuestions?: IntakePrescreenQuestion[]
   successMetric?: string
+  /**
+   * Lightest viable employer key — the wizard requester's work email. There is
+   * no real employer auth on this public flow yet, so we key reqs by the
+   * onboarding email (normalized lowercase). Stamped on BOTH the matching-jobs
+   * and pa-jobs docs as `createdByEmail` so `paEmployerMyReqs` can list "this
+   * employer's reqs" and `paEmployerPassedCandidates` can scope inbox reads.
+   * HONEST SCOPE: this email is NOT verified (no magic-link gate here) — it is
+   * a self-asserted key, matching the unauthed posture of the wizard CFs.
+   */
+  employerEmail?: string
+  /** Optional org label captured at onboarding (secondary, display only). */
+  orgName?: string
 }
 
 export type EmployerCreatePilotReqOutput = {
@@ -105,6 +117,20 @@ function cleanStringArray(value: unknown): string[] {
     }
   }
   return out
+}
+
+/**
+ * Normalize an employer work email into the stable key used across the
+ * onboarding/home/inbox surfaces. Lowercased + trimmed. Returns null when the
+ * input is absent or not a plausible email (so we never stamp junk as a key).
+ */
+export function normalizeEmployerEmail(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim().toLowerCase()
+  if (!trimmed) return null
+  // Minimal plausibility gate — must look like local@domain.tld.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return null
+  return trimmed.slice(0, 254)
 }
 
 function requiredSkillsFrom(tags?: IntakeEnrichedTags): string[] {
@@ -165,6 +191,10 @@ export const paEmployerCreatePilotReq = onCall<EmployerCreatePilotReqInput>(
     const requiredSkills = requiredSkillsFrom(tags)
     const relevantTags = cleanStringArray(tags.relevantTags ?? [])
 
+    // Employer scoping key — see EmployerCreatePilotReqInput.employerEmail.
+    const createdByEmail = normalizeEmployerEmail(data.employerEmail)
+    const orgName = (data.orgName ?? "").trim() || null
+
     // Mint one stable-ish reqId shared by BOTH docs. Slug for legibility +
     // short random suffix to avoid collisions across re-submits of the same role.
     const companySlug = companyName ? slugify(companyName, 24) : "employer"
@@ -208,6 +238,9 @@ export const paEmployerCreatePilotReq = onCall<EmployerCreatePilotReqInput>(
       // collaborative pilot req on the matching side too.
       wekruitCollaborationStatus: "collaborated",
       isWekruitCollab: true,
+      // Employer scoping key (matcher mirror). See EmployerCreatePilotReqInput.
+      ...(createdByEmail ? { createdByEmail } : {}),
+      ...(orgName ? { orgName } : {}),
       firstSeenAt: nowIso,
       updatedAt: nowIso,
     }
@@ -243,6 +276,9 @@ export const paEmployerCreatePilotReq = onCall<EmployerCreatePilotReqInput>(
       status: "pilot_draft",
       source: "employer_onboarding",
       wekruitCollaborationStatus: "collaborated",
+      // Employer scoping key (workspace doc). `paEmployerMyReqs` lists by this.
+      ...(createdByEmail ? { createdByEmail } : {}),
+      ...(orgName ? { orgName } : {}),
       dead: false,
       firstSeenAt: nowIso,
       updatedAt: nowIso,
@@ -252,6 +288,7 @@ export const paEmployerCreatePilotReq = onCall<EmployerCreatePilotReqInput>(
     logger.info("paEmployerCreatePilotReq.write", {
       reqId,
       hasCompany: Boolean(companyName),
+      hasEmployerKey: Boolean(createdByEmail),
       roleFunction,
       prescreenCount: prescreenQuestions.length,
     })

@@ -17,8 +17,8 @@
  *   - default Employers       → /employers
  *   - named EmployersInbox    → /employers/inbox
  */
-import { useEffect, useState, type ReactNode } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import {
   Avatar,
   CANDIDATE_STYLES,
@@ -28,6 +28,12 @@ import {
 } from "./CandidateLogin.js"
 import { AudienceToggle } from "../components/AudienceToggle.js"
 import { EmployerSequence } from "../components/Sequence.js"
+import {
+  employerPassedCandidates,
+  employerPassedCandidateIntroDecision,
+  type PassedCandidateRow,
+} from "../lib/onboarding-api.js"
+import { loadWizardState, normalizeEmployerEmail } from "../lib/employer-onboarding-state.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // Sample preview data — one fully-fleshed generic passed profile plus
@@ -757,7 +763,396 @@ export default function Employers() {
 // /employers/inbox — passed profile detail preview
 // ────────────────────────────────────────────────────────────────────────────
 
+// ────────────────────────────────────────────────────────────────────────────
+// /employers/inbox — LIVE passed-candidate inbox.
+//
+// Reads pa-employer-visible-profiles for THIS employer's reqs only, via
+// employerPassedCandidates (consent-gated + PII-redacted server-side). The
+// employer is keyed by the self-asserted onboarding work email persisted in the
+// wizard's localStorage state (or typed here). Accept/decline-intro calls
+// employerPassedCandidateIntroDecision, which emits the employer_intro_*
+// FeedbackEvent + CandidateJobEvent FSM signal attributed to the employer.
+//
+// When the employer has no email on file yet, we fall back to the static SAMPLE
+// preview so the marketing "see a sample pass" link still works.
+// ────────────────────────────────────────────────────────────────────────────
+
 export function EmployersInbox() {
+  const [searchParams] = useSearchParams()
+  const jobIdFilter = searchParams.get("jobId") ?? undefined
+
+  const [email] = useState<string>(() => {
+    const s = loadWizardState()
+    return normalizeEmployerEmail(s.employerEmail) ?? ""
+  })
+
+  // No employer identity on file → render the static sample preview (the
+  // marketing "see a sample pass" path).
+  if (!email) return <EmployersInboxSample />
+
+  return <EmployersInboxLive employerEmail={email} jobIdFilter={jobIdFilter} />
+}
+
+function EmployersInboxLive({
+  employerEmail,
+  jobIdFilter,
+}: {
+  employerEmail: string
+  jobIdFilter?: string
+}) {
+  const [rows, setRows] = useState<PassedCandidateRow[] | null>(null)
+  const [status, setStatus] = useState<"loading" | "done" | "error">("loading")
+  const [error, setError] = useState<string | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(null)
+  // Locally-applied decisions so the row updates immediately post-action.
+  const [decisions, setDecisions] = useState<Record<string, "accepted" | "rejected">>({})
+
+  const load = useCallback(async () => {
+    setStatus("loading")
+    setError(null)
+    try {
+      const out = await employerPassedCandidates({
+        employerEmail,
+        ...(jobIdFilter ? { jobId: jobIdFilter } : {}),
+      })
+      setRows(out.rows)
+      setActiveId((prev) => prev ?? (out.rows[0]?.snapshotId ?? null))
+      setStatus("done")
+    } catch (err) {
+      setStatus("error")
+      setError(err instanceof Error ? err.message : "Couldn't load your passed candidates.")
+    }
+  }, [employerEmail, jobIdFilter])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const active = useMemo(
+    () => (rows ?? []).find((r) => r.snapshotId === activeId) ?? (rows ?? [])[0] ?? null,
+    [rows, activeId],
+  )
+
+  const onDecision = useCallback(
+    async (snapshotId: string, decision: "accepted" | "rejected", reason: string) => {
+      await employerPassedCandidateIntroDecision({ employerEmail, snapshotId, decision, reason })
+      setDecisions((prev) => ({ ...prev, [snapshotId]: decision }))
+    },
+    [employerEmail],
+  )
+
+  return (
+    <EmployerShell signedIn>
+      <div className="wk-emp-inbox">
+        <div className="wk-emp-inbox__bar">
+          <div className="wk-container wk-emp-inbox__bar-inner">
+            <div>
+              <p className="wk-eyebrow"><PulseDot size={6} /> Inbox · {employerEmail}</p>
+              <h1 className="wk-emp-inbox__h1">Your passed candidates.</h1>
+            </div>
+            <div className="wk-emp-inbox__hint">
+              <Icon name="lock" size={13} stroke={1.8} />
+              <span>Showing only candidates Claire passed for your reqs who consented to share with you.</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="wk-container wk-emp-inbox__grid">
+          <aside className="wk-emp-inbox__list">
+            <header className="wk-emp-inbox__list-head">
+              <span className="wk-eyebrow">Passes</span>
+              <span className="wk-emp-inbox__list-count">
+                {status === "done" ? `${(rows ?? []).length}` : status === "loading" ? "…" : "—"}
+              </span>
+            </header>
+
+            {status === "loading" ? (
+              <p style={{ padding: "16px 4px", color: "var(--ink-3)", fontSize: 14 }}>Loading…</p>
+            ) : status === "error" ? (
+              <div style={{ padding: "12px 4px" }}>
+                <p style={{ color: "var(--danger, #b3261e)", fontSize: 14, margin: "0 0 10px" }}>{error}</p>
+                <button type="button" className="wk-btn wk-btn--ink wk-btn--sm" onClick={() => void load()}>
+                  Retry
+                </button>
+              </div>
+            ) : (rows ?? []).length === 0 ? (
+              <p style={{ padding: "16px 4px", color: "var(--ink-3)", fontSize: 14 }}>
+                No passed candidates yet. Claire surfaces them here as your reqs screen.
+              </p>
+            ) : (
+              <ul className="wk-emp-inbox__rows">
+                {(rows ?? []).map((r) => {
+                  const localDecision = decisions[r.snapshotId]
+                  const decided =
+                    localDecision ??
+                    (r.state === "intro_accepted" ? "accepted" : r.state === "intro_rejected" ? "rejected" : null)
+                  return (
+                    <li key={r.snapshotId}>
+                      <button
+                        type="button"
+                        className={`wk-emp-row${r.snapshotId === activeId ? " is-active" : ""}`}
+                        aria-label={`Open ${r.displayName} pass record`}
+                        aria-pressed={r.snapshotId === activeId}
+                        onClick={() => setActiveId(r.snapshotId)}
+                      >
+                        <Avatar name={r.displayName} size={36} tone="warm" />
+                        <div className="wk-emp-row__body">
+                          <div className="wk-emp-row__top">
+                            <span className="wk-emp-row__name">{r.displayName}</span>
+                            <span className="wk-emp-row__time">{shortDate(r.createdAt)}</span>
+                          </div>
+                          <div className="wk-emp-row__meta">{r.jobId}</div>
+                          <div className="wk-emp-row__chips">
+                            <span className="wk-emp-row__pass is-strong">Passed</span>
+                            {decided ? (
+                              <span className={`wk-emp-row__badge${decided === "rejected" ? " is-risk" : ""}`}>
+                                Intro {decided}
+                              </span>
+                            ) : (
+                              <span className="wk-emp-row__badge">Awaiting decision</span>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+
+            <div className="wk-emp-inbox__pool">
+              <Icon name="sparkle" size={14} stroke={1.6} />
+              <div>
+                <strong>Other candidates stay hidden</strong> while Claire screens for your reqs.
+                <br />
+                <span>You see only passed profiles after consent is ready.</span>
+              </div>
+            </div>
+          </aside>
+
+          <section className="wk-emp-detail">
+            {active ? (
+              <LivePassedDetail
+                row={active}
+                decided={
+                  decisions[active.snapshotId] ??
+                  (active.state === "intro_accepted"
+                    ? "accepted"
+                    : active.state === "intro_rejected"
+                    ? "rejected"
+                    : null)
+                }
+                onDecision={onDecision}
+              />
+            ) : status === "done" ? (
+              <article className="wk-emp-pp wk-emp-pp--lite">
+                <header className="wk-emp-pp__head">
+                  <div className="wk-emp-pp__head-body">
+                    <p className="wk-eyebrow">Inbox</p>
+                    <h2 className="wk-emp-pp__name">No passed candidates yet</h2>
+                    <p className="wk-emp-pp__meta">
+                      As Claire screens candidates against your reqs, their passed profiles appear here.
+                    </p>
+                  </div>
+                </header>
+              </article>
+            ) : null}
+          </section>
+        </div>
+      </div>
+    </EmployerShell>
+  )
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ""
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
+
+// LIVE detail pane — renders the REAL redacted snapshot fields (summary, pass
+// reason, match reason, transcript, consent) and the real accept/decline-intro
+// action. No invented requirementsMet/risks; only what the snapshot carries.
+function LivePassedDetail({
+  row,
+  decided,
+  onDecision,
+}: {
+  row: PassedCandidateRow
+  decided: "accepted" | "rejected" | null
+  onDecision: (snapshotId: string, decision: "accepted" | "rejected", reason: string) => Promise<void>
+}) {
+  const [reason, setReason] = useState("")
+  const [busy, setBusy] = useState<null | "accepted" | "rejected">(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const consentGranted = row.profile.consentStatus === "granted"
+
+  const act = useCallback(
+    async (decision: "accepted" | "rejected") => {
+      if (busy) return
+      const trimmed = reason.trim()
+      if (!trimmed) {
+        setActionError("Add a short reason before recording your decision.")
+        return
+      }
+      setBusy(decision)
+      setActionError(null)
+      try {
+        await onDecision(row.snapshotId, decision, trimmed)
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : "Couldn't record your decision.")
+      } finally {
+        setBusy(null)
+      }
+    },
+    [busy, reason, onDecision, row.snapshotId],
+  )
+
+  return (
+    <article className="wk-emp-pp">
+      <header className="wk-emp-pp__head">
+        <Avatar name={row.displayName} size={72} tone="warm" />
+        <div className="wk-emp-pp__head-body">
+          <p className="wk-eyebrow">Passed by Claire · for {row.jobId}</p>
+          <h2 className="wk-emp-pp__name">{row.displayName}</h2>
+          <p className="wk-emp-pp__meta">
+            Consent: <strong>{consentGranted ? "granted" : "pending"}</strong>
+          </p>
+        </div>
+        <div className="wk-emp-pp__head-side">
+          <span className="wk-emp-pp__pass is-strong">
+            <Icon name="check" size={12} stroke={2.4} /> Passed
+          </span>
+          {decided ? (
+            <span className={`wk-emp-pp__badge${decided === "rejected" ? " is-risk" : ""}`}>
+              Intro {decided}
+            </span>
+          ) : null}
+        </div>
+      </header>
+
+      {/* Real decision loop */}
+      <section className="wk-emp-pp__decision" aria-labelledby="wk-emp-live-decision-title">
+        <div className="wk-emp-pp__decision-head">
+          <p className="wk-eyebrow">Your decision</p>
+          <h3 id="wk-emp-live-decision-title">Accept the intro or pass with a reason.</h3>
+        </div>
+        {decided ? (
+          <p style={{ color: "var(--ink-2)", margin: "10px 0 0" }}>
+            You {decided === "accepted" ? "accepted" : "passed on"} this intro.
+            {row.latestEmployerAction?.reason ? ` Reason on file: “${row.latestEmployerAction.reason}”.` : ""}
+          </p>
+        ) : (
+          <>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Why you're accepting or passing — goes back to WeKruit to tighten the next screen."
+              rows={3}
+              style={{
+                width: "100%",
+                marginTop: 12,
+                padding: "10px 12px",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                font: "inherit",
+                color: "var(--ink)",
+                background: "var(--cream)",
+                resize: "vertical",
+              }}
+            />
+            {actionError ? (
+              <p style={{ color: "var(--danger, #b3261e)", fontSize: 13, margin: "8px 0 0" }}>{actionError}</p>
+            ) : null}
+            <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="wk-btn wk-btn--ink"
+                disabled={busy !== null}
+                onClick={() => void act("accepted")}
+              >
+                {busy === "accepted" ? "Recording…" : "Accept intro & request interview"}
+              </button>
+              <button
+                type="button"
+                className="wk-btn wk-btn--secondary"
+                disabled={busy !== null}
+                onClick={() => void act("rejected")}
+              >
+                {busy === "rejected" ? "Recording…" : "Pass with reason"}
+              </button>
+            </div>
+            {!consentGranted ? (
+              <p style={{ color: "var(--ink-3)", fontSize: 12, margin: "10px 0 0" }}>
+                Note: this candidate&apos;s share consent is still pending.
+              </p>
+            ) : null}
+          </>
+        )}
+      </section>
+
+      {row.resumeSummary ? (
+        <section className="wk-emp-pp__sec">
+          <h3 className="wk-emp-pp__h">Summary</h3>
+          <p className="wk-emp-pp__sum">{row.resumeSummary}</p>
+        </section>
+      ) : null}
+
+      {row.passReason ? (
+        <section className="wk-emp-pp__sec">
+          <h3 className="wk-emp-pp__h">Why Claire passed this candidate</h3>
+          <div className="wk-emp-pp__verdict">
+            <div className="wk-emp-pp__verdict-by">
+              <Avatar name="Claire" size={28} tone="warm" />
+              <span><strong>Claire</strong> · WeKruit recruiter</span>
+            </div>
+            <p>{row.passReason}</p>
+          </div>
+        </section>
+      ) : null}
+
+      {row.matchReason ? (
+        <section className="wk-emp-pp__sec">
+          <h3 className="wk-emp-pp__h">Why this candidate matched the req</h3>
+          <p className="wk-emp-pp__sum">{row.matchReason}</p>
+        </section>
+      ) : null}
+
+      {row.transcript.turns.length > 0 ? (
+        <section className="wk-emp-pp__sec">
+          <div className="wk-emp-pp__h-row">
+            <h3 className="wk-emp-pp__h">Transcript excerpts</h3>
+            <span className="wk-emp-pp__sample">Redacted</span>
+          </div>
+          <ol className="wk-emp-pp__transcript">
+            {row.transcript.turns.map((t) => (
+              <li key={t.id} className="wk-emp-pp__tx">
+                <div className="wk-emp-pp__tx-a">
+                  <span className="wk-emp-pp__tx-by">{row.displayName.split(" ")[0]}</span>
+                  <p>{t.body}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      <footer className="wk-emp-pp__consent">
+        <Icon name="lock" size={13} stroke={1.8} />
+        <span>
+          {consentGranted
+            ? "This candidate consented to share their passed profile with your hiring team."
+            : "Contact details stay redacted until share consent is confirmed."}
+        </span>
+      </footer>
+    </article>
+  )
+}
+
+// Static sample inbox — preserved for the marketing "see a sample pass" path
+// when there's no employer identity on file.
+function EmployersInboxSample() {
   const [activeId, setActiveId] = useState(EMP_PASSED[0].id)
   const active = EMP_PASSED.find((p) => p.id === activeId) ?? EMP_PASSED[0]
   return (
