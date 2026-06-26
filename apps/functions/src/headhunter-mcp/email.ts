@@ -36,10 +36,11 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
 }
 
-export type SendEmailArgs = { to?: string; subject?: string; body?: string }
+export type SendEmailArgs = { to?: string; subject?: string; body?: string; confirm?: boolean }
 export type SendEmailResult = {
   sent: boolean
   reason?: string
+  note?: string
   to?: string
   subject?: string
   messageId?: string
@@ -60,6 +61,20 @@ export async function runSendEmail(args: SendEmailArgs, deps: { db: Firestore })
   if (subject.length > 200) return { sent: false, reason: "subject_too_long" }
   if (!body) return { sent: false, reason: "empty_body" }
   if (body.length > 8000) return { sent: false, reason: "body_too_long" }
+
+  // CONFIRM-FIRST gate (deterministic — persona instructions alone don't hold a
+  // weak model). First call (confirm omitted/false) sends NOTHING and records
+  // nothing; it returns the recipient/subject for the operator to approve. Only
+  // confirm:true actually sends. Mirrors confirm_interview_booking.
+  if (args.confirm !== true) {
+    return {
+      sent: false,
+      reason: "not_confirmed",
+      to,
+      subject,
+      note: `Dry run — this sends a REAL email to ${to} (subject: "${subject}"). Restate the recipient + subject to the operator, get an explicit yes, then call again with confirm:true.`,
+    }
+  }
 
   const ref = deps.db.collection("pa-headhunter-emails").doc()
   await ref.set({
