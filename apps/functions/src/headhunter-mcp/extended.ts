@@ -99,19 +99,31 @@ export async function runSearchCandidatePool(
   const nowMs = deps.nowMs ?? Date.parse("2026-06-24T00:00:00.000Z")
   const limit = Math.min(Math.max(filters.limit ?? 20, 1), 50)
 
+  const matchable = new Set<string>(MATCHABLE_LIFECYCLE_STATES as readonly string[])
   const rows = new Map<string, MatchingCandidateRow>()
-  // Parallel + bounded (was 6 sequential 600-doc reads → MCP timeout risk).
-  const perState = await Promise.all(
-    MATCHABLE_LIFECYCLE_STATES.map((lifecycle) =>
-      deps.db
-        .collection("pa-users")
-        .where("candidateLifecycleState", "==", lifecycle)
-        .limit(250)
-        .get(),
-    ),
-  )
-  for (const snap of perState) {
-    for (const doc of snap.docs) rows.set(doc.id, toCandidateRow(doc.id, doc.data() as Rec))
+  const roles = strArr(filters.roleFunction).slice(0, 10)
+
+  if (roles.length > 0) {
+    // Push the roleFunction filter to the query: load only role-relevant
+    // candidates (~hundreds), never the whole pool. Lifecycle gated in-memory.
+    const snap = await deps.db
+      .collection("pa-users")
+      .where("tags.targetRoleFunction", "array-contains-any", roles)
+      .limit(600)
+      .get()
+    for (const doc of snap.docs) {
+      const data = doc.data() as Rec
+      const lc = data.candidateLifecycleState
+      if (typeof lc === "string" && matchable.has(lc)) rows.set(doc.id, toCandidateRow(doc.id, data))
+    }
+  } else {
+    // No role in the brief: bounded parallel lifecycle scan.
+    const perState = await Promise.all(
+      MATCHABLE_LIFECYCLE_STATES.map((lifecycle) =>
+        deps.db.collection("pa-users").where("candidateLifecycleState", "==", lifecycle).limit(250).get(),
+      ),
+    )
+    for (const snap of perState) for (const doc of snap.docs) rows.set(doc.id, toCandidateRow(doc.id, doc.data() as Rec))
   }
   const candidates = [...rows.values()]
 

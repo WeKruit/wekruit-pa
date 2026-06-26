@@ -172,13 +172,53 @@ const MATCHABLE_LIFECYCLE_STATES = [
   "retained",
 ] as const
 
-async function loadCandidatePool(db: Firestore): Promise<MatchingCandidateRow[]> {
+function candidateRowFrom(id: string, data: Record<string, unknown>, lifecycle: string): MatchingCandidateRow {
+  const tags = cleanTags(data.tags ?? data.globalTags)
+  return {
+    userId: id,
+    displayName: cleanString(data.displayName),
+    lifecycle: lifecycle as MatchingCandidateRow["lifecycle"],
+    outreach: {
+      paused: data.outreachPaused === true,
+      doNotContact: data.doNotContact === true,
+      reachable: typeof data.phoneE164 === "string" || typeof data.email === "string",
+    },
+    tagsUpdatedAt: cleanString(data.tagsUpdatedAt) ?? cleanString(data.updatedAt),
+    tags: tags as MatchingCandidateRow["tags"],
+    cvEmbedding: Array.isArray(data.embedding) && data.embedding.every((item) => typeof item === "number")
+      ? (data.embedding as number[])
+      : null,
+    llmMatch: typeof data.llmMatch === "number" ? data.llmMatch : null,
+  }
+}
+
+/**
+ * Load candidates to score against a job. The RIGHT way: push the roleFunction
+ * hard filter to the QUERY (canonical V16 "push role to query layer") so a PM
+ * job loads only PM candidates (~hundreds) — never the whole ~5k pool. Loading
+ * everyone then scoring blew the MCP timeout. Lifecycle is gated in-memory.
+ * Only falls back to a bounded lifecycle scan when the job has no roleFunction.
+ */
+async function loadCandidatePool(db: Firestore, roleFunctions: string[] = []): Promise<MatchingCandidateRow[]> {
+  const matchable = new Set<string>(MATCHABLE_LIFECYCLE_STATES as readonly string[])
   const rows = new Map<string, MatchingCandidateRow>()
-  // Parallel state queries (NOT sequential) + a bounded per-state limit: six
-  // sequential 600-doc reads blew the MCP client timeout
-  // (find_candidates_for_job -32001). Parallel = ~1 round-trip; the cap bounds
-  // the scored set. (Pushing the roleFunction hard filter to the query layer is
-  // the proper next step — needs a composite index.)
+  const roles = roleFunctions.filter((r) => typeof r === "string" && r.trim().length > 0).slice(0, 10)
+
+  if (roles.length > 0) {
+    const snap = await db
+      .collection("pa-users")
+      .where("tags.targetRoleFunction", "array-contains-any", roles)
+      .limit(600)
+      .get()
+    for (const doc of snap.docs) {
+      const data = doc.data() as Record<string, unknown>
+      const lc = data.candidateLifecycleState
+      if (typeof lc === "string" && matchable.has(lc)) rows.set(doc.id, candidateRowFrom(doc.id, data, lc))
+    }
+    return [...rows.values()]
+  }
+
+  // Fallback only when the job has no roleFunction: bounded parallel lifecycle scan.
   const perState = await Promise.all(
     MATCHABLE_LIFECYCLE_STATES.map((lifecycle) =>
       db
@@ -190,26 +230,7 @@ async function loadCandidatePool(db: Firestore): Promise<MatchingCandidateRow[]>
     ),
   )
   for (const { lifecycle, docs } of perState) {
-    for (const doc of docs) {
-      const data = doc.data() as Record<string, unknown>
-      const tags = cleanTags(data.tags ?? data.globalTags)
-      rows.set(doc.id, {
-        userId: doc.id,
-        displayName: cleanString(data.displayName),
-        lifecycle,
-        outreach: {
-          paused: data.outreachPaused === true,
-          doNotContact: data.doNotContact === true,
-          reachable: typeof data.phoneE164 === "string" || typeof data.email === "string",
-        },
-        tagsUpdatedAt: cleanString(data.tagsUpdatedAt) ?? cleanString(data.updatedAt),
-        tags: tags as MatchingCandidateRow["tags"],
-        cvEmbedding: Array.isArray(data.embedding) && data.embedding.every((item) => typeof item === "number")
-          ? data.embedding as number[]
-          : null,
-        llmMatch: typeof data.llmMatch === "number" ? data.llmMatch : null,
-      })
-    }
+    for (const doc of docs) rows.set(doc.id, candidateRowFrom(doc.id, doc.data() as Record<string, unknown>, lifecycle))
   }
   return [...rows.values()]
 }
@@ -237,7 +258,7 @@ export async function runAdminJobMatchDebug(
   }
   const rawJob = (jobSnap.data() ?? {}) as Record<string, unknown>
   const job = projectMatchingJob(parsed.data.jobId, rawJob)
-  const candidates = await loadCandidatePool(deps.db)
+  const candidates = await loadCandidatePool(deps.db, job.roleFunction ?? [])
   const ranker =
     deps.rankCandidatesForJob ??
     (async (args: { job: MatchingJob; candidates: MatchingCandidateRow[]; limit: number }) => {
