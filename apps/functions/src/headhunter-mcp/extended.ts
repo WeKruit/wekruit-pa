@@ -237,7 +237,8 @@ export async function runRediscoverForJob(
     tierById.set(doc.id, { tier: str(t.tier), reusable: t.reusable === true })
   }
 
-  const ranked = rankCandidatesForJob(job, candidates, { nowMs }).slice(0, limit)
+  const isCollab = raw.wekruitCollaborationStatus === "collaborated" || raw.isWekruitCollab === true
+  const ranked = rankCandidatesForJob(job, candidates, { nowMs, isCollaborationJob: isCollab }).slice(0, limit)
   return {
     direction: "rediscover",
     jobId: input.jobId,

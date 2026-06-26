@@ -259,11 +259,15 @@ export async function runAdminJobMatchDebug(
   const rawJob = (jobSnap.data() ?? {}) as Record<string, unknown>
   const job = projectMatchingJob(parsed.data.jobId, rawJob)
   const candidates = await loadCandidatePool(deps.db, job.roleFunction ?? [])
+  // WeKruit collab pilot reqs apply through WeKruit (no external ATS URL) — tell
+  // the scorer so it skips the ats-url/staleness job-side hard blocks.
+  const isCollab =
+    rawJob.wekruitCollaborationStatus === "collaborated" || rawJob.isWekruitCollab === true
   const ranker =
     deps.rankCandidatesForJob ??
     (async (args: { job: MatchingJob; candidates: MatchingCandidateRow[]; limit: number }) => {
       const mod = await import("@pa/job-rec")
-      return mod.rankCandidatesForJob(args.job, args.candidates).slice(0, args.limit)
+      return mod.rankCandidatesForJob(args.job, args.candidates, { isCollaborationJob: isCollab }).slice(0, args.limit)
     })
   const ranked = (await ranker({ job, candidates, limit: parsed.data.limit })).slice(0, parsed.data.limit)
   const candidateById = new Map(candidates.map((candidate) => [candidate.userId, candidate]))
