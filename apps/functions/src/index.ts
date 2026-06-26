@@ -3176,6 +3176,7 @@ export {
 } from "./openLayoff.js"
 export { paEmployerClaimVerification } from "./identity/employer-claim-verification.js"
 export { paEmployerIntakeJob } from "./employer-intake-job.js"
+export { paEmployerCreatePilotReq } from "./employer-create-pilot-req.js"
 
 // ============================================================
 // Candidate referral program (2026-05-27)

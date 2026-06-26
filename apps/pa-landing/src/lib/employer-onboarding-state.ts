@@ -68,6 +68,14 @@ export type WizardState = {
   completion: Partial<Record<WizardStepKey, "done" | "skipped">>
   /** Step 0 capture. */
   successMetric: SuccessMetric
+  /**
+   * Step 6 sign-off result — the persisted pilot-req id (shared by
+   * matching-jobs/{reqId} + pa-jobs/{reqId}). Set once the employer signs off
+   * on the calibrated req; read by the Launch step to confirm it's saved.
+   */
+  pilotReqId?: string
+  /** Role title at sign-off — shown on the Launch confirmation. */
+  pilotReqTitle?: string
   /** epoch millis of the last write (for resume affordances). */
   updatedAt: number
 }

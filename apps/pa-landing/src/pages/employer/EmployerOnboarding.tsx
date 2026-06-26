@@ -19,6 +19,7 @@ import { useCallback, useState, type CSSProperties } from "react"
 import { Link } from "react-router-dom"
 import {
   employerIntakeJob,
+  employerCreatePilotReq,
   type EmployerIntakeJobOutput,
 } from "../../lib/onboarding-api.js"
 import {
@@ -68,6 +69,24 @@ export default function EmployerOnboarding() {
 
   const setSuccessMetric = useCallback(
     (metric: SuccessMetric) => update({ ...state, successMetric: metric }),
+    [state, update],
+  )
+
+  // Step 6 sign-off — persist the pilot-req id + title and advance to Launch.
+  const recordPilotReq = useCallback(
+    (reqId: string, reqTitle: string) => {
+      const index = WIZARD_STEPS.findIndex((s) => s.key === "calibrate_req")
+      const key = WIZARD_STEPS[index].key
+      const completion = { ...state.completion, [key]: "done" as const }
+      const nextIndex = Math.min(index + 1, WIZARD_STEPS.length - 1)
+      update({
+        ...state,
+        completion,
+        activeStep: nextIndex,
+        pilotReqId: reqId,
+        pilotReqTitle: reqTitle,
+      })
+    },
     [state, update],
   )
 
@@ -158,8 +177,15 @@ export default function EmployerOnboarding() {
                 />
               ) : activeStepDef.key === "calibrate_req" ? (
                 <CalibrateStep
-                  onDone={() => setStepResult(activeIndex, "done")}
+                  successMetric={state.successMetric}
+                  onSignedOff={recordPilotReq}
                   onSkip={() => setStepResult(activeIndex, "skipped")}
+                  onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
+                />
+              ) : activeStepDef.key === "launch" ? (
+                <LaunchStep
+                  pilotReqId={state.pilotReqId}
+                  pilotReqTitle={state.pilotReqTitle}
                   onPrev={activeIndex > 0 ? () => goToStep(activeIndex - 1) : undefined}
                 />
               ) : (
@@ -430,11 +456,13 @@ function prettyToken(token: string): string {
 }
 
 function CalibrateStep({
-  onDone,
+  successMetric,
+  onSignedOff,
   onSkip,
   onPrev,
 }: {
-  onDone: () => void
+  successMetric: SuccessMetric
+  onSignedOff: (reqId: string, reqTitle: string) => void
   onSkip: () => void
   onPrev?: () => void
 }) {
@@ -445,6 +473,8 @@ function CalibrateStep({
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle")
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<EmployerIntakeJobOutput | null>(null)
+  const [signOffStatus, setSignOffStatus] = useState<"idle" | "saving" | "error">("idle")
+  const [signOffError, setSignOffError] = useState<string | null>(null)
 
   const canEnrich = title.trim().length > 0 && jobDescription.trim().length > 0
 
@@ -474,6 +504,42 @@ function CalibrateStep({
   const tags = result?.enrichedTags
   const skillChips = (tags?.skills ?? []).map((s) => s.name).filter(Boolean)
   const overall = result?.confidence?.overall
+
+  const onSignOff = useCallback(async () => {
+    if (status !== "done" || !result || signOffStatus === "saving") return
+    setSignOffStatus("saving")
+    setSignOffError(null)
+    try {
+      const out = await employerCreatePilotReq({
+        title: title.trim(),
+        jobDescription: jobDescription.trim(),
+        companyName: companyName.trim() || undefined,
+        locationRaw: locationRaw.trim() || undefined,
+        enrichedTags: result.enrichedTags,
+        hardFilters: result.hardFilters,
+        prescreenQuestions: result.prescreenQuestions,
+        successMetric,
+      })
+      onSignedOff(out.reqId, title.trim())
+    } catch (err) {
+      setSignOffStatus("error")
+      setSignOffError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't save your pilot role. Try again in a moment.",
+      )
+    }
+  }, [
+    status,
+    result,
+    signOffStatus,
+    title,
+    jobDescription,
+    companyName,
+    locationRaw,
+    successMetric,
+    onSignedOff,
+  ])
 
   return (
     <div style={stepBody}>
@@ -623,11 +689,17 @@ function CalibrateStep({
           ) : null}
 
           <p style={calScopeNote}>
-            This enriches the role right now so you can review the tags and
-            screening draft. Connecting it to matching and saving it as a live,
-            matchable req comes after you sign off — nothing has been persisted
-            yet.
+            Review the tags and screening draft above. When you sign off,
+            WeKruit saves this as a real, matchable pilot req — then matches it
+            against the candidate pool. No candidates are contacted at this step.
           </p>
+        </div>
+      ) : null}
+
+      {signOffStatus === "error" && signOffError ? (
+        <div style={calErrorBox} role="alert">
+          <strong style={{ display: "block", marginBottom: 4 }}>Couldn&apos;t save</strong>
+          {signOffError}
         </div>
       ) : null}
 
@@ -646,15 +718,18 @@ function CalibrateStep({
           <button
             type="button"
             className="btn btn--primary"
-            disabled={status !== "done"}
-            onClick={onDone}
+            disabled={status !== "done" || signOffStatus === "saving"}
+            onClick={onSignOff}
             style={{
               textDecoration: "none",
-              opacity: status !== "done" ? 0.55 : 1,
-              cursor: status !== "done" ? "not-allowed" : "pointer",
+              opacity: status !== "done" || signOffStatus === "saving" ? 0.55 : 1,
+              cursor:
+                status !== "done" || signOffStatus === "saving"
+                  ? "not-allowed"
+                  : "pointer",
             }}
           >
-            Looks right — sign off
+            {signOffStatus === "saving" ? "Saving…" : "Looks right — sign off"}
           </button>
         </div>
       </div>
@@ -682,6 +757,111 @@ function CalTagGroup({
             {raw ? t : prettyToken(t)}
           </span>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Step 7 — Launch (REAL: confirms the signed-off pilot req is saved + honest
+// next step). Renders only after the pilot req persisted at Step 6 sign-off.
+// ---------------------------------------------------------------------------
+
+function LaunchStep({
+  pilotReqId,
+  pilotReqTitle,
+  onPrev,
+}: {
+  pilotReqId?: string
+  pilotReqTitle?: string
+  onPrev?: () => void
+}) {
+  // Defensive: if a user lands here without signing off (e.g. skipped Step 6),
+  // point them back rather than implying something was saved.
+  if (!pilotReqId) {
+    return (
+      <div style={stepBody}>
+        <p style={stepLede}>
+          Sign off on a calibrated pilot req in the previous step and it&apos;ll
+          be saved here — ready for WeKruit to match against the candidate pool.
+        </p>
+        <div style={comingSoon}>
+          <span style={comingSoonKicker}>Nothing saved yet</span>
+          <strong style={comingSoonTitle}>No pilot req on file</strong>
+          <p style={comingSoonBody}>
+            Head back to <em>Calibrate Pilot Req</em>, enrich one real role, and
+            press <em>Looks right — sign off</em> to save it.
+          </p>
+        </div>
+        <div style={stepActions}>
+          {onPrev ? (
+            <button type="button" className="btn btn--ghost" onClick={onPrev}>
+              ← Back
+            </button>
+          ) : (
+            <span />
+          )}
+          <span />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={stepBody}>
+      <p style={stepLede}>
+        Your pilot role is live in WeKruit. Here&apos;s exactly what happens
+        next — no surprises.
+      </p>
+
+      <div style={launchCard}>
+        <span style={launchCheck} aria-hidden>
+          ✅
+        </span>
+        <div style={launchCardBody}>
+          <strong style={launchCardTitle}>
+            Your pilot role
+            {pilotReqTitle ? (
+              <>
+                {" "}
+                <em style={{ fontStyle: "italic" }}>{pilotReqTitle}</em>
+              </>
+            ) : null}{" "}
+            is saved
+          </strong>
+          <div style={launchReqIdRow}>
+            <span style={launchReqIdLabel}>Req ID</span>
+            <code style={launchReqId}>{pilotReqId}</code>
+          </div>
+        </div>
+      </div>
+
+      <div style={launchNextWrap}>
+        <span style={calSectionLabel}>What happens next</span>
+        <p style={launchNextBody}>
+          The role is saved as a matchable pilot req. WeKruit will match it
+          against the candidate pool next — scoring and ranking candidates by
+          fit. Nobody has been contacted yet: reaching out to candidates is a
+          separate step you&apos;ll approve. You can close this page; your
+          progress is saved.
+        </p>
+      </div>
+
+      <div style={stepActions}>
+        {onPrev ? (
+          <button type="button" className="btn btn--ghost" onClick={onPrev}>
+            ← Back
+          </button>
+        ) : (
+          <span />
+        )}
+        <Link
+          to="/employers"
+          className="btn btn--primary"
+          style={{ textDecoration: "none" }}
+        >
+          Done
+        </Link>
       </div>
     </div>
   )
@@ -1245,4 +1425,68 @@ const calScopeNote: CSSProperties = {
   color: "var(--ink-3)",
   borderTop: "1px solid var(--border)",
   paddingTop: 14,
+}
+
+// ---- Launch (Step 7) ------------------------------------------------------
+
+const launchCard: CSSProperties = {
+  display: "flex",
+  alignItems: "flex-start",
+  gap: 14,
+  border: "1px solid var(--live-border)",
+  background: "var(--live-soft)",
+  borderRadius: "var(--r-lg)",
+  padding: "20px 20px 22px",
+}
+const launchCheck: CSSProperties = { fontSize: 24, lineHeight: 1, flexShrink: 0 }
+const launchCardBody: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
+  minWidth: 0,
+}
+const launchCardTitle: CSSProperties = {
+  fontFamily: "var(--font-serif)",
+  fontWeight: 400,
+  fontSize: 20,
+  color: "var(--ink)",
+  lineHeight: 1.25,
+}
+const launchReqIdRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  flexWrap: "wrap",
+}
+const launchReqIdLabel: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "var(--ink-3)",
+}
+const launchReqId: CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: 13,
+  color: "var(--ink)",
+  background: "var(--cream-3)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--r-md)",
+  padding: "4px 10px",
+  wordBreak: "break-all",
+}
+const launchNextWrap: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+  border: "1px solid var(--border)",
+  borderRadius: "var(--r-md)",
+  padding: "16px 18px",
+  background: "var(--cream)",
+}
+const launchNextBody: CSSProperties = {
+  margin: 0,
+  fontSize: 14,
+  lineHeight: 1.55,
+  color: "var(--ink-2)",
 }

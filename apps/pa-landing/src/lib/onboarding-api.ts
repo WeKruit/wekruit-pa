@@ -177,6 +177,44 @@ export async function employerIntakeJob(
   return res.data
 }
 
+// ---------------------------------------------------------------------------
+// Employer onboarding Step 6 sign-off — persist the calibrated pilot req
+// ---------------------------------------------------------------------------
+
+export type EmployerCreatePilotReqInput = {
+  title: string
+  jobDescription: string
+  companyName?: string
+  locationRaw?: string
+  enrichedTags?: IntakeEnrichedTags
+  hardFilters?: IntakeHardFilters
+  prescreenQuestions?: IntakePrescreenQuestion[]
+  successMetric?: string
+}
+
+export type EmployerCreatePilotReqOutput = {
+  reqId: string
+  status: "pilot_draft"
+}
+
+/**
+ * Persist the calibrated pilot req at Step 6 sign-off. Dual-writes a real
+ * Firestore job (matching-jobs/{reqId} + pa-jobs/{reqId}, same reqId) so the
+ * role is retrievable and soft-scored by the matcher immediately and surfaces
+ * on the recruiter board as a WeKruit collaborative req. Public callable (no
+ * auth), mirrors employerIntakeJob. Does NOT contact any candidates.
+ */
+export async function employerCreatePilotReq(
+  input: EmployerCreatePilotReqInput,
+): Promise<EmployerCreatePilotReqOutput> {
+  const fn = httpsCallable<EmployerCreatePilotReqInput, EmployerCreatePilotReqOutput>(
+    functions(),
+    "paEmployerCreatePilotReq",
+  )
+  const res = await fn(input)
+  return res.data
+}
+
 export function deriveFunction(title: string): "Design" | "Engineering" | "Product" | "GTM" | "Other" {
   const t = (title || "").toLowerCase()
   if (t.includes("design") || t.includes("ux") || t.includes("brand")) return "Design"
