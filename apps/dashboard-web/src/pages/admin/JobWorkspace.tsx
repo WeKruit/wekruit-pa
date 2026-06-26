@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
+import { EnrichWithClaire } from "../../components/EnrichWithClaire.js"
 import {
   getCompany,
   getJob,
@@ -260,6 +261,12 @@ function CreateJobWorkspace() {
               style={{ ...inputStyle, fontFamily: "monospace", fontSize: "0.85em" }}
             />
           </Field>
+          <EnrichWithClaire
+            title={form.title}
+            descriptionMd={form.descriptionMd}
+            companyName={selectedCompany?.displayName ?? selectedCompany?.name ?? form.companyId}
+            locationRaw={form.rawLocation}
+          />
           {error ? <ErrorState message={error} /> : null}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
@@ -522,6 +529,12 @@ function ExistingJobWorkspace() {
               style={{ ...inputStyle, fontFamily: "monospace", fontSize: "0.85em" }}
             />
           </Field>
+          <EnrichWithClaire
+            title={form.title ?? job.title}
+            descriptionMd={form.descriptionMd ?? ""}
+            companyName={job.companyId ?? undefined}
+            locationRaw={form.rawLocation ?? job.rawLocation ?? undefined}
+          />
           <div>
             <button type="button" disabled={saving} onClick={() => save()} style={primaryBtnStyle}>
               {saving ? "Saving…" : "Save fields"}

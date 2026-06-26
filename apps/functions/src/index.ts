@@ -263,6 +263,17 @@ export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
 // optional weight-override sandbox values, and returns full per-job score
 // breakdown + counters for the dashboard's live debugger.
 export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
+// paAdminIntakeJob — admin-only callable wrapping the SAME runIntakeJob runner
+// the Slack-agent intake_job tool uses (enrichJobTags 3-tier router +
+// deriveJobOpportunityDraft). Brings Slack-parity JD enrichment (canonical tags,
+// hard filters, draft prescreen questions, clarifying questions, confidence) to
+// the dashboard create-job / job-edit surface. Advisory + persists nothing.
+export { paAdminIntakeJob } from "./admin-intake-job.js"
+// paAdminRediscoverForJob — admin-only callable wrapping the SAME
+// runRediscoverForJob runner the Slack-agent rediscover_for_job tool uses (V16
+// two-way scorer over the global candidate-tier pool). Surfaces silver-medalist
+// reactivation in the dashboard. Consent-safe projection (ids/scores/tier only).
+export { paAdminRediscoverForJob } from "./admin-rediscover-for-job.js"
 // pa-pending-outbound — admin-only callable backing /admin/pending-outbound
 // (batch human-approve-then-send queue). list/update/approve/skip are
 // functional; `send` is GATED + the live Sendblue dispatch seam is
