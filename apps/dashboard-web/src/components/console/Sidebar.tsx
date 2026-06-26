@@ -42,7 +42,10 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     icon: "trending_up",
     mode: "ops",
     defaultOpen: true,
-    items: [{ to: "/admin/operations", label: "Operations overview" }],
+    items: [
+      { to: "/admin/setup", label: "Setup" },
+      { to: "/admin/operations", label: "Operations overview" },
+    ],
   },
   {
     id: "prescreen",

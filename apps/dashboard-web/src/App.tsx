@@ -109,6 +109,10 @@ import { EvaluationAgentRanking as ExternalSupplyEvaluationAgentRanking } from "
 // Post-V2 hotfix 2026-05-14 — per-company / per-job sourcing entry surface.
 import { Jobs as ExternalSupplyJobs } from "./pages/external-supply/Jobs.js"
 import { JobWorkspace } from "./pages/admin/JobWorkspace.js"
+// Enterprise onboarding (Module A) — wizard shell + persistent checklist home.
+// First slice: client-side state via localStorage (resumable); server-state
+// callable is a later slice.
+import { OnboardingWizard } from "./pages/onboarding/OnboardingWizard.js"
 
 import { auth } from "./lib/firebase.js"
 import {
@@ -170,6 +174,10 @@ export default function App() {
     >
         <Routes>
           <Route path="/" element={<Overview />} />
+          {/* Enterprise onboarding (Module A) — wizard shell + checklist home,
+              localStorage-resumable. Admin-gated by virtue of living inside
+              AppShell's authed Routes. */}
+          <Route path="/admin/setup" element={<OnboardingWizard />} />
           <Route path="/admin/operations" element={<OperationsOverview />} />
           <Route path="/conversations" element={<Users />} />
           {/* v2.0 marketplace candidate browser — replaces /conversations
