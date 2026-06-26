@@ -229,6 +229,33 @@ export async function getFlag(
 }
 
 /**
+ * Allowlist-ONLY membership check for a perUser bool flag. Unlike {@link getFlag},
+ * this DELIBERATELY ignores the global `value`, the env emergency override, and any
+ * bucket strategy — it returns true ONLY when `userId` is explicitly in the doc's
+ * `allowlist` (and not in `blocklist`).
+ *
+ * Use this for gates that must ramp PER-CANDIDATE ONLY and never globally (locked
+ * rule c — e.g. the scheduling gate): a single global `value:true` flip or env var
+ * must NOT widen the gate to the whole fleet. Returns false if the doc is absent or
+ * the flag isn't a perUser bool. Not cached — allowlist edits take effect at once.
+ */
+export async function isUserAllowlisted(
+  db: Firestore,
+  key: string,
+  userId: string | null | undefined,
+): Promise<boolean> {
+  if (typeof userId !== "string" || userId.length === 0) return false
+  const snap = await db.collection(COLLECTION).doc(key).get()
+  if (!snap.exists) return false
+  const doc = snap.data() as FlagDoc
+  if (doc.scope !== "perUser" || doc.type !== "bool") return false
+  const block = doc.blocklist ?? []
+  const allow = doc.allowlist ?? []
+  if (block.includes(userId)) return false
+  return allow.includes(userId)
+}
+
+/**
  * Write a flag + audit row in a single transaction. Caller supplies actor
  * (dashboard email) and reason (free text). Bumps `version` monotonically.
  */

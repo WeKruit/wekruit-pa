@@ -10,13 +10,15 @@
  * (perUser allowlist, same mechanism as paThinClaireEnabled). With the flag
  * absent / off / empty allowlist — the live default — the resolver returns
  * EXACTLY today's behavior: dev-uids-only. Adam ramps scheduling to real
- * candidates by editing the flag's allowlist (or flipping its value), NOT a code
- * deploy.
+ * candidates by adding their uid to the flag's allowlist (per-uid ONLY — a global
+ * value flip is not honored, locked rule c), NOT a code deploy.
  *
  * Ramp lever (the ONE thing Adam edits — no deploy):
  *   pa-feature-flags/paSchedulingEnabled
  *     - add a uid to `allowlist`  → that real candidate can schedule
- *     - set `value: true` (global perUser default) → all candidates can schedule
+ *   ALLOWLIST-ONLY by design (locked rule c): a global `value:true` flip is NOT a
+ *   lever here — isSchedulingEligible ignores it. Ramp is strictly per-uid so one
+ *   flip can never enable the whole fleet.
  *   (seed it once via paAdminBootstrap action=seedFlags; SCHEDULING_FLAG_SEED.)
  *
  * Fail-CLOSED on read error: if the flag read throws, a non-dev uid is NOT
@@ -24,7 +26,7 @@
  * scheduling/outbound to real candidates.
  */
 import type { Firestore } from "firebase-admin/firestore"
-import { getFlag } from "@pa/pa-persistence"
+import { isUserAllowlisted } from "@pa/pa-persistence"
 
 /**
  * WRITE-action dev allowlist (Adam +14243201960 = 8fEwIduUrzxZsblHHsNz, Noah
@@ -40,7 +42,8 @@ export const SCHEDULING_FLAG_KEY = "paSchedulingEnabled"
 /**
  * Seed descriptor for admin-bootstrap.ts. perUser, value:false, EMPTY allowlist
  * by design — so the seeded default is INERT (dev-uids-only). Adam ramps by
- * adding uids to the allowlist (or flipping value:true) on the live doc.
+ * adding uids to the allowlist on the live doc (value:true is NOT a lever — the
+ * gate is allowlist-only, locked rule c).
  */
 export const SCHEDULING_FLAG_SEED = {
   key: SCHEDULING_FLAG_KEY,
@@ -59,30 +62,30 @@ export function isSchedulingDevUid(userId: string | null | undefined): boolean {
 /**
  * Resolve whether `userId` may schedule an interview.
  *
- *   (a) uid ∈ SCHEDULING_DEV_UIDS                         → true (unchanged floor)
- *   (b) getFlag(paSchedulingEnabled, {userId}) === true   → true (Adam-ramp)
- *   else                                                  → false
+ *   (a) uid ∈ SCHEDULING_DEV_UIDS                                  → true (floor)
+ *   (b) uid ∈ paSchedulingEnabled.allowlist (perUser bool)         → true (Adam-ramp)
+ *   else                                                           → false
  *
- * At the live default (flag absent / value:false / empty allowlist) this returns
- * EXACTLY today's behavior: true only for the dev uids. Fail-closed: a flag read
- * error keeps a non-dev uid at false. Pass `env` so the `paSchedulingEnabled=1`
- * emergency env override works in evals/tests (same convention as the other flags).
+ * ALLOWLIST-ONLY (locked rule c): a real candidate becomes eligible ONLY by being
+ * added to the flag's `allowlist` per-uid. A global `value:true` flip or a
+ * `paSchedulingEnabled=1` env var DOES NOT widen the gate — those blanket levers are
+ * deliberately NOT honored here so one flip can never enable scheduling fleet-wide.
+ * (Was a hole: the old getFlag path returned true on global value/env — QA H2.)
+ *
+ * `_opts` is retained for call-site back-compat (callers pass `{ env }`) but is
+ * intentionally unused — env override is no longer a scheduling lever. Fail-closed:
+ * a flag read error keeps a non-dev uid at false.
  */
 export async function isSchedulingEligible(
   db: Firestore,
   userId: string | null | undefined,
-  opts?: { env?: NodeJS.ProcessEnv | Record<string, string | undefined> },
+  _opts?: { env?: NodeJS.ProcessEnv | Record<string, string | undefined> },
 ): Promise<boolean> {
   if (isSchedulingDevUid(userId)) return true
   if (typeof userId !== "string" || userId.length === 0) return false
   try {
-    const value = await getFlag(
-      db,
-      SCHEDULING_FLAG_KEY,
-      { userId, ...(opts?.env ? { env: opts.env } : {}) },
-      false,
-    )
-    return value === true
+    // Per-uid allowlist membership ONLY — never global value, never env override.
+    return await isUserAllowlisted(db, SCHEDULING_FLAG_KEY, userId)
   } catch {
     // Fail-closed — never widen scheduling/outbound to a real candidate on a read error.
     return false
