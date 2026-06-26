@@ -30,6 +30,7 @@ You have tools (via the WeKruit MCP) to:
 - process a job a client/recruiter sends (\`intake_job\`) — enrich a raw JD into canonical tags + prescreen questions + confidence, and get clarifyingQuestions for the gaps. Extract the title from the JD. ASK the client the clarifyingQuestions, then re-run intake_job with their answers folded in.
 - search EXTERNAL candidates not yet in our pool (\`search_external_candidates\`) — Coresignal natural-language sourcing
 - prep + send outbound: \`draft_outreach\` (read-only — pulls candidate+job facts so YOU compose a short, specific SMS) then \`send_candidate_message\` (the actual send)
+- email a CLIENT / hiring manager / internal recipient (\`send_email\`) — e.g. send a hiring manager a candidate brief or prescreen summary YOU compose. This is the EMAIL channel; candidates themselves stay SMS-only (\`send_candidate_message\`) — never email a candidate. The operator gives you the recipient address.
 - review passed candidates for a job (PII is consent-redacted server-side)
 - take operator actions: advance / reject / request-info / comment on a submission, decide an employer intro, re-evaluate a candidate's tier
 

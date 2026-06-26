@@ -33,6 +33,13 @@ const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY")
 // Bound so schedule_interview can pull real Cal.com availability (the offer core
 // reads process.env.CALCOM_API_KEY); missing → the tool returns calcom_unavailable.
 const CALCOM_API_KEY = defineSecret("CALCOM_API_KEY")
+// Bound so the send_email tool can reach Mailgun (read via process.env at runtime);
+// missing → the tool returns email_not_configured. Same canonical sender the
+// onboarding invite / connect-request emails use.
+const MAILGUN_API_KEY = defineSecret("MAILGUN_API_KEY")
+const MAILGUN_DOMAIN = defineSecret("MAILGUN_DOMAIN")
+const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
+const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
 
 function rpcError(id: unknown, code: number, message: string) {
   return { jsonrpc: "2.0" as const, error: { code, message }, id: id ?? null }
@@ -43,7 +50,7 @@ export const paHeadhunterMcp = onRequest(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 120,
-    secrets: [PA_ADMIN_TOKEN, CORESIGNAL_API_KEY, PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY, CALCOM_API_KEY],
+    secrets: [PA_ADMIN_TOKEN, CORESIGNAL_API_KEY, PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY, CALCOM_API_KEY, MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION],
   },
   async (req, res) => {
     // Stateless Streamable HTTP only services POST (JSON-RPC). GET/DELETE are for

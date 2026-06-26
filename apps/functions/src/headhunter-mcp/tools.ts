@@ -39,6 +39,7 @@ import {
   runSchedulingStatus,
 } from "./extended.js"
 import { runDraftOutreach, runSendCandidateMessage } from "./outbound.js"
+import { runSendEmail } from "./email.js"
 import { runScheduleInterview, runBookInterviewSlot } from "./scheduling.js"
 import { runIntakeJob } from "./job-intake.js"
 import { runCoresignalAgenticSearch } from "../admin-coresignal-agentic-search.js"
@@ -376,6 +377,19 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
     },
     annotations: MUTATING,
   }, async (a) => jsonContent(await runSendCandidateMessage(a, { db })))
+  // Email channel — CLIENT / hiring-manager / internal recipients only (candidate
+  // outreach stays SMS). Operator supplies the recipient; Mailgun-backed; audited.
+  register<{ to: string; subject: string; body: string }>(server, "send_email", {
+    title: "Email a client / hiring manager",
+    description:
+      "Send ONE email (via Mailgun, from claire@mg.wekruit.com) to a CLIENT, hiring manager, or internal recipient — e.g. a candidate brief or prescreen summary you compose. NOT for candidate outreach: candidates are SMS-only via send_candidate_message (one channel per candidate + consent). The operator supplies the recipient address. Audited to pa-headhunter-emails. ALWAYS restate the recipient + subject + a one-line summary of the body and get an explicit operator yes before calling.",
+    inputSchema: {
+      to: z.string().min(3).describe("recipient email (client / hiring manager / internal — never a candidate)"),
+      subject: z.string().min(1).max(200),
+      body: z.string().min(1).max(8000).describe("the full email body text you composed"),
+    },
+    annotations: MUTATING,
+  }, async (a) => jsonContent(await runSendEmail(a, { db })))
   // Status transitions go through the canonical action runner (audit + statusHistory).
   register<{ submissionId: string; stage: "advance" | "wekruit_interview" | "client_review" | "hired" | "reviewing"; note?: string }>(
     server, "advance_recruiter_submission", {
