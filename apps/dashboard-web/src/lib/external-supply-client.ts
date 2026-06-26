@@ -1439,6 +1439,8 @@ export interface CompanyFundingRoundRow {
 export interface JobRow {
   jobId: string
   companyId?: string
+  /** Human-readable company name (pa-jobs `company`), distinct from the doc-id companyId. */
+  company?: string
   title?: string
   department?: string
   roleFunction?: string[]
@@ -1518,6 +1520,7 @@ function coerceJobRow(id: string, raw: unknown): JobRow {
   return {
     jobId: id,
     companyId: typeof o.companyId === "string" ? o.companyId : undefined,
+    company: typeof o.company === "string" ? o.company : undefined,
     title: typeof o.title === "string" ? o.title : undefined,
     department: typeof o.department === "string" ? o.department : undefined,
     roleFunction: strArr(o.roleFunction),

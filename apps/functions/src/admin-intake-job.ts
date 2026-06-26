@@ -24,6 +24,13 @@ import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 
 // PA_ADMIN_TOKEN — scripted-caller fallback (mirrors paAdminMatchDebug).
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
+// enrichJobTags (the 3-tier LLM router inside runIntakeJob) reads its keys from
+// process.env at runtime — so we MUST bind + hydrate them, the same
+// bind-then-hydrate idiom paEmployerIntakeJob / paHeadhunterMcp use. Without the
+// primary key the enrichment throws and the CF returns INTERNAL.
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+// Optional Anthropic secondary/fallback tier — falls through gracefully if unset.
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY")
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -101,10 +108,18 @@ export const paAdminIntakeJob = onCall(
     // Enrichment is a 3-tier LLM router (OpenAI → Anthropic → OpenAI) — give it
     // headroom for retries on the slow path.
     timeoutSeconds: 120,
-    secrets: [PA_ADMIN_TOKEN],
+    secrets: [PA_ADMIN_TOKEN, PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY],
   },
   async (req) => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
+    // Hydrate enricher secrets into process.env BEFORE the LLM call (enrichJobTags
+    // reads them at runtime). Primary is required; secondary falls through if unbound.
+    process.env.PA_OPENAI_AGENT_API_KEY = PA_OPENAI_AGENT_API_KEY.value()
+    try {
+      process.env.ANTHROPIC_API_KEY = ANTHROPIC_API_KEY.value()
+    } catch {
+      /* optional secondary tier — fall through if unbound */
+    }
     return runAdminIntakeJob(req.data)
   },
 )

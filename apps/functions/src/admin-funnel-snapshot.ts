@@ -257,6 +257,10 @@ export async function runAdminFunnelSnapshot(
     "candidateId",
     "jobId",
     "employerVisibleProfileId",
+    // interviewState is read below for the interview sub-track tally; Firestore
+    // .select() returns ONLY projected fields, so it MUST be listed or the tally
+    // is silently always 0.
+    "interviewState",
   ])
 
   const ladderCounts = new Map<string, number>()

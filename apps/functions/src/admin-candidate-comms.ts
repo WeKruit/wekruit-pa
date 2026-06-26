@@ -162,10 +162,20 @@ export async function runAdminCandidateComms(
   const outboundByUser = await safeQueryDocs(
     db.collection(HEADHUNTER_EMAILS_COLLECTION).where("userId", "==", userId).limit(PER_SOURCE_CAP),
   )
+  // SECURITY: the by-email fallback exists because the headhunter send_email path
+  // stamps only `to` (no userId). But two pa-users can share an email — so keep a
+  // by-email doc ONLY when it has NO userId of its own OR it matches this user.
+  // A doc bearing a DIFFERENT userId belongs to another candidate → drop it.
+  const notForeignUser = ({ data }: { data: Record<string, unknown> }): boolean => {
+    const docUid = cleanString(data.userId)
+    return !docUid || docUid === userId
+  }
   const outboundByEmail = candidateEmail
-    ? await safeQueryDocs(
-        db.collection(HEADHUNTER_EMAILS_COLLECTION).where("to", "==", candidateEmail).limit(PER_SOURCE_CAP),
-      )
+    ? (
+        await safeQueryDocs(
+          db.collection(HEADHUNTER_EMAILS_COLLECTION).where("to", "==", candidateEmail).limit(PER_SOURCE_CAP),
+        )
+      ).filter(notForeignUser)
     : []
 
   // ── Email — inbound (pa-email-inbound) ──────────────────────────────────
@@ -173,9 +183,11 @@ export async function runAdminCandidateComms(
     db.collection(EMAIL_INBOUND_COLLECTION).where("userId", "==", userId).limit(PER_SOURCE_CAP),
   )
   const inboundByEmail = candidateEmail
-    ? await safeQueryDocs(
-        db.collection(EMAIL_INBOUND_COLLECTION).where("candidateEmail", "==", candidateEmail).limit(PER_SOURCE_CAP),
-      )
+    ? (
+        await safeQueryDocs(
+          db.collection(EMAIL_INBOUND_COLLECTION).where("candidateEmail", "==", candidateEmail).limit(PER_SOURCE_CAP),
+        )
+      ).filter(notForeignUser)
     : []
 
   // ── Email — thread metadata (pa-email-threads) for subject backfill ─────
@@ -183,9 +195,11 @@ export async function runAdminCandidateComms(
     db.collection(EMAIL_THREADS_COLLECTION).where("userId", "==", userId).limit(PER_SOURCE_CAP),
   )
   const threadsByEmail = candidateEmail
-    ? await safeQueryDocs(
-        db.collection(EMAIL_THREADS_COLLECTION).where("candidateEmail", "==", candidateEmail).limit(PER_SOURCE_CAP),
-      )
+    ? (
+        await safeQueryDocs(
+          db.collection(EMAIL_THREADS_COLLECTION).where("candidateEmail", "==", candidateEmail).limit(PER_SOURCE_CAP),
+        )
+      ).filter(notForeignUser)
     : []
   const subjectByToken = new Map<string, string>()
   for (const { data } of [...threadsByUser, ...threadsByEmail]) {

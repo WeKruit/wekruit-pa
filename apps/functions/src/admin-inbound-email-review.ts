@@ -255,6 +255,33 @@ export async function runAdminSendInboundEmailDraft(
     throw new HttpsError("failed-precondition", "draft_incomplete")
   }
 
+  // SECURITY (locked rule d — STOP gate / TOCTOU): re-read the thread NOW, at
+  // approve-time. The webhook sets thread.optOut on a STOP reply but only blocks
+  // NEW drafts; a draft composed BEFORE the STOP would otherwise stay sendable.
+  // Abort the send (and mark the draft suppressed) if the candidate has opted out.
+  const draftConvToken = cleanString(draft.convToken)
+  if (draftConvToken) {
+    const threadSnap = await deps.db
+      .collection(EMAIL_THREADS_COLLECTION)
+      .doc(draftConvToken)
+      .get()
+      .catch(() => null)
+    if (threadSnap?.exists && (threadSnap.data() as Record<string, unknown>)?.optOut === true) {
+      await ref.set(
+        { status: "suppressed_opt_out", lastError: "candidate_opted_out", updatedAt: at },
+        { merge: true },
+      )
+      return {
+        ok: true,
+        draftId,
+        action: "approve_send",
+        sent: false,
+        status: "suppressed_opt_out",
+        reason: "candidate_opted_out",
+      }
+    }
+  }
+
   const cfg = mailgunConfigFromEnv()
   if (!cfg) {
     await ref.set({ status: "send_failed", lastError: "email_not_configured", updatedAt: at }, { merge: true })

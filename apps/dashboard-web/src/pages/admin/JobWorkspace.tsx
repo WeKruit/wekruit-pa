@@ -532,7 +532,9 @@ function ExistingJobWorkspace() {
           <EnrichWithClaire
             title={form.title ?? job.title}
             descriptionMd={form.descriptionMd ?? ""}
-            companyName={job.companyId ?? undefined}
+            // Use the human-readable company NAME (not the doc-id companyId) so the
+            // LLM enricher gets real context, matching the create flow.
+            companyName={job.company ?? job.companyId ?? undefined}
             locationRaw={form.rawLocation ?? job.rawLocation ?? undefined}
           />
           <div>

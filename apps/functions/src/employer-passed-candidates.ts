@@ -96,8 +96,11 @@ export async function runEmployerPassedCandidates(
   if (!employerEmail) {
     throw new HttpsError("invalid-argument", "A valid employer email is required.")
   }
-  const requireConsent = data.requireConsent !== false
-
+  // SECURITY (locked rules a + g): consent is SERVER-ENFORCED on this PUBLIC,
+  // self-asserted-email surface. A caller-supplied `requireConsent:false` must
+  // NOT be able to reveal non-consented passed candidates — the flag is ignored
+  // for row visibility. The summary still reports the missing-consent COUNT so
+  // the employer sees "N pending consent", but never their data.
   const reqIds = await loadEmployerReqIds(deps.db, employerEmail)
 
   // If a specific jobId is requested it MUST be in the employer's req set.
@@ -136,10 +139,9 @@ export async function runEmployerPassedCandidates(
     allRows.push(...snap.rows)
   }
 
-  const visibleRows = requireConsent
-    ? allRows.filter((r) => r.profile.consentStatus === "granted")
-    : allRows
-  const hiddenMissingConsent = requireConsent ? missingConsent : 0
+  // Always granted-only — non-overridable (see SECURITY note above).
+  const visibleRows = allRows.filter((r) => r.profile.consentStatus === "granted")
+  const hiddenMissingConsent = missingConsent
 
   visibleRows.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
@@ -148,7 +150,7 @@ export async function runEmployerPassedCandidates(
     targetJobs: targetJobIds.length,
     totalPassed: allRows.length,
     visible: visibleRows.length,
-    requireConsent,
+    consentEnforced: true,
   })
 
   return {
