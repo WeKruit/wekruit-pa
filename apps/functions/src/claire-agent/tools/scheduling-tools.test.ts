@@ -10,6 +10,7 @@ import {
   parseStatedTime,
   resolveTimeZone,
   listSchedulableJobs,
+  bookInterviewSlotCore,
 } from "./scheduling-tools.js"
 import type { ClaireToolContext } from "../types.js"
 import type { FlatSlot } from "../../calcom/calcom-client.js"
@@ -324,6 +325,89 @@ test("offer persists status:offered + ordered offeredSlots; returns numbered lis
     for (let i = 0; i < slots.length; i++) {
       assert.equal(slots[i]!.iso, offeredSlots[i]!.iso)
     }
+  } finally {
+    restore()
+  }
+})
+
+test("offer mints + persists + returns a non-empty offerToken (email booking-link auth)", async () => {
+  const db = new FakeDb()
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const res = await invoke(tools(makeCtx(db, DEV_UID)).offer, { timeZone: null, partOfDay: null, jobChoice: null })
+    assert.equal(res.ok, true)
+    // Token is on the wire shape (the email-sender reads it) and persisted.
+    const token = res.offerToken as string
+    assert.equal(typeof token, "string")
+    assert.ok(token.length >= 16, "offerToken is high-entropy (>=16 chars)")
+    assert.match(token, /^[a-f0-9]+$/, "url-safe hex token")
+    const persisted = db.store.get(BOOKING_PATH)!
+    assert.equal(persisted.offerToken, token, "persisted offerToken == returned token")
+  } finally {
+    restore()
+  }
+})
+
+test("re-offer REUSES the same offerToken so prior emailed links stay valid", async () => {
+  const db = new FakeDb()
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    const first = await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null, jobChoice: null })
+    const second = await invoke(tools(ctx).offer, { timeZone: null, partOfDay: "afternoon", jobChoice: null })
+    assert.equal(first.ok, true)
+    assert.equal(second.ok, true)
+    assert.equal(second.offerToken, first.offerToken, "token reused across re-offer")
+    assert.equal(db.store.get(BOOKING_PATH)!.offerToken, first.offerToken)
+  } finally {
+    restore()
+  }
+})
+
+test("token-gated email-link path: persisted token + offered slotIso → bookInterviewSlotCore books that slot", async () => {
+  // Simulates the public paBookInterviewViaLink CF: after token+slot validation
+  // it calls the SAME book core with the offered slotIso (no slotNumber, no
+  // statedTime), exactly as the CF does.
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    const offerRes = await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null, jobChoice: null })
+    assert.equal(offerRes.ok, true)
+    const persisted = db.store.get(BOOKING_PATH)!
+    const offered = persisted.offeredSlots as Array<{ iso: string }>
+    const token = persisted.offerToken as string
+
+    // (1) token gate — exact match required (constant-time in the CF).
+    assert.equal(token, offerRes.offerToken)
+    // (2) slot gate — the chosen iso must be one of the offered set.
+    const chosenIso = offered[1]!.iso
+    assert.ok(offered.some((s) => s.iso === chosenIso))
+
+    // (3) the CF delegates to bookInterviewSlotCore with slotIso (no number).
+    const book = await bookInterviewSlotCore(ctx, {
+      slotNumber: null,
+      slotIso: chosenIso,
+      statedTime: null,
+      candidateEmail: null,
+      candidateName: null,
+      timeZone: persisted.timeZone as string,
+    })
+    assert.equal(book.ok, true)
+    assert.equal((book as { action: string }).action, "booked")
+    assert.equal((book as { slotIso: string }).slotIso, chosenIso)
+    // a non-offered iso would be rejected by the core (defense in depth).
+    const bogus = await bookInterviewSlotCore(ctx, {
+      slotNumber: null,
+      slotIso: "2030-01-01T09:00:00.000-04:00",
+      statedTime: null,
+      candidateEmail: null,
+      candidateName: null,
+      timeZone: null,
+    })
+    assert.equal(bogus.ok, false)
+    assert.equal((bogus as { reason: string }).reason, "slot_not_offered")
   } finally {
     restore()
   }

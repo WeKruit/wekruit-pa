@@ -22,6 +22,7 @@
  *     reducer that picks the ISO, books, and writes state (v2.0 rule: LLM never
  *     directly controls state).
  */
+import { randomBytes } from "node:crypto"
 import { tool, z } from "../sdk.js"
 import type { Firestore } from "firebase-admin/firestore"
 import { InterviewBookingSchema, interviewBookingDocId, PA_COLLECTIONS } from "@pa/core-types"
@@ -568,6 +569,13 @@ export type InterviewOfferResult =
       slots: Array<{ number: number; iso: string; label: string }>
       count: number
       filteredEmpty: boolean
+      /**
+       * High-entropy per-offer token authorizing the public "book this time"
+       * email link (paBookInterviewViaLink). Reused across re-offers so prior
+       * emailed links stay valid. The email-sending caller builds the link
+       * `?u=<userId>&j=<jobId>&t=<offerToken>&s=<iso>` from this.
+       */
+      offerToken: string
     }
   | { ok: false; reason: "no_schedulable_job" }
   | { ok: false; reason: "needs_job_choice"; jobs: Array<{ jobId: string; label: string }> }
@@ -699,9 +707,17 @@ export async function buildInterviewOffer(
   // slotNumber would degrade).
   const docId = interviewBookingDocId({ userId: ctx.userId, jobId })
   const nowIso = ctx.nowIso()
+  // Random url-safe token (24 hex chars = 12 bytes ≈ 96 bits) authorizing the
+  // public email "book this time" link. node:crypto.randomBytes is CSPRNG and
+  // available in the CF runtime (NOT Math.random). REUSE an existing token on a
+  // re-offer so links from prior emails keep working; only mint one when absent.
+  let offerToken = randomBytes(12).toString("hex")
   try {
     const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(docId)
     const existing = await loadBooking(ctx.db, docId)
+    if (existing && typeof existing.offerToken === "string" && existing.offerToken.length > 0) {
+      offerToken = existing.offerToken
+    }
     await ref.set(
       {
         id: docId,
@@ -712,6 +728,7 @@ export async function buildInterviewOffer(
         timeZone: tz,
         offeredSlots: picked.map((s) => ({ iso: s.iso, date: s.date })),
         offeredAt: nowIso,
+        offerToken,
         sessionId: ctx.sessionId,
         updatedAt: nowIso,
         ...(existing ? {} : { createdAt: nowIso }),
@@ -743,6 +760,7 @@ export async function buildInterviewOffer(
     slots: picked.map((s, i) => ({ number: i + 1, iso: s.iso, label: humanLabel(s.iso, tz) })),
     count: picked.length,
     filteredEmpty,
+    offerToken,
   }
 }
 

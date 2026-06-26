@@ -386,6 +386,9 @@ export {
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
+// Public GET "book this time" link from an interview-offer email. Token-gated
+// (offerToken) + slot-gated + confirm-on-click → bookInterviewSlotCore.
+export { paBookInterviewViaLink } from "./book-interview-via-link.js"
 // iMessage-first QR onboarding — public GET /start?c=<campaign> picks a
 // capacity-aware Sendblue number, reserves it for a minted scanToken, and 302s
 // to sms:<number>?body=Hi, WeKruit, my verification code is <scanToken>. See qr-onboarding/.

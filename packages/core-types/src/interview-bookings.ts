@@ -72,6 +72,15 @@ export const InterviewBookingSchema = z.object({
   // OFFER state — persisted so slotNumber resolves to the exact ISO next turn:
   offeredSlots: z.array(OfferedSlotSchema).default([]),
   offeredAt: z.string().min(1).nullable(),
+  /**
+   * High-entropy per-offer token used to authorize an UNAUTHENTICATED public
+   * "book this time" email link (paBookInterviewViaLink). The link carries
+   * `t=<offerToken>`; the public CF constant-time-compares it to this field
+   * before booking. Re-offers REUSE the existing token (so prior emailed links
+   * stay valid). Optional + nullable so legacy docs (and loadBooking's
+   * `InterviewBookingSchema.partial().safeParse`) don't drop it.
+   */
+  offerToken: z.string().min(1).nullable().optional(),
   // BOOK state:
   selectedSlotIso: z.string().min(1).nullable(),
   calBookingId: z.number().int().nullable(),

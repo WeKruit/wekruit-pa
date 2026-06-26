@@ -41,6 +41,7 @@ import {
 import { runDraftOutreach, runSendCandidateMessage } from "./outbound.js"
 import { runSendEmail } from "./email.js"
 import { runScheduleInterview, runBookInterviewSlot } from "./scheduling.js"
+import { runEmailInterviewOffer } from "./email-interview-offer.js"
 import { runIntakeJob } from "./job-intake.js"
 import { runCoresignalAgenticSearch } from "../admin-coresignal-agentic-search.js"
 
@@ -315,6 +316,23 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
     },
     annotations: MUTATING,
   }, async (a) => jsonContent(await runBookInterviewSlot(a, { db })))
+
+  // Email the candidate their interview slots as one-click "Book <time>" links
+  // (each link → the public token-gated paBookInterviewViaLink CF). NEW
+  // candidate-outreach channel, so confirm-first + dev-gated.
+  register<{ userId: string; candidateEmail: string; jobId?: string; confirm?: boolean }>(
+    server, "email_interview_offer", {
+    title: "Email a candidate their interview times (booking links)",
+    description:
+      "Email a CANDIDATE their REAL Cal.com interview times as one-click 'Book <time>' links (each link books that exact slot via a token-gated public page). Pulls + persists the offer (same path as schedule_interview) and reuses its offerToken so the links resolve to the candidate's booking doc. SAFETY: this is a candidate-facing email (a real outbound message). It is confirm-first — call once WITHOUT confirm (or confirm:false) to dry-run; it returns not_confirmed and sends nothing, restating the recipient + slot count. ALWAYS restate the candidate's email + that we're about to email them, get operator confirmation, THEN call again with confirm:true. Gated to the scheduling dev cohort (Adam/Noah) until paSchedulingEnabled — a real candidate returns scheduling_not_enabled and sends nothing. The operator supplies candidateEmail explicitly. Audited to pa-headhunter-emails.",
+    inputSchema: {
+      userId: z.string().min(1),
+      candidateEmail: z.string().min(3).describe("the candidate's email to send the booking links to (operator-supplied)"),
+      jobId: z.string().optional().describe("omit to resolve the candidate's passed/active job"),
+      confirm: z.boolean().optional().describe("must be true to actually email; omit/false = dry-run preview (no send)"),
+    },
+    annotations: MUTATING,
+  }, async (a) => jsonContent(await runEmailInterviewOffer(a, { db })))
 
   // ───────────────────────── JOB INTAKE (demand side) ─────────────────────────
   register<{ title: string; jobDescription: string; companyName?: string; locationRaw?: string; salaryMin?: number; salaryMax?: number; currency?: string }>(
