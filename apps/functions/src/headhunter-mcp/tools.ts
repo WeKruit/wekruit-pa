@@ -39,7 +39,7 @@ import {
   runSchedulingStatus,
 } from "./extended.js"
 import { runDraftOutreach, runSendCandidateMessage } from "./outbound.js"
-import { runScheduleInterview } from "./scheduling.js"
+import { runScheduleInterview, runBookInterviewSlot } from "./scheduling.js"
 import { runIntakeJob } from "./job-intake.js"
 import { runCoresignalAgenticSearch } from "../admin-coresignal-agentic-search.js"
 
@@ -293,6 +293,27 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
     },
     annotations: READ_ONLY,
   }, async (a) => jsonContent(await runScheduleInterview(a, { db })))
+
+  // Book-on-behalf: the WRITE half of scheduling. Creates a REAL Cal.com booking
+  // for the candidate's chosen slot + sends a WeKruit confirmation email. SIDE
+  // EFFECTS the candidate didn't request this turn, so confirm-first + dev-gated.
+  register<{ userId: string; confirm?: boolean; jobId?: string; slotNumber?: number; slotIso?: string; candidateEmail?: string; candidateName?: string; timeZone?: string }>(
+    server, "confirm_interview_booking", {
+    title: "Book an interview slot on a candidate's behalf",
+    description:
+      "Create a REAL Cal.com interview booking for the slot a candidate picked (from schedule_interview's offered list) AND email them a WeKruit confirmation. Pass slotNumber (1-based, exactly as schedule_interview listed) OR the exact slotIso. SAFETY: this is a candidate-facing side effect (calendar invite + email). It is confirm-first — call once WITHOUT confirm (or confirm:false) to dry-run; the tool returns not_confirmed and books nothing. ALWAYS restate the exact userId + the chosen slot to the operator and get confirmation, THEN call again with confirm:true. Gated to the scheduling dev cohort (Adam/Noah) until paSchedulingEnabled — a real candidate returns scheduling_not_enabled and books nothing. v1 has NO reschedule: if the candidate already has a live booking on a different slot it returns already_booked_other_slot.",
+    inputSchema: {
+      userId: z.string().min(1),
+      confirm: z.boolean().optional().describe("must be true to actually book; omit/false = dry-run, no write"),
+      jobId: z.string().optional().describe("omit to recover the candidate's live offered job"),
+      slotNumber: z.number().int().min(1).max(10).optional().describe("1-based, exactly as schedule_interview listed the slots"),
+      slotIso: z.string().optional().describe("exact ISO from the offered list (alternative to slotNumber)"),
+      candidateEmail: z.string().optional().describe("override the candidate's stored email for the booking"),
+      candidateName: z.string().optional(),
+      timeZone: z.string().optional().describe("IANA tz; defaults to the tz the slots were offered in"),
+    },
+    annotations: MUTATING,
+  }, async (a) => jsonContent(await runBookInterviewSlot(a, { db })))
 
   // ───────────────────────── JOB INTAKE (demand side) ─────────────────────────
   register<{ title: string; jobDescription: string; companyName?: string; locationRaw?: string; salaryMin?: number; salaryMax?: number; currency?: string }>(
