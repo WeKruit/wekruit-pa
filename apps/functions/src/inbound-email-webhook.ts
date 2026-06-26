@@ -17,16 +17,19 @@
  *      and dedup on Message-Id.
  *   5. record the inbound to the thread + a `pa-email-inbound/{messageId}` doc.
  *   6. if PA_INBOUND_EMAIL_AUTOREPLY !== "0": compose a contextual reply via the
- *      LLM (stripped-text only) and send it back to thread.candidateEmail with
- *      Reply-To = the SAME `reply+<token>@` + In-Reply-To = inbound Message-Id.
+ *      LLM (stripped-text only). By DEFAULT the reply is recorded as a
+ *      `pa-inbound-email-drafts/{messageId}` doc with status "pending_review"
+ *      and NOTHING is sent — an operator approves it via
+ *      paAdminSendInboundEmailDraft. Only PA_INBOUND_EMAIL_AUTOSEND=1 opts back
+ *      into unsupervised auto-send (legacy path).
  *   7. unmapped token → record to `pa-inbound-emails-unmatched`, 200-ack.
  *
  * ALWAYS returns 200 (Mailgun retries on non-200). Every reply send is audited.
  *
- * Risk posture (see recon `risks`): HITL/auto-reply is FLAG-GATED
- * (PA_INBOUND_EMAIL_AUTOREPLY, default ON for the demo). STOP/opt-out + comp/
- * visa/legal-sensitive replies skip LLM auto-answer and are routed to review.
- * Only `stripped-text` (capped) is fed to the LLM, never the full quoted body.
+ * HITL posture: candidate emails are DRAFT-BY-DEFAULT — no unsupervised send.
+ * STOP/opt-out + comp/visa/legal-sensitive replies skip LLM compose entirely
+ * and are routed to the unmatched HITL queue. Only `stripped-text` (capped) is
+ * fed to the LLM, never the full quoted body.
  */
 import { onRequest, type HttpsFunction } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
@@ -52,6 +55,8 @@ const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY")
 
 const INBOUND_COLLECTION = "pa-email-inbound"
 const UNMATCHED_COLLECTION = "pa-inbound-emails-unmatched"
+/** HITL draft queue — composed replies awaiting operator approval (no auto-send). */
+const DRAFTS_COLLECTION = "pa-inbound-email-drafts"
 
 /** Cap inbound text before feeding the LLM (avoid context overflow). */
 const MAX_INBOUND_CHARS = 4000
@@ -188,7 +193,20 @@ async function composeReply(args: {
 export interface InboundEmailDeps {
   db: Firestore
   signingKey?: string
+  /**
+   * When false, the inbound webhook records NO composed reply at all (it only
+   * stores the inbound message). When true, it composes a reply.
+   * Default ON — composing a draft is harmless (it never sends on its own).
+   */
   autoReplyEnabled: boolean
+  /**
+   * HITL gate. When false (DEFAULT), the composed reply is recorded as a
+   * `pa-inbound-email-drafts/{id}` doc with status "pending_review" and NOTHING
+   * is sent — an operator must approve it via paAdminSendInboundEmailDraft.
+   * Only an explicit allowlist/flag (PA_INBOUND_EMAIL_AUTOSEND=1) flips this on
+   * so legacy unsupervised auto-send is opt-in, not the default.
+   */
+  autoSendEnabled?: boolean
   now?: () => string
 }
 
@@ -364,14 +382,49 @@ export async function handleInboundEmail(
     return
   }
 
+  const replyTo = verpReplyToAddress(convToken) // continue the SAME thread
+  const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${thread.subject ?? subject}`
+
+  // ── HITL DRAFT GATE (default) ─────────────────────────────────────────────
+  // Mirrors the prescreen autoDraft contract: the LLM reply is RECORDED for an
+  // operator to approve, NEVER auto-sent — unless an explicit allowlist flag
+  // (autoSendEnabled) is on. This closes the unsupervised-candidate-email HITL
+  // gap flagged by the v2.0 control-plane mandate.
+  if (deps.autoSendEnabled !== true) {
+    const draftRef = db.collection(DRAFTS_COLLECTION).doc(encodeURIComponent(messageId))
+    await draftRef
+      .set({
+        convToken,
+        userId: thread.userId ?? null,
+        jobId: thread.jobId ?? null,
+        candidateEmail: thread.candidateEmail,
+        inboundMessageId: messageId,
+        inboundSubject: subject,
+        inboundPreview: candidateText.slice(0, 500),
+        replyTo,
+        replySubject,
+        replyBody,
+        status: "pending_review",
+        source: "inbound_email_autoreply_draft",
+        createdAt: FieldValue.serverTimestamp(),
+      })
+      .catch(() => undefined)
+    // Also flag the thread so the candidate timeline / ops surfaces show a draft
+    // is waiting. NOT a send — lastDirection stays "inbound".
+    await threadRef
+      .set({ pendingReview: true, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
+      .catch(() => undefined)
+    res.status(200).json({ ok: true, action: "drafted_for_review", convToken })
+    return
+  }
+
+  // ── EXPLICIT-OPT-IN AUTO-SEND (legacy path; PA_INBOUND_EMAIL_AUTOSEND=1) ────
   const cfg = mailgunConfigFromEnv()
   if (!cfg) {
     res.status(200).json({ ok: true, action: "recorded_email_not_configured" })
     return
   }
 
-  const replyTo = verpReplyToAddress(convToken) // continue the SAME thread
-  const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${thread.subject ?? subject}`
   const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;line-height:1.5;color:#1a1a1a">${escapeHtml(
     replyBody,
   ).replace(/\n/g, "<br>")}</div>`
@@ -468,8 +521,13 @@ export const paInboundEmailWebhook: HttpsFunction = onRequest(
     // Mailgun inbound route posts multipart/form-data or urlencoded; both are
     // parsed by firebase-functions into req.body as flat string fields.
     const formBody = (req.body ?? {}) as Record<string, unknown>
-    // Auto-reply default ON for the demo; PA_INBOUND_EMAIL_AUTOREPLY=0 disables.
+    // Compose a reply by default (PA_INBOUND_EMAIL_AUTOREPLY=0 records the
+    // inbound only, no compose). NOTE: composing != sending — see autoSend.
     const autoReplyEnabled = (process.env.PA_INBOUND_EMAIL_AUTOREPLY ?? "1") !== "0"
+    // HITL gate: the composed reply is a DRAFT awaiting operator approval unless
+    // PA_INBOUND_EMAIL_AUTOSEND=1 explicitly opts into unsupervised auto-send.
+    // Default = draft-only (no unsupervised candidate emails).
+    const autoSendEnabled = (process.env.PA_INBOUND_EMAIL_AUTOSEND ?? "0") === "1"
 
     await handleInboundEmail(
       { method: req.method, body: formBody },
@@ -480,6 +538,7 @@ export const paInboundEmailWebhook: HttpsFunction = onRequest(
         db: getFirestore(),
         signingKey: process.env.MAILGUN_WEBHOOK_SIGNING_KEY ?? "",
         autoReplyEnabled,
+        autoSendEnabled,
       },
     )
   },

@@ -378,8 +378,26 @@ export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 
 // TWO-WAY email — Mailgun inbound route catches candidate REPLIES at
 // `reply+<convToken>@<inbound-domain>`; resolves the thread via
-// pa-email-threads/{convToken} and (flag-gated) auto-replies contextually.
+// pa-email-threads/{convToken}. By DEFAULT the LLM reply is recorded as a
+// DRAFT (pa-inbound-email-drafts, pending_review) — no unsupervised send;
+// PA_INBOUND_EMAIL_AUTOSEND=1 opts into legacy auto-send.
 export { paInboundEmailWebhook } from "./inbound-email-webhook.js"
+
+// Unified SMS + email comms timeline for one candidate (pa-messages +
+// pa-headhunter-emails + pa-email-inbound, keyed by userId/candidateEmail).
+// Backs the /admin/users/:id "Communications" panel so operator decisions see
+// the FULL conversation, not just SMS. Read-only, admin-gated.
+export { paAdminCandidateComms } from "./admin-candidate-comms.js"
+
+// HITL email-review surfaces: list pending auto-reply DRAFTS, approve+send (or
+// edit-then-send) / dismiss a draft, and list the pa-inbound-emails-unmatched
+// dead-letter queue (comp/visa/STOP replies that missed the thread token).
+// Backs /admin/email-review. All admin-gated.
+export {
+  paAdminInboundEmailDrafts,
+  paAdminSendInboundEmailDraft,
+  paAdminInboundUnmatchedList,
+} from "./admin-inbound-email-review.js"
 
 // v2.1 S3 — outbound voice prescreen dispatch + status callback reconciliation.
 // `paVoiceDialOutbound`: Firestore trigger on `outbound-bookings/{id}` writes;

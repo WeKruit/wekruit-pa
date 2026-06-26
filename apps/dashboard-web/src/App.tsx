@@ -87,6 +87,7 @@ import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 // Recruiter board (wekruit-recruiters.web.app/recruiters) — admin review surface.
+import EmailReview from "./pages/EmailReview.js"
 import RecruiterSubmissions from "./pages/RecruiterSubmissions.js"
 import RecruiterHub from "./pages/RecruiterHub.js"
 import RecruiterDigests from "./pages/RecruiterDigests.js"
@@ -275,6 +276,9 @@ export default function App() {
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
           {/* Interview bookings (pa-interview-bookings) + operator outcome-stamp. */}
           <Route path="/admin/interviews" element={<Interviews />} />
+          {/* HITL inbound-email review — approve auto-reply drafts before send +
+              triage the unmatched (comp/visa/STOP) queue. */}
+          <Route path="/admin/email-review" element={<EmailReview />} />
           {/* Recruiter board admin surfaces. */}
           <Route path="/admin/recruiter-hub" element={<RecruiterHub />} />
           <Route path="/admin/recruiter-digests" element={<RecruiterDigests />} />
