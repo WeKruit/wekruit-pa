@@ -8,6 +8,11 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
+import {
+  getCandidateScheduling,
+  setCandidateScheduling,
+  type CandidateSchedulingState,
+} from "../lib/candidate-scheduling-api.js"
 
 const LIST_CALLABLE = "paAdminInterviewBookingsList"
 const OUTCOME_CALLABLE = "paAdminInterviewOutcome"
@@ -102,6 +107,9 @@ export default function Interviews() {
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [filter, setFilter] = useState<StatusFilter>("all")
+  // Per-candidate scheduling eligibility, keyed by userId. Lazily loaded.
+  const [scheduling, setScheduling] = useState<Record<string, CandidateSchedulingState>>({})
+  const [schedBusyUid, setSchedBusyUid] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -146,6 +154,53 @@ export default function Interviews() {
       return bx.localeCompare(ax)
     })
   }, [data, filter])
+
+  // Lazily fetch scheduling eligibility for every distinct candidate uid in view.
+  useEffect(() => {
+    const uids = Array.from(
+      new Set(rows.map((r) => r.userId).filter((u): u is string => typeof u === "string" && u.length > 0)),
+    )
+    let cancelled = false
+    for (const uid of uids) {
+      if (scheduling[uid]) continue // already loaded
+      void getCandidateScheduling(uid)
+        .then((state) => {
+          if (!cancelled) setScheduling((prev) => ({ ...prev, [uid]: state }))
+        })
+        .catch(() => {
+          // Non-fatal: leave the cell as "—" if eligibility can't be read.
+        })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [rows, scheduling])
+
+  const handleToggleScheduling = useCallback(
+    async (uid: string, candidateName: string, nextEnabled: boolean) => {
+      if (nextEnabled) {
+        const ok = window.confirm(
+          `Enable REAL interview scheduling for ${candidateName}?\n\n` +
+            "This lets Claire book an actual interview for this real candidate. " +
+            "Only this one candidate is affected — the global flag is not changed.",
+        )
+        if (!ok) return
+      }
+      setSchedBusyUid(uid)
+      try {
+        const res = await setCandidateScheduling(uid, nextEnabled)
+        setScheduling((prev) => ({
+          ...prev,
+          [uid]: { userId: uid, enabled: res.eligible, isDevUid: res.isDevUid },
+        }))
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err))
+      } finally {
+        setSchedBusyUid(null)
+      }
+    },
+    [],
+  )
 
   if (loading) return <LoadingState label="Loading interviews…" />
   if (error) return <ErrorState message={error} />
@@ -194,6 +249,7 @@ export default function Interviews() {
                   <th>When</th>
                   <th>Join</th>
                   <th>Pipeline state</th>
+                  <th>Scheduling</th>
                   <th>Outcome</th>
                 </tr>
               </thead>
@@ -247,6 +303,38 @@ export default function Interviews() {
                           {row.outcomeNote ? ` · ${row.outcomeNote}` : ""}
                         </div>
                       )}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      {(() => {
+                        const uid = row.userId
+                        if (!uid) return <span style={{ opacity: 0.5 }}>—</span>
+                        const state = scheduling[uid]
+                        if (!state) return <span style={{ opacity: 0.5 }}>…</span>
+                        if (state.isDevUid) {
+                          return <Badge tone="info">dev (always on)</Badge>
+                        }
+                        const name = row.candidateName ?? row.candidateEmail ?? uid
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                            <Badge tone={state.enabled ? "ok" : "muted"}>
+                              {state.enabled ? "enabled" : "disabled"}
+                            </Badge>
+                            <button
+                              type="button"
+                              className="btn btn--sm"
+                              disabled={schedBusyUid === uid}
+                              onClick={() => handleToggleScheduling(uid, name, !state.enabled)}
+                              title={
+                                state.enabled
+                                  ? "Disable real interview scheduling for this candidate"
+                                  : "Enable real interview scheduling for this candidate (books a real interview)"
+                              }
+                            >
+                              {state.enabled ? "Disable" : "Enable"}
+                            </button>
+                          </div>
+                        )
+                      })()}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       <div style={{ display: "flex", gap: "0.3rem" }}>

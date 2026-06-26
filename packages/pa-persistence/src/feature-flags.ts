@@ -436,6 +436,55 @@ export async function addUserToFlagAllowlist(
 }
 
 // -----------------------------------------------------------------------------
+// removeUserFromFlagAllowlist — atomic remove + audit trail. The arrayRemove
+// sibling of addUserToFlagAllowlist, for operator-driven per-user DISABLE.
+//
+// Idempotent: arrayRemove is a no-op if the user isn't present. Touches ONLY
+// the `allowlist` array (preserve other fields, including the global `value`);
+// if the flag doc doesn't exist there is nothing to remove (no-op, no create).
+// Writes a `pa-audit-events` row ("flag.allowlist_remove") and invalidates the
+// in-memory cache for the key.
+// -----------------------------------------------------------------------------
+export async function removeUserFromFlagAllowlist(
+  db: Firestore,
+  key: string,
+  userId: string,
+  opts: { actor: string; reason: string }
+): Promise<void> {
+  const flagRef = db.collection(COLLECTION).doc(key)
+  const auditRef = db.collection(AUDIT_COLLECTION).doc()
+  const nowIso = new Date().toISOString()
+  const { FieldValue } = await import("firebase-admin/firestore")
+
+  await db.runTransaction(async (t) => {
+    const cur = await t.get(flagRef)
+    if (!cur.exists) return // nothing to remove — no doc create on disable.
+    const prev = cur.data() as FlagDoc
+    // Update only allowlist (preserve other fields, esp. global `value`).
+    t.update(flagRef, {
+      allowlist: FieldValue.arrayRemove(userId),
+      updatedAt: nowIso,
+      updatedBy: opts.actor,
+      reason: opts.reason,
+      version: (prev.version ?? 0) + 1,
+    })
+    t.set(auditRef, {
+      actor: opts.actor,
+      action: "flag.allowlist_remove",
+      key,
+      userId,
+      reason: opts.reason,
+      ts: nowIso,
+    })
+  })
+
+  // Invalidate every cache entry for this key (perUser hash variants too).
+  for (const k of Array.from(cache.keys())) {
+    if (k.startsWith(`${key}::`)) cache.delete(k)
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Test-only helpers (exported but not part of the public API contract).
 // -----------------------------------------------------------------------------
 

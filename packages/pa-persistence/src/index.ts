@@ -253,6 +253,7 @@ export {
   setFlag,
   revertFlag,
   addUserToFlagAllowlist,
+  removeUserFromFlagAllowlist,
   _clearFeatureFlagCache,
   _getFeatureFlagCacheStats,
 } from "./feature-flags.js"

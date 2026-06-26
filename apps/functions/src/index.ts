@@ -317,6 +317,13 @@ export { paAlgoliaBackfill } from "./algolia/algolia-backfill.js"
 // Tier is stamped at rejection (prescreen + recruiter) via applyGlobalCandidateTier.
 export { paAdminRejectedCandidatesSnapshot } from "./admin-rejected-candidates.js"
 export { paAdminReevaluateCandidateTier } from "./admin-candidate-tier-actions.js"
+// Per-candidate scheduling ramp — operator enables/disables REAL interview
+// scheduling for ONE candidate by mutating ONLY the paSchedulingEnabled flag
+// allowlist (never the global value).
+export {
+  paAdminSetCandidateScheduling,
+  paAdminGetCandidateScheduling,
+} from "./admin-set-candidate-scheduling.js"
 // Identity-conflict resolve/dismiss + true counts — client Firestore writes
 // to pa-candidate-identity-conflicts are rules-denied, so the dashboard
 // /admin/identity-conflicts page goes through this callable.
