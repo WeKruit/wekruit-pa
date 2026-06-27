@@ -53,6 +53,17 @@ function makeDb(store: Store): Firestore {
               const prev = opts?.merge ? col.get(docId) ?? {} : {}
               col.set(docId, { ...prev, ...data })
             },
+            // Atomic create: rejects with gRPC ALREADY_EXISTS (code 6) when the
+            // doc already exists — mirrors firebase-admin Firestore semantics so
+            // the idempotency claim is exercised, not faked.
+            async create(data: Record<string, unknown>) {
+              if (col.has(docId)) {
+                const e = new Error(`already exists: ${docId}`) as Error & { code?: number }
+                e.code = 6
+                throw e
+              }
+              col.set(docId, data)
+            },
           }
         },
         async add(data: Record<string, unknown>) {
@@ -298,6 +309,51 @@ test("idempotent on Message-Id (redelivery)", async () => {
     baseDeps(db),
   )
   assert.equal((out.body as { idempotent?: boolean }).idempotent, true)
+})
+
+test("concurrent redelivery of same Message-Id → exactly one processes, other idempotent (atomic claim)", async () => {
+  const store: Store = new Map()
+  const db = makeDb(store)
+  const token = generateConvToken()
+  ensureCol(store, EMAIL_THREADS_COLLECTION).set(token, {
+    convToken: token,
+    userId: "user-1",
+    jobId: "job-1",
+    candidateEmail: "candidate@example.com",
+    subject: "Pick a time",
+    lastDirection: "outbound",
+  })
+  // Two near-simultaneous Mailgun redeliveries of the SAME Message-Id. The
+  // atomic create() claim must let exactly one win; the loser gets a 200
+  // idempotent ack instead of a second draft/send. (The OLD get()+set() pair
+  // could let both pass the existence check and both proceed.)
+  const fire = () => {
+    const { res, out } = makeRes()
+    const run = handleInboundEmail(
+      inboundReq({
+        recipient: verpReplyToAddress(token),
+        sender: "candidate@example.com",
+        subject: "Re: Pick a time",
+        "stripped-text": "still interested!",
+        "Message-Id": "<race@example.com>",
+      }),
+      res,
+      baseDeps(db),
+    )
+    return { out, run }
+  }
+  const a = fire()
+  const b = fire()
+  await Promise.all([a.run, b.run])
+
+  const bodies = [a.out.body, b.out.body] as Array<{ idempotent?: boolean; action?: string }>
+  const idempotent = bodies.filter((x) => x?.idempotent === true)
+  const processed = bodies.filter((x) => x?.action === "recorded_no_autoreply")
+  assert.equal(idempotent.length, 1, "exactly one redelivery is idempotent")
+  assert.equal(processed.length, 1, "exactly one redelivery processes")
+  // Atomic claim ⇒ a single inbound doc and a single thread flip, no dup work.
+  assert.equal(ensureCol(store, "pa-email-inbound").size, 1)
+  assert.equal(ensureCol(store, EMAIL_THREADS_COLLECTION).get(token)!.lastDirection, "inbound")
 })
 
 test("HMAC verify rejects bad signature when signingKey set", async () => {

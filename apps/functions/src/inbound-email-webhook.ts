@@ -13,8 +13,9 @@
  *      MAILGUN_WEBHOOK_SIGNING_KEY is set.
  *   2. extract `convToken` from the `recipient` (`reply+<token>@...`).
  *   3. load `pa-email-threads/{convToken}` → { userId?, jobId?, candidateEmail }.
- *   4. loop-guards: drop our own `claire@` sender, auto-responders/bulk mail,
- *      and dedup on Message-Id.
+ *   4. atomically claim the Message-Id (create() → ALREADY_EXISTS is an
+ *      idempotent redelivery); loop-guards drop our own `claire@` sender and
+ *      auto-responders/bulk mail.
  *   5. record the inbound to the thread + a `pa-email-inbound/{messageId}` doc.
  *   6. if PA_INBOUND_EMAIL_AUTOREPLY !== "0": compose a contextual reply via the
  *      LLM (stripped-text only). By DEFAULT the reply is recorded as a
@@ -91,6 +92,19 @@ function field(body: Record<string, unknown>, ...names: string[]): string {
     }
   }
   return ""
+}
+
+/**
+ * True when a Firestore write rejected because the doc already exists. The
+ * admin SDK surfaces ALREADY_EXISTS as gRPC numeric code 6 (and sometimes the
+ * string form); fall back to the message text for safety.
+ */
+function isAlreadyExists(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false
+  const code = (err as { code?: unknown }).code
+  if (code === 6 || code === "already-exists" || code === "ALREADY_EXISTS") return true
+  const msg = (err as { message?: unknown }).message
+  return typeof msg === "string" && /already exists/i.test(msg)
 }
 
 /** Is the inbound sender our own outbound identity? (loop guard) */
@@ -261,11 +275,29 @@ export async function handleInboundEmail(
   // ── (2) extract convToken from recipient ──────────────────────────────────
   const convToken = extractConvTokenFromRecipient(recipient)
 
-  // ── dedup on Message-Id (idempotency) ─────────────────────────────────────
+  // ── atomic claim on Message-Id (idempotency) ──────────────────────────────
+  // A non-atomic get()+set() lets two concurrent Mailgun redeliveries of the
+  // SAME Message-Id both pass an existence check and both proceed to draft (or,
+  // in the legacy auto-send path, both SEND). create() is atomic: the first
+  // caller wins the claim; every redelivery rejects with ALREADY_EXISTS and
+  // short-circuits to a 200 idempotent ack. The full inbound record is merged
+  // onto this claim doc once the thread resolves (below).
   const inboundRef = db.collection(INBOUND_COLLECTION).doc(encodeURIComponent(messageId))
-  const existing = await inboundRef.get().catch(() => null)
-  if (existing && existing.exists) {
-    res.status(200).json({ ok: true, idempotent: true })
+  try {
+    await inboundRef.create({ messageId, status: "claimed", claimedAt: FieldValue.serverTimestamp() })
+  } catch (err) {
+    if (isAlreadyExists(err)) {
+      res.status(200).json({ ok: true, idempotent: true })
+      return
+    }
+    // Unexpected claim failure (e.g. transient Firestore error): do NOT proceed
+    // to compose/draft/send — we can't prove we own this Message-Id, and going
+    // on risks the very double-action the claim prevents. Fail-safe, always-200.
+    logger.warn("[inbound-email] claim_error", {
+      messageId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    res.status(200).json({ ok: true, action: "claim_error" })
     return
   }
 
@@ -308,20 +340,24 @@ export async function handleInboundEmail(
   }
   const thread = threadSnap.data() as EmailThreadDoc
 
-  // ── record the inbound message + flip thread direction (always) ───────────
+  // ── enrich the claimed inbound doc + flip thread direction (always) ───────
   await inboundRef
-    .set({
-      convToken,
-      userId: thread.userId ?? null,
-      jobId: thread.jobId ?? null,
-      candidateEmail: thread.candidateEmail,
-      sender,
-      subject,
-      messageId,
-      strippedText: candidateText.slice(0, MAX_INBOUND_CHARS),
-      direction: "inbound",
-      createdAt: FieldValue.serverTimestamp(),
-    })
+    .set(
+      {
+        convToken,
+        userId: thread.userId ?? null,
+        jobId: thread.jobId ?? null,
+        candidateEmail: thread.candidateEmail,
+        sender,
+        subject,
+        messageId,
+        strippedText: candidateText.slice(0, MAX_INBOUND_CHARS),
+        direction: "inbound",
+        status: "recorded",
+        createdAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
     .catch(() => undefined)
   await threadRef
     .set(
