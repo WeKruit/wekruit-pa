@@ -59,16 +59,16 @@ export interface PartnerStatsSnapshot {
 export type StageFilter = "all" | "signed_up" | "resume_submitted" | "interviewing" | "review_pending" | "pending_human_review" | "awaiting_hm_response" | "passed" | "rejected" | "not_passed" | "employer_visible"
 
 export const STAGE_LABELS: Record<string, string> = {
-  signed_up: "Signed up",
-  resume_submitted: "Resume submitted",
-  interviewing: "Interviewing",
+  signed_up: "Registered",
+  resume_submitted: "Applied",
+  interviewing: "Prescreening",
   review_pending: "Under review",
-  pending_human_review: "Pending human review",
-  awaiting_hm_response: "Awaiting HM",
-  passed: "Passed",
-  rejected: "Rejected",
-  not_passed: "Not passed",
-  employer_visible: "Employer visible",
+  pending_human_review: "Prescreened",
+  awaiting_hm_response: "Sent to client",
+  passed: "Sent to client",
+  rejected: "Not selected",
+  not_passed: "Not selected",
+  employer_visible: "With client",
 }
 
 export const STAGE_TONES: Record<string, "good" | "bad" | "warn" | "muted"> = {

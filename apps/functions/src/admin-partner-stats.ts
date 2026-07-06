@@ -90,37 +90,27 @@ export interface PartnerStatsSnapshot {
 }
 
 async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<PartnerStatsSnapshot> {
-  const partnerSources = PA_USER_SOURCES.filter(
-    (s) => s !== "admin" && s !== "dev_test" && s !== "e2e_run" && s !== "qa_run",
-  )
-
-  const allSourcesInDb = new Set<string>()
-  const allDocs = await db.collection(PA_COLLECTIONS.users).get()
-  for (const d of allDocs.docs) {
-    const u = d.data()
-    if (typeof u.source === "string" && u.source) allSourcesInDb.add(u.source)
-    const fe = entryOf(u.firstSignupEntry)
-    const le = entryOf(u.lastSignupEntry)
-    if (fe.source) allSourcesInDb.add(fe.source)
-    if (le.source) allSourcesInDb.add(le.source)
-  }
-  const knownPartnerSources = [...allSourcesInDb].filter(
-    (s) => s !== "admin" && s !== "dev_test" && s !== "e2e_run" && s !== "qa_run" && s !== "candidate",
+  const INTERNAL = new Set(["admin", "dev_test", "e2e_run", "qa_run"])
+  const knownPartnerSources = PA_USER_SOURCES.filter(
+    (s) => !INTERNAL.has(s) && s !== "candidate",
   ).sort()
 
   const targetSource = partnerSource || "layoffhedge"
 
-  const cohort: Array<{ id: string; data: Record<string, unknown> }> = []
-  for (const d of allDocs.docs) {
-    const u = d.data()
-    const topMatch = u.source === targetSource
-    const fe = entryOf(u.firstSignupEntry)
-    const le = entryOf(u.lastSignupEntry)
-    const entryMatch = fe.source === targetSource || le.source === targetSource
-    if (topMatch || entryMatch) {
-      cohort.push({ id: d.id, data: u })
+  // Targeted queries instead of full-collection scan (was OOM at 729+ docs)
+  const FETCH_CAP = 3000
+  const [bySource, byFirstEntry, byLastEntry] = await Promise.all([
+    db.collection(PA_COLLECTIONS.users).where("source", "==", targetSource).limit(FETCH_CAP).get(),
+    db.collection(PA_COLLECTIONS.users).where("firstSignupEntry.source", "==", targetSource).limit(FETCH_CAP).get(),
+    db.collection(PA_COLLECTIONS.users).where("lastSignupEntry.source", "==", targetSource).limit(FETCH_CAP).get(),
+  ])
+  const mergedById = new Map<string, { id: string; data: Record<string, unknown> }>()
+  for (const snap of [bySource, byFirstEntry, byLastEntry]) {
+    for (const d of snap.docs) {
+      if (!mergedById.has(d.id)) mergedById.set(d.id, { id: d.id, data: d.data() })
     }
   }
+  const cohort = [...mergedById.values()]
 
   cohort.sort((a, b) => {
     const ac = toIso(a.data.createdAt, "")
@@ -145,8 +135,23 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
   funnel.signedUp = cohort.length
 
   const cohortIds = cohort.map((c) => c.id)
-  const prescreenByUserJob = new Map<string, { terminal?: string; score?: number }>()
+
+  // Batch resume check (was N+1 per-user query)
+  const usersWithResume = new Set<string>()
   const CHUNK = 30
+  for (let i = 0; i < cohortIds.length; i += CHUNK) {
+    const chunk = cohortIds.slice(i, i + CHUNK)
+    const snap = await db.collection("parsedCandidateResumes")
+      .where("userId", "in", chunk)
+      .select("userId")
+      .get().catch(() => ({ docs: [] as Array<{ data: () => Record<string, unknown> }> }))
+    for (const d of snap.docs) {
+      const uid = d.data().userId
+      if (typeof uid === "string") usersWithResume.add(uid)
+    }
+  }
+
+  const prescreenByUserJob = new Map<string, { terminal?: string; score?: number }>()
   for (let i = 0; i < cohortIds.length; i += CHUNK) {
     const chunk = cohortIds.slice(i, i + CHUNK)
     const snap = await db.collection("pa-prescreen-sessions")
@@ -185,9 +190,7 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
         fe.jobId ?? le.jobId
       const attributedVia = topMatch && entryMatch ? "both" as const : topMatch ? "top_level" as const : "entry" as const
 
-      const resumeSnap = await db.collection("parsedCandidateResumes")
-        .where("userId", "==", id).limit(1).get().catch(() => ({ size: 0 }))
-      const hasResume = resumeSnap.size > 0 || u.resumeStatus === "parsed"
+      const hasResume = usersWithResume.has(id) || u.resumeStatus === "parsed"
       const resumeStatus = (u.resumeStatus as string | undefined) ?? (hasResume ? "parsed" : "none")
       if (hasResume) funnel.withResume++
 
@@ -272,10 +275,10 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
 
       const hasPassTerminal = jobs.some((j) => j.prescreenTerminal === "PASS")
       const hasFailOrPause = jobs.some((j) => j.prescreenTerminal === "FAIL" || j.prescreenTerminal === "HARD_STOP" || j.prescreenTerminal === "PAUSE")
-      if (hasPassTerminal && (currentStage === "review_pending" || currentStage === "interviewing" || currentStage === "not_passed")) {
+      if (hasPassTerminal && currentStage !== "employer_visible") {
         currentStage = "pending_human_review"
         funnel.pendingHumanReview++
-      } else if (hasFailOrPause && !hasPassTerminal && (currentStage === "review_pending" || currentStage === "interviewing" || currentStage === "not_passed")) {
+      } else if (hasFailOrPause && !hasPassTerminal && currentStage !== "employer_visible" && currentStage !== "passed") {
         currentStage = "rejected"
         funnel.rejected++
       }
@@ -314,7 +317,7 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
 export const paAdminPartnerStats = onCall(
   {
     region: "us-central1",
-    memory: "1GiB",
+    memory: "256MiB",
     maxInstances: 5,
     secrets: [PA_ADMIN_TOKEN],
   },
