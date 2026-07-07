@@ -833,6 +833,12 @@ function recruiterKeyMatches(row: { recruiterId?: string | null; recruiterEmail?
   return row.recruiterId === profile.id || Boolean(email && row.recruiterEmail?.trim().toLowerCase() === email)
 }
 
+function isSyntheticRecruiterProfile(profile: RecruiterProfileDoc): boolean {
+  const email = profile.email?.trim().toLowerCase() ?? ""
+  const name = profile.name?.trim().toLowerCase() ?? ""
+  return email.endsWith("@example.com") || email.endsWith(".example.com") || name.includes("qa live") || name.includes("synthetic")
+}
+
 function rowJobKey(row: { inboundJobId?: string; jobId?: string }): string {
   return (row.inboundJobId || row.jobId || "").trim()
 }
@@ -2493,9 +2499,14 @@ function RecruiterQualityPanel() {
     void reload()
   }, [])
 
+  const managementProfiles = useMemo(
+    () => profiles.filter((profile) => !isSyntheticRecruiterProfile(profile)),
+    [profiles],
+  )
+
   const rows = useMemo(
-    () => computeRecruiterQualityRows(profiles, submissions, candidates, applications),
-    [applications, candidates, profiles, submissions],
+    () => computeRecruiterQualityRows(managementProfiles, submissions, candidates, applications),
+    [applications, candidates, managementProfiles, submissions],
   )
 
   const table = useTable<RecruiterQualityRow>(rows, {

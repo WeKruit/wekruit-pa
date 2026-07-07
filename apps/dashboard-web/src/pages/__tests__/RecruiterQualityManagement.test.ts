@@ -35,6 +35,15 @@ test("recruiter quality dashboard separates no-work from pending WeKruit respons
   assert.match(pageSource, /label: "WK pending"/)
 })
 
+test("recruiter quality dashboard excludes synthetic recruiter profiles from management rollups", () => {
+  assert.match(pageSource, /function isSyntheticRecruiterProfile/)
+  assert.match(pageSource, /email\.endsWith\("@example\.com"\)/)
+  assert.match(pageSource, /email\.endsWith\("\.example\.com"\)/)
+  assert.match(pageSource, /const managementProfiles = useMemo/)
+  assert.match(pageSource, /profiles\.filter\(\(profile\) => !isSyntheticRecruiterProfile\(profile\)\)/)
+  assert.match(pageSource, /computeRecruiterQualityRows\(managementProfiles, submissions, candidates, applications\)/)
+})
+
 test("recruiter quality dashboard reuses the complete trimmed submissions list", () => {
   const panelSource = pageSource.slice(
     pageSource.indexOf("function RecruiterQualityPanel()"),
