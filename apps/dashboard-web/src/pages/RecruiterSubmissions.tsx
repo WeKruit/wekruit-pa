@@ -98,6 +98,11 @@ interface SubmissionDoc {
     antiTotal: number
   }
   status?: string
+  adminDecision?: {
+    by?: string
+    at?: string
+    note?: string
+  }
   statusHistory?: Array<{
     status?: string
     by?: string
@@ -107,6 +112,7 @@ interface SubmissionDoc {
     reasons?: string[]
   }>
   companySends?: CompanySend[]
+  requestedInfo?: Array<{ message?: string; at?: string; by?: string }>
   inboundJobId?: string
   recruiterId?: string | null
   recruiterEmail?: string
@@ -371,7 +377,9 @@ const TRIAGE_SORT_BOOST_MS = 1e15
 const ADVANCED_SUBMISSION_STATUSES = ["advanced", "wekruit_interview", "interviewing", "offer", "client_review", "hired"]
 const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
+const RECRUITER_INACTIVITY_WINDOW_DAYS = 14
 const RECRUITER_INTERVIEW_RATE_TARGET = 50
+const INITIAL_RECRUITER_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
 
 // Reason taxonomy + the grouped chip UI now live in the shared component
 // ../components/recruiter-reasons.js, so the Submission view and the Recruiter
@@ -381,6 +389,27 @@ function normalizeFeedbackRating(rating: unknown): number | null {
   const n = typeof rating === "number" ? rating : Number(rating)
   if (!Number.isInteger(n) || n < 1 || n > 4) return null
   return n
+}
+
+function hasWeKruitSubmissionResponse(submission: Pick<
+  SubmissionDoc,
+  "adminDecision" | "companySends" | "recruiterFeedbackNote" | "recruiterFeedbackRating" | "recruiterFeedbackReasons" | "recruiterFeedbackUpdatedAt" | "requestedInfo" | "status"
+>): boolean {
+  const status = submission.status ?? "submitted"
+  return (
+    !INITIAL_RECRUITER_SUBMISSION_STATUSES.includes(status) ||
+    Boolean(submission.adminDecision) ||
+    Boolean(submission.recruiterFeedbackUpdatedAt) ||
+    Boolean(submission.recruiterFeedbackNote?.trim()) ||
+    normalizeFeedbackRating(submission.recruiterFeedbackRating) !== null ||
+    Boolean(submission.recruiterFeedbackReasons?.length) ||
+    Boolean(submission.requestedInfo?.length) ||
+    Boolean(submission.companySends?.length)
+  )
+}
+
+function isPendingWeKruitSubmissionResponse(submission: SubmissionDoc): boolean {
+  return !hasWeKruitSubmissionResponse(submission)
 }
 
 function feedbackRatingLabel(rating: unknown): string {
@@ -629,8 +658,10 @@ interface RecruiterQualityRow {
   avgRating: number | null
   submissionsTotal: number
   submissions7d: number
+  submissions14d: number
   weeklyTargetPct: number
   activeSubmissions: number
+  pendingWeKruitResponse: number
   advancedCount: number
   movementRate: number
   rejectionDrag: number
@@ -640,11 +671,13 @@ interface RecruiterQualityRow {
   pendingApplications: number
   roleCoveragePct: number
   coveredApprovedRoles: number
+  lastSubmissionMs: number
   lastActivityMs: number
 }
 
 function timestampToMs(raw: unknown): number {
   if (!raw) return 0
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw
   if (typeof raw === "string") return Date.parse(raw) || 0
   if (typeof raw === "object" && typeof (raw as { seconds?: unknown }).seconds === "number") {
     return ((raw as { seconds: number }).seconds) * 1000
@@ -810,7 +843,9 @@ function computeRecruiterQualityRows(
   sourcedCandidates: SourcedCandidateDoc[],
   applications: RecruiterRoleApplicationDoc[],
 ): RecruiterQualityRow[] {
-  const weekStartMs = Date.now() - 7 * 86_400_000
+  const nowMs = Date.now()
+  const weekStartMs = nowMs - 7 * 86_400_000
+  const inactivityStartMs = nowMs - RECRUITER_INACTIVITY_WINDOW_DAYS * 86_400_000
   return profiles.map((profile) => {
     const recruiterSubmissions = submissions.filter((s) => recruiterKeyMatches(s, profile))
     const recruiterCandidates = sourcedCandidates.filter((c) => recruiterKeyMatches(c, profile))
@@ -820,7 +855,10 @@ function computeRecruiterQualityRows(
       .filter((n): n is number => n !== null)
     const avgRating = ratings.length ? ratings.reduce((sum, n) => sum + n, 0) / ratings.length : null
     const submissions7d = recruiterSubmissions.filter((s) => timestampToMs(s.createdAt) >= weekStartMs).length
+    const submissions14d = recruiterSubmissions.filter((s) => timestampToMs(s.createdAt) >= inactivityStartMs).length
+    const lastSubmissionMs = Math.max(0, ...recruiterSubmissions.map((s) => timestampToMs(s.createdAt)))
     const activeSubmissions = recruiterSubmissions.filter((s) => ACTIVE_SUBMISSION_STATUSES.includes(s.status ?? "submitted")).length
+    const pendingWeKruitResponse = recruiterSubmissions.filter(isPendingWeKruitSubmissionResponse).length
     const advancedCount = recruiterSubmissions.filter((s) => ADVANCED_SUBMISSION_STATUSES.includes(s.status ?? "")).length
     const negativeCount = recruiterSubmissions.filter((s) => NEGATIVE_SUBMISSION_STATUSES.includes(s.status ?? "")).length
     const movementRate = recruiterSubmissions.length ? Math.round((advancedCount / recruiterSubmissions.length) * 100) : 0
@@ -878,8 +916,10 @@ function computeRecruiterQualityRows(
       avgRating,
       submissionsTotal: recruiterSubmissions.length,
       submissions7d,
+      submissions14d,
       weeklyTargetPct,
       activeSubmissions,
+      pendingWeKruitResponse,
       advancedCount,
       movementRate,
       rejectionDrag,
@@ -889,6 +929,7 @@ function computeRecruiterQualityRows(
       pendingApplications,
       roleCoveragePct,
       coveredApprovedRoles,
+      lastSubmissionMs,
       lastActivityMs,
     }
   })
@@ -2431,14 +2472,14 @@ function RecruiterQualityPanel() {
     setLoading(true)
     setErr(null)
     try {
-      const [profileSnap, submissionSnap, candidateSnap, applicationSnap] = await Promise.all([
+      const [profileSnap, submissionList, candidateSnap, applicationSnap] = await Promise.all([
         getDocs(collection(db(), "pa-recruiter-users")),
-        getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
+        cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
         getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
         getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
       ])
       setProfiles(profileSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterProfileDoc, "id">) })))
-      setSubmissions(submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) })))
+      setSubmissions(submissionList.rows as unknown as SubmissionDoc[])
       setCandidates(candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) })))
       setApplications(applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) })))
     } catch (e) {
@@ -2465,6 +2506,31 @@ function RecruiterQualityPanel() {
       r.email.toLowerCase().includes(q) ||
       (r.profile.reviewNote?.toLowerCase().includes(q) ?? false),
     chips: [
+      {
+        id: "pace",
+        label: "Pace",
+        multi: true,
+        options: [
+          {
+            key: "no_work_7d",
+            label: "No work 7d",
+            title: "Recruiters with no submissions in the last 7 days and no submissions waiting on WeKruit.",
+            test: (r: RecruiterQualityRow) => r.submissions7d === 0 && r.pendingWeKruitResponse === 0,
+          },
+          {
+            key: "no_work_14d",
+            label: "No work 14d",
+            title: "Recruiters with no submissions in the last 14 days and no submissions waiting on WeKruit.",
+            test: (r: RecruiterQualityRow) => r.submissions14d === 0 && r.pendingWeKruitResponse === 0,
+          },
+          {
+            key: "needs_wekruit_feedback",
+            label: "Needs WK feedback",
+            title: "Recruiters with at least one submitted candidate that has no WeKruit response or feedback yet.",
+            test: (r: RecruiterQualityRow) => r.pendingWeKruitResponse > 0,
+          },
+        ],
+      },
       {
         id: "status",
         label: "Account",
@@ -2497,6 +2563,8 @@ function RecruiterQualityPanel() {
         .reduce((sum, r, _, ratedRows) => sum + (r.avgRating ?? 0) / Math.max(1, ratedRows.length), 0)
       : 0,
     weeklySubmissions: rows.reduce((sum, r) => sum + r.submissions7d, 0),
+    noWork14d: rows.filter((r) => r.submissions14d === 0 && r.pendingWeKruitResponse === 0).length,
+    pendingResponse: rows.filter((r) => r.pendingWeKruitResponse > 0).length,
   }
 
   if (loading) return <LoadingState label="Loading recruiter quality..." />
@@ -2544,11 +2612,25 @@ function RecruiterQualityPanel() {
       render: (r) => r.avgRating === null ? "unrated" : `${r.avgRating.toFixed(1)}/4`,
     },
     {
+      key: "pendingWeKruitResponse",
+      label: "WK pending",
+      sortable: true,
+      width: 105,
+      render: (r) => r.pendingWeKruitResponse || "—",
+    },
+    {
       key: "submissions7d",
       label: "7d pace",
       sortable: true,
       width: 105,
       render: (r) => `${r.submissions7d}/${RECRUITER_WEEKLY_SUBMISSION_TARGET}`,
+    },
+    {
+      key: "submissions14d",
+      label: "14d",
+      sortable: true,
+      width: 90,
+      render: (r) => r.submissions14d,
     },
     {
       key: "roleCoveragePct",
@@ -2565,6 +2647,13 @@ function RecruiterQualityPanel() {
       render: (r) => `${r.movementRate}%`,
     },
     {
+      key: "lastSubmissionMs",
+      label: "Last submission",
+      sortable: true,
+      width: 130,
+      render: (r) => formatCompactOpsDate(r.lastSubmissionMs),
+    },
+    {
       key: "lastActivityMs",
       label: "Last activity",
       sortable: true,
@@ -2575,9 +2664,11 @@ function RecruiterQualityPanel() {
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
         <OpsMetric label="Recruiters" value={metrics.total} />
         <OpsMetric label="Needs review" value={metrics.needsReview} />
+        <OpsMetric label="Pending response" value={metrics.pendingResponse} />
+        <OpsMetric label="No work 14d" value={metrics.noWork14d} />
         <OpsMetric label="Avg rating" value={metrics.avgRating ? `${metrics.avgRating.toFixed(1)}/4` : "unrated"} />
         <OpsMetric label="7d submissions" value={metrics.weeklySubmissions} meta={`Target ${rows.length * RECRUITER_WEEKLY_SUBMISSION_TARGET}`} />
       </div>
@@ -2671,10 +2762,12 @@ function RecruiterQualityDetailPanel({
 
   return (
     <Panel title="Recruiter account review" eyebrow={row.email}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
         <OpsMetric label="Quality score" value={row.qualityScore} meta={row.reviewLabel} />
         <OpsMetric label="Rating" value={row.avgRating === null ? "unrated" : `${row.avgRating.toFixed(1)}/4`} />
+        <OpsMetric label="WK pending" value={row.pendingWeKruitResponse} meta={row.pendingWeKruitResponse ? "needs our response" : "clear"} />
         <OpsMetric label="7d pace" value={`${row.submissions7d}/${RECRUITER_WEEKLY_SUBMISSION_TARGET}`} meta={`${row.weeklyTargetPct}% of target`} />
+        <OpsMetric label="14d submissions" value={row.submissions14d} meta={row.lastSubmissionMs ? `Last ${formatCompactOpsDate(row.lastSubmissionMs)}` : "never submitted"} />
         <OpsMetric label="Coverage" value={row.approvedRoles ? `${row.coveredApprovedRoles}/${row.approvedRoles}` : "0"} meta={row.approvedRoles ? `${row.roleCoveragePct}% approved roles active` : "no approved roles"} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
@@ -2682,6 +2775,8 @@ function RecruiterQualityDetailPanel({
           <div><b>Recruiter:</b> {row.name}</div>
           <div><b>Email:</b> {row.email}</div>
           <div><b>Total submissions:</b> {row.submissionsTotal}</div>
+          <div><b>Last submission:</b> {formatOpsDate(row.lastSubmissionMs)}</div>
+          <div><b>Pending WeKruit response:</b> {row.pendingWeKruitResponse}</div>
           <div><b>Active submissions:</b> {row.activeSubmissions}</div>
           <div><b>Advanced/interview/offer/hired:</b> {row.advancedCount} ({row.movementRate}%)</div>
           <div><b>Rejected/duplicate drag:</b> {row.rejectionDrag}%</div>

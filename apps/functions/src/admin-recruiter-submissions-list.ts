@@ -40,6 +40,8 @@ const CACHE_VERSION = "v2"
 // candidateBackground / candidate.notes are deliberately excluded (the drawer
 // fetches the full doc on open).
 const SELECT_FIELDS = [
+  "recruiterId",
+  "recruiterEmail",
   "submitter.name",
   "submitter.email",
   "candidate.name",
@@ -58,6 +60,10 @@ const SELECT_FIELDS = [
   "recruiterFeedbackNote",
   "recruiterFeedbackRating",
   "recruiterFeedbackReasons",
+  "recruiterFeedbackUpdatedAt",
+  "adminDecision",
+  "requestedInfo",
+  "companySends",
   "recruiterPayout",
   // Stored eval-attempt stamp — the drawer reads it; without it the client used
   // to recompute a sha256 (server-only) and white-screen.
@@ -113,13 +119,14 @@ export async function runAdminRecruiterSubmissionsList(
   const snap = await deps.db.collection(SUBMISSIONS_COLLECTION).select(...SELECT_FIELDS).limit(SCAN_CAP).get()
   const rows = snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>
-    const { createdAt, sheetSyncedAt, ...rest } = data
+    const { createdAt, sheetSyncedAt, recruiterFeedbackUpdatedAt, ...rest } = data
     return {
       id: d.id,
       ...rest,
       // {seconds} plain objects → JSON-safe + back-compatible with the client.
       createdAt: toSecondsObj(createdAt),
       sheetSyncedAt: toSecondsObj(sheetSyncedAt),
+      recruiterFeedbackUpdatedAt: toSecondsObj(recruiterFeedbackUpdatedAt),
     }
   })
   return {
