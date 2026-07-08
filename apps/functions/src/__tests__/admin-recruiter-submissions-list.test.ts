@@ -21,9 +21,17 @@ describe("runAdminRecruiterSubmissionsList", () => {
       recruiterId: "rec-1",
       recruiterEmail: "r@x.com",
       submitter: { name: "Rec", email: "r@x.com" },
-      candidate: { name: "Cand A", email: "a@x.com" },
+      candidate: {
+        name: "Cand A",
+        email: "a@x.com",
+        link: "https://example.com/cand-a",
+        linkedinUrl: "https://linkedin.com/in/cand-a",
+        resumeUrl: "https://storage.example.com/cand-a.pdf",
+      },
       createdAt: { seconds: 1_700_000_000 },
       recruiterFeedbackUpdatedAt: { seconds: 1_700_000_100 },
+      adminCommentCount: 2,
+      adminLastCommentAt: { seconds: 1_700_000_200 },
       adminDecision: { by: "admin@wekruit.com", at: "2026-06-01T00:00:00.000Z" },
       requestedInfo: [{ message: "Can you send the resume?", at: "2026-06-01T00:00:00.000Z" }],
     })
@@ -50,6 +58,18 @@ describe("runAdminRecruiterSubmissionsList", () => {
       (byId.get("s1") as { recruiterFeedbackUpdatedAt: unknown }).recruiterFeedbackUpdatedAt,
       { seconds: 1_700_000_100 },
     )
+    assert.deepEqual(
+      (byId.get("s1") as { candidate: unknown }).candidate,
+      {
+        name: "Cand A",
+        email: "a@x.com",
+        link: "https://example.com/cand-a",
+        linkedinUrl: "https://linkedin.com/in/cand-a",
+        resumeUrl: "https://storage.example.com/cand-a.pdf",
+      },
+    )
+    assert.equal((byId.get("s1") as { adminCommentCount: number }).adminCommentCount, 2)
+    assert.deepEqual((byId.get("s1") as { adminLastCommentAt: unknown }).adminLastCommentAt, { seconds: 1_700_000_200 })
     assert.deepEqual(
       (byId.get("s1") as { adminDecision: unknown }).adminDecision,
       { by: "admin@wekruit.com", at: "2026-06-01T00:00:00.000Z" },

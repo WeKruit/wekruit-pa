@@ -19,6 +19,7 @@ import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import {
   upsertCompanySend,
   removeCompanySend,
+  sendRecruiterSubmissionComment,
   COMPANY_SEND_STATUS_LABEL,
   type CompanySend,
   type CompanySendStatus,
@@ -113,6 +114,8 @@ interface SubmissionDoc {
   }>
   companySends?: CompanySend[]
   requestedInfo?: Array<{ message?: string; at?: string; by?: string }>
+  adminCommentCount?: number | null
+  adminLastCommentAt?: { seconds?: number; _seconds?: number; toDate?: () => Date } | string | null
   inboundJobId?: string
   recruiterId?: string | null
   recruiterEmail?: string
@@ -675,6 +678,25 @@ interface RecruiterQualityRow {
   lastActivityMs: number
 }
 
+interface SubmissionCommentDoc {
+  id: string
+  message?: string
+  by?: string
+  authorName?: string
+  authorEmail?: string
+  at?: string
+}
+
+interface ConversationEntry {
+  key: string
+  kind: "comment" | "request"
+  side: "left" | "right"
+  author: string
+  at?: string
+  message: string
+  pending?: boolean
+}
+
 function timestampToMs(raw: unknown): number {
   if (!raw) return 0
   if (typeof raw === "number" && Number.isFinite(raw)) return raw
@@ -682,7 +704,73 @@ function timestampToMs(raw: unknown): number {
   if (typeof raw === "object" && typeof (raw as { seconds?: unknown }).seconds === "number") {
     return ((raw as { seconds: number }).seconds) * 1000
   }
+  if (typeof raw === "object" && typeof (raw as { _seconds?: unknown })._seconds === "number") {
+    return ((raw as { _seconds: number })._seconds) * 1000
+  }
+  if (typeof raw === "object" && typeof (raw as { toDate?: unknown }).toDate === "function") {
+    const date = (raw as { toDate: () => Date }).toDate()
+    const ms = date.getTime()
+    return Number.isFinite(ms) ? ms : 0
+  }
   return 0
+}
+
+function normalizedCommentCount(submission: Pick<SubmissionDoc, "adminCommentCount">): number {
+  return Math.max(0, Math.trunc(Number(submission.adminCommentCount ?? 0)) || 0)
+}
+
+function latestCommentAt(comments: SubmissionCommentDoc[]): string | null {
+  let latestMs = 0
+  let latestAt: string | null = null
+  for (const comment of comments) {
+    const ms = comment.at ? Date.parse(comment.at) : 0
+    if (ms > latestMs) {
+      latestMs = ms
+      latestAt = comment.at ?? null
+    }
+  }
+  return latestAt
+}
+
+function buildConversationEntries(
+  comments: Array<{ id: string; message?: string; by?: string; authorName?: string; at?: string }>,
+  requestedInfo: Array<{ message?: string; at?: string; by?: string }> | undefined,
+): ConversationEntry[] {
+  const entries: ConversationEntry[] = []
+  ;(requestedInfo ?? []).forEach((entry, i) => {
+    const message = entry?.message?.trim()
+    if (!message) return
+    entries.push({
+      key: `request-${i}`,
+      kind: "request",
+      side: "right",
+      author: entry.by?.trim() || "WeKruit",
+      at: entry.at,
+      message,
+    })
+  })
+  for (const comment of comments) {
+    const message = comment.message?.trim()
+    if (!message) continue
+    const fromWekruit = comment.by === "wekruit"
+    entries.push({
+      key: `comment-${comment.id}`,
+      kind: "comment",
+      side: fromWekruit ? "right" : "left",
+      author: comment.authorName?.trim() || (fromWekruit ? "WeKruit" : "Recruiter"),
+      at: comment.at,
+      message,
+    })
+  }
+  return entries.sort((a, b) => (Date.parse(a.at ?? "") || 0) - (Date.parse(b.at ?? "") || 0))
+}
+
+function linkLabel(value: string): string {
+  try {
+    return new URL(value).hostname
+  } catch {
+    return value.length > 36 ? `${value.slice(0, 36)}...` : value
+  }
 }
 
 function toDatetimeLocalValue(date: Date): string {
@@ -1250,16 +1338,22 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
         <>
           <div>{r.candidate?.name ?? "—"}</div>
           {r.candidate?.email && <div style={{ color: "#777", fontSize: 11 }}>{r.candidate.email}</div>}
-          {r.candidate?.link && (
-            <a
-              href={r.candidate.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              style={{ fontSize: 11, color: "#2a5fb8" }}
-            >
-              {r.candidate.link.length > 36 ? r.candidate.link.slice(0, 36) + "…" : r.candidate.link}
-            </a>
+          {(r.candidate?.resumeUrl || r.candidate?.linkedinUrl || r.candidate?.link || normalizedCommentCount(r) > 0) && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 3, fontSize: 11 }}>
+              {r.candidate?.resumeUrl && (
+                <a href={r.candidate.resumeUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "#2a5fb8" }}>
+                  Resume
+                </a>
+              )}
+              {(r.candidate?.linkedinUrl || r.candidate?.link) && (
+                <a href={r.candidate.linkedinUrl ?? r.candidate.link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "#2a5fb8" }}>
+                  LinkedIn
+                </a>
+              )}
+              {normalizedCommentCount(r) > 0 && (
+                <span style={{ color: "#777" }}>{normalizedCommentCount(r)} msg</span>
+              )}
+            </div>
           )}
         </>
       ),
@@ -4271,6 +4365,141 @@ function CompanySendsPanel({ submissionId, initial }: { submissionId: string; in
   )
 }
 
+function SubmissionConversationPanel({
+  row,
+  onUpdated,
+}: {
+  row: SubmissionDoc
+  onUpdated: (row: Partial<SubmissionDoc> & { id: string }) => void
+}) {
+  const [comments, setComments] = useState<SubmissionCommentDoc[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [draft, setDraft] = useState("")
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [pendingComment, setPendingComment] = useState<SubmissionCommentDoc | null>(null)
+
+  async function fetchComments(): Promise<SubmissionCommentDoc[]> {
+    const snap = await getDocs(
+      query(collection(db(), "pa-recruiter-submissions", row.id, "comments"), orderBy("at", "asc")),
+    )
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionCommentDoc, "id">) }))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const rows = await fetchComments()
+        if (cancelled) return
+        setComments(rows)
+        setLoadError(null)
+        onUpdated({ id: row.id, adminCommentCount: rows.length, adminLastCommentAt: latestCommentAt(rows) })
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [row.id])
+
+  async function handleSend() {
+    const message = draft.trim()
+    if (!message || sending) return
+    setSending(true)
+    setSendError(null)
+    setPendingComment({
+      id: `pending-${Date.now()}`,
+      message,
+      by: "wekruit",
+      authorName: "you",
+      at: new Date().toISOString(),
+    })
+    setDraft("")
+    try {
+      await sendRecruiterSubmissionComment({ submissionId: row.id, message })
+      const rows = await fetchComments()
+      setComments(rows)
+      onUpdated({ id: row.id, adminCommentCount: rows.length, adminLastCommentAt: latestCommentAt(rows) })
+      setPendingComment(null)
+    } catch (e) {
+      setPendingComment(null)
+      setDraft(message)
+      setSendError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const entries = buildConversationEntries(comments ?? [], row.requestedInfo)
+  if (pendingComment) {
+    entries.push({
+      key: pendingComment.id,
+      kind: "comment",
+      side: "right",
+      author: pendingComment.authorName ?? "you",
+      at: pendingComment.at,
+      message: pendingComment.message ?? "",
+      pending: true,
+    })
+  }
+
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Recruiter chat history
+      </h4>
+      <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, display: "grid", gap: 8 }}>
+        {loadError && <div style={{ color: "#9c3a1d", fontSize: 12 }}>Failed to load comments: {loadError}</div>}
+        {comments === null && !loadError ? (
+          <div style={{ color: "#777", fontSize: 12 }}>Loading conversation...</div>
+        ) : entries.length === 0 ? (
+          <div style={{ color: "#777", fontSize: 12 }}>No messages yet.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 6 }}>
+            {entries.map((entry) => (
+              <div key={entry.key} style={{ display: "flex", justifyContent: entry.side === "right" ? "flex-end" : "flex-start" }}>
+                <div
+                  style={{
+                    maxWidth: 420,
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${entry.side === "right" ? "#d7e3f6" : "#e6e2d8"}`,
+                    background: entry.side === "right" ? "#eef3fb" : "#fdfcf8",
+                    opacity: entry.pending ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: "#777", marginBottom: 2 }}>
+                    <strong>{entry.author}</strong>
+                    {entry.kind === "request" && <Badge tone="info">request</Badge>}
+                    <span>{formatOpsDate(entry.at)}</span>
+                    {entry.pending && <span>sending...</span>}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{entry.message}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {sendError && <div style={{ color: "#9c3a1d", fontSize: 12 }}>{sendError}</div>}
+        <textarea
+          value={draft}
+          disabled={sending}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Message the recruiter..."
+          style={{ width: "100%", minHeight: 54, fontSize: 13, padding: 8, borderRadius: 6, border: "1px solid #ddd", boxSizing: "border-box" }}
+        />
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button type="button" disabled={sending || !draft.trim()} onClick={handleSend} style={{ fontSize: 13, padding: "6px 12px" }}>
+            Send message
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
 function RowDetailPanel({
   row,
   role,
@@ -4506,6 +4735,20 @@ function RowDetailPanel({
               </a>
             </p>
           )}
+          {(row.candidate?.resumeUrl || row.candidate?.linkedinUrl) && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6, fontSize: 12 }}>
+              {row.candidate.resumeUrl && (
+                <a href={row.candidate.resumeUrl} target="_blank" rel="noopener noreferrer">
+                  Open resume ({linkLabel(row.candidate.resumeUrl)})
+                </a>
+              )}
+              {row.candidate.linkedinUrl && (
+                <a href={row.candidate.linkedinUrl} target="_blank" rel="noopener noreferrer">
+                  Open LinkedIn ({linkLabel(row.candidate.linkedinUrl)})
+                </a>
+              )}
+            </div>
+          )}
           {row.candidate?.compensationExpectation && (
             <p style={{ margin: "8px 0 0", fontSize: 12.5 }}>
               <strong>Expected salary:</strong> {row.candidate.compensationExpectation}
@@ -4585,6 +4828,7 @@ function RowDetailPanel({
           )}
 
           <CompanySendsPanel submissionId={row.id} initial={row.companySends} />
+          <SubmissionConversationPanel row={row} onUpdated={onUpdated} />
 
           <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
             Role evidence matrix

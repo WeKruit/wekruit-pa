@@ -47,6 +47,8 @@ const SELECT_FIELDS = [
   "candidate.name",
   "candidate.email",
   "candidate.link",
+  "candidate.linkedinUrl",
+  "candidate.resumeUrl",
   "jobId",
   "inboundJobId",
   "jobTitleSnapshot",
@@ -63,6 +65,8 @@ const SELECT_FIELDS = [
   "recruiterFeedbackUpdatedAt",
   "adminDecision",
   "requestedInfo",
+  "adminCommentCount",
+  "adminLastCommentAt",
   "companySends",
   "recruiterPayout",
   // Stored eval-attempt stamp — the drawer reads it; without it the client used
