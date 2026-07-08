@@ -773,6 +773,10 @@ function linkLabel(value: string): string {
   }
 }
 
+function recruiterConversationLabel(row: Pick<SubmissionDoc, "recruiterEmail" | "recruiterId">): string {
+  return row.recruiterEmail?.trim() || row.recruiterId?.trim() || "this recruiter"
+}
+
 function toDatetimeLocalValue(date: Date): string {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
   return local.toISOString().slice(0, 16)
@@ -4433,6 +4437,7 @@ function SubmissionConversationPanel({
   }
 
   const entries = buildConversationEntries(comments ?? [], row.requestedInfo)
+  const recruiterLabel = recruiterConversationLabel(row)
   if (pendingComment) {
     entries.push({
       key: pendingComment.id,
@@ -4448,14 +4453,17 @@ function SubmissionConversationPanel({
   return (
     <>
       <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
-        Recruiter chat history
+        Recruiter-specific chat
       </h4>
       <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, display: "grid", gap: 8 }}>
+        <div style={{ fontSize: 12, color: "#666" }}>
+          Thread with <strong>{recruiterLabel}</strong>. Stored on this recruiter submission, so moving or rejecting the candidate does not hide it.
+        </div>
         {loadError && <div style={{ color: "#9c3a1d", fontSize: 12 }}>Failed to load comments: {loadError}</div>}
         {comments === null && !loadError ? (
           <div style={{ color: "#777", fontSize: 12 }}>Loading conversation...</div>
         ) : entries.length === 0 ? (
-          <div style={{ color: "#777", fontSize: 12 }}>No messages yet.</div>
+          <div style={{ color: "#777", fontSize: 12 }}>No messages yet. Use the box below to start this recruiter conversation.</div>
         ) : (
           <div style={{ display: "grid", gap: 6 }}>
             {entries.map((entry) => (
