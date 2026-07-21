@@ -12,9 +12,15 @@ import {
   evaluateDeadSenderAssignments,
   evaluateOutboundHealth,
   evaluateInboundLiveness,
+  evaluateCapacity,
+  capacityBand,
+  worstCapacityBand,
+  evaluateDeadLetterDepth,
   paChannelHealthHandler,
   SAMPLE_USER_IDS_MAX,
   WINDOW_MS,
+  CAPACITY_INFO_PCT,
+  CAPACITY_WARN_PCT,
 } from "./channel-health.js"
 
 const NOW = new Date("2026-06-11T08:00:00Z")
@@ -172,6 +178,84 @@ describe("evaluateInboundLiveness", () => {
 })
 
 // ---------------------------------------------------------------------------
+// evaluateCapacity — % of configured newUserCap (Adam 2026-06-14)
+// ---------------------------------------------------------------------------
+
+describe("evaluateCapacity", () => {
+  const T = { info: CAPACITY_INFO_PCT, warn: CAPACITY_WARN_PCT, critical: 1.0 }
+
+  it("bands by pct: ok/info/warn/critical", () => {
+    assert.equal(capacityBand(0.5, T), "ok")
+    assert.equal(capacityBand(0.7, T), "info")
+    assert.equal(capacityBand(0.85, T), "warn")
+    assert.equal(capacityBand(1.0, T), "critical")
+    assert.equal(capacityBand(1.2, T), "critical")
+  })
+
+  it("flags the live 717 number at 397/550 = 72% as info; skips admin + uncapped", () => {
+    const numbers = [
+      { number: "+13054507715", capacity: 10, adminOnly: true }, // admin → skipped
+      { number: "+17174919939", newUserCap: 550, adminOnly: false }, // 397/550 = 72%
+      { number: "+16146202403", newUserCap: 550, adminOnly: false }, // 16/550 = 3%
+      { number: "+1999", adminOnly: false }, // no cap → skipped
+    ]
+    const reachable = new Map([
+      ["+17174919939", 397],
+      ["+16146202403", 16],
+      ["+13054507715", 5],
+    ])
+    const caps = evaluateCapacity(numbers, reachable, T)
+    assert.equal(caps.length, 2, "only the two capped public numbers")
+    assert.equal(caps[0].number, "+17174919939")
+    assert.equal(caps[0].band, "info")
+    assert.equal(Math.round(caps[0].pct * 100), 72)
+    assert.equal(caps[1].band, "ok")
+  })
+
+  it("critical at/over cap", () => {
+    const caps = evaluateCapacity(
+      [{ number: "+1", newUserCap: 550, adminOnly: false }],
+      new Map([["+1", 560]]),
+      T,
+    )
+    assert.equal(caps[0].band, "critical")
+    assert.equal(worstCapacityBand(caps), "critical")
+  })
+
+  it("worstCapacityBand picks the highest across numbers", () => {
+    const caps = evaluateCapacity(
+      [
+        { number: "+a", newUserCap: 100, adminOnly: false },
+        { number: "+b", newUserCap: 100, adminOnly: false },
+      ],
+      new Map([["+a", 72], ["+b", 90]]),
+      T,
+    )
+    assert.equal(worstCapacityBand(caps), "warn")
+  })
+})
+
+describe("evaluateDeadLetterDepth", () => {
+  const rows = (dead: number, other: number) => [
+    ...Array.from({ length: dead }, () => ({ status: "dead_letter" })),
+    ...Array.from({ length: other }, () => ({ status: "sent" })),
+  ]
+  it("breaches above threshold", () => {
+    const v = evaluateDeadLetterDepth(rows(101, 50), 100)
+    assert.equal(v.count, 101)
+    assert.equal(v.breached, true)
+  })
+  it("does not breach at/under threshold; counts both dead-letter statuses", () => {
+    const v = evaluateDeadLetterDepth(
+      [{ status: "dead_letter" }, { status: "dead_letter_rate_limited" }, { status: "sent" }],
+      100,
+    )
+    assert.equal(v.count, 2)
+    assert.equal(v.breached, false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Runner — fake db (supports == and > where ops + bare limit scans)
 // ---------------------------------------------------------------------------
 
@@ -191,6 +275,17 @@ function makeFakeDb(initial: Record<string, Record<string, DocData>> = {}) {
     return { docs, empty: docs.length === 0, size: docs.length }
   }
   const db = {
+    doc(path: string) {
+      const idx = path.lastIndexOf("/")
+      const coll = path.slice(0, idx)
+      const id = path.slice(idx + 1)
+      return {
+        async get() {
+          const data = bucket(coll).get(id)
+          return { exists: data !== undefined, data: () => data }
+        },
+      }
+    },
     collection(coll: string) {
       return {
         limit(max: number) {
@@ -346,6 +441,34 @@ describe("paChannelHealthHandler (runner, fake db)", () => {
     assert.match(String(cap.alerts[0].title), /Outbound failure/)
   })
 
+  it("capacity: a public number over the warn % fires a capacity alert (email+slack via notifyOps seam)", async () => {
+    const users: Record<string, DocData> = {}
+    // 90 reachable users on +1717 (cap 100 → 90% → warn band)
+    for (let i = 0; i < 90; i++) {
+      users[`u${i}`] = { senderNumber: "+1717", phoneE164: `+1555000${i}`, candidateLifecycleState: "active" }
+    }
+    // a deleted + a no-phone user must NOT count toward reachable
+    users.del = { senderNumber: "+1717", phoneE164: "+1555999", candidateLifecycleState: "deleted" }
+    users.nophone = { senderNumber: "+1717" }
+    const { db } = makeFakeDb({
+      "pa-sendblue-numbers": { "+1717": { status: "active" } },
+      "pa-config": { "sendblue-pool": { numbers: [{ number: "+1717", newUserCap: 100, adminOnly: false }] } },
+      "pa-users": users,
+      "pa-outbound": { o1: { status: "sent", createdAt: iso(HOUR) } },
+      "pa-inbound-events": { i1: { createdAt: iso(HOUR) } },
+    })
+    const cap = captureDeps()
+    const result = await paChannelHealthHandler({ db, now: () => NOW, ...cap })
+
+    assert.equal(result.errors, 0)
+    assert.equal(result.capacity.length, 1)
+    assert.equal(result.capacity[0].reachable, 90, "deleted + no-phone excluded")
+    assert.equal(result.capacity[0].band, "warn")
+    const capAlert = cap.alerts.find((a) => /capacity/i.test(String(a.title)))
+    assert.ok(capAlert, "expected a capacity alert")
+    assert.equal(String((capAlert as { level?: string }).level), "warn")
+  })
+
   it("all healthy → single pa.channel.health_ok log, zero alerts", async () => {
     const { db } = makeFakeDb({
       "pa-sendblue-numbers": { "+13054507715": { status: "active" } },
@@ -374,6 +497,9 @@ describe("paChannelHealthHandler (runner, fake db)", () => {
       "pa-inbound-events": { i1: { createdAt: iso(HOUR) } },
     })
     const db = {
+      doc(path: string) {
+        return (base.db as unknown as { doc: (p: string) => unknown }).doc(path)
+      },
       collection(coll: string) {
         const real = (base.db as unknown as { collection: (c: string) => any }).collection(coll)
         return {

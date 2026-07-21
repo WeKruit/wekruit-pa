@@ -520,6 +520,83 @@ describe("sweepUnansweredInboundForOperatorReview", () => {
     assert.equal((stores.get("pa-recovery-cases") ?? new Map()).size, 0)
   })
 
+  it("auto-tapback (Adam 2026-06-14): fires once per newly-queued unanswered inbound when enabled; no ack marker", async () => {
+    const { db, stores } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_tb: {
+          userId: "u-tb",
+          createdAt: iso(2 * HOUR),
+          body: "is the role remote?",
+          from: "+15550002001",
+          rawPayload: { messageHandle: "h-tb1", toNumber: WEKRUIT },
+        },
+      },
+    })
+    const tapbacks: Array<Record<string, unknown>> = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredTapbackEnabled: true,
+      unansweredAlertEnabled: false, // tapback is independent of the email alert
+      sendTapback: async (a) => { tapbacks.push(a as Record<string, unknown>) },
+    })
+    assert.equal(queued, 1)
+    assert.equal(tapbacks.length, 1, "one tapback for the new case")
+    assert.equal(tapbacks[0].to, "+15550002001")
+    assert.equal(tapbacks[0].messageHandle, "h-tb1")
+    assert.equal(tapbacks[0].fromNumber, WEKRUIT)
+    const c = stores.get("pa-recovery-cases")!.get("unanswered_u-tb_inb_tb") as DocData
+    assert.ok(c.tapbackSentAt, "case stamped tapbackSentAt")
+    assert.equal((stores.get("pa-inbound-acks") ?? new Map()).size, 0, "NO ack marker — operator alert still owns it")
+  })
+
+  it("auto-tapback: does NOT fire when disabled (default)", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_no: { userId: "u-no", createdAt: iso(2 * HOUR), body: "hello?", from: "+15550002002", rawPayload: { messageHandle: "h-no", toNumber: WEKRUIT } },
+      },
+    })
+    const tapbacks: unknown[] = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredTapbackEnabled: false,
+      unansweredAlertEnabled: false,
+      sendTapback: async (a) => { tapbacks.push(a) },
+    })
+    assert.equal(queued, 1)
+    assert.equal(tapbacks.length, 0)
+  })
+
+  it("alert-only mode (recoveryActionsEnabled=false): unanswered alert runs, NO active recovery / raw scan", async () => {
+    const phone = "+15550009999"
+    const handle = "h-alert-only"
+    const { db } = makeFakeDb({
+      // A raw inbound that active recovery WOULD replay — must be ignored when off.
+      "pa-sendblue-webhook-raw": Object.fromEntries([
+        rawDoc({ id: "raw-x", from: phone, to: WEKRUIT, content: "hello?", handle, dateSent: iso(2 * HOUR) }),
+      ]),
+      // An unanswered inbound (>60min default) for the alert sweep.
+      "pa-inbound-events": {
+        inb_ao: { userId: "u-ao", createdAt: iso(2 * HOUR), body: "any update on my screen?", from: phone },
+      },
+    })
+    const replayed: string[] = []
+    const result = await paConversationRecoverySweepHandler({
+      db: db as never,
+      now: () => NOW,
+      recoveryActionsEnabled: false,
+      processInboundEventById: async (id) => { replayed.push(id) },
+      log: () => {},
+    })
+    assert.equal(result.scannedRaw, 0, "raw 10k-doc scan skipped in alert-only mode")
+    assert.equal(result.recovered, 0, "no active recovery")
+    assert.deepEqual(replayed, [], "no inbound replay")
+    assert.equal(result.unansweredQueued, 1, "unanswered alert sweep still runs")
+  })
+
   it("the full sweep handler surfaces unansweredQueued and stays fail-soft", async () => {
     const { db } = makeFakeDb({
       "pa-inbound-events": {
@@ -682,5 +759,59 @@ describe("sweepUnansweredInboundForOperatorReview", () => {
     })
     assert.equal(queued, 0, "STOP is terminal → not an unanswered case")
     assert.equal(alerts.length, 0)
+  })
+
+  // ── 2026-06-14 (Adam): default-ON + lower window + escalation ──────────────
+
+  it("DEFAULT ON — alert fires with no explicit opt-in (warn level under 12h)", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_d: { userId: "u-d", createdAt: iso(8 * HOUR), body: "can you help me?", from: "+15550001070" },
+      },
+    })
+    const alerts: Array<Record<string, unknown>> = []
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      // no unansweredAlertEnabled → defaults ON now
+      postSlackAlert: (async (i: Record<string, unknown>) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(queued, 1)
+    assert.equal(alerts.length, 1, "alert fires by default")
+    assert.equal(alerts[0].level, "warn")
+  })
+
+  it("ESCALATES to error-level when the oldest unanswered crosses 12h", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_e: { userId: "u-e", createdAt: iso(14 * HOUR), body: "still waiting…", from: "+15550001071" },
+      },
+    })
+    const alerts: Array<Record<string, unknown>> = []
+    await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      postSlackAlert: (async (i: Record<string, unknown>) => { alerts.push(i); return { posted: true } }) as never,
+    })
+    assert.equal(alerts.length, 1)
+    assert.equal(alerts[0].level, "error", "14h old → escalated")
+  })
+
+  it("configurable window: a 90-min-old inbound IS flagged when unansweredAfterMs=60min", async () => {
+    const { db } = makeFakeDb({
+      "pa-inbound-events": {
+        inb_w: { userId: "u-w", createdAt: iso(90 * 60 * 1000), body: "hello?", from: "+15550001072" },
+      },
+    })
+    const queued = await sweepUnansweredInboundForOperatorReview({
+      db: db as never,
+      now: () => NOW,
+      log: () => {},
+      unansweredAfterMs: 60 * 60 * 1000,
+      unansweredAlertEnabled: false,
+    })
+    assert.equal(queued, 1, "90min > 60min threshold → flagged (6h window would have missed it)")
   })
 })

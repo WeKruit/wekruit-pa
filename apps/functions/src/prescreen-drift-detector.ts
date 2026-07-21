@@ -56,11 +56,28 @@ export interface DriftRunResult {
   durationMs: number
 }
 
+export interface DriftAlertInput {
+  level: "warn" | "error" | "info"
+  title: string
+  message: string
+  fields?: Array<{ name: string; value: string }>
+}
+
+/** Drift-alert gate (pure): >5% drift alerts (warn), >15% escalates to error. */
+export function decideDriftAlert(driftRate: number): { shouldAlert: boolean; level: "warn" | "error" } {
+  if (driftRate > 0.15) return { shouldAlert: true, level: "error" }
+  if (driftRate > 0.05) return { shouldAlert: true, level: "warn" }
+  return { shouldAlert: false, level: "warn" }
+}
+
 export async function runPrescreenDriftDetector(args: {
   db: Firestore
   log?: (event: string, payload: Record<string, unknown>) => void
+  /** Alert dispatch seam (production = notifyOps email+Slack). No-op by default. */
+  alert?: (input: DriftAlertInput) => Promise<unknown>
 }): Promise<DriftRunResult> {
   const log = args.log ?? (() => {})
+  const alert = args.alert ?? (async () => {})
   const start = Date.now()
   const snap = await args.db.collection("pa-prescreen-fixtures").limit(100).get()
   const fixtures: Fixture[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Fixture, "id">) }))
@@ -136,9 +153,27 @@ export async function runPrescreenDriftDetector(args: {
     ...result,
     ts: new Date().toISOString(),
   })
-  if (driftRate > 0.05) {
+  const driftAlert = decideDriftAlert(driftRate)
+  if (driftAlert.shouldAlert) {
     log("drift.alert", { driftRate, meanMatch })
-    // Slack alert hook — paSendSlackAlert helper if available; else just log.
+    // 2026-06-14 — wired: dispatch via notifyOps (email + Slack). Fail-soft.
+    try {
+      await alert({
+        level: driftAlert.level,
+        title: `Prescreen judge drift ${(driftRate * 100).toFixed(0)}%`,
+        message:
+          `KeywordSetJudge drifted on ${driftCount}/${variances.length} fixtures ` +
+          `(driftRate ${(driftRate * 100).toFixed(1)}% > 5% gate). The production LLM ` +
+          `scoring has moved vs gold — review before it skews PASS/FAIL decisions.`,
+        fields: [
+          { name: "driftRate", value: `${(driftRate * 100).toFixed(1)}%` },
+          { name: "drifted fixtures", value: `${driftCount}/${variances.length}` },
+          { name: "mean match variance", value: meanMatch.toFixed(3) },
+        ],
+      })
+    } catch {
+      /* alert is never load-bearing */
+    }
   }
   log("drift.complete", { fixtureCount: fixtures.length, driftRate })
   return result

@@ -64,6 +64,8 @@ import {
 // into the boot graph and crashed the container at startup. cutover.js loads the
 // heavy agent/tools lazily, only behind the flag gate.
 import { maybeRunThinClaire } from "./claire-agent/cutover.js"
+// Unified ops-alert dispatch (email → admin1@/adam.ylol@/noah.liu@ + Slack).
+import { notifyOps } from "./lib/ops-alert.js"
 export {
   MAILGUN_API_KEY,
   MAILGUN_DOMAIN,
@@ -150,6 +152,11 @@ export { paBackfillAtsUrlsBatch, paCostSummaryWeekly } from "./backfill-ats-urls
 // pa-alerts/{yyyy-mm-dd-<kind>}. Fail-open (never throws). Costs poll needs the
 // optional OPENAI_ADMIN_KEY secret; health-ping works without it.
 export { paOpenAiKeyHealth } from "./openai-key-health.js"
+
+// 2026-06-14 — Anthropic key/quota early-warning (mirror of paOpenAiKeyHealth).
+// Every 30 min: GET /v1/models health-ping; 401/403 → revoked, 429/billing →
+// credit exhausted. Dispatches via notifyOps (email + Slack), deduped per kind/day.
+export { paAnthropicKeyHealth } from "./anthropic-key-health.js"
 
 // v1.6 Phase 57 (LIVE-01..04) — Daily HEAD-check sweep for matching-jobs.
 // Cloud Scheduler 03:00 UTC. Marks dead on 4xx/5xx/timeout, recovers on
@@ -2676,9 +2683,14 @@ export const paConversationRecoverySweep = onSchedule(
       SENDBLUE_API_KEY_ID,
       SENDBLUE_API_SECRET_KEY,
       SENDBLUE_FROM_NUMBER,
-      // Unanswered-inbound alert (Feature 1) posts to Slack via the shared helper,
-      // which reads PA_SLACK_ALERT_WEBHOOK from process.env. Fail-soft when unset.
+      // Unanswered-inbound alert (Feature 1) dispatches via notifyOps →
+      // EMAIL (admin1@/adam.ylol@/noah.liu@) + Slack. Bind both channels'
+      // secrets so they're in process.env at runtime. Fail-soft when unset.
       PA_SLACK_ALERT_WEBHOOK,
+      MAILGUN_API_KEY,
+      MAILGUN_DOMAIN,
+      MAILGUN_FROM,
+      MAILGUN_REGION,
     ],
     memory: "1GiB",
     maxInstances: 1,
@@ -2697,6 +2709,20 @@ export const paConversationRecoverySweep = onSchedule(
       if (slackWebhook && slackWebhook !== "__UNSET__") process.env.PA_SLACK_ALERT_WEBHOOK = slackWebhook
     } catch {
       /* leave unset → alert helper no-ops gracefully */
+    }
+    // Surface Mailgun so notifyOps can email the unanswered-inbound alert.
+    for (const [name, handle] of [
+      ["MAILGUN_API_KEY", MAILGUN_API_KEY],
+      ["MAILGUN_DOMAIN", MAILGUN_DOMAIN],
+      ["MAILGUN_FROM", MAILGUN_FROM],
+      ["MAILGUN_REGION", MAILGUN_REGION],
+    ] as const) {
+      try {
+        const v = handle.value().trim()
+        if (v && v !== "__UNSET__") process.env[name] = v
+      } catch {
+        /* secret unprovisioned → notifyOps email path no-ops gracefully */
+      }
     }
     try {
       const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
@@ -2737,9 +2763,49 @@ export const paConversationRecoverySweep = onSchedule(
     const { runPreScreenForUser } = await import("./prescreen-session-start.js")
 
     try {
+      // ALERT-ONLY by default (Adam 2026-06-14: "let's not have [active recovery]
+      // right now... this is mainly for alert"). Active replay/start/notice
+      // actions only run when PA_RECOVERY_ACTIONS_ENABLED is truthy (no redeploy
+      // to flip back on). Off → read-only unanswered detection + alert only.
+      const recoveryActionsEnabled = (() => {
+        const raw = (process.env.PA_RECOVERY_ACTIONS_ENABLED ?? "").trim().toLowerCase()
+        return raw === "1" || raw === "true" || raw === "yes" || raw === "on"
+      })()
       const result = await paConversationRecoverySweepHandler({
         db,
+        recoveryActionsEnabled,
         log: (...args: unknown[]) => logger.info("[sendblue][recovery-agent]", ...args),
+        // Unanswered-inbound alert → EMAIL + Slack via notifyOps (Adam 2026-06-14).
+        // Keep the postSlackAlert seam name so the deps-injected unit tests are unchanged.
+        postSlackAlert: (async (input: Parameters<typeof notifyOps>[0]) => {
+          const r = await notifyOps(input)
+          return { posted: r.anyDelivered }
+        }) as never,
+        // Auto-tapback (gated by PA_UNANSWERED_TAPBACK_ENABLED) — acknowledge an
+        // unanswered candidate via a reaction on their last inbound, riding their
+        // bound Sendblue line. Adam 2026-06-14 approved.
+        sendTapback: async ({ to, messageHandle, userId, fromNumber }) => {
+          const { sendReaction } = await import("./sendblue/send-reaction.js")
+          let resolvedFrom = fromNumber
+          if (!resolvedFrom && userId) {
+            try {
+              const { resolveBoundFromNumber } = await import("./sendblue/resolve-bound-from-number.js")
+              const bound = await resolveBoundFromNumber(db, userId, {
+                log: (event, payload) => logger.info("[unanswered-tapback]", { event, ...(payload ?? {}) }),
+              })
+              resolvedFrom = bound.fromNumber
+            } catch {
+              /* fall through — sendReaction can pool-resolve via userId/db */
+            }
+          }
+          await sendReaction({
+            to,
+            messageHandle,
+            reaction: "like",
+            ...(resolvedFrom ? { fromNumber: resolvedFrom } : { userId, db }),
+            allowEnvFromNumberFallback: false,
+          })
+        },
         processInboundEventById: async (eventId) => {
           const snap = await db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId).get()
           if (!snap.exists) {
@@ -3084,7 +3150,15 @@ export const paPrescreenDriftDetector = onSchedule(
     schedule: "30 4 * * *",
     timeZone: "UTC",
     region: "us-central1",
-    secrets: [PA_OPENAI_AGENT_API_KEY],
+    // + alert channels (Adam 2026-06-14): drift > 5% now EMAILs + Slacks via notifyOps.
+    secrets: [
+      PA_OPENAI_AGENT_API_KEY,
+      PA_SLACK_ALERT_WEBHOOK,
+      MAILGUN_API_KEY,
+      MAILGUN_DOMAIN,
+      MAILGUN_FROM,
+      MAILGUN_REGION,
+    ],
     memory: "256MiB",
     timeoutSeconds: 540,
   },
@@ -3092,7 +3166,11 @@ export const paPrescreenDriftDetector = onSchedule(
     process.env.PA_OPENAI_AGENT_API_KEY = PA_OPENAI_AGENT_API_KEY.value()
     const { runPrescreenDriftDetector } = await import("./prescreen-drift-detector.js")
     const db = (await import("firebase-admin/firestore")).getFirestore()
-    const result = await runPrescreenDriftDetector({ db, log: (e, p) => logger.info(`drift.${e}`, p) })
+    const result = await runPrescreenDriftDetector({
+      db,
+      log: (e, p) => logger.info(`drift.${e}`, p),
+      alert: (input) => notifyOps(input),
+    })
     logger.info("paPrescreenDriftDetector tick", result)
   }
 )
