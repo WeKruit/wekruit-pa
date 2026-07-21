@@ -36,6 +36,7 @@ import {
   type Row,
 } from "../components/prescreen/PrescreenReviewDrawers.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
+import { algoliaSearch, isAlgoliaConfigured, ALGOLIA_CANDIDATES_INDEX } from "../lib/algolia-search.js"
 import {
   getPrescreenOpsSnapshot,
   listPrescreenSessionsPage,
@@ -144,6 +145,10 @@ export default function PrescreenSessionsList() {
   const [loadAllCapped, setLoadAllCapped] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [rows, setRows] = useState<PrescreenOpsSessionRow[]>([])
+  // Whole-pool name-search hits: typed name → Algolia pa_candidates → userIds →
+  // CF returns just those candidates' sessions. Merged with the loaded page so a
+  // name on an unloaded page still resolves without loading every row.
+  const [algoliaRows, setAlgoliaRows] = useState<PrescreenOpsSessionRow[]>([])
   const [nextCursor, setNextCursor] = useState<PrescreenOpsSessionCursor | null>(null)
   const [snapshot, setSnapshot] = useState<PrescreenOpsSnapshotOpsResponse | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -236,11 +241,50 @@ export default function PrescreenSessionsList() {
     }
   }, [reloadKey, sessionsInput])
 
+  // Whole-pool name search via Algolia (debounced). Resolve the typed text to
+  // candidate userIds, then fetch only those candidates' sessions through the CF.
+  useEffect(() => {
+    const q = search.trim()
+    if (!q || !isAlgoliaConfigured()) {
+      setAlgoliaRows([])
+      return
+    }
+    let cancelled = false
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await algoliaSearch<{ objectID: string }>(ALGOLIA_CANDIDATES_INDEX, q, { hitsPerPage: 50 })
+          const userIds = [...new Set(res.hits.map((h) => h.objectID).filter(Boolean))]
+          if (cancelled) return
+          if (userIds.length === 0) {
+            setAlgoliaRows([])
+            return
+          }
+          const page = await listPrescreenSessionsPage({ ...sessionsInput, userIds, limit: undefined, cursor: undefined })
+          if (!cancelled) setAlgoliaRows(page.rows)
+        } catch {
+          if (!cancelled) setAlgoliaRows([])
+        }
+      })()
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [search, sessionsInput])
+
+  // Merge the loaded page with the Algolia name-search hits (dedupe by id).
+  const mergedRows = useMemo(() => {
+    if (algoliaRows.length === 0) return rows
+    const seen = new Set(rows.map((r) => r.id))
+    return [...rows, ...algoliaRows.filter((r) => !seen.has(r.id))]
+  }, [rows, algoliaRows])
+
   const pendingRows = useMemo(() => rows.filter((r) => r.terminalActionPendingReview === true), [rows])
   const reviewSummary = useMemo(() => summarizePrescreenReviewRows(rows), [rows])
   const visibleRows = useMemo(
     () => {
-      const filtered = filterAndSortPrescreenRows(rows, {
+      const filtered = filterAndSortPrescreenRows(mergedRows, {
         bucket: bucketFilter,
         sort: sortMode,
         search,
@@ -251,7 +295,7 @@ export default function PrescreenSessionsList() {
       })
       return jobIdParam ? filtered.filter((r) => r.jobId === jobIdParam) : filtered
     },
-    [actionFilter, bucketFilter, draftFilter, jobIdParam, queueFilter, rows, search, sortMode, terminalFilter],
+    [actionFilter, bucketFilter, draftFilter, jobIdParam, queueFilter, mergedRows, search, sortMode, terminalFilter],
   )
   const selectableVisibleRows = useMemo(
     () => visibleRows.filter((r) => r.terminalActionPendingReview === true),
@@ -542,8 +586,10 @@ export default function PrescreenSessionsList() {
                         {r.jobTitle ? `${r.jobTitle}${r.jobCompany ? ` · ${r.jobCompany}` : ""}` : r.jobId}
                       </AdminJobLink>
                     </td>
-                    <td style={{ padding: "0.35rem", fontFamily: "monospace", fontSize: "0.75em" }}>
-                      <AdminUserLink userId={r.userId}>{r.userId?.slice(0, 8)}...</AdminUserLink>
+                    <td style={{ padding: "0.35rem", fontSize: "0.8em" }}>
+                      <AdminUserLink userId={r.userId}>
+                        {r.candidateName ?? <span style={{ fontFamily: "monospace", fontSize: "0.9em" }}>{r.userId?.slice(0, 8)}...</span>}
+                      </AdminUserLink>
                       {includeTest && r.candidateClass !== "candidate_account" ? (
                         <>
                           {" "}

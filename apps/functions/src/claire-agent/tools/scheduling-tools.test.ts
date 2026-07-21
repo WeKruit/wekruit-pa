@@ -768,6 +768,37 @@ test("book dedup: second book for same confirmed slot → already_booked, no 2nd
   }
 })
 
+test("CROSS-TURN recovery includes status:confirmed — book on a jobId-less turn recovers the confirmed doc → already_booked", async () => {
+  // The headhunter book-on-behalf gap: once a booking flips to "confirmed" (the
+  // WeKruit confirmation email sent in bookInterviewSlotCore), a LATER turn with
+  // NO ctx.jobId — a candidate re-confirming on a TRIAGE turn, or a headhunter
+  // runBookInterviewSlot with jobId omitted — must still recover the SAME doc.
+  // resolveActiveSchedulingJobId originally omitted "confirmed" from its status
+  // `in` list → fell back to "unknown_job" → read an empty doc → slot_not_offered.
+  // With "confirmed" in the list the doc stays recoverable cross-turn.
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    // turn 1 — offer + book under the real jobId (ctx.jobId = "job-1").
+    const ctx1 = makeCtx(db, DEV_UID)
+    await offerThen(db, ctx1)
+    const first = await invoke(tools(ctx1).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
+    assert.equal(first.action, "booked")
+    assert.equal(db.store.get(BOOKING_PATH)!.status, "confirmed") // post-email terminal status
+
+    // turn 2 — NO ctx.jobId (TRIAGE). recovery must find the confirmed doc via
+    // status in [...,"confirmed",...]; pre-fix this returned slot_not_offered.
+    const ctx2 = makeCtx(db, DEV_UID, { jobId: undefined })
+    const second = await invoke(tools(ctx2).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
+    assert.equal(second.ok, true)
+    assert.equal(second.action, "already_booked") // recovered same doc, not slot_not_offered
+    assert.equal(second.slotIso, first.slotIso) // same slot from the same recovered doc
+  } finally {
+    restore()
+  }
+})
+
 test("book FAIL-OPEN: calcom POST throws → { ok:false, calcom_unavailable }, status stays offered", async () => {
   const db = new FakeDb()
   db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })

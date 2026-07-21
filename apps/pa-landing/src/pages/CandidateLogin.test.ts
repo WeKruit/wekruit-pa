@@ -66,7 +66,9 @@ test("CandidateLogin preserves role context when onboarding carries a public job
 
 test("CandidateLogin frames onboarding login as a first-time Claire start", () => {
   assert.match(source, /onboardingNext\s*=\s*nextDest\.isOnboarding && !roleInterviewNext/)
-  assert.match(source, /onboardingNext[\s\S]*\? "Start with Claire"/)
+  // yc entry keeps its own eyebrow; every other onboarding entry stays "Start with Claire".
+  assert.match(source, /onboardingNext[\s\S]*: "Start with Claire"/)
+  assert.match(source, /ycEntry[\s\S]*\? "YC Startup School × WeKruit"/)
   assert.match(source, /onboardingNext[\s\S]*<>Start with <em className="wk-accent">Claire\.<\/em><\/>/)
   assert.match(source, /Claire starts a guided profile chat: resume or LinkedIn first, then target roles, constraints, and nearest-work evidence/)
   assert.match(source, /onboardingNext \? "Start with Google" : "Continue with Google"/)

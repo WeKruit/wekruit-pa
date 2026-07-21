@@ -93,7 +93,7 @@ function UserRow({ user, onViewUser, onToggleHm }: {
       </tr>
       {expanded && (
         <tr className="partner-row-detail">
-          <td colSpan={10}>
+          <td colSpan={12}>
             <div style={{ padding: "0.5rem 0" }}>
               <div style={{ marginBottom: "0.4rem" }}>
                 <strong>Skills:</strong> {user.topSkills.length ? user.topSkills.join(", ") : "—"}
@@ -110,6 +110,8 @@ function UserRow({ user, onViewUser, onToggleHm }: {
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Job</th>
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Company</th>
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>State</th>
+                      <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Verdict</th>
+                      <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Score</th>
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Updated</th>
                       <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}></th>
                     </tr>
@@ -124,6 +126,16 @@ function UserRow({ user, onViewUser, onToggleHm }: {
                           <td style={{ padding: "0.2rem 0.5rem" }}>{j.company}</td>
                           <td style={{ padding: "0.2rem 0.5rem" }}>
                             <StageBadge stage={isAwaitingHm ? "awaiting_hm_response" : j.state} />
+                          </td>
+                          <td style={{ padding: "0.2rem 0.5rem" }}>
+                            {j.prescreenTerminal ? (
+                              <span className={`status-badge ${j.prescreenTerminal === "PASS" ? "good" : "bad"}`}>
+                                {j.prescreenTerminal}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td style={{ padding: "0.2rem 0.5rem" }}>
+                            {j.prescreenScore != null ? `${j.prescreenScore}%` : "—"}
                           </td>
                           <td style={{ padding: "0.2rem 0.5rem" }}>{formatDate(j.stateUpdatedAt)}</td>
                           <td style={{ padding: "0.2rem 0.5rem" }}>
@@ -213,16 +225,18 @@ export default function PartnerStats() {
 
       <Panel title="Funnel">
         <div className="funnel-grid">
-          <FunnelCard label="Signed up" value={f.signedUp} />
-          <FunnelCard label="Submitted resume" value={f.withResume} />
-          <FunnelCard label="Have skills parsed" value={f.withSkills} />
-          <FunnelCard label="Entered job flow" value={f.enteredJobFlow} />
-          <FunnelCard label="Interviewing" value={f.prescreenStarted} tone="warn" />
+          <FunnelCard label="Registered" value={f.signedUp} />
+          <FunnelCard label="Applied" value={f.withResume} />
+          <FunnelCard label="Skills parsed" value={f.withSkills} />
+          <FunnelCard label="In pipeline" value={f.enteredJobFlow} />
+          <FunnelCard label="Prescreening" value={f.prescreenStarted} tone="warn" />
           <FunnelCard label="Under review" value={f.prescreenReviewPending} tone="warn" />
-          <FunnelCard label="Awaiting HM" value={f.awaitingHmResponse} tone="warn" />
-          <FunnelCard label="Passed" value={f.passed} tone="good" />
-          <FunnelCard label="Not passed" value={f.notPassed} tone="bad" />
-          <FunnelCard label="Employer visible" value={f.employerVisible} tone="good" />
+          <FunnelCard label="Prescreened" value={f.pendingHumanReview} tone="warn" />
+          <FunnelCard label="Sent to client" value={f.awaitingHmResponse} tone="warn" />
+          <FunnelCard label="Approved" value={f.passed} tone="good" />
+          <FunnelCard label="Not selected" value={f.rejected} tone="bad" />
+          <FunnelCard label="Not selected (jobs)" value={f.notPassed} tone="bad" />
+          <FunnelCard label="With client" value={f.employerVisible} tone="good" />
         </div>
       </Panel>
 
@@ -235,14 +249,16 @@ export default function PartnerStats() {
             style={{ padding: "0.3rem 0.6rem", borderRadius: 6, border: "1px solid var(--ink-6, #ccc)", fontSize: "0.85rem" }}
           >
             <option value="all">All stages</option>
-            <option value="signed_up">Signed up</option>
-            <option value="resume_submitted">Resume submitted</option>
-            <option value="interviewing">Interviewing</option>
+            <option value="signed_up">Registered</option>
+            <option value="resume_submitted">Applied</option>
+            <option value="interviewing">Prescreening</option>
             <option value="review_pending">Under review</option>
-            <option value="awaiting_hm_response">Awaiting HM</option>
-            <option value="passed">Passed</option>
-            <option value="not_passed">Not passed</option>
-            <option value="employer_visible">Employer visible</option>
+            <option value="pending_human_review">Prescreened</option>
+            <option value="awaiting_hm_response">Sent to client</option>
+            <option value="passed">Sent to client (legacy)</option>
+            <option value="rejected">Not selected</option>
+            <option value="not_passed">Not selected (jobs)</option>
+            <option value="employer_visible">With client</option>
           </select>
         }
       >

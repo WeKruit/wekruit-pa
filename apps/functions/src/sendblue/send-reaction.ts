@@ -31,6 +31,7 @@ import {
   SendblueServerError,
   type SendblueCredentials,
 } from "./sendblue-client.js"
+import { isSyntheticRecipientNumber } from "./synthetic-recipient.js"
 
 const SEND_REACTION_URL = "https://api.sendblue.co/api/send-reaction"
 const REACTION_BREAKER_KEY = "sendblue-reaction"
@@ -109,6 +110,14 @@ export async function sendReaction(
   }
   if (!input.to) {
     throw new SendblueClientError(400, "send-reaction: to (recipient number) required", null)
+  }
+  // 2026-06-19 incident hard backstop — synthetic/test recipient NEVER posts.
+  if (isSyntheticRecipientNumber(input.to)) {
+    throw new SendblueClientError(
+      400,
+      "blocked: synthetic/test recipient (reserved +1999999xxxx) — never deliverable",
+      null
+    )
   }
 
   const resolvedFromNumber = await resolveReactionFromNumber(input, creds)

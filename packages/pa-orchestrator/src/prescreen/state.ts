@@ -55,7 +55,7 @@ export interface PreScreenQuestionState {
   /** When this Q was answered (ISO). null when in-progress. */
   answeredAt?: string
   /** Reason field set when this Q caused a terminal state. */
-  terminalCause?: "type_gate_fail" | "viability_fail" | "max_clarify_exhausted"
+  terminalCause?: "type_gate_fail" | "viability_fail" | "max_clarify_exhausted" | "candidate_declined"
   /**
    * SPEC §5a — authored cross-job identity. When set, an answer to this question is
    * shared across jobs via `pa-users/{uid}.prescreenSharedAnswers[sharedKey]`

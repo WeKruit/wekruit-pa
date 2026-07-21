@@ -73,7 +73,8 @@ const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 // Qwen-7B). Until Adam provisions ANTHROPIC_API_KEY, the helper falls
 // through to the OpenAI tier with no behavioral change. Centralized in
 // orchestrator-deps.ts so cv-ingest + sponsorship paths share it.
-import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
+import { ANTHROPIC_API_KEY, MAILGUN_SECRETS, PA_SLACK_ALERT_WEBHOOK } from "./orchestrator-deps.js"
+import { withScheduledAlert } from "./lib/with-scheduled-alert.js"
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -735,10 +736,11 @@ export const paLlmRerankNightly = onSchedule(
     memory: "1GiB",
     timeoutSeconds: 540,
     region: "us-central1",
-    secrets: [SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY],
+    secrets: [SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, ANTHROPIC_API_KEY, PA_SLACK_ALERT_WEBHOOK, ...MAILGUN_SECRETS],
     retryCount: 0,
   },
-  async () => {
+  // 2026-06-14 — alert (email + Slack) if this nightly batch throws (was silent).
+  withScheduledAlert("paLlmRerankNightly", async () => {
     // Bind SiliconFlow key into both `OPENAI_API_KEY` (for Qwen-7B fallback in
     // computeJdRelativeWeights' OpenAI-tier client when running against
     // SiliconFlow's compatible endpoint) AND `SILICONFLOW_API_KEY` (read by
@@ -795,5 +797,5 @@ export const paLlmRerankNightly = onSchedule(
       ...result.counters,
       durationMs: result.durationMs,
     })
-  }
+  })
 )

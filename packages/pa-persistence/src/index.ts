@@ -448,6 +448,7 @@ export type { RateLimitOptions, RateLimitResult } from "./rate-limit.js"
 export {
   incrementDailyOutbound,
   getDailyOutboundCount,
+  isDailyContactKnown,
   formatDailyBucket,
   OUTBOUND_QUOTA_COLLECTION,
 } from "./outbound-quota.js"

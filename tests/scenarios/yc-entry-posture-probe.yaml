@@ -1,0 +1,77 @@
+# 2026-07-20 — YC Startup School entry-posture live probe (real LLM, prod CFs).
+#
+# Probes the deployed thin-Claire yc_startup_school posture end-to-end through
+# the REAL inbound path (broker inject → onPaInbound → cutover → mode-selector
+# → agent). Verifies, on live model output:
+#   1. First text: NO onboarding question wall / interrogation; founder-scene tone.
+#   2. "Is this the YC thing? What is Y Combinator?" → grounded facts (event +
+#      accelerator), not guesses; never claims WeKruit ≡ YC.
+#   3. "Anything else I need to do?" → the notify promise (text here + email on
+#      match), no task pushed back onto the candidate.
+#
+# Assertions are deliberately LOOSE (LLM prose varies) — per the workflow
+# contract the pass signal is READING the actual replies, not the exit code.
+#
+# Run:
+#   source .env-loading-of-choice && node tests/scenarios/runner.mjs tests/scenarios/yc-entry-posture-probe.yaml
+
+id: yc_entry_posture_probe
+description: |
+  yc_startup_school entry posture — no-push tone, YC/event grounded context,
+  notify-on-match promise. Real-LLM probe of the deployed prompt directive.
+locale: en-US
+agentId: default
+participant: "+19999990722"
+chatId: "iMessage;+19999990722"
+testMode: true
+turnTimeoutMs: 120000
+replyTimeoutMs: 180000
+
+setup:
+  userPatch:
+    source: "yc_startup_school"
+
+fixture:
+  userTags:
+    targetRoleFunction: ["software_engineering"]
+    skills: ["python", "react", "distributed_systems"]
+  cv:
+    candidateProfile:
+      name: "Probe Chen"
+    topSkills: ["python", "react", "distributed systems"]
+    experiences:
+      - title: "Software Engineer Intern"
+        company: "Stripe"
+        description: "Built an internal payments-reconciliation service processing 2M+ events/day; cut settlement mismatch triage time by 60% with an anomaly-clustering pipeline."
+      - title: "Research Assistant"
+        company: "UC Berkeley"
+        description: "Co-authored a systems paper on low-latency consensus; built the Raft-variant prototype in Rust used for all benchmarks."
+
+turns:
+  - user: "hey claire"
+    assert:
+      reply_min_length: 1
+      reply_not_contains_any:
+        - "what kind of role — software engineering, product, or data"
+        - "what kind of roles are you targeting"
+        - "connect your LinkedIn"
+        - "drop your résumé"
+        - "drop your resume"
+  - user: "wait, is this connected to that YC event? what even is Y Combinator lol"
+    assert:
+      reply_min_length: 1
+      reply_contains_any:
+        - "Y Combinator"
+        - "YC"
+      reply_not_contains_any:
+        - "we're part of Y Combinator"
+        - "we are part of Y Combinator"
+        - "our YC batch"
+  - user: "ok cool. do i need to do anything else to get matched with founders?"
+    assert:
+      reply_min_length: 1
+      reply_contains_any:
+        - "text"
+        - "email"
+        - "nothing"
+        - "ping"

@@ -38,6 +38,16 @@ function statusLabel(s: string): string {
   return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+function companySendLabel(s: string): string {
+  switch (s) {
+    case "sent": return "Sent to company"
+    case "waiting_hm": return "Waiting for hiring manager"
+    case "interested": return "Hiring manager interested"
+    case "passed": return "Hiring manager passed"
+    default: return statusLabel(s)
+  }
+}
+
 export default function SubmissionDetailPage() {
   const { submissionId } = useParams<{ submissionId: string }>()
   const { session, authReady } = useRecruiterSession()
@@ -199,6 +209,23 @@ export default function SubmissionDetailPage() {
                 <li key={i}>
                   <strong>{statusLabel(entry.status)}</strong>
                   <span>{formatDate(entry.atIso)}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {submission.companySends && submission.companySends.length > 0 && (
+          <section className="sd-card">
+            <h2>Companies</h2>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
+              {submission.companySends.map((s) => (
+                <li key={s.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                    <strong>{s.company}</strong>
+                    <span className="sd-badge">{companySendLabel(s.status)}</span>
+                  </div>
+                  {s.feedback && <p className="sd-muted" style={{ margin: "6px 0 0" }}>{s.feedback}</p>}
                 </li>
               ))}
             </ul>

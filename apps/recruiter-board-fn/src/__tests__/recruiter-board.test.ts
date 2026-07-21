@@ -1785,6 +1785,7 @@ describe("recruiter submissions", () => {
       email: "ADA@Example.com",
       link: "https://linkedin.com/in/ada",
       currentRole: "Staff Engineer",
+      compensationExpectation: "$180k-$220k",
     },
     checklist: { hard_1: true },
     candidateConsent: true,
@@ -1825,6 +1826,23 @@ describe("recruiter submissions", () => {
       ok: false,
       reason: "invalid_candidate_email",
     })
+  })
+
+  it("accepts missing expected salary range on recruiter submissions", () => {
+    const blankResult = validateSubmission({
+      ...validSubmission,
+      candidate: { ...validSubmission.candidate, compensationExpectation: " " },
+    })
+    assert.equal(blankResult.ok, true)
+    if (blankResult.ok) assert.equal(blankResult.value.candidate.compensationExpectation, undefined)
+
+    const { compensationExpectation: _salary, ...candidateWithoutSalary } = validSubmission.candidate
+    const missingResult = validateSubmission({
+      ...validSubmission,
+      candidate: candidateWithoutSalary,
+    })
+    assert.equal(missingResult.ok, true)
+    if (missingResult.ok) assert.equal(missingResult.value.candidate.compensationExpectation, undefined)
   })
 
   it("requires a LinkedIn profile URL and canonicalizes it for identity tracking", () => {
@@ -1903,6 +1921,7 @@ describe("recruiter submissions", () => {
         name: "Ada Lovelace",
         email: "ada@example.com",
         link: "https://linkedin.com/in/ada",
+        compensationExpectation: "$180k-$220k",
         yoe: " ",
       },
     })
@@ -1917,6 +1936,7 @@ describe("recruiter submissions", () => {
       email: "ada@example.com",
       link: "https://linkedin.com/in/ada",
       linkedinUrl: "https://linkedin.com/in/ada",
+      compensationExpectation: "$180k-$220k",
     })
   })
 
@@ -3236,7 +3256,7 @@ describe("checklist cell coercion", () => {
       jobId: "public-job-1",
       source: "hiring-board",
       submitter: { name: "Sloane", email: "sloane@agency.com" },
-      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada" },
+      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada", compensationExpectation: "$180k-$220k" },
       checklist: { hard_1: true, hard_2: false, fit_1: "strong" },
       candidateConsent: true,
     })
@@ -3252,7 +3272,7 @@ describe("checklist cell coercion", () => {
     const result = validateSubmission({
       jobId: "public-job-1",
       submitter: { name: "Sloane", email: "sloane@agency.com" },
-      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada" },
+      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada", compensationExpectation: "$180k-$220k" },
       checklist: { hard_1: "yes" },
       // intentionally no candidateConsent
     })
@@ -3265,7 +3285,7 @@ describe("checklist cell coercion", () => {
     const result = validateSubmission({
       jobId: "public-job-1",
       submitter: { name: "Sloane", email: "sloane@agency.com" },
-      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada" },
+      candidate: { name: "Ada", email: "ada@example.com", link: "https://linkedin.com/in/ada", compensationExpectation: "$180k-$220k" },
       checklist: {},
       candidateBackground: { school: "weak", company: "strong", gpa: "bogus", junkKey: "weak" },
     })
@@ -3297,6 +3317,7 @@ describe("candidate core cells", () => {
       name: "Ada Lovelace",
       email: "ada@example.com",
       link: "https://linkedin.com/in/ada",
+      compensationExpectation: "$180k-$220k",
     },
     checklist: { h1: true },
     candidateConsent: true,
@@ -3339,12 +3360,12 @@ describe("candidate core cells", () => {
       "location",
       "workAuthorization",
       "employmentStatus",
-      "compensationExpectation",
       "noticePeriod",
       "interviewAvailability",
     ]) {
       assert.equal(field in result.value.candidate, false, `${field} must be omitted`)
     }
+    assert.equal(result.value.candidate.compensationExpectation, "$180k-$220k")
   })
 
   it("rejects non-string or oversized core cells", () => {
@@ -3472,6 +3493,19 @@ describe("recruiter submission update validation", () => {
     }), {
       ok: false,
       reason: "candidate_linkedin_url_too_long",
+    })
+  })
+
+  it("allows clearing expected salary range on recruiter edits", () => {
+    assert.deepEqual(validateRecruiterSubmissionUpdateInput({
+      submissionId: "sub-1",
+      candidate: { compensationExpectation: "  " },
+    }), {
+      ok: true,
+      value: {
+        submissionId: "sub-1",
+        candidate: { compensationExpectation: "" },
+      },
     })
   })
 

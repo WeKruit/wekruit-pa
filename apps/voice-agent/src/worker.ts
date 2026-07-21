@@ -43,7 +43,7 @@ import {
 import { buildConsentPrompt } from "./consent-prompt.js"
 import { emitConsentSpokenAudit } from "./consent-audit.js"
 import { startRecordingEgress } from "./egress.js"
-import type { VoiceCallContext, VoicePrescreenCallContext } from "./voice-context-types.js"
+import type { VoiceCallContext, VoicePrescreenCallContext, VoiceUserProfile } from "./voice-context-types.js"
 import { WekruitLLM } from "./wekruit-llm.js"
 
 /**
@@ -69,7 +69,10 @@ export function buildDefaultLLM(): WekruitLLM {
 
 export interface StartWorkerOpts {
   /** Test seam — supply an alternative `defineAgent` impl. */
-  defineAgent?: (def: { entry: (ctx: AgentRuntimeCtx) => Promise<void> }) => unknown
+  defineAgent?: (def: {
+    entry: (ctx: AgentRuntimeCtx) => Promise<void>
+    prewarm?: (proc: { userData?: Record<string, unknown> }) => void | Promise<void>
+  }) => unknown
   /** Test seam — supply pre-loaded context (skips Firestore reads). */
   loadContext?: (bookingId: string) => Promise<VoiceCallContext>
   /** Test seam — pipeline factory. */
@@ -103,6 +106,10 @@ interface AgentRuntimeCtx {
    * session's room operations fail with WS 400 ("Unexpected server
    * response: 400") and no audio reaches the SIP leg. */
   connect?: () => Promise<void>
+  /** LK JobProcess shared store. prewarm() loads Silero VAD here once per
+   *  (pre-spawned) process so entry() doesn't pay the multi-second model load
+   *  on the call's critical path — the dominant chunk of time-to-first-speech. */
+  proc?: { userData?: Record<string, unknown> }
 }
 
 interface RemoteParticipantLike {
@@ -153,13 +160,35 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
 
   const defineAgent =
     opts.defineAgent ??
-    ((def: { entry: (ctx: AgentRuntimeCtx) => Promise<void> }) =>
-      livekitMod.defineAgent(def))
+    ((def: {
+      entry: (ctx: AgentRuntimeCtx) => Promise<void>
+      prewarm?: (proc: { userData?: Record<string, unknown> }) => void | Promise<void>
+    }) => livekitMod.defineAgent(def))
 
   const loadContext = opts.loadContext ?? defaultLoadContext
 
+  // ── PREWARM (Adam 2026-06-21) — load Silero VAD ONCE per pre-spawned process,
+  // not per call. The VAD ONNX model load was multiple seconds on the call's
+  // critical path (the bulk of the ~20s "dead air" after pickup). With a warm
+  // idle process (cli.ts numIdleProcesses), the dispatched job grabs a process
+  // whose VAD is already in proc.userData → entry() skips the load entirely.
+  const prewarm = async (proc: { userData?: Record<string, unknown> }) => {
+    try {
+      if (!sileroMod) return
+      const vad = await sileroMod.VAD.load()
+      proc.userData = proc.userData ?? {}
+      proc.userData.vad = vad
+      log("voice.worker.prewarm.vad_loaded", {})
+    } catch (err) {
+      log("voice.worker.prewarm.failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   // ── The actual LiveKit Agent definition ─────────────────────────────────
   const agent = defineAgent({
+    prewarm,
     entry: async (ctx: AgentRuntimeCtx) => {
       // Dispatch-time room info lives on `ctx.job.room` (proto JobInfo);
       // `ctx.room` is the rtc-node Room instance which is empty until
@@ -196,9 +225,14 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         return
       }
 
-      const pipeline = opts.buildPipeline
-        ? await opts.buildPipeline(callContext)
-        : await defaultBuildPipeline(callContext)
+      // know-you-better is CONVERSATIONAL (WekruitLLM generic drill persona) — it
+      // has no server-side turn pipeline, so we don't build one.
+      const isConversational = callContext.purpose === "know_you_better"
+      const pipeline = isConversational
+        ? undefined
+        : opts.buildPipeline
+          ? await opts.buildPipeline(callContext)
+          : await defaultBuildPipeline(callContext)
 
       // ── Build AgentSession via SDK ───────────────────────────────────────
       // Adaptive turn detection — MultilingualModel from the LiveKit SDK
@@ -208,6 +242,16 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       // Deferred terminal closer — set after the session exists so the pipeline
       // adapter's onPipelineTerminal can end the call once the final line plays.
       let closeForTerminal: () => Promise<void> = async () => {}
+      // Per-session time-budget cutoff (Adam 2026-06-21). Armed after the greeting;
+      // cleared whenever the call ends first (terminal / disconnect) so we never
+      // speak the "we're at time" close after a natural ending.
+      let callDeadlineTimer: ReturnType<typeof setTimeout> | undefined
+      const clearCallDeadline = () => {
+        if (callDeadlineTimer) {
+          clearTimeout(callDeadlineTimer)
+          callDeadlineTimer = undefined
+        }
+      }
       const lang = callContext.userProfile.preferredLang ?? "en"
       const pipelineSessionId =
         callContext.purpose === "prescreen" ? callContext.prescreenSessionId : callContext.bookingId
@@ -216,7 +260,11 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
       let session: any
       if (!opts.defineAgent) {
         const { voice, inference } = livekitMod
-        const vad = await sileroMod.VAD.load()
+        // Prefer the VAD prewarmed at process start; only load inline if this
+        // process wasn't prewarmed (cold spawn) — keeps it off the critical path.
+        const prewarmedVad = ctx.proc?.userData?.vad
+        const vad = prewarmedVad ?? (await sileroMod.VAD.load())
+        log("voice.worker.vad_source", { prewarmed: Boolean(prewarmedVad), bookingId })
         // P1 turn detector (Adam 2026-06-19): prefer the contextual end-of-utterance
         // model over plain VAD endpointing. Defensive — fall back to 'vad' if the
         // installed SDK doesn't expose inference.TurnDetector (no tsc safety here;
@@ -241,7 +289,12 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         // Deepgram, which AgentSession surfaces as `voice.error: 'Unexpected
         // server response: 400'` and immediately tears the session down
         // (no audio reaches the SIP candidate leg).
-        const tts = new deepgramMod.TTS({ model: "aura-asteria-en" })
+        // aura-2-luna-en (Adam 2026-06-21) — Aura-2 calm/consistent-pacing voice.
+        // speed=0.9 slows delivery (Deepgram speed range 0.7–1.5; in-range so it
+        // won't error). NOTE: Deepgram's speed param is Early Access — if the
+        // account isn't enabled it's ignored (tone unchanged), not an error.
+        // `model` is typed TTSModels|string so the aura-2 slug is accepted.
+        const tts = new deepgramMod.TTS({ model: "aura-2-luna-en" as string, speed: 0.9 })
         // P0 single-brain (Adam 2026-06-19): WekruitLLM in PIPELINE-ADAPTER mode is
         // the SOLE in-call brain — every spoken line is the real prescreen/onboarding
         // pipeline output (runPrescreenTurn + KeywordSet judge + clarify composer).
@@ -249,22 +302,28 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         // bug that produced repeated "that helps" filler over the real questions).
         const llm = opts.buildLLM
           ? opts.buildLLM()
-          : new WekruitLLM({
-              pipelineMode: {
-                voicePipeline: pipeline,
-                sessionId: pipelineSessionId,
-                userId: callContext.userProfile.userId,
-                lang,
-                redactProfile: callContext.userProfile,
-                terminalCloseText:
-                  lang === "zh"
-                    ? "好的，我需要的就这些了——非常感谢你抽时间。我们很快会再联系你。"
-                    : "That's everything I needed — thank you so much for your time. We'll be in touch shortly.",
-                onPipelineTerminal: async () => {
-                  await closeForTerminal()
+          : isConversational
+            ? // know-you-better: generic conversational brain. The drill persona +
+              // profile context + time budget live in the voice.Agent instructions
+              // (built below), which WekruitLLM reads as the system prompt. The call
+              // ends on the time-budget cutoff or hangup (no pipeline terminal).
+              new WekruitLLM({})
+            : new WekruitLLM({
+                pipelineMode: {
+                  voicePipeline: pipeline as VoicePipelineLite,
+                  sessionId: pipelineSessionId,
+                  userId: callContext.userProfile.userId,
+                  lang,
+                  redactProfile: callContext.userProfile,
+                  terminalCloseText:
+                    lang === "zh"
+                      ? "好啦，我想了解的就这些——真的很谢谢你抽时间跟我聊。我待会儿发短信告诉你下一步，好吗？"
+                      : "okay, that's everything on my end — i really appreciate you taking the time to talk. i'll text you the next steps in a bit, okay?",
+                  onPipelineTerminal: async () => {
+                    await closeForTerminal()
+                  },
                 },
-              },
-            })
+              })
         void inference
         session = new voice.AgentSession({ vad, turnDetection, stt, llm, tts })
       } else {
@@ -279,6 +338,7 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         }
       }
       closeForTerminal = async () => {
+        clearCallDeadline()
         try {
           await session.aclose?.()
         } catch (err) {
@@ -327,6 +387,7 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         },
         shutdown: async () => {
           log("voice.shutdown", { bookingId })
+          clearCallDeadline()
           try {
             await session.aclose?.()
           } catch {
@@ -348,9 +409,11 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         const { voice } = livekitMod
         conversationalAgent = new voice.Agent({
           instructions:
-            callContext.purpose === "onboarding"
-              ? "You are Claire, WeKruit's voice onboarding agent. Your job is to ask the short onboarding questions needed to understand the candidate. Speak warmly and concisely. Stay on the onboarding flow and do not recommend jobs during this call."
-              : "You are Claire, WeKruit's voice prescreen recruiter. Your job is to conduct a short structured prescreen for the candidate. Speak warmly and concisely. Begin by greeting the candidate, then ask the prescreen questions you've been given. Stay strictly on the prescreen plan — do not free-style about unrelated topics.",
+            callContext.purpose === "know_you_better"
+              ? buildKnowYouBetterInstructions(callContext.userProfile, callContext.timeBudgetSec ?? 360)
+              : callContext.purpose === "onboarding"
+                ? "You are Claire from WeKruit on a phone call — a warm, real person, NOT a form. Talk like a friend who happens to be great at this: short natural sentences, react to what they actually say, a little personality. You're getting to know the candidate. Keep it light and human, one thing at a time; never sound like you're reading a script."
+                : "You are Claire from WeKruit on a phone call — a warm, real recruiter, NOT a survey bot. Talk like a sharp friend in recruiting: short natural sentences, react to what they say, a touch of personality. Work through the prescreen you're given, but make it feel like a real conversation — never an interrogation, never robotic, one question at a time.",
           // "WeKruit" → "We-Cruit" (we + cruit as in re-cruit). Without the
           // remap, Deepgram aura pronounces the brand as a single mushed
           // syllable. Map applies before TTS synthesis to every variant.
@@ -402,21 +465,27 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           identity: candidateParticipantIdentity,
         })
       }
+      // 2s of intentional silence at the start of EVERY call (Adam 2026-06-22) so
+      // the greeting doesn't clip the candidate's "hello?". This is a deliberate
+      // beat — NOT the old dead-air bug (that was the 12s waitForSpeechPlayout block,
+      // now removed). The consent line is queued right after, no phantom wait.
+      if (!opts.defineAgent) {
+        await new Promise((r) => setTimeout(r, 2_000))
+      }
       const consentLine = buildConsentPrompt(callContext)
       try {
-        const speechHandle = session.say?.(consentLine, {
+        // Queue the consent line WITHOUT blocking on playout. The previous
+        // `await waitForSpeechPlayout(…, 12_000)` dead-aired the call for up to 12s
+        // whenever the SDK playout-complete event didn't fire — the real cause of
+        // the "20s to first message" (Adam 2026-06-22 live call: consent_prompt
+        // _failed:speech_playout_timeout). AgentSession serializes session.say()
+        // calls, so the Q1 kickoff below plays right after this — no phantom wait.
+        session.say?.(consentLine, {
           allowInterruptions: false,
           addToChatCtx: false,
         })
-        log("voice.consent_prompt_scheduled", {
-          bookingId,
-          lang: callContext.userProfile.preferredLang ?? "en",
-        })
-        await waitForSpeechPlayout(speechHandle, { timeoutMs: 12_000 })
         log("voice.consent_prompt_spoken", { bookingId, lang: callContext.userProfile.preferredLang ?? "en" })
-        // S5 — structured TCPA audit log capturing the consent-disclosure
-        // moment (paired with the prior-consent verification in
-        // voice-tcpa-checks/{bookingId}_<runId>).
+        // S5 — structured TCPA audit log capturing the consent-disclosure moment.
         emitConsentSpokenAudit(callContext, consentLine, log)
       } catch (err) {
         log("voice.consent_prompt_failed", {
@@ -439,11 +508,14 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
         } else {
           kickoff =
             lang === "zh"
-              ? "我们开始吧——先跟我说说你在找什么样的机会？"
-              : "Let's get started — tell me a bit about the kind of role you're looking for."
+              ? "那我们就先聊聊吧——你最近在找什么样的工作呀？"
+              : "so — tell me, what kind of role are you hoping to land next?"
         }
         if (kickoff) {
-          await session.say?.(kickoff, { allowInterruptions: true })
+          // Queue (don't await) so the entry fn proceeds to arm the budget timer;
+          // AgentSession plays it right after the consent line. Awaiting the say
+          // handle risked the same never-firing playout hang as the consent line.
+          session.say?.(kickoff, { allowInterruptions: true })
           log("voice.worker.first_question_spoken", { bookingId, purpose: callContext.purpose })
         }
       } catch (err) {
@@ -451,6 +523,37 @@ export async function startWorker(opts: StartWorkerOpts = {}): Promise<void> {
           bookingId,
           error: err instanceof Error ? err.message : String(err),
         })
+      }
+
+      // ── PER-SESSION TIME-BUDGET CUTOFF (Adam 2026-06-21) ─────────────────────
+      // Arm a graceful hard cap at the call's time budget. If the call runs long,
+      // Claire gives a warm close and we end the call (the post-call summary still
+      // sends). Cleared on any earlier ending (closeForTerminal / shutdown) so it
+      // never double-speaks. (Soft pacing — Claire wrapping herself up before this
+      // — rides on the conversational know-you-better mode that surfaces the
+      // remaining time to the LLM.)
+      if (!opts.defineAgent) {
+        const budgetSec = callContext.timeBudgetSec ?? 360
+        callDeadlineTimer = setTimeout(() => {
+          void (async () => {
+            log("voice.worker.time_budget_reached", { bookingId, budgetSec })
+            try {
+              const closeLine =
+                lang === "zh"
+                  ? "我们差不多到时间了——我会用短信跟你说下一步。今天非常感谢你抽时间！"
+                  : "we're about at time for today — i'll text you the next step. thanks so much for hopping on!"
+              const handle = session.say?.(closeLine, { allowInterruptions: false })
+              await waitForSpeechPlayout(handle, { timeoutMs: 8_000 })
+            } catch (err) {
+              log("voice.worker.time_budget_close_failed", {
+                bookingId,
+                error: err instanceof Error ? err.message : String(err),
+              })
+            }
+            await closeForTerminal()
+          })()
+        }, budgetSec * 1000)
+        log("voice.worker.time_budget_armed", { bookingId, budgetSec })
       }
     },
   })
@@ -492,6 +595,38 @@ function readBookingId(metadata?: string, roomName?: string): string {
   }
   if (roomName && roomName.length > 0) return roomName
   throw new Error("voice-agent: cannot resolve bookingId — neither room.metadata nor room.name is set")
+}
+
+/**
+ * Build the know-you-better drill persona (Adam 2026-06-21) — a warm,
+ * profile-grounded recruiter conversation: hybrid 2-3 anchored questions then a
+ * natural drill into the candidate's recent role / résumé, paced to the time
+ * budget. Exported for unit tests.
+ */
+export function buildKnowYouBetterInstructions(profile: VoiceUserProfile, budgetSec: number): string {
+  const minutes = Math.max(1, Math.round(budgetSec / 60))
+  const bits: string[] = []
+  if (profile.displayName) bits.push(`Name: ${profile.displayName}`)
+  if (profile.recentRoleTitle) {
+    bits.push(`Recent role: ${profile.recentRoleTitle}${profile.recentCompany ? ` at ${profile.recentCompany}` : ""}`)
+  }
+  if (profile.workHistorySummary) bits.push(`Background: ${profile.workHistorySummary}`)
+  const skillNames = (profile.skills ?? []).map((s) => s.name).filter(Boolean).slice(0, 8)
+  if (skillNames.length) bits.push(`Skills on file: ${skillNames.join(", ")}`)
+  if (profile.yoeRange) bits.push(`Years of experience: ~${profile.yoeRange[0]}-${profile.yoeRange[1]}`)
+  if (profile.targetRoleFunction?.length) bits.push(`Open to: ${profile.targetRoleFunction.join(", ")}`)
+  if (profile.targetLocations?.length) bits.push(`Locations: ${profile.targetLocations.join(", ")}`)
+  const known = bits.length
+    ? bits.join("\n")
+    : "(we have very little on file yet — use this call to learn the basics)"
+  return [
+    "You are Claire from WeKruit on a warm, friendly 'get to know you' phone call — like a recruiter friend catching up, not an interrogation.",
+    "What we already know about the candidate:",
+    known,
+    `You have about ${minutes} minute(s) for this call. PACE YOURSELF: go deeper early; as you near the end, wrap up warmly (e.g. "this was great — I'll text you the next steps"). One short question at a time; speak naturally for voice (no lists).`,
+    "FLOW (hybrid): (1) Warm hello, then 2-3 quick anchored questions — what kind of role they're looking for and what matters most to them. (2) Then DRILL into their actual background: reference their recent role / company / skills above and ask natural follow-ups — 'I saw you worked on X at Y, walk me through that', 'what did you own?', 'what are you most proud of?'. (3) Fill the gaps in what we know (recent work, what they want next, location, timing).",
+    "Do NOT score or judge them, and do NOT recommend specific jobs on this call — that comes later by text. Be warm, curious, human. If they go quiet, gently prompt.",
+  ].join("\n")
 }
 
 export async function waitForRemoteParticipant(
@@ -576,23 +711,33 @@ export async function defaultLoadContext(bookingId: string): Promise<VoiceCallCo
   }
   const data = (await res.json()) as {
     bookingId: string
-    purpose?: "prescreen" | "onboarding"
+    purpose?: "prescreen" | "onboarding" | "know_you_better"
+    timeBudgetSec?: number
     userProfile: VoiceCallContext["userProfile"]
     prescreenSessionId?: string
     jobBrief?: unknown
     prescreenConfig?: unknown
   }
-  const purpose = data.purpose === "onboarding" ? "onboarding" : "prescreen"
-  if (purpose === "onboarding") {
+  const purpose =
+    data.purpose === "onboarding"
+      ? "onboarding"
+      : data.purpose === "know_you_better"
+        ? "know_you_better"
+        : "prescreen"
+  const timeBudgetSec =
+    typeof data.timeBudgetSec === "number" && data.timeBudgetSec > 0 ? data.timeBudgetSec : undefined
+  if (purpose === "onboarding" || purpose === "know_you_better") {
     return {
       bookingId: data.bookingId,
       purpose,
+      ...(timeBudgetSec ? { timeBudgetSec } : {}),
       userProfile: data.userProfile,
     }
   }
   return {
     bookingId: data.bookingId,
     purpose,
+    ...(timeBudgetSec ? { timeBudgetSec } : {}),
     prescreenSessionId: data.prescreenSessionId ?? data.bookingId,
     userProfile: data.userProfile,
     jobBrief: data.jobBrief as VoicePrescreenCallContext["jobBrief"],

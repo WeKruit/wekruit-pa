@@ -255,3 +255,29 @@ test("scalar axes: null / absent proposals never clobber stored values", () => {
   assert.equal(next.minSalary, 140000)
   assert.equal(next.careerStage, "senior")
 })
+
+// yoeRange — explicit YoE correction (2026-06-19). "3 to 4 years" must be a
+// durable tuple, not collapse to a scalar careerStage (the silently-dropped bug).
+test("yoeRange: a stated [min,max] REPLACES and is normalized lo..hi", () => {
+  const { next, changed } = reduceMatchingPreferences({}, { yoeRange: [4, 3] })
+  assert.deepEqual(changed.yoeRange, [3, 4], "endpoints normalized lo..hi")
+  assert.deepEqual(next.yoeRange, [3, 4])
+})
+
+test("yoeRange: restating the same range (any order) is a no-op", () => {
+  const { changed } = reduceMatchingPreferences({ yoeRange: [3, 4] }, { yoeRange: [3, 4] })
+  assert.deepEqual(changed, {}, "identical yoeRange must not change anything")
+})
+
+test("yoeRange: null / malformed proposal never clobbers a stored range", () => {
+  const { next, changed } = reduceMatchingPreferences(
+    { yoeRange: [3, 4] },
+    { yoeRange: null },
+  )
+  assert.deepEqual(changed, {})
+  assert.deepEqual(next.yoeRange, [3, 4])
+  // malformed (single negative / NaN endpoints) is ignored too.
+  const bad = reduceMatchingPreferences({ yoeRange: [3, 4] }, { yoeRange: [-1, 2] as never })
+  assert.deepEqual(bad.changed, {})
+  assert.deepEqual(bad.next.yoeRange, [3, 4])
+})

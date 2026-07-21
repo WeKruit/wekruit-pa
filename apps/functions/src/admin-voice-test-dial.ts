@@ -31,8 +31,11 @@ const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
 const InputSchema = z.object({
   paUserId: z.string().min(8).max(128),
-  paJobId: z.string().min(1).max(256),
+  // Required only for prescreen calls; onboarding / know_you_better are not job-tied.
+  paJobId: z.string().min(1).max(256).optional(),
   toNumber: z.string().regex(/^\+[1-9]\d{6,14}$/, "must be +E.164"),
+  purpose: z.enum(["prescreen", "onboarding", "know_you_better"]).optional(),
+  timeBudgetSec: z.number().int().positive().max(1800).optional(),
   adminToken: z.string().optional(),
 })
 
@@ -68,24 +71,26 @@ export const paAdminVoiceTestDial = onCall(
     if (!parsed.success) {
       throw new HttpsError("invalid-argument", parsed.error.message)
     }
-    const { paUserId, paJobId, toNumber } = parsed.data
+    const { paUserId, paJobId, toNumber, timeBudgetSec } = parsed.data
+    const purpose = parsed.data.purpose ?? "prescreen"
+    if (purpose === "prescreen" && !paJobId) {
+      throw new HttpsError("invalid-argument", "paJobId is required for a prescreen call")
+    }
 
     const db = getFirestore()
 
     // Validate the upstream identities exist. Skip the bulk-resume /
-    // anonymous-application paths; this is admin-driven smoke.
-    const [userSnap, jobSnap] = await Promise.all([
-      db.collection("pa-users").doc(paUserId).get(),
-      db.collection("matching-jobs").doc(paJobId).get(),
-    ])
+    // anonymous-application paths; this is admin-driven smoke. The job is only
+    // validated for prescreen (onboarding / know_you_better are not job-tied).
+    const userSnap = await db.collection("pa-users").doc(paUserId).get()
     if (!userSnap.exists) {
       throw new HttpsError("not-found", `pa-users/${paUserId} not found`)
     }
-    if (!jobSnap.exists) {
-      throw new HttpsError(
-        "not-found",
-        `matching-jobs/${paJobId} not found`,
-      )
+    if (paJobId) {
+      const jobSnap = await db.collection("matching-jobs").doc(paJobId).get()
+      if (!jobSnap.exists) {
+        throw new HttpsError("not-found", `matching-jobs/${paJobId} not found`)
+      }
     }
 
     // Dupe-suppression — single-field equality + in-memory time filter
@@ -98,13 +103,14 @@ export const paAdminVoiceTestDial = onCall(
       .limit(20)
       .get()
     for (const d of dupeSnap.docs) {
-      const data = d.data() as { paJobId?: string; createdAt?: string }
-      if (data.paJobId !== paJobId) continue
+      const data = d.data() as { paJobId?: string; purpose?: string; createdAt?: string }
+      // Same user+job (prescreen) or same user+purpose (non-job calls) within 60s.
+      if (paJobId ? data.paJobId !== paJobId : (data.purpose ?? "prescreen") !== purpose) continue
       const t = data.createdAt ? Date.parse(data.createdAt) : 0
       if (t >= sixtyAgoMs) {
         throw new HttpsError(
           "already-exists",
-          `recent booking exists for this user+job (id=${d.id})`,
+          `recent booking exists for this user (id=${d.id})`,
         )
       }
     }
@@ -117,7 +123,9 @@ export const paAdminVoiceTestDial = onCall(
     // "dialing" satisfies that (before is undefined).
     await db.collection("outbound-bookings").doc(bookingId).set({
       paUserId,
-      paJobId,
+      ...(paJobId ? { paJobId } : {}),
+      purpose,
+      ...(timeBudgetSec ? { timeBudgetSec } : {}),
       phoneE164: toNumber,
       voiceState: "dialing",
       voiceCallSid: null,

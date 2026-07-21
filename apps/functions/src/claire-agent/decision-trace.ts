@@ -53,6 +53,13 @@ export interface DecisionTrace {
   suppressed: boolean
   /** per-turn token usage when it surfaced (absent on tripwire/error paths). */
   usage?: ClaireTurnUsage
+  /** which model served the reply — CLAIRE_MODEL (primary) or CLAIRE_FALLBACK_MODEL (provider-fallback
+   *  retry). Absent on legacy/older traces. Lets a single pa-turns read show "this turn fell back". */
+  servedByModel?: string
+  /** coarse error code when the turn errored / used the fallback (absent on a clean primary turn). */
+  errorCode?: string
+  /** underlying provider error message(s) for the errored/fallback turn (absent on a clean turn). */
+  errorMessage?: string
   handledBy: "thin_claire"
   createdAt: string
 }
@@ -73,6 +80,9 @@ export interface BuildDecisionTraceInput {
         toolCalls?: unknown
         deliveredViaTool?: boolean
         usage?: ClaireTurnUsage
+        servedByModel?: string
+        errorCode?: string
+        errorMessage?: string
       }
     | undefined
   nowIso: string
@@ -161,5 +171,8 @@ export function buildDecisionTrace(input: BuildDecisionTraceInput): DecisionTrac
     createdAt: input.nowIso,
   }
   if (tr.usage) trace.usage = tr.usage
+  if (typeof tr.servedByModel === "string" && tr.servedByModel !== "") trace.servedByModel = tr.servedByModel
+  if (typeof tr.errorCode === "string" && tr.errorCode !== "") trace.errorCode = tr.errorCode
+  if (typeof tr.errorMessage === "string" && tr.errorMessage !== "") trace.errorMessage = tr.errorMessage
   return trace
 }

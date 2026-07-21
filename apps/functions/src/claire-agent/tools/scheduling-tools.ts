@@ -146,8 +146,15 @@ function resolveJobId(ctx: ClaireToolContext): string {
  * resolveJobId() would return "unknown_job" and key the booking doc on a
  * DIFFERENT, empty doc (the offer was persisted under the real jobId). So when
  * the turn has no usable ctx.jobId, find the candidate's most-recent live
- * scheduling doc (status offered/booked/failed) and reuse ITS jobId. Fail-soft:
- * any query error → falls back to resolveJobId(ctx) ("unknown_job").
+ * scheduling doc and reuse ITS jobId.
+ *
+ * Status set includes "confirmed" — a booking flips offered→booked→confirmed
+ * once the WeKruit confirmation email sends in bookInterviewSlotCore. Omitting
+ * it meant a fully-confirmed booking could no longer be recovered on a later
+ * TRIAGE turn (candidate re-asking about their interview, or a headhunter
+ * runBookInterviewSlot with jobId omitted) → fell back to "unknown_job" → read
+ * an empty doc → slot_not_offered. Firestore `in` allows up to 10 values; 4 is
+ * fine. Fail-soft: any query error → falls back to resolveJobId(ctx).
  */
 async function resolveActiveSchedulingJobId(ctx: ClaireToolContext): Promise<string> {
   const direct = resolveJobId(ctx)
@@ -156,7 +163,7 @@ async function resolveActiveSchedulingJobId(ctx: ClaireToolContext): Promise<str
     const snap = await ctx.db
       .collection(INTERVIEW_BOOKINGS_COLLECTION)
       .where("userId", "==", ctx.userId)
-      .where("status", "in", ["offered", "booked", "failed"])
+      .where("status", "in", ["offered", "booked", "confirmed", "failed"])
       .get()
     if (snap.empty) return direct
     // Most-recently updated wins (in-memory sort; the Cal.com tools write a

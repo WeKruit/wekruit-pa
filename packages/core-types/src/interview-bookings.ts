@@ -115,13 +115,16 @@ export const InterviewBookingSchema = z.object({
 export type InterviewBooking = z.infer<typeof InterviewBookingSchema>
 
 /**
- * Sanitize a free-form id segment to a Firestore-safe slug. Lowercases,
- * replaces anything that is not `[a-z0-9]` with `-`, and collapses repeats.
+ * Sanitize a free-form id segment to a Firestore-safe slug. CASE-PRESERVING:
+ * replaces anything that is not `[A-Za-z0-9]` with `-`, collapses repeats, and
+ * trims leading/trailing `-`. Case is RETAINED so two Firebase auto-ids that
+ * differ ONLY by letter-case map to DISTINCT booking docs (see
+ * `interviewBookingDocId`). MUST stay byte-identical to the `slugifySegment`
+ * copy in `apps/functions/scripts/migrate-interview-bookings-docid-case.mjs`.
  */
 function slugifySegment(value: string): string {
   return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/[^A-Za-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .replace(/-{2,}/g, "-")
 }
@@ -130,6 +133,17 @@ function slugifySegment(value: string): string {
  * Cal.com booking doc id — `calbk-${userId}__${jobId}` (slugified). DISTINCT
  * namespace from the legacy `booking-...` doc id so the two producers never
  * collide. One booking doc per (user × job).
+ *
+ * CASE-SENSITIVITY (LOCKED 2026-06-26): `slugifySegment` PRESERVES letter-case,
+ * so two distinct case-sensitive Firebase auto-ids that differ ONLY by case map
+ * to DISTINCT booking docs — matching the case-sensitive `pa-users` / `pa-jobs`
+ * id space and the sibling builders `createCandidateJobStateId` /
+ * `safeInternalIdPart` (marketplace.ts). An earlier revision LOWERCASED here,
+ * which folded case and (theoretically) let two distinct ids share one doc; the
+ * one-shot `scripts/migrate-interview-bookings-docid-case.mjs` rewrote the
+ * lowercased legacy docs to this case-preserving scheme. Do NOT reintroduce
+ * `.toLowerCase()` in the id path without re-migrating existing docs (it would
+ * orphan every doc whose source ids contain uppercase).
  */
 export function interviewBookingDocId(args: { userId: string; jobId: string }): string {
   return `calbk-${slugifySegment(args.userId)}__${slugifySegment(args.jobId)}`

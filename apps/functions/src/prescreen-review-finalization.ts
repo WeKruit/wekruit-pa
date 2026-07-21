@@ -1,6 +1,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import {
   prescreenReviewPendingAckText,
+  prescreenReviewPendingNotPassAckText,
   prescreenSessionToEvaluationAttempt,
   type PreScreenState,
 } from "@pa/pa-orchestrator"
@@ -53,6 +54,12 @@ export async function finalizePrescreenForHumanReview(args: {
 }> {
   const log = args.log ?? (() => {})
   const nowIso = args.state.updatedAt ?? new Date().toISOString()
+  // cold_prescreen_no_profile (set at session start when the candidate had no
+  // résumé/LinkedIn/skills on file). A near-guaranteed HARD_STOP for such a
+  // candidate is structurally low-confidence — surface it so the reviewer /
+  // auto-draft does NOT treat a blind rejection as a real "no".
+  const lowConfidenceColdProfile =
+    (args.state as unknown as { lowConfidenceColdProfile?: boolean }).lowConfidenceColdProfile === true
   await writePrescreenMemoryUpdate({
     db: args.db,
     sessionId: args.state.sessionId,
@@ -81,7 +88,14 @@ export async function finalizePrescreenForHumanReview(args: {
     occurredAt: nowIso,
   })
 
-  const pendingAckText = prescreenReviewPendingAckText(args.lang)
+  // VERDICT-AWARE candidate ack (live bug 2026-06-19): a NOT_PASS (FAIL / HARD_STOP) outcome held for
+  // human review MUST NOT get the "pitch you to the hiring manager / nice work" PASS framing — that
+  // reads as a fabricated pass on a rejection (+13055102017: 0/7.5 HARD_STOP told we were pitching
+  // them). ONLY a real PASS gets the pitch framing; NOT_PASS gets warm, honest holding copy.
+  const pendingAckText =
+    args.terminal === "PASS"
+      ? prescreenReviewPendingAckText(args.lang)
+      : prescreenReviewPendingNotPassAckText(args.lang)
   const sendResult = await (args.sendSms ?? sendRuntimeApprovedIMessage)({
     to: args.toE164,
     content: pendingAckText,
@@ -103,6 +117,7 @@ export async function finalizePrescreenForHumanReview(args: {
         pendingAt: nowIso,
         updatedAt: nowIso,
         ...(pendingAckOutboundId ? { pendingAckOutboundId } : {}),
+        ...(lowConfidenceColdProfile ? { lowConfidenceColdProfile: true } : {}),
       },
       updatedAt: nowIso,
     },

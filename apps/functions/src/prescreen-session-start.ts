@@ -26,6 +26,7 @@ import {
 import { readUserPrescreenSharedAnswers, AI_USAGE_SHARED_KEY } from "@pa/pa-orchestrator"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { markFirstInterviewStarted } from "./prescreen-outcome-service.js"
+import { hasResumeOrLinkedInProfileSignal } from "./prescreen-terminal-action.js"
 import { isClaireEntryUxCanary } from "./claire-agent/canary.js"
 import { isEnrichmentInFlight } from "./claire-agent/enrichment-inflight.js"
 import {
@@ -129,6 +130,14 @@ export interface RunPreScreenResult {
      * a pending start instead of creating a half-context prescreen session.
      */
     | "readiness_hold"
+    /**
+     * Candidate reached a STRICT screen (MUST_HAVE/PROBING) with NO résumé/LinkedIn on file and no
+     * enrichment running (live victim Khloë 2026-06-21: token-pasted → account created → strict
+     * HARD_STOP in 77s, never uploaded a résumé). Screening blind is structurally meaningless and
+     * produces a fabricated rejection. Claire asks for the résumé/LinkedIn first and stores a
+     * waiting_profile pending start; cutover's continuation auto-starts the screen once it lands.
+     */
+    | "awaiting_profile"
   sessionId: string
   firstQuestionSent?: boolean
 }
@@ -593,6 +602,85 @@ async function maybeHoldForProfileReadiness(args: {
   return { ok: false, reason: "readiness_hold", sessionId: args.sessionId, firstQuestionSent: false }
 }
 
+/**
+ * Ask for a résumé/LinkedIn BEFORE running a strict screen on a candidate with no profile on file.
+ * The public job page mints the start token AFTER a résumé upload, so reaching a strict screen with
+ * ZERO profile is an anomaly (token-paste / phone-is-auth start that bypassed the upload gate — live
+ * victim Khloë 2026-06-21). Screening blind → un-scorable rubric → fabricated HARD_STOP. Instead store
+ * a waiting_profile pending start and ask for the résumé; cutover's resume continuation auto-starts the
+ * screen WITH context once it lands. Fleet-wide (NOT canary-gated). Only fires for screens that have a
+ * gating (MUST_HAVE/PROBING) question — lightweight intake-only screens don't need a résumé first.
+ */
+export const PROFILE_MISSING_HOLD_COPY =
+  "before i run this screen i need a bit of background so i ask the right questions — share your résumé (or your LinkedIn URL) here and i'll start it with real context. (this keeps the screen fair instead of guessing.)"
+
+async function maybeHoldForMissingProfile(args: {
+  db: Firestore
+  userId: string
+  jobId: string
+  toE164: string
+  hasGatingQuestion: boolean
+  suppressFirstQuestion?: boolean
+  sessionId: string
+  nowIso: string
+  sendSms: RuntimeSmsSender
+  log: (event: string, payload: Record<string, unknown>) => void
+}): Promise<RunPreScreenResult | null> {
+  if (args.suppressFirstQuestion) return null
+  if (!args.hasGatingQuestion) return null
+
+  const userRef = args.db.collection("pa-users").doc(args.userId)
+  const userSnap = await userRef.get()
+  const user = (userSnap.exists ? userSnap.data() : {}) ?? {}
+  // Scope to the C-end candidate population (source:"candidate") — exactly who goes through the
+  // public job page's résumé-upload gate, so a missing résumé here is the token-paste anomaly. Other
+  // sources (recruiter upload, external LinkedIn supply) have their own intake + identity evidence.
+  if (user.source !== "candidate") return null
+  // Has a profile, or enrichment is actively running → proceed (the readiness hold / normal flow
+  // covers the in-flight case; a present résumé is exactly what makes the screen scorable).
+  if (hasResumeOrLinkedInProfileSignal(user)) return null
+  if (isEnrichmentInFlight(user)) return null
+
+  const pendingStart = {
+    status: "waiting_profile",
+    reason: "missing_profile",
+    userId: args.userId,
+    jobId: args.jobId,
+    toE164: args.toE164,
+    createdAt: args.nowIso,
+    updatedAt: args.nowIso,
+  }
+  // Idempotent: if a missing-profile hold for this job is already pending, just stay held (do NOT
+  // start blind on a re-paste — unlike the in-flight readiness hold, here we genuinely have no résumé).
+  const existing = readPendingPrescreenStart(user as Record<string, unknown>)
+  const alreadyWaiting =
+    existing && existing.status === "waiting_profile" && existing.jobId === args.jobId
+  if (!alreadyWaiting) {
+    await userRef.set({ pendingPrescreenStart: pendingStart, updatedAt: args.nowIso }, { merge: true })
+  }
+
+  try {
+    await args.sendSms({
+      to: args.toE164,
+      content: PROFILE_MISSING_HOLD_COPY,
+      userId: args.userId,
+      db: args.db,
+      runtimeSource: "pa_prescreen_runtime",
+      idempotencyKey: `prescreen_missing_profile_hold:${args.jobId}:${args.userId}`,
+    })
+  } catch (err) {
+    args.log("prescreen.profile_missing_hold_send_failed", {
+      userId: args.userId,
+      jobId: args.jobId,
+      error: errorMessage(err),
+    })
+    return { ok: false, reason: "send_failed", sessionId: args.sessionId, firstQuestionSent: false }
+  }
+
+  args.log("prescreen.profile_missing_hold", { userId: args.userId, jobId: args.jobId })
+  return { ok: false, reason: "awaiting_profile", sessionId: args.sessionId, firstQuestionSent: false }
+}
+
 export async function resumePendingProfileReadinessPrescreenStart(args: {
   db: Firestore
   userId: string
@@ -905,6 +993,26 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
       log,
     })
     if (hold) return hold
+
+    // Khloë 2026-06-21 — a candidate with NO résumé/LinkedIn must not be run through a STRICT screen
+    // blind (token-paste bypassed the public-page upload gate → un-scorable rubric → fabricated
+    // HARD_STOP). Ask for the résumé first; the screen auto-starts once it lands.
+    const hasGatingQuestion = cfg.questions.some(
+      (q) => q.type === "MUST_HAVE" || q.type === "PROBING",
+    )
+    const missingProfileHold = await maybeHoldForMissingProfile({
+      db: args.db,
+      userId: args.userId,
+      jobId: args.jobId,
+      toE164: args.toE164,
+      hasGatingQuestion,
+      suppressFirstQuestion: args.suppressFirstQuestion,
+      sessionId,
+      nowIso,
+      sendSms,
+      log,
+    })
+    if (missingProfileHold) return missingProfileHold
   }
 
   // 1.5 RULE 2 race-closer (2026-06-11: one sweep run created THREE sessions
@@ -978,9 +1086,25 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
     maxClarifyRounds: Math.max(effectiveCfg.maxClarifyRounds, MIN_PRESCREEN_PROBE_ROUNDS),
     nowIso,
   })
+  // cold_prescreen_no_profile flag (live victims Khloë/Robert 2026-06-19): a
+  // candidate with NO résumé/LinkedIn/skills on file token-pasted into a strict
+  // MUST_HAVE screen is structurally hard to score → near-guaranteed HARD_STOP
+  // that the operator should NOT read as a real reject. Flag the session so the
+  // human-review record / auto-draft is marked low-confidence. Best-effort; a
+  // read failure just leaves the flag off. (Does NOT change terminal routing —
+  // the deeper "collect résumé before screening" flow is an Adam decision.)
+  let lowConfidenceColdProfile = false
+  try {
+    const startUserSnap = await args.db.collection("pa-users").doc(args.userId).get()
+    const startUser = (startUserSnap.data() ?? {}) as Record<string, unknown>
+    lowConfidenceColdProfile = !hasResumeOrLinkedInProfileSignal(startUser)
+  } catch {
+    // default false — never block the start
+  }
   await sessRef.set({
     ...state,
     cfgSnapshot: effectiveCfg, // snapshot of (augmented) config at session start
+    ...(lowConfidenceColdProfile ? { lowConfidenceColdProfile: true } : {}),
     e164: args.toE164,
     workSession: {
       kind: "job_prescreen",

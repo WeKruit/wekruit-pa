@@ -33,18 +33,22 @@ const CACHE_COLLECTION = "pa-recruiter-submissions-list-cache"
 // stale browse should self-heal within a minute (the client also patches its
 // own cache on each status mutation).
 const CACHE_TTL_MS = 60_000
-const CACHE_VERSION = "v1"
+const CACHE_VERSION = "v2"
 
 // Only the fields the table columns, search, and filter chips read. Nested
 // paths keep the payload tiny — the heavy aiEvaluation / statusHistory /
 // candidateBackground / candidate.notes are deliberately excluded (the drawer
 // fetches the full doc on open).
 const SELECT_FIELDS = [
+  "recruiterId",
+  "recruiterEmail",
   "submitter.name",
   "submitter.email",
   "candidate.name",
   "candidate.email",
   "candidate.link",
+  "candidate.linkedinUrl",
+  "candidate.resumeUrl",
   "jobId",
   "inboundJobId",
   "jobTitleSnapshot",
@@ -58,7 +62,16 @@ const SELECT_FIELDS = [
   "recruiterFeedbackNote",
   "recruiterFeedbackRating",
   "recruiterFeedbackReasons",
+  "recruiterFeedbackUpdatedAt",
+  "adminDecision",
+  "requestedInfo",
+  "adminCommentCount",
+  "adminLastCommentAt",
+  "companySends",
   "recruiterPayout",
+  // Stored eval-attempt stamp — the drawer reads it; without it the client used
+  // to recompute a sha256 (server-only) and white-screen.
+  "evaluationAttemptId",
 ] as const
 
 export const AdminRecruiterSubmissionsListInputSchema = z.object({
@@ -110,13 +123,14 @@ export async function runAdminRecruiterSubmissionsList(
   const snap = await deps.db.collection(SUBMISSIONS_COLLECTION).select(...SELECT_FIELDS).limit(SCAN_CAP).get()
   const rows = snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>
-    const { createdAt, sheetSyncedAt, ...rest } = data
+    const { createdAt, sheetSyncedAt, recruiterFeedbackUpdatedAt, ...rest } = data
     return {
       id: d.id,
       ...rest,
       // {seconds} plain objects → JSON-safe + back-compatible with the client.
       createdAt: toSecondsObj(createdAt),
       sheetSyncedAt: toSecondsObj(sheetSyncedAt),
+      recruiterFeedbackUpdatedAt: toSecondsObj(recruiterFeedbackUpdatedAt),
     }
   })
   return {

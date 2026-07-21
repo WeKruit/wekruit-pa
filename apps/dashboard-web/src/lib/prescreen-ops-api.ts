@@ -27,6 +27,8 @@ export const PRESCREEN_OPS_SNAPSHOT_CALLABLE = "paAdminPrescreenOpsSnapshot"
 
 export type PrescreenOpsSessionsPageInput = {
   jobId?: string
+  /** Restrict to these candidate userIds (Algolia name → pa_candidates objectIDs). */
+  userIds?: string[]
   queue?: PrescreenOpsQueueFilter
   bucket?: string
   includeTest?: boolean
