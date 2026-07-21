@@ -33,6 +33,7 @@
 import { randomUUID } from "node:crypto"
 import { initializeApp, cert, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
+import { getAuth } from "firebase-admin/auth"
 import { readFileSync } from "node:fs"
 
 const PROJECT = "wekruit-5f89b"
@@ -206,10 +207,12 @@ async function sendTurn({ participant, chatId, text, candidateId }) {
 }
 
 async function simulateUser(i) {
-  const persona = PERSONAS[(i - 1) % PERSONAS.length]
+  const persona = process.env.SIM_FIRST
+    ? { first: process.env.SIM_FIRST, last: process.env.SIM_LAST ?? "Sim-Test", resume: PERSONAS[0].resume }
+    : PERSONAS[(i - 1) % PERSONAS.length]
   const stamp = Date.now().toString(36)
   const email = `yc-sim-${stamp}-${i}@wekruit-e2e.test`
-  const phone = `+1999999074${i}`
+  const phone = `+1999999076${i}`
   const chatId = `iMessage;${phone}`
   const report = { user: `${persona.first} ${persona.last}`, phone, checks: [], transcript: [] }
   const check = (name, ok, detail = "") => report.checks.push(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`)
@@ -242,10 +245,29 @@ async function simulateUser(i) {
   check("pa-users.source === yc_startup_school", afterReg.source === "yc_startup_school", String(afterReg.source))
 
   // 2. REAL résumé ingest through the deployed public endpoint (real LLM parse).
-  const pdf = buildResumePdf(persona.resume)
-  const cvRes = await fetch(CF("paPublicCvIngest"), {
+  // The endpoint requires a signed-in candidate (Firebase ID token + the
+  // pa-candidate-auth mapping the login flow writes). Simulate the POST-LOGIN
+  // state: admin custom token -> ID token exchange + the auth mapping doc.
+  const authUid = `sim-auth-${candidateId}`
+  await db.collection("pa-candidate-auth").doc(authUid).set({
+    firebaseUid: authUid,
+    candidateId,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  }, { merge: true })
+  const customToken = await getAuth().createCustomToken(authUid)
+  const apiKey = (readFileSync("apps/pa-landing/.env.production.local", "utf8").match(/^VITE_FIREBASE_API_KEY=(.+)$/m) ?? [])[1]
+  const tokRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${apiKey}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+  })
+  const idToken = (await tokRes.json())?.idToken
+  check("auth session minted (post-login state)", typeof idToken === "string" && idToken.length > 0)
+  const pdf = process.env.SIM_PDF ? readFileSync(process.env.SIM_PDF) : buildResumePdf(persona.resume)
+  const cvRes = await fetch(CF("paPublicCvIngest"), {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${idToken}` },
     body: JSON.stringify({
       userId: candidateId,
       resumeBase64: pdf.toString("base64"),
@@ -269,7 +291,7 @@ async function simulateUser(i) {
   check("résumé parsed (topSkills)", Boolean(parsed), parsed ? parsed.topSkills.slice(0, 4).join(", ") : "no parse")
 
   // 3+4. First text = the bind-code opener from a brand-new phone, then the conversation.
-  const opener = `Hi, WeKruit, my code is ${reg.bindCode}`
+  const opener = `Hi, WeKruit, my verification code is ${reg.bindCode}`
   const turnTexts = [opener, ...TURNS.slice(1)]
   for (let t = 0; t < turnTexts.length; t++) {
     const text = turnTexts[t]
@@ -284,8 +306,12 @@ async function simulateUser(i) {
   }
 
   const allReplies = report.transcript.flatMap((t) => t.claire).join("\n")
-  check("no onboarding wall", !/what kind of role — software engineering, product, or data/i.test(allReplies))
-  check("no 'pitch' framing in any reply", !/pitch/i.test(allReplies))
+  if (allReplies.length === 0) {
+    check("conversation checks", false, "VACUOUS — no reply bubbles captured")
+  } else {
+    check("no onboarding wall", !/what kind of role — software engineering, product, or data/i.test(allReplies))
+    check("no OWNING pitch framing (negating the user's word is fine)", !/(your pitch\b|added .{0,40}pitch|pitch (deck|ready))/i.test(allReplies))
+  }
   return report
 }
 
