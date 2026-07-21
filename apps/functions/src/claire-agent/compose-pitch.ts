@@ -689,11 +689,19 @@ export async function composePitchTurn(
   // CONFIRMATION — when a rich résumé is in play (whether this is the candidate's FIRST pitch or an
   // IMPROVEMENT of an earlier one), acknowledge the RÉSUMÉ and that we ADDED the technical detail (Adam:
   // it's an improvement, not a re-pitch). LinkedIn-only keeps the original opener.
-  let confirmation = resumeIsRich
-    ? "got it — went through your résumé, added the technical detail to your pitch 👍"
-    : profile.recentCompany
-      ? `got it — pulled your full ${profile.recentCompany} experience from linkedin 👍`
-      : "got it — pulled your experience from linkedin 👍"
+  // YC posture NEVER frames the read-back as "your pitch" (Adam 2026-07-20: founder
+  // matching is not pitch-coaching) — it's "here's what stands out", then the pool promise.
+  let confirmation = ycPosture
+    ? resumeIsRich
+      ? "got it — read through your résumé, here's what stands out 👀"
+      : profile.recentCompany
+        ? `got it — pulled your ${profile.recentCompany} experience, here's what stands out 👀`
+        : "got it — pulled your experience, here's what stands out 👀"
+    : resumeIsRich
+      ? "got it — went through your résumé, added the technical detail to your pitch 👍"
+      : profile.recentCompany
+        ? `got it — pulled your full ${profile.recentCompany} experience from linkedin 👍`
+        : "got it — pulled your experience from linkedin 👍"
 
   // OFFER — a rich résumé just arrived → never re-ask for a résumé (we just got it); offer to match or
   // tweak. Otherwise: thin profile + not-yet-asked → the short optional evidence ask (once, stamped);
