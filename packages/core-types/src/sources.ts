@@ -37,6 +37,9 @@ export const PA_USER_SOURCES = [
   // code is <scanToken>` opener; legacy `Hello, WeKruit! <scanToken>` still accepted)
   // IS the account-creation event; no prior web account / resume.
   "qr_imessage",
+  // wekruit.com/yc-startup — YC Startup School attendee funnel (founder
+  // matching landing). Standard candidate UX; label kept for attribution.
+  "yc_startup_school",
 ] as const
 
 export type PaUserSource = (typeof PA_USER_SOURCES)[number]

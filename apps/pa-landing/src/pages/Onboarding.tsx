@@ -226,7 +226,9 @@ export default function Onboarding() {
     ? "Claire keeps the role context attached"
     : source === "WeKruit_Laid_Off"
       ? "WeKruit Open · for people between things"
-      : "WeKruit · meet your AI recruiter"
+      : source === "yc_startup_school"
+        ? "WeKruit · founder matching for Startup School attendees"
+        : "WeKruit · meet your AI recruiter"
 
   useEffect(() => {
     const rawNext = searchParams.get("next")
