@@ -187,7 +187,7 @@ test("replay: candidate_profile correction routes to user_tags seam and passes",
       candidateId: "cand-2",
       reason: "I want NYC + remote only and need sponsorship",
       beforeRedacted: {},
-      afterRedacted: { targetLocations: ["new_york_city", "remote_us"], visaStatus: "sponsor_needed" },
+      afterRedacted: { targetLocations: ["new_york_metro", "remote_united_states"], visaStatus: "sponsor_needed" },
     },
     "candidate_profile_correction",
   )
