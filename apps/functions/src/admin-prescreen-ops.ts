@@ -78,6 +78,9 @@ export const AdminPrescreenOpsSnapshotInputSchema = z.discriminatedUnion("mode",
   z.object({
     mode: z.literal("sessions"),
     jobId: z.string().optional(),
+    /** Restrict to these candidate userIds — used by the Algolia name search
+     *  (name → pa_candidates objectIDs → their sessions, whole pool, no scan). */
+    userIds: z.array(z.string()).max(200).optional(),
     queue: z.enum(["pending", "committed", "all"]).optional(),
     bucket: z.string().optional(),
     includeTest: z.boolean().optional(),
@@ -433,10 +436,28 @@ async function runOpsMode(
   }
 }
 
+/** Candidate display name from the pa-users doc, so sessions are searchable by name. */
+function candidateDisplayName(userDoc: Record<string, unknown> | null | undefined): string | undefined {
+  if (!userDoc) return undefined
+  const direct = firstString(
+    userDoc.displayName,
+    userDoc.name,
+    userDoc.fullName,
+    userDoc.candidateName,
+    nestedString(userDoc.level1Info, "name"),
+    nestedString(userDoc.pii, "name"),
+  )
+  if (direct) return direct
+  const combined = [cleanString(userDoc.firstName), cleanString(userDoc.lastName)].filter(Boolean).join(" ").trim()
+  if (combined) return combined
+  return firstString(userDoc.email, userDoc.phone, userDoc.phoneNumber)
+}
+
 function buildSessionRow(
   session: SessionScanRecord,
   candidateClass: CandidateClass,
   job: Record<string, unknown>,
+  candidateName?: string,
 ): PrescreenOpsSessionRow {
   const classification = classifyPrescreenReviewRow(session)
   const jobTitle = firstString(job.title, job.roleTitle, job.jobTitle, nestedString(job.prescreenConfig, "jobTitle"))
@@ -444,6 +465,7 @@ function buildSessionRow(
   return {
     id: session.id,
     userId: session.userId,
+    ...(candidateName ? { candidateName } : {}),
     jobId: session.jobId,
     ...(jobTitle ? { jobTitle } : {}),
     ...(jobCompany ? { jobCompany } : {}),
@@ -549,15 +571,73 @@ async function runScoreSortedSessionsMode(
     page.map((item) => item.record.jobId).filter((jobId) => jobId.length > 0),
   )
   return {
-    rows: page.map((item) => buildSessionRow(item.record, item.candidateClass, jobDocs.get(item.record.jobId) ?? {})),
+    rows: page.map((item) =>
+      buildSessionRow(
+        item.record,
+        item.candidateClass,
+        jobDocs.get(item.record.jobId) ?? {},
+        candidateDisplayName(userDocs.get(item.record.userId)),
+      ),
+    ),
     ...(nextCursor ? { nextCursor } : {}),
   }
+}
+
+/**
+ * Whole-pool name search path: the dashboard resolves a typed name to candidate
+ * userIds via Algolia (pa_candidates) and passes them here. We fetch only those
+ * users' sessions (chunked `userId in` — single-field, auto-indexed, no scan),
+ * so the search covers every session without loading pages.
+ */
+async function runUserIdsSessionsMode(
+  deps: { db: Firestore },
+  input: Extract<AdminPrescreenOpsSnapshotInput, { mode: "sessions" }>,
+  userIds: string[],
+): Promise<PrescreenOpsSnapshotSessionsResponse> {
+  const uniqueIds = [...new Set(userIds.filter((id) => typeof id === "string" && id.trim()))].slice(0, 200)
+  if (uniqueIds.length === 0) return { rows: [] }
+  const jobIdFilter = cleanString(input.jobId)
+
+  const records: SessionScanRecord[] = []
+  for (let i = 0; i < uniqueIds.length; i += 10) {
+    const chunk = uniqueIds.slice(i, i + 10)
+    const snap = await deps.db.collection(PRESCREEN_SESSIONS).where("userId", "in", chunk).select(...SESSION_FIELD_MASK).get()
+    for (const doc of snap.docs) {
+      records.push(toSessionRecord(doc.id, (doc.data() ?? {}) as Record<string, unknown>))
+    }
+  }
+
+  const [userDocs, jobDocs] = await Promise.all([
+    loadDocsById(deps.db, PA_COLLECTIONS.users, uniqueIds),
+    loadDocsById(deps.db, PA_COLLECTIONS.jobs, records.map((r) => r.jobId).filter((j) => j.length > 0)),
+  ])
+  const bucket = cleanString(input.bucket)
+  const rows = records.flatMap((record) => {
+    if (jobIdFilter && record.jobId !== jobIdFilter) return []
+    const candidateClass = classifySessionCandidate(record, userDocs)
+    if (input.includeTest !== true && candidateClass !== "candidate_account") return []
+    if (input.queue === "pending" && record.terminalActionPendingReview !== true) return []
+    if (input.queue === "committed" && !hasCommittedReview(record)) return []
+    const row = buildSessionRow(
+      record,
+      candidateClass,
+      jobDocs.get(record.jobId) ?? {},
+      candidateDisplayName(userDocs.get(record.userId)),
+    )
+    if (bucket && row.classification.bucket !== bucket) return []
+    return [row]
+  })
+  rows.sort((a, b) => compareScoreDesc(a, b))
+  return { rows }
 }
 
 async function runSessionsMode(
   deps: { db: Firestore; now?: () => string },
   input: Extract<AdminPrescreenOpsSnapshotInput, { mode: "sessions" }>,
 ): Promise<PrescreenOpsSnapshotSessionsResponse> {
+  if (input.userIds && input.userIds.length) {
+    return runUserIdsSessionsMode(deps, input, input.userIds)
+  }
   const pageLimit = Math.max(1, Math.min(SESSIONS_MAX_LIMIT, input.limit ?? SESSIONS_DEFAULT_LIMIT))
   if (input.sort === "score_desc") {
     return runScoreSortedSessionsMode(deps, input, pageLimit)
@@ -592,7 +672,12 @@ async function runSessionsMode(
     const candidateClass = classifySessionCandidate(record, userDocs)
     if (input.includeTest !== true && candidateClass !== "candidate_account") return []
     if (input.queue === "committed" && !hasCommittedReview(record)) return []
-    const row = buildSessionRow(record, candidateClass, jobDocs.get(record.jobId) ?? {})
+    const row = buildSessionRow(
+      record,
+      candidateClass,
+      jobDocs.get(record.jobId) ?? {},
+      candidateDisplayName(userDocs.get(record.userId)),
+    )
     if (bucket && row.classification.bucket !== bucket) return []
     return [row]
   })

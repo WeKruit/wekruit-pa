@@ -1,0 +1,79 @@
+{
+  "datasetVersion": "ranking-golden-2026-05-29",
+  "direction": "candidate_to_jobs",
+  "note": "Hand-authored candidate personas + relevant job-id judgments against corpus-jobs.json. tags shapes mirror pa-users/{uid}.tags consumed by queryMatchingJobsV16 (D8 single source). relevantIds = job ids a human reviewer would consider a plausible top recommendation for this candidate. The matcher's hard filters (role/visa/location/career/freshness/ats) are expected to suppress non-relevant ids; the soft score is expected to rank strong-skill-overlap relevant ids above weak ones. See README.md to grow this set.",
+  "queries": [
+    {
+      "queryId": "cand-frontend-swe-sf",
+      "displayName": "Frontend SWE — SF, mid-level",
+      "tags": {
+        "schemaVersion": 2,
+        "skills": ["typescript", "react", "javascript", "css"],
+        "targetRoleFunction": ["software_engineering"],
+        "industrySector": ["artificial_intelligence_and_machine_learning"],
+        "relevantTags": ["frontend", "web"],
+        "targetLocations": ["san_francisco_bay_area"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 140000,
+        "preferredLang": "en"
+      },
+      "relevantIds": ["job-swe-frontend-fresh", "job-swe-fullstack-fresh", "job-swe-backend-fresh"]
+    },
+    {
+      "queryId": "cand-backend-swe-remote",
+      "displayName": "Backend SWE — remote-friendly, needs sponsorship",
+      "tags": {
+        "schemaVersion": 2,
+        "skills": ["python", "go", "postgresql", "api"],
+        "targetRoleFunction": ["software_engineering"],
+        "industrySector": ["financial_technology"],
+        "relevantTags": ["backend", "distributed_systems"],
+        "targetLocations": ["remote_us", "san_francisco_bay_area"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "sponsor_needed",
+        "minSalary": 150000,
+        "preferredLang": "en"
+      },
+      "relevantIds": ["job-swe-backend-fresh"]
+    },
+    {
+      "queryId": "cand-data-analyst-nyc",
+      "displayName": "Data Analyst/Scientist — NYC, mid-level, needs sponsorship",
+      "tags": {
+        "schemaVersion": 2,
+        "skills": ["sql", "python", "tableau", "statistics"],
+        "targetRoleFunction": ["data_analysis"],
+        "industrySector": ["e_commerce_and_retail", "artificial_intelligence_and_machine_learning"],
+        "relevantTags": ["analytics", "bi"],
+        "targetLocations": ["new_york_city", "remote_us"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "sponsor_needed",
+        "minSalary": 90000,
+        "preferredLang": "en"
+      },
+      "relevantIds": ["job-data-analyst-fresh", "job-data-scientist-fresh"]
+    },
+    {
+      "queryId": "cand-pm-nyc-senior",
+      "displayName": "Product Manager — NYC, senior",
+      "tags": {
+        "schemaVersion": 2,
+        "skills": ["roadmapping", "user_research", "sql"],
+        "targetRoleFunction": ["product_management"],
+        "industrySector": ["enterprise_software"],
+        "relevantTags": ["product"],
+        "targetLocations": ["new_york_city"],
+        "careerStage": "senior",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 160000,
+        "preferredLang": "en"
+      },
+      "relevantIds": ["job-pm-fresh"]
+    }
+  ]
+}

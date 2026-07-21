@@ -42,7 +42,15 @@ import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-too
 import { isThinPrescreenEnabled } from "./flags.js"
 import { buildThinPrescreenSeed, type AiQuestionOptions } from "./prescreen-config.js"
 import { loadPrescreenContext } from "./prescreen-context.js"
-import { readUserPrescreenSharedAnswers, AI_USAGE_SHARED_KEY } from "@pa/pa-orchestrator"
+import {
+  buildStalePrescreenSweepPatch,
+  buildStalePrescreenSweepTurn,
+} from "../prescreen-staleness.js"
+import {
+  readUserPrescreenSharedAnswers,
+  AI_USAGE_SHARED_KEY,
+  isPrescreenSessionPastMaxAge,
+} from "@pa/pa-orchestrator"
 import {
   AI_QUESTION_QID,
   roleFunctionFromJob,
@@ -54,6 +62,27 @@ import { shouldNudgeGmail } from "./gmail-nudge.js"
 
 const USERS = "pa-users"
 const PRESCREEN_SESSIONS = "pa-prescreen-sessions"
+
+/** Parse an ISO string / epoch-ms / Firestore Timestamp into epoch ms (null when unparseable). */
+function parseMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : null
+  }
+  if (value && typeof value === "object") {
+    const maybe = value as { toMillis?: () => number; toDate?: () => Date }
+    if (typeof maybe.toMillis === "function") {
+      const ms = maybe.toMillis()
+      return Number.isFinite(ms) ? ms : null
+    }
+    if (typeof maybe.toDate === "function") {
+      const ms = maybe.toDate().getTime()
+      return Number.isFinite(ms) ? ms : null
+    }
+  }
+  return null
+}
 
 export interface ModeDecision {
   mode: ClaireMode
@@ -128,6 +157,12 @@ export interface ModeDecision {
    *  onboarding question. Route to triage with this directive → Claire warmly greets them back by name
    *  and offers to pull fresh matches / asks how she can help. Set on the cold-start triage branch. */
   warmReturningGreeting?: boolean
+  /** ENTRY POSTURE (Adam 2026-07-20): tone/behavior overlay keyed off pa-users.source — the page the
+   *  candidate entered through. `yc_startup_school` (wekruit.com/yc-startup) = light founder-scene chat,
+   *  NO structured onboarding push, NO next-step pushing; Claire states once that she'll text here +
+   *  email when a founder match pops. Per-user-stable (source is frozen at registration). Add future
+   *  entry pages here as new literals. */
+  entryPosture?: "yc_startup_school"
 }
 
 export interface SelectModeArgs {
@@ -153,17 +188,61 @@ export interface SelectModeArgs {
 async function hasActivePrescreen(
   db: Firestore,
   userId: string,
+  log: (event: string, payload?: Record<string, unknown>) => void = () => {},
 ): Promise<{ active: boolean; jobId?: string; sessionId?: string; session?: Record<string, unknown> }> {
   try {
     const snap = await db
       .collection(PRESCREEN_SESSIONS)
       .where("userId", "==", userId)
       .where("terminal", "==", null)
-      .limit(1)
       .get()
     if (snap.empty) return { active: false }
-    const doc = snap.docs[0]!
+    // Most-recent first (createdAt-keyed; the primary SMS detector already sorts the same way).
+    const docs = [...snap.docs].sort((a, b) => {
+      const aMs = parseMs((a.data() as Record<string, unknown>).createdAt) ?? 0
+      const bMs = parseMs((b.data() as Record<string, unknown>).createdAt) ?? 0
+      return bMs - aMs
+    })
+    const doc = docs[0]!
     const d = doc.data() as Record<string, unknown>
+    const nowMs = Date.now()
+    const createdAtMs = parseMs(d.createdAt)
+    // Zombie-prescreen fix (Adam 2026-06-21): a non-terminal session past its absolute
+    // createdAt age cap is NOT active — it must not capture this (unrelated) turn. The
+    // updatedAt inactivity timeout is poisoned by the clarify-loop self-refresh, so the
+    // createdAt cap is the immune bound. Sweep it to a stale-closed terminal (timed_out)
+    // so it stops interfering, then let this turn fall through to triage/matching.
+    if (isPrescreenSessionPastMaxAge(createdAtMs, nowMs)) {
+      const nowIso = new Date(nowMs).toISOString()
+      const createdAtIso = createdAtMs !== null ? new Date(createdAtMs).toISOString() : null
+      const ageMs = createdAtMs !== null ? nowMs - createdAtMs : null
+      // CANCEL CONTEXT CLEANLY: same canonical stale-closed patch the SMS detector uses, so the
+      // session is closed identically regardless of which detector caught it. NO send here —
+      // runPrescreenTurnIfActive owns the one-time candidate notice (it runs BEFORE thin Claire on
+      // every inbound), and expiryNoticeSentAt is its idempotency gate; sending here too would risk
+      // a double-notify. This sweep is defense-in-depth for any path that reaches thin first.
+      try {
+        await doc.ref.set(buildStalePrescreenSweepPatch(nowIso), { merge: true })
+      } catch {
+        /* best-effort sweep; even if it fails we still treat the session as inactive */
+      }
+      // STORE PROPERLY: auditable expiry record (mirrors the SMS detector's turns row).
+      try {
+        await doc.ref
+          .collection("turns")
+          .add(buildStalePrescreenSweepTurn({ createdAtIso, nowIso, ageMs, detector: "mode_selector" }))
+      } catch {
+        /* best-effort audit */
+      }
+      log("mode.prescreen_stale_swept", {
+        userId,
+        sessionId: doc.id,
+        jobId: typeof d.jobId === "string" ? d.jobId : undefined,
+        ageMs,
+        ...(createdAtIso !== null ? { createdAt: createdAtIso } : {}),
+      })
+      return { active: false }
+    }
     return {
       active: true,
       jobId: typeof d.jobId === "string" ? d.jobId : undefined,
@@ -418,7 +497,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   const now = (args.nowIso ?? (() => new Date().toISOString()))()
 
   // 1. ACTIVE PRESCREEN.
-  const ps = await hasActivePrescreen(args.db, args.userId)
+  const ps = await hasActivePrescreen(args.db, args.userId, log)
   if (ps.active) {
     // Flag OFF (default) → defer this turn to the proven legacy prescreen runner (UNCHANGED).
     let thinOn = false
@@ -539,6 +618,13 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   const shared = (user.sharedOnboarding ?? null) as Record<string, unknown> | null
   const onboardingComplete = shared?.completed === true || user.onboardingState === "complete"
 
+  // ENTRY POSTURE (Adam 2026-07-20): the /yc-startup funnel stamps pa-users.source=yc_startup_school.
+  // Those candidates get a tone overlay on every agent turn (light founder-scene chat, no pushing,
+  // "I'll text here + email when a founder match pops") instead of the standard progression posture.
+  // Pure structured read off the SAME snapshot — zero extra reads, NO LLM.
+  const posture: { entryPosture?: "yc_startup_school" } =
+    user.source === "yc_startup_school" ? { entryPosture: "yc_startup_school" } : {}
+
   // 2026-06-04 (#1 re-ask fix): the canonical user tags + the legacy statedPreferences mirror from the
   // SAME pa-users snapshot (zero extra read). The onboarding slot picker consults these so it NEVER
   // re-asks an axis whose canonical tag is already present (e.g. a résumé-enriched candidate carrying
@@ -571,7 +657,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // here (e.g. a file WITH a caption) so it routes to the agent instead of the hold ack.
   if (enrichmentInFlight && !args.hasInboundMedia && !isSharedOnboardingActiveUser(user)) {
     log("mode.enrichment_in_flight_ack", { userId: args.userId })
-    return { mode: "triage", ...inFlightDecision }
+    return { mode: "triage", ...inFlightDecision, ...posture }
   }
 
   // LINKEDIN-DONE RE-ENTRY (Adam 2026-06-03, Image #25): the candidate tapped "log in with LinkedIn"
@@ -592,7 +678,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
       return { mode: "triage", suppressReply: true, suppressReason: "linkedin_done_already_enriched" }
     }
     log("mode.linkedin_just_connected", { userId: args.userId })
-    return { mode: "triage", linkedinJustConnected: true }
+    return { mode: "triage", linkedinJustConnected: true, ...posture }
   }
 
   // WS-3(b) GMAIL NUDGE (Adam 2026-06-03): occasionally ask the candidate to connect Gmail on
@@ -626,7 +712,18 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
           log("mode.cv_parsed_enriched_markcomplete_failed", { userId: args.userId, error: String(err) })
         }
         log("mode.cv_parsed_pitch_enriched_no_wall", { userId: args.userId })
-        return { mode: "triage", postParsePitch: true }
+        return { mode: "triage", postParsePitch: true, ...posture }
+      }
+      // YC FOUNDER-MATCH ENTRY: the parse landed but the profile is thin — still NO question wall
+      // (Adam 2026-07-20 "不用推进"). Pitch what we have in triage; the posture directive owns the rest.
+      if (posture.entryPosture) {
+        try {
+          await markSharedOnboardingComplete(args.db, args.userId, now)
+        } catch (err) {
+          log("mode.entry_posture_markcomplete_failed", { userId: args.userId, error: String(err) })
+        }
+        log("mode.cv_parsed_entry_posture_no_wall", { userId: args.userId })
+        return { mode: "triage", postParsePitch: true, ...posture }
       }
       try {
         if (!isSharedOnboardingActiveUser(user)) {
@@ -689,7 +786,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     } else {
       // Returning user re-uploaded a résumé → pitch in triage, then OFFER find_match.
       log("mode.cv_parsed_pitch_triage", { userId: args.userId })
-      return { mode: "triage", postParsePitch: true }
+      return { mode: "triage", postParsePitch: true, ...posture }
     }
   }
 
@@ -736,14 +833,28 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     // texts fall to the warm greeting alone (no re-pitch). Deterministic — NO LLM, NO text→enum regex.
     if (hasIngestedBackground(user) && user.pitchedAt == null) {
       log("mode.recognized_first_pitch_on_text", { userId: args.userId })
-      return { mode: "triage", postParsePitch: true, warmReturningGreeting: true, ...inFlightDecision }
+      return { mode: "triage", postParsePitch: true, warmReturningGreeting: true, ...inFlightDecision, ...posture }
     }
     log("mode.warm_returning_greeting", { userId: args.userId })
-    return { mode: "triage", warmReturningGreeting: true, ...inFlightDecision }
+    return { mode: "triage", warmReturningGreeting: true, ...inFlightDecision, ...posture }
   }
 
   if (!onboardingComplete) {
     try {
+      // YC FOUNDER-MATCH ENTRY (Adam 2026-07-20 "聊一嘴…不用推进"): NEVER the structured onboarding
+      // question sequence for a /yc-startup arrival. Their registration résumé carries the matching
+      // signal; the posture turn-directive owns the tone + the "text here + email on match" promise.
+      // With an ingested background, ride the we-know-you PITCH turn (composePitchTurn swaps its
+      // closer to the notify promise for this source); otherwise plain triage — no questions, no wall.
+      if (posture.entryPosture) {
+        if (hasIngestedBackground(user)) {
+          await markSharedOnboardingComplete(args.db, args.userId, now)
+          log("mode.entry_posture_pitch", { userId: args.userId, source: user.source })
+          return { mode: "triage", postParsePitch: true, ...inFlightDecision, ...posture }
+        }
+        log("mode.entry_posture_no_push", { userId: args.userId, source: user.source })
+        return { mode: "triage", ...inFlightDecision, ...posture }
+      }
       if (!isSharedOnboardingActiveUser(user)) {
         // UNIVERSAL GAP-AWARE COLD START (Adam 2026-06-05: "ONLY ask for non-existing info").
         // A profiled cold-opener (LinkedIn/résumé/role/location already on file) must NOT be walked
@@ -896,10 +1007,11 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
 
   // WS-3(b): a plain conversational triage turn is the right place for the occasional Gmail nudge
   // (not mid-onboarding, not a pitch, not enrichment-in-flight). Stamp the cooldown when it fires.
-  if (gmailNudgeEligible) {
+  // Entry-posture users never get the Gmail nudge — it's a push, and their posture is no-push.
+  if (gmailNudgeEligible && !posture.entryPosture) {
     await stampGmailNudge(args.db, args.userId, now)
     log("mode.gmail_nudge", { userId: args.userId })
     return { mode: "triage", ...inFlightDecision, gmailNudge: true }
   }
-  return { mode: "triage", ...inFlightDecision }
+  return { mode: "triage", ...inFlightDecision, ...posture }
 }

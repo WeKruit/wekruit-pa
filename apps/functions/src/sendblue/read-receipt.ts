@@ -10,6 +10,7 @@
  * Best-effort: log + swallow. A read receipt is UX, never blocks the turn.
  */
 import { getSendblueCreds, type SendblueCredentials } from "./sendblue-client.js"
+import { isSyntheticRecipientNumber } from "./synthetic-recipient.js"
 
 // The official doc spells the endpoint as api.sendblue.com/api/mark-read, but the proven
 // in-codebase base (typing-indicator) is api.sendblue.co. They're the same API; try the doc host
@@ -32,6 +33,12 @@ export async function sendReadReceipt(
   creds: SendblueCredentials = getSendblueCreds(),
   log: (...args: unknown[]) => void = console.log
 ): Promise<void> {
+  // 2026-06-19 incident hard backstop — synthetic/test recipient NEVER posts.
+  // Read receipt is best-effort UX; skip silently (no throw).
+  if (isSyntheticRecipientNumber(input.to)) {
+    log("[sendblue][mark-read] blocked synthetic recipient (no POST)", input.to)
+    return
+  }
   const fromNumber = input.fromNumber?.trim() || creds.fromNumber
   const body = JSON.stringify({
     number: input.to,

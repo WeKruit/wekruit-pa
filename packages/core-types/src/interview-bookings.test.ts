@@ -103,10 +103,16 @@ test("interviewBookingDocId is deterministic, slugified, calbk- namespaced", () 
   const b = interviewBookingDocId({ userId: "8fEwIduUrzxZsblHHsNz", jobId: "hs-11005382-invoko" })
   assert.equal(a, b, "deterministic")
   assert.ok(a.startsWith("calbk-"), "calbk- namespace")
-  // slugify lowercases + replaces non-[a-z0-9] with - and collapses repeats.
+  // slugify is CASE-PRESERVING: replaces non-[A-Za-z0-9] with - and collapses repeats.
   assert.equal(
     interviewBookingDocId({ userId: "User_ID 1", jobId: "Job//ABC" }),
-    "calbk-user-id-1__job-abc",
+    "calbk-User-ID-1__Job-ABC",
+  )
+  // case-sensitive: ids differing ONLY by letter-case map to DISTINCT docs
+  // (mirrors the case-sensitive pa-users / pa-jobs auto-id space).
+  assert.notEqual(
+    interviewBookingDocId({ userId: "AbCdEf", jobId: "job-1" }),
+    interviewBookingDocId({ userId: "abcdef", jobId: "job-1" }),
   )
   // distinct from the legacy booking- namespace.
   assert.notEqual(a.slice(0, 8), "booking-")

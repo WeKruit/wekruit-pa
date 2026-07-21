@@ -10,18 +10,21 @@
  * emails with no matching recruiter profile land in an "Unclaimed
  * submitters" group.
  */
-import { useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, updateDoc } from "firebase/firestore"
 import {
   CANDIDATE_TIER_LABELS,
+  descriptionMdToJdBlocks,
   suggestTierFromRecruiterAi,
   type CandidateTier,
   type RecruiterAiVerdict,
 } from "@pa/core-types"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
+import { antiFlagRatio, boardSubmissionRankKey, checklistMetRatio, compareRankKeys } from "./board-submission-rank.js"
 import { SideDrawer } from "../components/prescreen/PrescreenReviewDrawers.js"
 import { DUAL_PANE_COLLAPSE_CSS, dualPaneStyle, paneHeaderStyle } from "../components/prescreen/dual-pane.js"
+import { ReasonChips } from "../components/recruiter-reasons.js"
 import { auth, db } from "../lib/firebase.js"
 import {
   RECRUITER_SUBMISSION_ACTION_TO_STATUS,
@@ -188,11 +191,38 @@ interface BoardJobDoc {
   id: string
   title?: string
   company?: string
+  /** Raw JD on the pa-jobs doc — used to derive jdBlocks when hand-seeded blocks are absent. */
+  descriptionMd?: string
+  /** Real doc fields the candidate site reads — used to show location + pay. */
+  location?: string
+  salaryRange?: string
+  compSummary?: string
+  jobType?: string
+  prescreenConfig?: { region?: string; jobType?: string; level1Reveal?: { salaryRange?: string } }
   jdBlocks?: BoardJdBlock[]
   recruiterBoard?: {
-    label?: { company?: string }
+    label?: { company?: string; location?: string }
     checklist?: { groups?: BoardChecklistGroupDoc[] }
   }
+}
+
+/** Location for the admin role panel — seed label first, then the real doc fields. */
+function jobLocation(job?: BoardJobDoc): string | undefined {
+  return (
+    job?.recruiterBoard?.label?.location?.trim() ||
+    job?.location?.trim() ||
+    job?.prescreenConfig?.region?.trim() ||
+    undefined
+  )
+}
+/** Pay — `compSummary` is seed-only; real jobs carry salaryRange / level1Reveal. */
+function jobPay(job?: BoardJobDoc): string | undefined {
+  return (
+    job?.compSummary?.trim() ||
+    job?.salaryRange?.trim() ||
+    job?.prescreenConfig?.level1Reveal?.salaryRange?.trim() ||
+    undefined
+  )
 }
 
 interface BoardJobGroup {
@@ -339,8 +369,10 @@ function recruiterAccountTone(status: string | null): Parameters<typeof Badge>[0
 function verdictChip(evaluation: SubmissionAiEvaluation | undefined): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
   if (!evaluation) return { label: "evaluating…", tone: "muted" }
   if (evaluation.error) return { label: "eval failed", tone: "warn" }
+  // "{verdict} · {n}% sure" — n is the AI's confidence in THIS verdict, not a
+  // candidate score (e.g. "reject · 92% sure" = 92% sure about rejecting).
   const confidence = typeof evaluation.confidence === "number"
-    ? ` · ${Math.round(evaluation.confidence * 100)}%`
+    ? ` · ${Math.round(evaluation.confidence * 100)}% sure`
     : ""
   switch (evaluation.verdict) {
     case "advance":
@@ -359,58 +391,7 @@ function selfScoreLabel(score: BoardSubmissionDoc["score"]): string {
   return `H ${score.hardChecked}/${score.hardTotal} · F ${score.fitChecked}/${score.fitTotal} · A ${score.antiChecked}/${score.antiTotal}`
 }
 
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(1, value))
-}
-
-function checklistMetRatio(tally: SubmissionAiChecklistTally | undefined): number {
-  const total = Number(tally?.total ?? 0)
-  if (!Number.isFinite(total) || total <= 0) return 0
-  return clamp01(Number(tally?.met ?? 0) / total)
-}
-
-function antiFlagRatio(tally: SubmissionAiAntiTally | undefined): number {
-  const total = Number(tally?.total ?? 0)
-  if (!Number.isFinite(total) || total <= 0) return 0
-  return clamp01(Number(tally?.flagged ?? 0) / total)
-}
-
-function selfScoreRatio(score: BoardSubmissionDoc["score"]): number {
-  if (!score) return 0
-  const positiveTotal = score.hardTotal + score.fitTotal + score.bonusTotal
-  const antiTotal = score.antiTotal
-  const positive = positiveTotal > 0
-    ? (score.hardChecked + score.fitChecked + score.bonusChecked) / positiveTotal
-    : 0
-  const antiPenalty = antiTotal > 0 ? score.antiChecked / antiTotal : 0
-  return clamp01(positive - antiPenalty)
-}
-
-function aiVerdictRank(evaluation: SubmissionAiEvaluation | undefined): number {
-  if (!evaluation || evaluation.error) return 0
-  if (evaluation.verdict === "advance") return 3
-  if (evaluation.verdict === "borderline") return 2
-  if (evaluation.verdict === "reject") return 1
-  return 0
-}
-
-function boardSubmissionQualityScore(submission: BoardSubmissionDoc): number {
-  const evaluation = submission.aiEvaluation
-  const verdictRank = aiVerdictRank(evaluation)
-  const confidence = clamp01(Number(evaluation?.confidence ?? 0))
-  const confidenceSignal = evaluation?.verdict === "reject" ? 1 - confidence : confidence
-  const checklist = evaluation?.checklist
-  return (
-    verdictRank * 1_000 +
-    checklistMetRatio(checklist?.hard) * 300 +
-    checklistMetRatio(checklist?.fit) * 220 +
-    checklistMetRatio(checklist?.bonus) * 90 -
-    antiFlagRatio(checklist?.anti) * 160 +
-    confidenceSignal * 50 +
-    selfScoreRatio(submission.score) * 30
-  )
-}
+// Triage-ranking helpers live in ./board-submission-rank (pure + unit-tested).
 
 function candidateHref(submission: BoardSubmissionDoc): string | null {
   const href = submission.candidate?.linkedinUrl ?? submission.candidate?.link
@@ -510,10 +491,12 @@ function submissionJobKey(submission: BoardSubmissionDoc): string {
 
 function sortSubmissions(submissions: BoardSubmissionDoc[]): BoardSubmissionDoc[] {
   return [...submissions].sort((a, b) => {
+    // Still-actionable (pending) above already-decided submissions.
     const pendingDelta = Number(isPending(b)) - Number(isPending(a))
     if (pendingDelta !== 0) return pendingDelta
-    const qualityDelta = boardSubmissionQualityScore(b) - boardSubmissionQualityScore(a)
-    if (Math.abs(qualityDelta) > 0.000001) return qualityDelta
+    // Lexicographic triage: verdict → confidence band → bounded sub-score tie-break.
+    const keyDelta = compareRankKeys(boardSubmissionRankKey(a), boardSubmissionRankKey(b))
+    if (keyDelta !== 0) return keyDelta
     return (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0)
   })
 }
@@ -914,17 +897,8 @@ function buildBoardChecklist(
     .sort((a, b) => CHECKLIST_TIER_ORDER.indexOf(a.kind) - CHECKLIST_TIER_ORDER.indexOf(b.kind))
 }
 
-/** Quick-reject chips grouped under candidate background, mirroring the recruiter
- *  submission screening design (school / GPA / degree / company pillars). */
-const BACKGROUND_REJECT_CHIPS: Array<{ id: string; label: string }> = [
-  { id: "weak_school", label: "Weak / non-target school" },
-  { id: "low_gpa", label: "Low GPA" },
-  { id: "degree_mismatch", label: "Degree / field mismatch" },
-  { id: "weak_company_pedigree", label: "Weak company pedigree" },
-  { id: "no_relevant_domain", label: "No relevant domain" },
-  { id: "over_leveled", label: "Over-leveled / too senior" },
-  { id: "under_leveled", label: "Under-leveled" },
-]
+// Reject reasons now come from the shared ../components/recruiter-reasons.js <ReasonChips>,
+// so the Board and the Submission view show the SAME full reason taxonomy (Adam 2026-06-23).
 
 const BACKGROUND_PILLARS: Array<{ key: "school" | "gpa" | "degree" | "company"; label: string }> = [
   { key: "school", label: "School" },
@@ -944,7 +918,16 @@ function hardGapCount(evaluation: SubmissionAiEvaluation | undefined): number {
 
 function suggestedCandidateTier(evaluation: SubmissionAiEvaluation | undefined): CandidateTier | null {
   if (!evaluation || evaluation.error || !isRecruiterAiVerdict(evaluation.verdict)) return null
-  return suggestTierFromRecruiterAi(evaluation.verdict, hardGapCount(evaluation))
+  const strongBackground =
+    evaluation.background?.school?.verdict === "strong" || evaluation.background?.company?.verdict === "strong"
+  return suggestTierFromRecruiterAi(evaluation.verdict, hardGapCount(evaluation), {
+    confidence: evaluation.confidence,
+    strongBackground,
+    hardRatio: checklistMetRatio(evaluation.checklist?.hard),
+    fitRatio: checklistMetRatio(evaluation.checklist?.fit),
+    bonusRatio: checklistMetRatio(evaluation.checklist?.bonus),
+    antiRatio: antiFlagRatio(evaluation.checklist?.anti),
+  })
 }
 
 function tierTone(tier: CandidateTier): Parameters<typeof Badge>[0]["tone"] {
@@ -1241,11 +1224,45 @@ function ReviewField({ label, value, href }: { label: string; value?: string; hr
   )
 }
 
+/** Render a jdBlock body: `- ` lines become a bulleted list, blank lines split paragraphs. */
+function JdBody({ body }: { body: string }) {
+  const out: ReactNode[] = []
+  let bullets: string[] = []
+  const flush = (key: string) => {
+    if (bullets.length) {
+      out.push(
+        <ul key={key} style={roleContextListStyle}>
+          {bullets.map((b, i) => <li key={i}>{b}</li>)}
+        </ul>,
+      )
+      bullets = []
+    }
+  }
+  body.split("\n").forEach((rawLine, i) => {
+    const line = rawLine.trim()
+    if (line.startsWith("- ")) {
+      bullets.push(line.slice(2))
+    } else if (line === "") {
+      flush(`ul-${i}`)
+    } else {
+      flush(`ul-${i}`)
+      out.push(<div key={`p-${i}`} style={roleContextTextStyle}>{line}</div>)
+    }
+  })
+  flush("ul-end")
+  return <>{out}</>
+}
+
 function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: BoardSubmissionDoc }) {
   const title = job?.title ?? submission.jobTitleSnapshot ?? submission.jobId ?? "Selected role"
   const company = job?.recruiterBoard?.label?.company ?? job?.company ?? submission.companyLabelSnapshot
   const groups = job?.recruiterBoard?.checklist?.groups ?? []
-  const blocks = job?.jdBlocks ?? []
+  // Hand-seeded jdBlocks are absent for real jobs; derive from descriptionMd
+  // (the same JD the candidate site renders) so the panel is never blank.
+  const blocks: BoardJdBlock[] =
+    job?.jdBlocks && job.jdBlocks.length ? job.jdBlocks : descriptionMdToJdBlocks(job?.descriptionMd)
+  const location = jobLocation(job)
+  const pay = jobPay(job)
   return (
     <div style={reviewContextStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
@@ -1253,6 +1270,12 @@ function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: B
           <div style={roleContextLabelStyle}>Role context</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: "#2b2119", lineHeight: 1.2 }}>{title}</div>
           {company && <div style={{ color: "#7b6f61", fontSize: 13, marginTop: 2 }}>{company}</div>}
+          {(location || pay) && (
+            <div style={{ color: "#7b6f61", fontSize: 13, marginTop: 4, display: "flex", flexWrap: "wrap", gap: "2px 10px" }}>
+              {location && <span>📍 {location}</span>}
+              {pay && <span>💰 {pay}</span>}
+            </div>
+          )}
         </div>
         <Badge tone="info">{selfScoreLabel(submission.score)}</Badge>
       </div>
@@ -1279,9 +1302,7 @@ function JobContextPanel({ job, submission }: { job?: BoardJobDoc; submission: B
           {blocks.slice(0, 6).map((block, index) => (
             <div key={`${block.heading ?? "block"}-${index}`}>
               {block.heading && <div style={roleContextSectionTitleStyle}>{block.heading}</div>}
-              {block.body && (
-                <div style={{ ...roleContextTextStyle, whiteSpace: "pre-wrap" }}>{block.body}</div>
-              )}
+              {block.body && <JdBody body={block.body} />}
               {Array.isArray(block.items) && block.items.length > 0 && (
                 <ul style={roleContextListStyle}>
                   {block.items.slice(0, 10).map((item, itemIndex) => <li key={`${index}-${itemIndex}`}>{item}</li>)}
@@ -1555,31 +1576,8 @@ function CandidateReviewPanel({
               </label>
             </div>
             <div style={{ display: "grid", gap: 5 }}>
-              <div style={{ fontSize: 11, color: "#6f6256", fontWeight: 700 }}>Background quick-reject</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {BACKGROUND_REJECT_CHIPS.map((chip) => {
-                  const active = reasonChips.has(chip.id)
-                  return (
-                    <button
-                      key={chip.id}
-                      type="button"
-                      onClick={() => toggleReasonChip(chip.id)}
-                      style={{
-                        padding: "3px 10px",
-                        fontSize: 11,
-                        borderRadius: 999,
-                        cursor: "pointer",
-                        border: active ? "1px solid #d9a8a0" : "1px solid #e2d6cc",
-                        background: active ? "#fdeceA" : "#fff",
-                        color: active ? "#9c3a1d" : "#6f6256",
-                        fontWeight: active ? 700 : 500,
-                      }}
-                    >
-                      {active ? "✓ " : ""}{chip.label}
-                    </button>
-                  )
-                })}
-              </div>
+              <div style={{ fontSize: 11, color: "#6f6256", fontWeight: 700 }}>Reason — tap any that apply (saved with the rejection)</div>
+              <ReasonChips selected={reasonChips} onToggle={toggleReasonChip} />
             </div>
             <textarea
               value={rejectReason}

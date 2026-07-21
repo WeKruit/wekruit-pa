@@ -55,6 +55,7 @@ import { getFirestore, FieldValue, type DocumentReference, type Firestore, type 
 import { getAuth } from "firebase-admin/auth"
 import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
+import { descriptionMdToJdBlocks } from "./job-description.js"
 import {
   computeRecruiterDigest,
   selectRoles,
@@ -1008,9 +1009,37 @@ const SYNTHESIZED_SORT_ORDER = 1_000_000
  * marked `recruiterBoard.active === false` are untouched — a deliberate hide
  * always wins over synthesis.
  */
+/** First non-empty string at d[key]. */
+function str(d: Record<string, unknown>, key: string): string | undefined {
+  const v = d[key]
+  return typeof v === "string" && v.trim() ? v.trim() : undefined
+}
+/** prescreenConfig.level1Reveal.salaryRange — the candidate-side pay field. */
+function level1Salary(d: Record<string, unknown>): string | undefined {
+  const pc = d.prescreenConfig
+  if (!pc || typeof pc !== "object") return undefined
+  const lr = (pc as Record<string, unknown>).level1Reveal
+  if (!lr || typeof lr !== "object") return undefined
+  const sr = (lr as Record<string, unknown>).salaryRange
+  return typeof sr === "string" && sr.trim() ? sr.trim() : undefined
+}
+function prescreenRegion(d: Record<string, unknown>): string | undefined {
+  const pc = d.prescreenConfig
+  if (!pc || typeof pc !== "object") return undefined
+  return str(pc as Record<string, unknown>, "region")
+}
+/** Pay for the recruiter card/brief. `compSummary` is seed-only; real jobs carry
+ *  `salaryRange` / `prescreenConfig.level1Reveal.salaryRange` (what the candidate
+ *  site reads), so fall back to those. */
+function resolveCompSummary(d: Record<string, unknown>): string | undefined {
+  return str(d, "compSummary") ?? str(d, "salaryRange") ?? level1Salary(d)
+}
+
 function synthesizeRecruiterBoardPayload(d: Record<string, unknown>): RecruiterBoardPayload {
   const company = String(d.companyName ?? d.company ?? "").trim()
-  const location = typeof d.location === "string" ? d.location.trim() : ""
+  // location is seed-only on the recruiterBoard label; real jobs carry top-level
+  // `location` or `prescreenConfig.region` (the candidate-side field).
+  const location = str(d, "location") ?? prescreenRegion(d) ?? ""
   return {
     active: true,
     sortOrder: SYNTHESIZED_SORT_ORDER,
@@ -1100,16 +1129,30 @@ export async function fetchCollabJobs(
     // (omitted entirely for normal/unranked roles).
     const { priority: rawPriority, ...boardWithoutPriority } = recruiterBoardForCaller
     const priority = publicRecruiterBoardPriority(rawPriority)
+    // Backfill location from the real doc fields when the seed label left it
+    // blank (same fields the candidate site reads).
+    const resolvedLocation =
+      (recruiterBoardForCaller.label.location || "").trim() || str(d, "location") || prescreenRegion(d) || ""
     const revealedBoard: RecruiterBoardPayload = {
       ...boardWithoutPriority,
-      ...(companyRaw ? { label: { ...recruiterBoardForCaller.label, company: revealedCompany } } : {}),
+      label: {
+        ...recruiterBoardForCaller.label,
+        ...(companyRaw ? { company: revealedCompany } : {}),
+        location: resolvedLocation,
+      },
       ...(priority ? { priority } : {}),
     }
     allMatching.push({
       jobId: jobIdForCaller,
       title: String(d.title ?? ""),
-      compSummary: typeof d.compSummary === "string" ? d.compSummary : undefined,
-      jdBlocks: Array.isArray(d.jdBlocks) ? (d.jdBlocks as JdBlock[]) : [],
+      compSummary: resolveCompSummary(d),
+      // jdBlocks is a hand-seeded field that real collaborated jobs lack. Fall
+      // back to deriving it from the job's descriptionMd (same field the
+      // candidate site renders) so the recruiter JD panel is never blank.
+      jdBlocks:
+        Array.isArray(d.jdBlocks) && d.jdBlocks.length
+          ? (d.jdBlocks as JdBlock[])
+          : descriptionMdToJdBlocks(typeof d.descriptionMd === "string" ? d.descriptionMd : undefined),
       recruiterBoard: revealedBoard,
       updatedAt: updatedAtIso,
     })
@@ -1930,9 +1973,10 @@ export function coerceStoredSubmissionChecklist(raw: unknown): Record<string, Ch
 }
 
 /**
- * Candidate "core cell" columns of the recruiter sheet. Optional free-text
- * strings, trimmed, capped at 300 chars; stored under `candidate.*` next to
- * the original name/email/link identity fields.
+ * Candidate "core cell" columns of the recruiter sheet. Free-text strings,
+ * trimmed, capped at 300 chars; stored under `candidate.*` next to the
+ * original name/email/link identity fields. `compensationExpectation` is
+ * recommended, but never blocks a recruiter submission.
  */
 export const CANDIDATE_CORE_CELL_FIELDS = [
   "currentCompany",
@@ -1989,6 +2033,7 @@ interface RecruiterSubmissionListItem {
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
   statusHistory?: RecruiterSubmissionStatusHistoryItem[]
+  companySends?: RecruiterCompanySendPublic[]
   requestedInfo?: RecruiterSubmissionRequestedInfoItem[]
   extraFields?: Record<string, string>
   recruiterFeedbackNote?: string | null
@@ -2036,6 +2081,42 @@ function sanitizeSubmissionFeedbackReasons(raw: unknown): string[] {
 function timestampMs(value: unknown): number {
   const iso = coerceToIso(value)
   return iso ? Date.parse(iso) || 0 : 0
+}
+
+// Recruiter-visible view of a company send: the company, its stage, and the
+// hiring-manager feedback. The internal `by` (ops email) is dropped.
+export interface RecruiterCompanySendPublic {
+  id: string
+  company: string
+  status: "sent" | "waiting_hm" | "interested" | "passed"
+  feedback?: string
+  sentAt?: string
+  updatedAt?: string
+}
+
+const COMPANY_SEND_PUBLIC_STATUSES = new Set(["sent", "waiting_hm", "interested", "passed"])
+
+export function sanitizeRecruiterCompanySends(raw: unknown): RecruiterCompanySendPublic[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((entry): RecruiterCompanySendPublic | null => {
+      if (!entry || typeof entry !== "object") return null
+      const e = entry as Record<string, unknown>
+      const id = typeof e.id === "string" ? e.id : ""
+      const company = typeof e.company === "string" ? e.company.trim() : ""
+      const status = typeof e.status === "string" && COMPANY_SEND_PUBLIC_STATUSES.has(e.status) ? e.status : "sent"
+      if (!id || !company) return null
+      const feedback = typeof e.feedback === "string" && e.feedback.trim() ? e.feedback.trim() : undefined
+      return {
+        id,
+        company,
+        status: status as RecruiterCompanySendPublic["status"],
+        ...(feedback ? { feedback } : {}),
+        sentAt: typeof e.sentAt === "string" ? e.sentAt : undefined,
+        updatedAt: typeof e.updatedAt === "string" ? e.updatedAt : undefined,
+      }
+    })
+    .filter((x): x is RecruiterCompanySendPublic => x !== null)
 }
 
 export function sanitizeSubmissionStatusHistory(raw: unknown): RecruiterSubmissionStatusHistoryItem[] {
@@ -2150,6 +2231,7 @@ export function publicRecruiterSubmission(d: { id: string; data: () => Record<st
       : "unclassified",
     status: typeof data.status === "string" ? data.status : "submitted",
     statusHistory: sanitizeSubmissionStatusHistory(data.statusHistory),
+    companySends: sanitizeRecruiterCompanySends(data.companySends),
     requestedInfo: sanitizeSubmissionRequestedInfo(data.requestedInfo),
     extraFields: sanitizeSubmissionExtraFields(data.extraFields),
     recruiterFeedbackNote: typeof data.recruiterFeedbackNote === "string" ? data.recruiterFeedbackNote : null,
@@ -4809,7 +4891,7 @@ export async function addRecruiterSubmissionComment(
   input: { submissionId: string; message: string },
   nowIso = new Date().toISOString(),
 ): Promise<
-  | { ok: true; comment: RecruiterSubmissionCommentListItem }
+  | { ok: true; comment: RecruiterSubmissionCommentListItem; submission: Record<string, unknown> }
   | { ok: false; status: 403 | 404; reason: string }
 > {
   const owned = await loadOwnedRecruiterSubmission(db, recruiter, input.submissionId)
@@ -4826,6 +4908,7 @@ export async function addRecruiterSubmissionComment(
   return {
     ok: true,
     comment: { id: commentId, ...commentDoc },
+    submission: owned.data,
   }
 }
 
@@ -4876,7 +4959,7 @@ export const paRecruiterSubmissionCommentsList = onRequest(
 )
 
 export const paRecruiterSubmissionCommentAdd = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -4904,6 +4987,22 @@ export const paRecruiterSubmissionCommentAdd = onRequest(
         res.status(result.status).json({ ok: false, reason: result.reason })
         return
       }
+      // Notify WeKruit ops that a recruiter messaged us on the platform. Best-effort,
+      // fail-open — never block the comment write on a mailgun hiccup.
+      const sub = result.submission
+      const candidate = (sub.candidate ?? {}) as Record<string, unknown>
+      const roleLine = [sub.jobTitleSnapshot, sub.companyLabelSnapshot]
+        .map((v) => (typeof v === "string" ? v.trim() : ""))
+        .filter(Boolean)
+        .join(" @ ")
+      await notifyWekruitOfRecruiterComment({
+        recruiterName: recruiter.name || recruiter.email,
+        recruiterEmail: recruiter.email,
+        submissionId: validated.value.submissionId,
+        candidateName: (typeof candidate.name === "string" && candidate.name.trim()) || "the candidate",
+        roleLine,
+        message: validated.value.message,
+      })
       res.set("Cache-Control", "private, max-age=0, no-store")
       res.status(200).json({ ok: true, comment: result.comment })
     } catch (err) {
@@ -5100,6 +5199,59 @@ async function sendRecruiterMailgunEmail(
     return { ok: true, messageId: parsed.id }
   } catch {
     return { ok: true }
+  }
+}
+
+// Where recruiter-message notifications go. Adam: "if a recruiter sends a message
+// on our platform, email me at noah.liu@wekruit.com." Overridable via env.
+const RECRUITER_MESSAGE_NOTIFY_TO = (process.env.RECRUITER_MESSAGE_NOTIFY_TO ?? "noah.liu@wekruit.com").trim()
+const ADMIN_DASHBOARD_BASE_URL = "https://wekruit-pa.web.app"
+
+/**
+ * Email WeKruit ops when a recruiter posts a message on a submission thread.
+ * Best-effort + fail-open: a mailgun miss must NEVER fail the comment write.
+ */
+async function notifyWekruitOfRecruiterComment(input: {
+  recruiterName: string
+  recruiterEmail: string
+  submissionId: string
+  candidateName: string
+  roleLine: string
+  message: string
+}): Promise<void> {
+  try {
+    const cfg = recruiterMailgunConfigFromEnv()
+    if (!cfg) {
+      logger.warn("recruiter_comment_notify_skipped", { reason: "mailgun_not_configured" })
+      return
+    }
+    const link = `${ADMIN_DASHBOARD_BASE_URL}/admin/recruiter-submissions?submission=${encodeURIComponent(input.submissionId)}`
+    const subject = `New recruiter message — ${input.recruiterName} re: ${input.candidateName}`
+    const text = [
+      `${input.recruiterName} (${input.recruiterEmail}) sent a message on the WeKruit recruiter platform.`,
+      "",
+      `Candidate: ${input.candidateName}`,
+      input.roleLine ? `Role: ${input.roleLine}` : "",
+      "",
+      "Message:",
+      input.message,
+      "",
+      `Open the submission: ${link}`,
+    ].filter((l) => l !== "").join("\n")
+    const html = [
+      `<p><b>${escapeHtml(input.recruiterName)}</b> (${escapeHtml(input.recruiterEmail)}) sent a message on the WeKruit recruiter platform.</p>`,
+      `<p><b>Candidate:</b> ${escapeHtml(input.candidateName)}${input.roleLine ? `<br/><b>Role:</b> ${escapeHtml(input.roleLine)}` : ""}</p>`,
+      `<p style="border-left:3px solid #ccc;padding-left:12px;white-space:pre-wrap">${escapeHtml(input.message)}</p>`,
+      `<p><a href="${escapeHtml(link)}">Open the submission in the admin dashboard</a></p>`,
+    ].join("")
+    const sent = await sendRecruiterMailgunEmail(cfg, { to: RECRUITER_MESSAGE_NOTIFY_TO, subject, text, html })
+    if (!sent.ok) {
+      logger.error("recruiter_comment_notify_failed", { status: sent.status, raw: sent.raw.slice(0, 300) })
+    } else {
+      logger.info("recruiter_comment_notify_sent", { to: RECRUITER_MESSAGE_NOTIFY_TO, messageId: sent.messageId })
+    }
+  } catch (err) {
+    logger.error("recruiter_comment_notify_error", { error: String(err) })
   }
 }
 

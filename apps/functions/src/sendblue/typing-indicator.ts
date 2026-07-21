@@ -7,6 +7,7 @@
  */
 
 import { getSendblueCreds, type SendblueCredentials } from "./sendblue-client.js"
+import { isSyntheticRecipientNumber } from "./synthetic-recipient.js"
 
 // Verified empirically 2026-04-27: real endpoint is /api/send-typing-indicator
 // (NOT under /send-message/). Doc page is misleading.
@@ -27,6 +28,12 @@ export async function sendTypingIndicator(
   creds: SendblueCredentials = getSendblueCreds(),
   log: (...args: unknown[]) => void = console.log
 ): Promise<void> {
+  // 2026-06-19 incident hard backstop — synthetic/test recipient NEVER posts.
+  // Typing is best-effort UX; skip silently (no throw) so callers are unaffected.
+  if (isSyntheticRecipientNumber(input.to)) {
+    log("[sendblue][typing] blocked synthetic recipient (no POST)", input.to)
+    return
+  }
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), TYPING_TIMEOUT_MS)
   try {

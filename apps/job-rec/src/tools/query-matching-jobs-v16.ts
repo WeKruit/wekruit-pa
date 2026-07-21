@@ -292,13 +292,59 @@ function careerStageYoeMaxFromTags(tags: UserTags): number | undefined {
   return undefined
 }
 
+/**
+ * IC early/mid career stages (fix 2026-06-19). A candidate at one of these
+ * stages is an individual contributor who has NOT signalled readiness to manage
+ * people — so a people-management / executive `seniorityLevel` job is a hard
+ * drop even though the ±1 ordinal window would otherwise admit `manager`
+ * (`CAREER_STAGE_INDEX` 5, parallel to `senior`). `senior`+ IC stages are
+ * intentionally excluded (a senior IC adjacent to manager is a plausible match).
+ */
+const IC_EARLY_MID_STAGES = new Set<CareerStage>([
+  "student",
+  "intern",
+  "entry_level",
+  "junior",
+  "mid_level",
+])
+
+/**
+ * People-management / executive seniority tiers. A job whose explicit
+ * `seniorityLevel` normalizes to one of these is gated for IC early/mid
+ * candidates (see the leakage guard in `applyV16HardFilters`). `staff` /
+ * `principal` are senior-IC tiers, NOT people-management, and are NOT listed —
+ * they are already dropped for early/mid candidates by the ordinal window.
+ */
+const MANAGEMENT_TIER_STAGES = new Set<CareerStage>([
+  "manager",
+  "director",
+  "vp",
+  "c_level",
+])
+
 export function matchingCareerStageWindow(stage: CareerStage, yoeMaxYears?: number): CareerStage[] {
-  if (stage !== "founder") return acceptableCareerStages(stage)
+  const hasYoeMax = typeof yoeMaxYears === "number" && Number.isFinite(yoeMaxYears)
+  if (stage !== "founder") {
+    // Default behaviour (NO explicit yoe) = the static ±1 acceptable window.
+    // Do NOT tighten everyone — only an EXPLICIT candidate-authored yoeRange
+    // narrows the window (fix 2026-06-19, "3-4 years" → senior leaked through).
+    if (!hasYoeMax) return acceptableCareerStages(stage)
+    // EXPLICIT yoe present (e.g. yoeRange [3,4] → yoeMax 4 → mid_level): cap the
+    // UPPER bound of the ±1 window at the stage implied by the candidate's
+    // stated max experience. "make sure these are all 3 to 4 years" must
+    // hard-drop ~5+yr "senior" (idx 5) roles even for a mid_level (idx 4)
+    // candidate, whose static ±1 window would otherwise admit senior.
+    // Lower bound is left at the ±1 floor (a slightly-junior role is fine);
+    // only upward leakage past the stated experience is removed.
+    const yoeStage = careerStageFromYoeMax(yoeMaxYears as number)
+    const cap = CAREER_STAGE_INDEX[yoeStage]
+    return acceptableCareerStages(stage).filter((s) => CAREER_STAGE_INDEX[s] <= cap)
+  }
   // A founder with KNOWN low experience is early-career, not an executive hire → use the yoe-implied
   // ±1 window so they are NEVER leaked senior/manager/director roles. A seasoned founder (yoe ≥
   // FOUNDER_SENIOR_YOE) OR unknown yoe keeps the full executive band (a real founder fits senior+ scope).
-  if (typeof yoeMaxYears === "number" && Number.isFinite(yoeMaxYears) && yoeMaxYears < FOUNDER_SENIOR_YOE) {
-    return acceptableCareerStages(careerStageFromYoeMax(yoeMaxYears))
+  if (hasYoeMax && (yoeMaxYears as number) < FOUNDER_SENIOR_YOE) {
+    return acceptableCareerStages(careerStageFromYoeMax(yoeMaxYears as number))
   }
   return ["senior", "staff", "principal", "manager", "director", "vp", "c_level", "founder"]
 }
@@ -1554,12 +1600,25 @@ export function applyV16HardFilters(
   // (`jobIsForeignNonUs`) is NOT bypassed by this (a region-locked non-US role
   // is always dropped); only the metro intersect + the careerStage relax ladder
   // consult `isAnywhere`.
+  // FIX 2026-06-19 (Adam — in-person defense jobs leaked to a remote+metro candidate): the old
+  // `.some(ANYWHERE_LOCATION_TOKENS)` made isAnywhere=true whenever ANY token was `remote`, which
+  // DISABLED the metro intersect for a user who listed `["remote", cleveland, akron, ...]` → in-person
+  // off-metro roles (Lockheed/RTX) passed. The correct discriminator is NOT "is any token an anywhere
+  // token" — it's "does the user name a CONCRETE METRO". A concrete metro (cleveland, sf) imposes a
+  // real sub-constraint; remote / anywhere / US-country / onsite-hybrid-intent tokens do not. So:
+  //   - no concrete metro present (e.g. ["remote_anywhere","onsite_hybrid_us"] or bare ["remote"]) →
+  //     anywhere-within-US, skip the metro intersect (the country gate still drops foreign roles).
+  //   - at least one concrete metro (e.g. ["remote","cleveland"]) → run the metro intersect, where a
+  //     remote job still passes via the job-side `jobIsAnywhere` bypass (~line 1723) and an in-person
+  //     off-metro role correctly drops.
+  const isConcreteMetroToken = (raw: string): boolean => {
+    const t = raw.trim().toLowerCase()
+    if (isUserAnywhereUsToken(t)) return false
+    if (t.includes("remote") || t.includes("onsite") || t.includes("hybrid")) return false
+    return true
+  }
   const isAnywhere =
-    targetLocations.length === 0 ||
-    targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase())) ||
-    // US-only platform: a target of only country-level US / anywhere tokens carries no metro
-    // sub-constraint → anywhere-within-US (skip the metro intersect). A specific metro is respected.
-    targetLocations.every(isUserAnywhereUsToken)
+    targetLocations.length === 0 || !targetLocations.some(isConcreteMetroToken)
   const targetLocationSet = new Set(targetLocations.map((l) => l.trim().toLowerCase()))
   // careerStage window — only enforce when both user + job sides present.
   // W5 — `careerStage`, `targetJobType`, `targetRoleFunction`, `relevantTags`,
@@ -1769,6 +1828,24 @@ export function applyV16HardFilters(
     if (!careerStageSoft && acceptableStages) {
       const jobStage = normalizeCareerStageToken(job.seniorityLevel)
       if (jobStage && !acceptableStages.has(jobStage)) {
+        counters.careerStage++
+        continue
+      }
+      // 3b. People-management / executive leakage guard (fix 2026-06-19 — leak
+      // #1: a 2-3yr IC candidate received Lead/Manager roles). Root cause: the
+      // ±1 ordinal `acceptableCareerStages` window puts `manager` (CAREER_STAGE_INDEX
+      // 5, the people-management parallel band) inside a `mid_level` (4) candidate's
+      // window — so a manager-tagged job survived. An early/mid IC candidate has
+      // NOT signalled readiness to manage people, so a people-management or
+      // executive seniorityLevel is a HARD drop regardless of ordinal adjacency.
+      //   - Fires ONLY for the scalar IC-stage window (student…mid_level): an
+      //     explicit `careerStageRange` or a `founder` stage deliberately opens
+      //     the executive band (Adam-locked range/founder behaviour) and is left
+      //     untouched — neither sets these IC stages here when a range is present.
+      //   - "lead" titles normalize to `senior` (an IC tier, idx 5) and are NOT
+      //     caught here; only the people-management vocab (manager/director/vp/
+      //     c_level) is gated, matching the live complaint.
+      if (!careerStageRange && IC_EARLY_MID_STAGES.has(careerStage as CareerStage) && jobStage && MANAGEMENT_TIER_STAGES.has(jobStage)) {
         counters.careerStage++
         continue
       }

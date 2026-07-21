@@ -10,11 +10,38 @@
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { buildMatchingTools } from "./matching-tools.js"
+import { buildMatchingTools, deliverRecBubbles } from "./matching-tools.js"
 import { claireToolUseBehavior } from "../agent.js"
 import type { ClaireToolContext, FindMatchResult } from "../types.js"
 
 type SentRow = { text: string; seq?: number; paced?: boolean }
+
+/**
+ * A Firestore stub shaped EXACTLY for getRecentSentMessages' query:
+ *   db.collection(PA_MESSAGES).where("sessionId","==",x).limit(200).get() → { docs:[{data()}] }
+ * Each prior message is returned as an `assistant` row sourced from the real outbox
+ * (`rawMeta.source === "pa-outbound"`) so it counts as "what Claire actually SENT". Used to drive the
+ * re-pull silence guard: when the matcher returns roles byte-identical to these, the guard fires.
+ */
+function recentSentDbStub(priorBodies: string[], sessionId = "s1", userId = "u1"): unknown {
+  const docs = priorBodies.map((body, i) => ({
+    data: () => ({
+      role: "assistant",
+      sessionId,
+      userId,
+      body,
+      createdAt: `2026-06-09T00:0${i}:00.000Z`,
+      rawMeta: { source: "pa-outbound" },
+    }),
+  }))
+  return {
+    collection: () => ({
+      where: () => ({
+        limit: () => ({ get: async () => ({ docs }) }),
+      }),
+    }),
+  }
+}
 
 function recordingCtx(findMatch: ClaireToolContext["findMatch"]): {
   ctx: ClaireToolContext
@@ -155,6 +182,79 @@ test("matcher error (ok:false): nothing sent, delivered:false", async () => {
   assert.equal(out.ok, false)
   assert.equal(out.delivered, false)
   assert.equal(sent.length, 0)
+})
+
+// ── RE-PULL SILENCE GUARD (Shivam incident, 2026-06-09) ───────────────────────────────────────────
+// Live bug: candidate said "Yeah" (= check my statuses) → agent re-ran find_match → matcher returned
+// the SAME roles already sent → deliverRecBubbles posted byte-identical role bubbles → the outbox
+// dropped EVERY one as `duplicate_skipped` (downstream, invisible to the agent) → ZERO message → total
+// silence. The fix: when EVERY deliverable role bubble is a recent near-dup, do NOT re-post the identical
+// batch; send ONE guaranteed-fresh status-aware line so the candidate ALWAYS hears back.
+
+test("re-pull: ALL roles are recent duplicates → no role bubbles re-posted, ONE fresh line sent, delivered:true", async () => {
+  // The candidate already received these exact two role lines this session (prior outbox rows).
+  const res: FindMatchResult = {
+    ok: true,
+    recCount: 2,
+    jobs: [COLLAB_LINE_1, OPEN_LINE],
+    reason: null,
+    collab: [{ jobId: "metavoice", title: "Software Engineer (Data & Evals)", company: "MetaVoice", prescreenReady: true }],
+  }
+  const { ctx, sent } = recordingCtx(async () => res)
+  ;(ctx as { db: unknown }).db = recentSentDbStub([COLLAB_LINE_1, OPEN_LINE])
+  const out = await deliverRecBubbles(ctx, res)
+
+  // NOT the normal batch — no intro, no per-role bubble, no offer. Exactly ONE fresh line.
+  assert.equal(sent.length, 1, "exactly one fresh status-aware line is sent on a pure re-pull")
+  assert.ok(!sent.some((s) => s === COLLAB_LINE_1 || s === OPEN_LINE), "no identical role bubble re-posted")
+  assert.ok(!sent.some((s) => /found a few that fit/i.test(s)), "no intro bubble re-posted")
+  // The fresh line acknowledges the same-set reality and offers a real next step (status / widen).
+  assert.match(sent[0]!, /same|already|nothing (newer|fresh)|status|screen|wider|broaden|widen/i)
+  // delivered:true ⇒ the agent stays silent (no duplicate narration) — the fresh line is on the wire.
+  assert.equal(out.delivered, true)
+  assert.equal(out.collabCount, 0)
+})
+
+test("re-pull: SOME role is new → normal delivery (guard does NOT fire)", async () => {
+  // Only COLLAB_LINE_1 was sent before; COLLAB_LINE_2 is brand new → deliver normally.
+  const res: FindMatchResult = {
+    ok: true,
+    recCount: 2,
+    jobs: [COLLAB_LINE_1, COLLAB_LINE_2],
+    reason: null,
+    collab: [
+      { jobId: "metavoice", title: "Software Engineer (Data & Evals)", company: "MetaVoice", prescreenReady: true },
+      { jobId: "helium", title: "Product Engineer (Full-Stack)", company: "Helium", prescreenReady: true },
+    ],
+  }
+  const { ctx, sent } = recordingCtx(async () => res)
+  ;(ctx as { db: unknown }).db = recentSentDbStub([COLLAB_LINE_1])
+  const out = await deliverRecBubbles(ctx, res)
+
+  // Full normal batch: intro + 2 roles + offer = 4 bubbles (both roles delivered verbatim).
+  assert.equal(out.delivered, true)
+  assert.ok(sent.some((s) => s === COLLAB_LINE_1), "the seen role is still delivered as part of the fresh batch")
+  assert.ok(sent.some((s) => s === COLLAB_LINE_2), "the new role is delivered")
+  assert.ok(sent.some((s) => /found a few that fit/i.test(s)), "intro present (normal path)")
+})
+
+test("re-pull: NO prior sends (empty recent) → normal delivery (fail-open / first send)", async () => {
+  const res: FindMatchResult = { ok: true, recCount: 1, jobs: [OPEN_LINE], reason: null, collab: [] }
+  const { ctx, sent } = recordingCtx(async () => res)
+  ;(ctx as { db: unknown }).db = recentSentDbStub([])
+  const out = await deliverRecBubbles(ctx, res)
+  assert.equal(out.delivered, true)
+  assert.equal(sent.length, 2) // intro + 1 role, normal path
+  assert.ok(sent.some((s) => s === OPEN_LINE))
+})
+
+test("re-pull guard NEVER ends a real-text turn silent: a pure re-pull always puts ≥1 message on the wire", async () => {
+  // The invariant: even when every role is a duplicate, the candidate is NOT left silent.
+  const res: FindMatchResult = { ok: true, recCount: 1, jobs: [OPEN_LINE], reason: null, collab: [] }
+  const { ctx, sent } = recordingCtx(async () => res)
+  ;(ctx as { db: unknown }).db = recentSentDbStub([OPEN_LINE])
+  await deliverRecBubbles(ctx, res)
+  assert.ok(sent.length >= 1, "a turn with real user text NEVER ends with zero messages sent")
 })
 
 // ── REC-HALLUCINATION: SDK-NATIVE TURN FINALIZATION (Adam 2026-06-06) ─────────────────────────────

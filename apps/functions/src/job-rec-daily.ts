@@ -16,6 +16,8 @@
 import { onSchedule } from "firebase-functions/v2/scheduler"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { withScheduledAlert } from "./lib/with-scheduled-alert.js"
+import { MAILGUN_SECRETS, PA_SLACK_ALERT_WEBHOOK } from "./orchestrator-deps.js"
 import {
   runDailyJobRecBatch,
   defaultUserEmbedFetcher,
@@ -108,8 +110,10 @@ export const paJobRecDaily = onSchedule(
     memory: "2GiB",
     timeoutSeconds: 540,
     retryCount: 0,
+    // 2026-06-14 — alert channels so a silent batch failure pages ops.
+    secrets: [PA_SLACK_ALERT_WEBHOOK, ...MAILGUN_SECRETS],
   },
-  async () => {
+  withScheduledAlert("paJobRecDaily", async () => {
     const db = getFirestore()
     try {
       // Audience widener pre-pass (2026-06-11, Adam: "every 2-3 days we should
@@ -159,5 +163,5 @@ export const paJobRecDaily = onSchedule(
       })
       throw err
     }
-  }
+  })
 )

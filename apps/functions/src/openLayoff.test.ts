@@ -514,6 +514,30 @@ test("runRegisterLayoffCandidate writes candidate source for candidate-host sign
   assert.equal((user.candidateContext as DocData).lastCompany, "Rain")
 })
 
+test("runRegisterLayoffCandidate keeps yc_startup_school attribution and never marks laid-off", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterLayoffCandidate(
+    registration({ source: "yc_startup_school" }),
+    deps(fake)
+  )
+
+  assert.equal(result.candidateId, "auto_1")
+  const user = fake.read(`${PA_COLLECTIONS.users}/auto_1`)!
+  assert.equal(user.source, "yc_startup_school")
+  assert.equal(user.lastLaidOffAt, undefined)
+  assert.equal(user.layoffContext, undefined)
+})
+
+test("runRegisterLayoffCandidate coerces a non-canonical source to the layoff default", async () => {
+  const fake = new FakeFirestore()
+  await runRegisterLayoffCandidate(
+    registration({ source: "not_a_real_source" as never }),
+    deps(fake)
+  )
+  const user = fake.read(`${PA_COLLECTIONS.users}/auto_1`)!
+  assert.equal(user.source, LAYOFF_SOURCE_TAG)
+})
+
 test("runRegisterLayoffCandidate mints a transit-safe bind code when no phone is bound (website-first)", async () => {
   const fake = new FakeFirestore()
   const result = await runRegisterLayoffCandidate(

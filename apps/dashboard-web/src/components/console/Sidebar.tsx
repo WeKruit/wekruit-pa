@@ -80,6 +80,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     items: [
       { to: "/admin/external-supply/jobs", label: "Collab companies · jobs" },
       { to: "/admin/recruiter-roles", label: "Role priorities" },
+      { to: "/admin/job-quality", label: "Job quality" },
       { to: "/admin/external-supply/non-collab-jobs", label: "Non-collab companies · jobs" },
       { to: "/admin/companies", label: "Companies directory" },
       { to: "/admin/job-prescreen", label: "Prescreen config" },

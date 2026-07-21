@@ -41,6 +41,14 @@ export interface DialOutboundDeps {
   callerIdStrategy: CallerIdStrategy
   trunkSid: string
   /**
+   * Dispatch the named voice agent to the room BEFORE the SIP call (LiveKit
+   * telephony best practice — https://docs.livekit.io/sip/outbound-calls/).
+   * The agent connects + warms (context, STT/LLM/TTS) during the ring so it
+   * greets the instant the candidate answers, instead of cold-starting on the
+   * live call (~20s dead air). Optional so tests / legacy paths skip it.
+   */
+  dispatchAgent?: (args: { roomName: string; metadata: string }) => Promise<void>
+  /**
    * Optional override of how the room name is derived from a booking id.
    * Default = identity (room name === bookingId), per AGENT_PLAN §3.2.
    */
@@ -69,6 +77,7 @@ export interface DialOutboundResult {
     | "skipped:missing_data"
     | "failed:missing_identity"
     | "failed:dev_phone_gate"
+    | "failed:agent_dispatch"
     | "failed:sip_dispatch"
     | "dispatched"
   bookingId: string
@@ -126,7 +135,12 @@ export async function handleDialOutbound(
   // failed and stop. No LLM, no LiveKit call.
   const paUserId = typeof after.paUserId === "string" ? after.paUserId.trim() : ""
   const paJobId = typeof after.paJobId === "string" ? after.paJobId.trim() : ""
-  const purpose = after.purpose === "onboarding" ? "onboarding" : "prescreen"
+  const purpose =
+    after.purpose === "onboarding"
+      ? "onboarding"
+      : after.purpose === "know_you_better"
+        ? "know_you_better"
+        : "prescreen"
   if (!paUserId || (purpose === "prescreen" && !paJobId)) {
     const missing = []
     if (!paUserId) missing.push("paUserId")
@@ -191,7 +205,38 @@ export async function handleDialOutbound(
   const callerId = deps.callerIdStrategy.pick({ bookingId, paUserId })
   const roomName = deriveRoom(bookingId)
 
-  // Dispatch.
+  // ── AGENT-FIRST (LiveKit telephony best practice) ──────────────────────────
+  // Dispatch the named voice agent to the room and let it connect + WARM (load
+  // context, start STT/LLM/TTS) BEFORE we place the call, so the candidate hears
+  // the greeting the instant they answer rather than ~20s of dead air while the
+  // agent cold-starts on the live call. A NAMED agent disables auto-dispatch, so
+  // if this dispatch fails NO agent would ever join — we must NOT place the call.
+  if (deps.dispatchAgent) {
+    try {
+      await deps.dispatchAgent({
+        roomName,
+        metadata: JSON.stringify({ bookingId, purpose, paUserId, paJobId }),
+      })
+      log("info", "dialOutbound:agent_dispatched", { bookingId, roomName })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      log("error", "dialOutbound:agent_dispatch_failed", { bookingId, error: message })
+      await bookingRef.set(
+        {
+          voiceState: "failed",
+          voiceOutcome: "failed:agent_dispatch_error",
+          voiceLastError: truncate(message, 500),
+          voiceEndedAt: now().toISOString(),
+          voiceCallerId: callerId,
+          voiceRoomName: roomName,
+        },
+        { merge: true },
+      )
+      return { action: "failed:agent_dispatch", bookingId, callerId, errorMessage: message }
+    }
+  }
+
+  // Dispatch the SIP call (the candidate's phone rings; the agent is warming).
   let info: SipParticipantInfo
   try {
     info = await deps.sipClient.createSipParticipant({

@@ -13,7 +13,7 @@
 
 import { cookieDomainForHost } from "./browser-identity"
 
-export type SignupSource = "WeKruit_Laid_Off" | "candidate" | "layoffhedge"
+export type SignupSource = "WeKruit_Laid_Off" | "candidate" | "layoffhedge" | "yc_startup_school"
 
 /**
  * Build marker — minifiers rename exported function names, so the deploy
@@ -36,6 +36,7 @@ function sourceFromQueryValue(v: string | null): SignupSource | null {
   if (v === "layoff" || v === "WeKruit_Laid_Off") return "WeKruit_Laid_Off"
   if (v === "candidate") return "candidate"
   if (v === "layoffhedge") return "layoffhedge"
+  if (v === "yc" || v === "yc_startup_school") return "yc_startup_school"
   return null
 }
 
@@ -51,7 +52,7 @@ function cookieSource(): SignupSource | null {
   const match = document.cookie.match(new RegExp("(?:^|; )" + COOKIE_NAME + "=([^;]+)"))
   if (!match) return null
   const v = decodeURIComponent(match[1])
-  if (v === "WeKruit_Laid_Off" || v === "candidate" || v === "layoffhedge") return v
+  if (v === "WeKruit_Laid_Off" || v === "candidate" || v === "layoffhedge" || v === "yc_startup_school") return v
   return null
 }
 
@@ -78,6 +79,15 @@ export function resolveSource(): SignupSource {
 /** Read the cookie value without writing. Falls back to default when absent. */
 export function peekSource(): SignupSource {
   return cookieSource() ?? "candidate"
+}
+
+/**
+ * Stick an explicit source on arrival at a source-owning page (e.g.
+ * /yc-startup) so later internal nav to /onboarding — with or without a
+ * ?source= param — keeps the attribution.
+ */
+export function stickExplicitSource(value: SignupSource): void {
+  writeCookie(value)
 }
 
 /**

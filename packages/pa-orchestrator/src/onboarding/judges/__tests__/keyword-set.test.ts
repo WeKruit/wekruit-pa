@@ -372,3 +372,27 @@ test("Phase 75: buildKeywordSetPrompt uses strict prescreen calibration anchors"
   assert.match(system, /cap .*adjacent/i)
   assert.match(system, /cap .*no measurable/i)
 })
+
+test("buildKeywordSetPrompt: candidate-context block appears when provided", () => {
+  const { user, system } = buildKeywordSetPrompt({
+    reply: "I shipped a payments API",
+    lang: "en",
+    keywords: [{ keyword: "payments", weight: 1 }],
+    questionPrompt: "Tell me about payments work",
+    candidateContext: "Current/recent: Staff SWE @ Stripe",
+  })
+  assert.ok(user.includes("Candidate context"))
+  assert.ok(user.includes("Current/recent: Staff SWE @ Stripe"))
+  // System encourages crediting context + decline detection.
+  assert.ok(system.includes("candidate-context block"))
+})
+
+test("buildKeywordSetPrompt: no candidate-context block when omitted (back-compat)", () => {
+  const { user } = buildKeywordSetPrompt({
+    reply: "I shipped a payments API",
+    lang: "en",
+    keywords: [{ keyword: "payments", weight: 1 }],
+    questionPrompt: "Tell me about payments work",
+  })
+  assert.ok(!user.includes("Candidate context"))
+})

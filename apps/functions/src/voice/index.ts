@@ -48,6 +48,32 @@ const PA_VOICE_WEBHOOK_SECRET = defineSecret("PA_VOICE_WEBHOOK_SECRET")
 // ─── LiveKit SDK adapter ────────────────────────────────────────────────────
 
 /**
+ * Named voice agent — explicit dispatch (LiveKit telephony best practice:
+ * https://docs.livekit.io/sip/outbound-calls/). MUST match
+ * apps/voice-agent/src/cli.ts WorkerOptions.agentName. Naming the agent disables
+ * auto-dispatch; paVoiceDialOutbound dispatches it to the room BEFORE dialing so
+ * it connects + warms during the ring (kills the ~20s post-answer dead air).
+ */
+const WEKRUIT_VOICE_AGENT_NAME = "wekruit-voice-agent"
+
+/**
+ * Lazy-loaded `AgentDispatchClient` adapter — dispatches the named voice agent
+ * into a room (createDispatch) so it warms before the SIP participant joins.
+ */
+async function makeRealAgentDispatcher(opts: {
+  livekitUrl: string
+  apiKey: string
+  apiSecret: string
+}): Promise<(args: { roomName: string; metadata: string }) => Promise<void>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mod: any = await import("livekit-server-sdk")
+  const client = new mod.AgentDispatchClient(opts.livekitUrl, opts.apiKey, opts.apiSecret)
+  return async ({ roomName, metadata }) => {
+    await client.createDispatch(roomName, WEKRUIT_VOICE_AGENT_NAME, { metadata })
+  }
+}
+
+/**
  * Lazy-loaded LiveKit `SipClient` adapter. We dynamic-import to keep the
  * cold-start path lean and so unit tests of the rest of this module do not
  * require the SDK at module load.
@@ -175,8 +201,10 @@ export const paVoiceDialOutbound = onDocumentWritten(
     }
 
     let sipClient: SipClientLike
+    let dispatchAgent: (args: { roomName: string; metadata: string }) => Promise<void>
     try {
       sipClient = await makeRealSipClient({ livekitUrl, apiKey, apiSecret })
+      dispatchAgent = await makeRealAgentDispatcher({ livekitUrl, apiKey, apiSecret })
     } catch (err) {
       logger.error("paVoiceDialOutbound:sdk_load_failed", {
         bookingId,
@@ -199,6 +227,7 @@ export const paVoiceDialOutbound = onDocumentWritten(
       { bookingId, before, after, bookingRef },
       {
         sipClient,
+        dispatchAgent,
         callerIdStrategy,
         trunkSid,
         log: (level, msg, fields) => logger[level](msg, { ...fields }),

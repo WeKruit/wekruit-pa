@@ -127,6 +127,7 @@ export interface PartnerUsersJobRow {
   state: CandidateJobState
   stateUpdatedAt: string
   prescreenSessionId?: string
+  prescreenTerminal?: string
   wekruitJobUrl: string
 }
 
@@ -152,6 +153,9 @@ export interface PartnerUsersUserRow {
   entryJobId?: string
   /** Which field(s) attributed this user to the partner. */
   attributedVia: AttributedVia
+  /** Computed display stage. Prescreen PASS → `pending_review`, FAIL/PAUSE →
+   * `not_selected`. Only `selected` means human-confirmed. */
+  stage: string
   jobs: PartnerUsersJobRow[]
   summary: {
     totalJobs: number
@@ -334,19 +338,23 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
         if (args.status && args.status.length > 0 && !args.status.includes(parsed.data)) continue
         const meta = jobMeta.get(jobId) ?? { title: "Unknown role", company: "" }
 
-        // Latest prescreen session for this candidate+job. pa-prescreen-sessions
-        // keys the candidate as `userId` (not candidateId) and timestamps as
-        // `updatedAt` (ISO string). The existing (jobId, userId, updatedAt desc)
-        // composite index covers this query.
-        const psSnap = await db
-          .collection("pa-prescreen-sessions")
-          .where("jobId", "==", jobId)
-          .where("userId", "==", candidateId)
-          .orderBy("updatedAt", "desc")
-          .limit(1)
-          .get()
-          .catch(() => ({ docs: [] as Array<{ id: string }> }))
-        const prescreenSessionId = psSnap.docs[0]?.id
+        let prescreenSessionId: string | undefined
+        let prescreenTerminal: string | undefined
+        try {
+          const psSnap = await db
+            .collection("pa-prescreen-sessions")
+            .where("jobId", "==", jobId)
+            .where("userId", "==", candidateId)
+            .orderBy("updatedAt", "desc")
+            .limit(1)
+            .get()
+          const psDoc = psSnap.docs[0]
+          if (psDoc) {
+            prescreenSessionId = psDoc.id
+            const t = psDoc.data().terminal
+            if (typeof t === "string") prescreenTerminal = t
+          }
+        } catch { /* no prescreen data */ }
 
         jobs.push({
           jobId,
@@ -355,12 +363,34 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
           state: parsed.data,
           stateUpdatedAt,
           prescreenSessionId,
+          ...(prescreenTerminal ? { prescreenTerminal } : {}),
           wekruitJobUrl: `https://wekruit.com/j/${jobId}`,
         })
       }
 
       // If a status filter is present, drop users with zero remaining jobs.
       if (args.status && args.status.length > 0 && jobs.length === 0) return null
+
+      // Compute display stage: prescreen terminal overrides CJS state.
+      // Values: registered → applied → prescreening → prescreened → sent_to_client → with_client
+      //         (not_selected = prescreen FAIL/PAUSE)
+      let stage = jobs.length > 0 ? "applied" : "registered"
+      if (jobs.some((j) => ACTIVE_PRESCREEN.has(j.state))) stage = "prescreening"
+      if (jobs.some((j) => j.state === "passed")) stage = "sent_to_client"
+      if (jobs.some((j) => j.state === "employer_visible")) stage = "with_client"
+      if (jobs.some((j) => j.state === "not_passed") && !jobs.some((j) => j.state === "passed" || j.state === "employer_visible")) {
+        stage = "not_selected"
+      }
+      const hasPassTerminal = jobs.some((j) => j.prescreenTerminal === "PASS")
+      const hasFailOrPause = jobs.some((j) => {
+        const t = j.prescreenTerminal
+        return t === "FAIL" || t === "HARD_STOP" || t === "PAUSE"
+      })
+      if (hasPassTerminal && stage !== "with_client") {
+        stage = "prescreened"
+      } else if (hasFailOrPause && !hasPassTerminal && stage !== "with_client" && stage !== "sent_to_client") {
+        stage = "not_selected"
+      }
 
       const summary = {
         totalJobs: jobs.length,
@@ -380,6 +410,7 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
         entrySource,
         entryJobId,
         attributedVia,
+        stage,
         jobs,
         summary,
       } as PartnerUsersUserRow

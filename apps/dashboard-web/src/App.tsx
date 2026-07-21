@@ -87,6 +87,7 @@ import PassedCandidates from "./pages/PassedCandidates.js"
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 // Recruiter board (wekruit-recruiters.web.app/recruiters) — admin review surface.
 import RecruiterSubmissions from "./pages/RecruiterSubmissions.js"
+import JobQuality from "./pages/JobQuality.js"
 import RecruiterHub from "./pages/RecruiterHub.js"
 import RecruiterDigests from "./pages/RecruiterDigests.js"
 // v2.0 External Supply V1 — Wave D admin surfaces (Landing, BatchNew,
@@ -196,6 +197,7 @@ export default function App() {
           <Route path="/admin/canonical-tags" element={<CanonicalTags />} />
           {/* Phase A4 (WEK-yc) — centralized company directory CRUD. */}
           <Route path="/admin/companies" element={<Companies />} />
+          <Route path="/admin/job-quality" element={<JobQuality />} />
           {/* Employer role packets — review candidate.wekruit.com /employer submissions. */}
           <Route path="/admin/layoff-employers" element={<LayoffEmployers />} />
           {/* Coresignal Agentic Search playground — admin-only, CF proxy. */}

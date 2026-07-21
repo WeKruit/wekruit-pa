@@ -42,6 +42,21 @@ import {
 export const CLAIRE_MODEL = "gpt-5.4-nano"
 
 /**
+ * Fallback conversation model — tried ONCE when the primary model THROWS (429 / 5xx /
+ * APIConnectionError) on the inbound turn, BEFORE the user-visible hiccup copy (2026-06-20 SEV:
+ * 31 OpenAI fast-throws across 13 users → 31 candidates got the "trouble on my end" copy because
+ * the turn had NO model fallback). `gpt-4.1-mini` is the lowest-risk swap: SAME OpenAI client /
+ * SDK shape as the primary (sdk.ts configureClaireSdk points the SDK at one OpenAI client; only
+ * the model STRING differs), so the retry needs no new client wiring — and a DIFFERENT model id
+ * dodges a per-model rate-limit / 5xx that just hit the primary. Mirrors the pa-resume-parser
+ * router's gpt-5.4-nano → … → gpt-4.1-mini chain (router.ts). The fallback is NOT tried on a
+ * guardrail tripwire (a deliberate block) or on the explicit run timeout (the timeout path is a
+ * cost/latency guard, not a provider hiccup, and re-running would blow the inbound lease) — only on
+ * a genuine provider throw.
+ */
+export const CLAIRE_FALLBACK_MODEL = "gpt-4.1-mini"
+
+/**
  * Hard cap on the SDK agent loop (model-call iterations per inbound turn) for the
  * LIVE thin-Claire path — the `run()` calls in this file + proactive.ts.
  *
@@ -291,6 +306,9 @@ export interface BuildClaireAgentOptions {
   linkedinJustConnected?: boolean
   /** CANONICAL STEP 4: the conditional pre-match location+salary ask (turn-context only). */
   locationSalaryAsk?: boolean
+  /** Provider-fallback retry: override the conversation model (default CLAIRE_MODEL). Set to
+   *  CLAIRE_FALLBACK_MODEL for the one-shot retry after the primary model throws. */
+  modelOverride?: string
 }
 
 // The agent's terminal output when a tool already delivered the candidate-facing text: an EMPTY bubble array
@@ -381,7 +399,9 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
   // only the compile-time type is the known lie. Same casting philosophy as sdk.ts's value exports.
   const agentConfig = {
     name: "Claire",
-    model: CLAIRE_MODEL,
+    // Default = the primary model; the provider-fallback retry passes CLAIRE_FALLBACK_MODEL here so
+    // the rebuilt agent hits a DIFFERENT model on the same OpenAI client (see CLAIRE_FALLBACK_MODEL).
+    model: opts.modelOverride ?? CLAIRE_MODEL,
     // 2B — STATIC HEAD ONLY (byte-stable across turns so the prefix caches). The per-turn
     // dynamic block (canary tapback / globalContext / prescreenContext / non-onboarding
     // pendingStep) is re-injected as a trailing system input item in run() below, NOT here.
@@ -780,6 +800,10 @@ export interface RunClaireTurnDeps {
    *  cutover from the mode-selector cold-start triage short-path. Drives the warm-greet-back directive —
    *  no offer kickoff, no onboarding question. */
   warmReturningGreeting?: boolean
+  /** ENTRY POSTURE (Adam 2026-07-20): tone overlay keyed off the entry page (pa-users.source, set by
+   *  mode-selector). yc_startup_school = founder-scene chat, no pushing, notify-on-match promise.
+   *  Persona-level (NOT a deterministic pattern) — survives the anti-silence fallback strip. */
+  entryPosture?: "yc_startup_school"
   /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention context
    *  (buildCandidateContext.prescreenContextText) — prior screens + terminals + real reasons + borderline
    *  gaps + capture/offer-other-roles directive. Set by cutover for a post-terminal/retention turn that
@@ -972,7 +996,9 @@ export async function runClaireTurn(
   // suppressed, run a PLAIN agent turn — every deterministic directive STRIPPED, plain triage mode — so
   // the model writes a fresh, contextual, non-duplicate reply instead of replaying the dropped pattern.
   const fallback = deps.isSuppressionFallback === true
-  const agent = buildClaireAgent(ctx, {
+  // Captured so the provider-fallback retry (catch block below) can REBUILD the same agent with only
+  // the model swapped (modelOverride: CLAIRE_FALLBACK_MODEL) — identical mode/tools/guardrails/context.
+  const buildOpts: BuildClaireAgentOptions = {
     mode: fallback ? "triage" : (deps.mode ?? "triage"),
     lang,
     pendingStep: fallback ? undefined : deps.pendingStep,
@@ -988,7 +1014,8 @@ export async function runClaireTurn(
     resumeJustDropped: fallback ? undefined : deps.resumeJustDropped,
     enrichmentInFlight: fallback ? undefined : deps.enrichmentInFlight,
     gmailNudge: fallback ? undefined : deps.gmailNudge,
-  })
+  }
+  const agent = buildClaireAgent(ctx, buildOpts)
   const session = makeClaireSession({
     db: deps.db,
     sessionId: input.sessionId,
@@ -1030,6 +1057,9 @@ export async function runClaireTurn(
     locationSalaryAsk: fallback ? undefined : deps.locationSalaryAsk,
     // WARM RETURNING GREETING — per-turn directive for a known candidate's cold greeting, trailing only.
     warmReturningGreeting: fallback ? undefined : deps.warmReturningGreeting,
+    // ENTRY POSTURE — persona tone, NOT a deterministic pattern: survives the fallback strip so the
+    // fresh reply still speaks in the entry page's voice (yc: no pushing, notify-on-match).
+    entryPosture: deps.entryPosture,
     // PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block.
     // Per-turn, trailing only, rendered in ANY mode. Stripped on the anti-silence fallback re-entry.
     candidateContext: fallback ? undefined : deps.candidateContext,
@@ -1073,40 +1103,55 @@ export async function runClaireTurn(
   let toolCalls: ClaireToolCall[] = []
   let blocked = false
   let usage: ClaireTurnUsage | undefined
+  // SECONDARY (2026-06-20): persist the turn's error state + which model served onto the decision
+  // trace so a hiccup/fallback is debuggable straight from Firestore (pa-turns), not only Cloud
+  // Logging — this SEV was previously diagnosable ONLY via logs because pa-turns had no error field.
+  // servedByModel flips to CLAIRE_FALLBACK_MODEL when the fallback retry produces the reply.
+  let servedByModel: string = CLAIRE_MODEL
+  let turnErrorCode: string | undefined
+  let turnErrorMessage: string | undefined
   // turnStartedAtIso is captured ABOVE (just before runConfig). It is the "cross_turn dedup keeps
   // triggering / silent turn" fix (Adam 2026-06-04): captured BEFORE run() so a tool that delivers
   // mid-run (find_match's role bubbles → outbox → a `pa-outbound` pa-messages row written DURING this
   // turn) is excluded from the cross-turn dedup's recent-sent set. Without it, the model's final bubble
   // restating a just-sent tool message near-dups its OWN send and is suppressed → silent. It is threaded
   // into deliverBubblesEx below AND anchors the per-turn trace id (turnTraceId).
-  // Hold the timeout handle so we can CLEAR it once the agent run settles — otherwise the 100s timer
-  // keeps the event loop alive after a fast turn (e.g. the anti-silence fallback re-entry, or a unit
-  // test with an injected runAgent), needlessly delaying process exit.
-  let runTimeout: ReturnType<typeof setTimeout> | undefined
+  //
+  // Run ONE agent against a freshly-armed timeout race. Extracted so the provider-fallback retry
+  // (catch below) can re-run the SAME loop against a rebuilt agent (CLAIRE_FALLBACK_MODEL) without
+  // duplicating the race/extract wiring. Each call arms its OWN timer (and clears it on settle) — a
+  // shared timer would already be near-elapsed by the retry, robbing the fallback of its full budget.
+  const runWith = async (agentToRun: unknown) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const res = (await Promise.race([
+        // maxTurns — cost guard against the unbounded agent loop (see resolveClaireMaxTurns). Without
+        // it the SDK runs up to 10 turns, each re-sending the full prompt + growing transcript (the
+        // 1.2B-token runaway). 2B — array input: [trailing system context (if any), user message].
+        runAgent(agentToRun, runInput, { session, maxTurns: resolveClaireMaxTurns() }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("claire_run_timeout")), RUN_TIMEOUT_MS)
+        }),
+      ])) as {
+        finalOutput?: unknown
+        rawResponses?: ReadonlyArray<unknown>
+        newItems?: ReadonlyArray<unknown>
+      }
+      return res
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
   // 2026-06-10 trust audit (fix 6a) — circuit OPEN (3 run failures in the last 60s on THIS
   // instance) → fast-fail to the fallback copy immediately, no LLM call. Keeps a provider
   // outage from burning 100s timeouts turn after turn while the candidate waits in silence.
   if (isClaireCircuitOpen()) {
     log("claire_circuit_fast_fail", { userId: input.userId })
+    turnErrorCode = "claire_circuit_open"
     bubbles = [await resolveHiccupFallbackCopy(deps.db, input.userId, Date.now(), log)]
   } else
   try {
-    const res = (await Promise.race([
-      // maxTurns — cost guard against the unbounded agent loop (see
-      // resolveClaireMaxTurns). Without it the SDK runs up to 10 turns, each
-      // re-sending the full prompt + growing transcript (the 1.2B-token runaway).
-      // 2B — array input: [trailing system context (if any), user message]. {session, maxTurns}
-      // unchanged. The system item rides as a per-turn input, NOT persisted (see above).
-      runAgent(agent, runInput, { session, maxTurns: resolveClaireMaxTurns() }),
-      new Promise((_, reject) => {
-        runTimeout = setTimeout(() => reject(new Error("claire_run_timeout")), RUN_TIMEOUT_MS)
-      }),
-    ])) as {
-      finalOutput?: unknown
-      rawResponses?: ReadonlyArray<unknown>
-      newItems?: ReadonlyArray<unknown>
-    }
-    if (runTimeout) clearTimeout(runTimeout)
+    const res = await runWith(agent)
     // finalOutput is the resolved ClaireReplySchema → { messages: string[] }. Each element is one
     // iMessage bubble; deliverBubbles POSTs them in order. extractBubbles is defensive vs shape drift.
     bubbles = extractBubbles(res?.finalOutput)
@@ -1117,7 +1162,6 @@ export async function runClaireTurn(
     // Claire acted (was the old hardcoded []). Defensive — captureToolCalls never throws.
     toolCalls = captureToolCalls(res?.newItems)
   } catch (e) {
-    if (runTimeout) clearTimeout(runTimeout)
     if (e instanceof InputGuardrailTripwireTriggered) {
       blocked = true
       log("guardrail_tripwire", { userId: input.userId })
@@ -1136,16 +1180,58 @@ export async function runClaireTurn(
       await forceFlushTraces()
       return { finalText: "", toolCalls: [], deliveredViaTool: true }
     }
-    // RC2: timeout / SDK / LLM error → grounded fallback so the turn ALWAYS replies.
-    log("claire_run_error", {
-      userId: input.userId,
-      err: e instanceof Error ? e.message : String(e),
-    })
-    // 2026-06-10 trust audit (fix 6) — feed the per-instance breaker (guardrail trips above
-    // RETURN before this, so only real run/LLM failures count) + escalate the copy when the
-    // user's previous turn also hiccupped (no identical retry-bait twice in a row).
-    noteClaireRunFailure()
-    bubbles = [await resolveHiccupFallbackCopy(deps.db, input.userId, Date.now(), log)]
+    const primaryErr = e instanceof Error ? e.message : String(e)
+    const isTimeout = primaryErr === "claire_run_timeout"
+    log("claire_run_error", { userId: input.userId, err: primaryErr, model: CLAIRE_MODEL })
+
+    // PROVIDER FALLBACK (2026-06-20): a genuine provider THROW from the primary model (429 / 5xx /
+    // APIConnectionError) — NOT a guardrail tripwire (returned above) and NOT the explicit run
+    // timeout — gets ONE retry on CLAIRE_FALLBACK_MODEL before the user-visible hiccup copy. A
+    // different model on the same OpenAI client dodges a per-model rate-limit / 5xx that just hit the
+    // primary, so one provider hiccup no longer = a candidate gets an error message. The timeout path
+    // is left exactly as-is (re-running a slow turn would blow the inbound lease, and a timeout is a
+    // latency guard, not a provider hiccup). A test may inject deps.runAgent, in which case the same
+    // runAgent drives the retry (so the test controls primary-vs-fallback success per call).
+    if (!isTimeout) {
+      try {
+        const fallbackAgent = buildClaireAgent(ctx, {
+          ...buildOpts,
+          modelOverride: CLAIRE_FALLBACK_MODEL,
+        })
+        log("claire_run_fallback_retry", { userId: input.userId, model: CLAIRE_FALLBACK_MODEL })
+        const res = await runWith(fallbackAgent)
+        bubbles = extractBubbles(res?.finalOutput)
+        usage = extractClaireUsage(res?.rawResponses)
+        toolCalls = captureToolCalls(res?.newItems)
+        servedByModel = CLAIRE_FALLBACK_MODEL
+        // The fallback served a REAL reply — record the recovered-from error for the trace, but do
+        // NOT trip the breaker or stamp the hiccup (the candidate is getting a real answer).
+        turnErrorCode = "primary_model_threw_fallback_recovered"
+        turnErrorMessage = primaryErr
+        log("claire_run_fallback_recovered", { userId: input.userId, model: CLAIRE_FALLBACK_MODEL })
+      } catch (e2) {
+        // BOTH primary and fallback threw → last-resort hiccup copy (unchanged behavior).
+        const fallbackErr = e2 instanceof Error ? e2.message : String(e2)
+        log("claire_run_fallback_failed", {
+          userId: input.userId,
+          err: fallbackErr,
+          model: CLAIRE_FALLBACK_MODEL,
+        })
+        turnErrorCode = "primary_and_fallback_threw"
+        turnErrorMessage = `${primaryErr} | fallback: ${fallbackErr}`
+        // 2026-06-10 trust audit (fix 6) — feed the per-instance breaker + escalate the copy when the
+        // user's previous turn also hiccupped (no identical retry-bait twice in a row). Counted ONCE
+        // for the whole failed turn (primary + fallback), not per-throw.
+        noteClaireRunFailure()
+        bubbles = [await resolveHiccupFallbackCopy(deps.db, input.userId, Date.now(), log)]
+      }
+    } else {
+      // RC2: explicit run timeout → straight to the grounded fallback copy (NO model retry).
+      turnErrorCode = "claire_run_timeout"
+      turnErrorMessage = primaryErr
+      noteClaireRunFailure()
+      bubbles = [await resolveHiccupFallbackCopy(deps.db, input.userId, Date.now(), log)]
+    }
   }
 
   // DE-BLACKBOX FLUSH: the SDK's BatchTraceProcessor flushes on an unref'd 5s timer; a short CF
@@ -1449,6 +1535,11 @@ export async function runClaireTurn(
     toolCalls: toolCalls as unknown as string[],
     deliveredViaTool: deliveredViaTool || blocked,
     ...(usage ? { usage } : {}),
+    // SECONDARY (2026-06-20): carry which model served + any error onto the result so the decision
+    // trace (pa-turns/{eventId}) is debuggable from Firestore — this SEV was previously log-only.
+    servedByModel,
+    ...(turnErrorCode ? { errorCode: turnErrorCode } : {}),
+    ...(turnErrorMessage ? { errorMessage: turnErrorMessage } : {}),
   }
 }
 

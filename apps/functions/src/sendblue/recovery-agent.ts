@@ -2,6 +2,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent, enqueueOutbound, inboundEventDocId } from "@pa/pa-broker"
 import { isBindCode } from "@pa/pa-orchestrator"
 import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
+import { claimOpsAlertOnce, hourBucket } from "../lib/ops-alert.js"
 import { classifyInboundReplyNeed } from "./ack-classifier.js"
 
 // Durable marker collection written by the transport when a turn is acknowledged
@@ -70,11 +71,44 @@ export type ConversationRecoveryDeps = {
   /** Slack alert seam (tests inject a recorder); production = the shared helper. */
   postSlackAlert?: typeof defaultPostSlackAlert
   /**
-   * Opt-in gate for the unanswered-inbound ALERT (NOT the ops-queue row — that
-   * always writes). Lets the alert run dev-only first. Defaults to the env flag
-   * `PA_UNANSWERED_ALERT_ENABLED` (truthy = on); explicit value wins for tests.
+   * Gate for the unanswered-inbound ALERT (NOT the ops-queue row — that always
+   * writes). 2026-06-14 (Adam): DEFAULT ON. Set env `PA_UNANSWERED_ALERT_ENABLED`
+   * to a falsy value (0/false/no/off) to disable; explicit dep value wins (tests).
    */
   unansweredAlertEnabled?: boolean
+  /**
+   * Age (ms) past which an unanswered inbound is flagged. 2026-06-14 (Adam:
+   * "6h is too long"): default 60min, overridable via env `PA_UNANSWERED_AFTER_MIN`;
+   * explicit dep value wins (tests).
+   */
+  unansweredAfterMs?: number
+  /**
+   * Auto-tapback an unanswered candidate's last inbound to acknowledge them
+   * ("we see you") — Adam 2026-06-14 approved ("if we tap back it's fine"). A
+   * tapback is a reaction to a message they JUST sent (inbound evidence present,
+   * same thread/line, not a cold open) — the least-risky candidate outbound.
+   * Gated by `PA_UNANSWERED_TAPBACK_ENABLED` (default OFF; flip on with no
+   * redeploy). Does NOT mark the turn handled — the operator alert still fires so
+   * a human/Claire gives the real answer. Explicit dep value wins (tests).
+   */
+  unansweredTapbackEnabled?: boolean
+  /** Send a tapback reaction (production = sendReaction via bound line). */
+  sendTapback?: (args: {
+    to: string
+    messageHandle: string
+    userId: string
+    fromNumber?: string
+  }) => Promise<void>
+  /**
+   * Gate for the ACTIVE recovery actions (replay dropped inbound events,
+   * reconstruct missing events, auto-start prescreens, send identity-mismatch
+   * notices). 2026-06-14 (Adam: "let's not have it right now... this is mainly
+   * for alert") — production sets this FALSE so the sweep is ALERT-ONLY: it only
+   * runs the read-only unanswered-inbound detection + alert and does NO outbound
+   * or state mutation. Handler defaults TRUE (preserves the pure-logic tests);
+   * the CF passes the env-gated value (`PA_RECOVERY_ACTIONS_ENABLED`, default off).
+   */
+  recoveryActionsEnabled?: boolean
 }
 
 type ParsedWebhook = {
@@ -126,54 +160,76 @@ function emptyResult(): RecoverySweepResult {
   }
 }
 
+/** Active recovery default ON for the pure handler (tests); the CF env-gates it. */
+function resolveRecoveryActionsEnabled(deps: ConversationRecoveryDeps): boolean {
+  if (typeof deps.recoveryActionsEnabled === "boolean") return deps.recoveryActionsEnabled
+  return true
+}
+
+/** Auto-tapback default OFF (candidate outbound — opt-in via env). Dep wins (tests). */
+function unansweredTapbackEnabled(deps: ConversationRecoveryDeps): boolean {
+  if (typeof deps.unansweredTapbackEnabled === "boolean") return deps.unansweredTapbackEnabled
+  const raw = (process.env.PA_UNANSWERED_TAPBACK_ENABLED ?? "").trim().toLowerCase()
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on"
+}
+
 export async function paConversationRecoverySweepHandler(
   deps: ConversationRecoveryDeps
 ): Promise<RecoverySweepResult> {
   const log = deps.log ?? console.log
   const now = deps.now ?? (() => new Date())
   const result = emptyResult()
+  const recoveryActionsOn = resolveRecoveryActionsEnabled(deps)
 
-  result.verified = await verifyPendingRecoveryCases(deps, now())
+  // ALERT-ONLY mode (Adam 2026-06-14): when active recovery is disabled, skip the
+  // raw-webhook scan + replay/reconstruct/start/notice actions entirely and run
+  // ONLY the read-only unanswered-inbound detection + alert. No outbound, no
+  // state mutation, no 10k-doc scan — pure visibility.
+  if (recoveryActionsOn) {
+    result.verified = await verifyPendingRecoveryCases(deps, now())
 
-  const rawLimit = deps.rawLimit ?? 10_000
-  const recoveryLimit = deps.recoveryLimit ?? 50
-  let rawSnap
-  try {
-    rawSnap = await deps.db
-      .collection(RAW_COLLECTION)
-      .orderBy("receivedAt", "desc")
-      .limit(rawLimit)
-      .get()
-  } catch (err) {
-    log("[sendblue][recovery-agent] raw query failed", err instanceof Error ? err.message : String(err))
-    result.errors++
-    return result
+    const rawLimit = deps.rawLimit ?? 10_000
+    const recoveryLimit = deps.recoveryLimit ?? 50
+    let rawSnap
+    try {
+      rawSnap = await deps.db
+        .collection(RAW_COLLECTION)
+        .orderBy("receivedAt", "desc")
+        .limit(rawLimit)
+        .get()
+    } catch (err) {
+      log("[sendblue][recovery-agent] raw query failed", err instanceof Error ? err.message : String(err))
+      result.errors++
+      return result
+    }
+    result.scannedRaw = rawSnap.size ?? rawSnap.docs.length
+
+    const conversations = buildConversations(rawSnap.docs as Array<{ id: string; data: () => Record<string, unknown> }>)
+    result.conversations = conversations.size
+    const candidates = [...conversations.values()]
+      .filter((conversation) => {
+        if (!conversation.latestInbound) return false
+        if (!conversation.latestOutbound) return true
+        return conversation.latestInbound.messageAt > conversation.latestOutbound.messageAt
+      })
+      .sort((a, b) => b.latestInbound!.messageAt.localeCompare(a.latestInbound!.messageAt))
+      .slice(0, recoveryLimit)
+    result.candidates = candidates.length
+
+    for (const conversation of candidates) {
+      // eslint-disable-next-line no-await-in-loop
+      const outcome = await recoverConversation(deps, conversation, now())
+      if (outcome === "recovered") result.recovered++
+      else if (outcome === "needs_operator_review") result.needsOperatorReview++
+      else if (outcome === "skipped_existing") result.skippedExisting++
+      else result.errors++
+    }
+  } else {
+    log("[sendblue][recovery-agent] active recovery disabled — alert-only mode")
   }
-  result.scannedRaw = rawSnap.size ?? rawSnap.docs.length
 
-  const conversations = buildConversations(rawSnap.docs as Array<{ id: string; data: () => Record<string, unknown> }>)
-  result.conversations = conversations.size
-  const candidates = [...conversations.values()]
-    .filter((conversation) => {
-      if (!conversation.latestInbound) return false
-      if (!conversation.latestOutbound) return true
-      return conversation.latestInbound.messageAt > conversation.latestOutbound.messageAt
-    })
-    .sort((a, b) => b.latestInbound!.messageAt.localeCompare(a.latestInbound!.messageAt))
-    .slice(0, recoveryLimit)
-  result.candidates = candidates.length
-
-  for (const conversation of candidates) {
-    // eslint-disable-next-line no-await-in-loop
-    const outcome = await recoverConversation(deps, conversation, now())
-    if (outcome === "recovered") result.recovered++
-    else if (outcome === "needs_operator_review") result.needsOperatorReview++
-    else if (outcome === "skipped_existing") result.skippedExisting++
-    else result.errors++
-  }
-
-  // 2026-06-10 trust audit (fix 11) — unanswered-inbound ops queue. Fail-soft:
-  // an error here must never break the raw-webhook recovery above.
+  // Unanswered-inbound detection + alert. Read-only; always runs (this is the
+  // visibility/alert Adam wants). Fail-soft.
   try {
     result.unansweredQueued = await sweepUnansweredInboundForOperatorReview(deps)
   } catch (err) {
@@ -196,9 +252,20 @@ export async function paConversationRecoverySweepHandler(
 // stale inbound is queued exactly once no matter how many sweeps run.
 // ---------------------------------------------------------------------------
 
-// TUNING (2026-06-12): age threshold a candidate is "unanswered" past. Confirmed
-// at the existing 6h. One constant so it's a one-line change if Adam re-tunes.
-const UNANSWERED_AFTER_MS = 6 * 60 * 60 * 1000
+// TUNING (2026-06-14, Adam "6h is too long"): default age threshold lowered to
+// 60min. Overridable per-run (deps.unansweredAfterMs) or via env
+// PA_UNANSWERED_AFTER_MIN (minutes) with no redeploy.
+const DEFAULT_UNANSWERED_AFTER_MIN = 60
+/** Escalate the batched alert to error-level when the oldest unanswered crosses this. */
+const UNANSWERED_ESCALATE_HOURS = 12
+function resolveUnansweredAfterMs(deps: ConversationRecoveryDeps): number {
+  if (typeof deps.unansweredAfterMs === "number" && deps.unansweredAfterMs > 0) {
+    return deps.unansweredAfterMs
+  }
+  const envMin = Number.parseFloat((process.env.PA_UNANSWERED_AFTER_MIN ?? "").trim())
+  const minutes = Number.isFinite(envMin) && envMin > 0 ? envMin : DEFAULT_UNANSWERED_AFTER_MIN
+  return minutes * 60 * 1000
+}
 const UNANSWERED_SCAN_LIMIT = 300
 const UNANSWERED_WRITE_CAP = 25
 // Sample size for the batched alert (mask + list this many users; count is exact).
@@ -225,6 +292,7 @@ export async function sweepUnansweredInboundForOperatorReview(
   const log = deps.log ?? console.log
   const now = deps.now ?? (() => new Date())
   const nowMs = now().getTime()
+  const afterMs = resolveUnansweredAfterMs(deps)
 
   let docs: Array<{ id: string; data: () => Record<string, unknown> | undefined }>
   try {
@@ -256,7 +324,7 @@ export async function sweepUnansweredInboundForOperatorReview(
   for (const [userId, latest] of latestByUser) {
     if (queued >= UNANSWERED_WRITE_CAP) break
     const inboundMs = Date.parse(latest.createdAt)
-    if (!Number.isFinite(inboundMs) || nowMs - inboundMs <= UNANSWERED_AFTER_MS) continue
+    if (!Number.isFinite(inboundMs) || nowMs - inboundMs <= afterMs) continue
 
     const caseId = unansweredCaseId(userId, latest.eventId)
     // eslint-disable-next-line no-await-in-loop
@@ -351,7 +419,7 @@ export async function sweepUnansweredInboundForOperatorReview(
         className: "unanswered_inbound_needs_operator_review",
         action: "none",
         status: "needs_operator_review",
-        reason: "no_assistant_outbound_after_inbound_6h",
+        reason: "no_assistant_outbound_after_inbound",
         userId,
         inboundEventId: latest.eventId,
         latestInboundAt: latest.createdAt,
@@ -371,6 +439,38 @@ export async function sweepUnansweredInboundForOperatorReview(
       inboundEventId: latest.eventId,
       ageHours,
     })
+
+    // AUTO-TAPBACK (Adam 2026-06-14, gated): acknowledge the candidate's last
+    // inbound with a reaction. Per NEW case only (the existing-case check above
+    // dedupes), so a candidate is tapbacked exactly once. Best-effort + fail-soft;
+    // does NOT write a pa-inbound-acks marker, so the operator alert still fires.
+    if (deps.sendTapback && unansweredTapbackEnabled(deps)) {
+      const rp = (latest.data.rawPayload ?? {}) as Record<string, unknown>
+      const messageHandle = cleanString(rp.messageHandle, 240)
+      const ourNumber = cleanString(rp.toNumber, 120)
+      if (messageHandle && phone) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await deps.sendTapback({
+            to: phone,
+            messageHandle,
+            userId,
+            ...(ourNumber ? { fromNumber: ourNumber } : {}),
+          })
+          // eslint-disable-next-line no-await-in-loop
+          await deps.db.collection(CASE_COLLECTION).doc(caseId).set(
+            { tapbackSentAt: now().toISOString() },
+            { merge: true }
+          )
+          log("[sendblue][recovery-agent] unanswered tapback sent", { userId, inboundEventId: latest.eventId })
+        } catch (err) {
+          log("[sendblue][recovery-agent] unanswered tapback failed (non-fatal)", {
+            userId,
+            err: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+    }
   }
 
   // ── BATCHED ALERT ─────────────────────────────────────────────────────────
@@ -380,17 +480,33 @@ export async function sweepUnansweredInboundForOperatorReview(
   // re-queue; this guards a case queued in a PRIOR run but not yet alerted, e.g. if
   // the alert was disabled then enabled). Fail-soft: the slack helper never throws
   // and silently no-ops when PA_SLACK_ALERT_WEBHOOK is unset.
-  if (newlyQueued.length > 0) {
-    await fireUnansweredAlert(deps, newlyQueued, now)
+  if (newlyQueued.length > 0 && unansweredAlertEnabled(deps)) {
+    // THROTTLE (Adam 2026-06-14: don't overload email): the sweep runs every
+    // 10min, so cap the unanswered email to ONCE PER HOUR. The full open queue
+    // is always on the ops dashboard — this is a heads-up, not the system of
+    // record. claimOpsAlertOnce fail-opens if the store is unreachable.
+    const throttleKey = `unanswered-alert-${hourBucket(now().getTime())}`
+    if (await claimOpsAlertOnce(deps.db, throttleKey, now().getTime())) {
+      await fireUnansweredAlert(deps, newlyQueued, now)
+    } else {
+      log("[sendblue][recovery-agent] unanswered alert throttled (already alerted this hour)", {
+        count: newlyQueued.length,
+      })
+    }
   }
   return queued
 }
 
-/** True when the unanswered-inbound alert is opted in (explicit dep wins, else env flag). */
+/**
+ * True when the unanswered-inbound alert should fire. 2026-06-14 (Adam):
+ * DEFAULT ON — only an explicit falsy env (0/false/no/off) disables it.
+ * Explicit dep value always wins (tests).
+ */
 function unansweredAlertEnabled(deps: ConversationRecoveryDeps): boolean {
   if (typeof deps.unansweredAlertEnabled === "boolean") return deps.unansweredAlertEnabled
   const raw = (process.env.PA_UNANSWERED_ALERT_ENABLED ?? "").trim().toLowerCase()
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on"
+  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false
+  return true
 }
 
 /**
@@ -414,6 +530,10 @@ async function fireUnansweredAlert(
   const alert = deps.postSlackAlert ?? defaultPostSlackAlert
   const count = newlyQueued.length
   const oldest = newlyQueued.reduce((m, c) => Math.max(m, c.ageHours), 0)
+  const thresholdHours = Math.round((resolveUnansweredAfterMs(deps) / 3_600_000) * 10) / 10
+  // Escalate to error-level once the oldest unanswered text crosses the
+  // escalation window — a candidate ghosted that long is a churn risk.
+  const level: "warn" | "error" = oldest >= UNANSWERED_ESCALATE_HOURS ? "error" : "warn"
   const sample = newlyQueued
     .slice()
     .sort((a, b) => b.ageHours - a.ageHours)
@@ -423,11 +543,11 @@ async function fireUnansweredAlert(
 
   try {
     await alert({
-      level: "warn",
-      title: `${count} candidate text${count === 1 ? "" : "s"} unanswered >6h`,
+      level,
+      title: `${count} candidate text${count === 1 ? "" : "s"} unanswered >${thresholdHours}h`,
       message:
         `${count} candidate${count === 1 ? "" : "s"} sent a message that genuinely awaits a reply ` +
-        `and got none for over 6h. Pure acks ('thanks'/'👍'), STOP, and tapbacked messages are excluded.`,
+        `and got none for over ${thresholdHours}h. Pure acks ('thanks'/'👍'), STOP, and tapbacked messages are excluded.`,
       fields: [
         { name: "Unanswered users", value: String(count) },
         { name: "Oldest", value: `${oldest}h` },

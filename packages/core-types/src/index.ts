@@ -7,6 +7,8 @@ export * from "./prescreen-review-classification.js"
 export * from "./prescreen-engagement.js"
 export * from "./prescreen-ops-types.js"
 export * from "./conversation-sentiment.js"
+export * from "./job-description.js"
+export * from "./job-logistics.js"
 
 export type { Channel }
 export { ChannelSchema }

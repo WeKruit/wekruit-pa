@@ -29,6 +29,7 @@ import {
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
   hardFilterClarifyText,
+  isPrescreenSessionPastMaxAge,
   isSharedOnboardingSlotSatisfied,
   loadSharedOnboardingParsedResumeForPrompt,
   type KeywordSetLlmCaller,
@@ -43,7 +44,11 @@ import {
 import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm.js"
 import { AI_QUESTION_QID } from "./claire-agent/prescreen-ai-question.js"
 import { isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
-import { isStaleClosedPrescreenSession } from "./prescreen-staleness.js"
+import {
+  isStaleClosedPrescreenSession,
+  buildStalePrescreenSweepPatch,
+  buildStalePrescreenSweepTurn,
+} from "./prescreen-staleness.js"
 import { classifyInboundReplyNeed } from "./sendblue/ack-classifier.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
@@ -82,6 +87,21 @@ type RuntimeSmsSender = (args: {
 
 function stablePrescreenSendKey(...parts: string[]): string {
   return createHash("sha256").update(parts.join("|"), "utf8").digest("hex").slice(0, 32)
+}
+
+/**
+ * True when an inbound media URL is an image attachment (screenshot proof),
+ * NOT a document we already ingest (PDF résumé). Conservative: any non-PDF
+ * media is treated as an image for the proof-guard. A PDF flows through the
+ * normal CV-ingest path and is not handled here.
+ */
+function isLikelyImageMediaUrl(mediaUrl: string | undefined | null): boolean {
+  if (typeof mediaUrl !== "string" || !mediaUrl.trim()) return false
+  const u = mediaUrl.trim().toLowerCase()
+  if (/\.pdf(\?|#|$)/.test(u)) return false
+  if (/\.(png|jpe?g|gif|heic|heif|webp|bmp|tiff?)(\?|#|$)/.test(u)) return true
+  // No extension (Sendblue CDN URLs often omit one) → assume image for the guard.
+  return true
 }
 
 /** Firestore-backed PreScreenStateProvider. */
@@ -125,12 +145,18 @@ function stripUndefined<T>(v: T): T {
 }
 
 /** Production LLM caller — gpt-5.4-nano JSON-mode. */
-function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
+function makeProductionKeywordSetCaller(candidateContext = ""): KeywordSetLlmCaller {
   return {
-    async score({ reply, lang, keywords, questionPrompt }) {
+    async score({ reply, lang, keywords, questionPrompt, candidateContext: perCall }) {
       const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
       if (!apiKey) throw new Error("missing OpenAI API key")
-      const { system, user } = buildKeywordSetPrompt({ reply, lang, keywords, questionPrompt })
+      const { system, user } = buildKeywordSetPrompt({
+        reply,
+        lang,
+        keywords,
+        questionPrompt,
+        candidateContext: perCall ?? candidateContext,
+      })
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -153,7 +179,53 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
   }
 }
 
-function makeProductionClarifyComposer(): PreScreenClarifyComposer {
+/** One-paragraph candidate context (résumé + profile) for the prescreen judge/clarify. Best-effort; "" on any miss. */
+async function buildPrescreenCandidateContext(
+  db: FirebaseFirestore.Firestore,
+  userId: string,
+): Promise<string> {
+  try {
+    const userSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+    const user = (userSnap.data() ?? {}) as Record<string, unknown>
+    const tags = (user.tags ?? {}) as Record<string, unknown>
+    const lines: string[] = []
+    const role = (tags.recentRoleTitle ?? user.recentRoleTitle) as unknown
+    const company = (tags.recentCompany ?? user.recentCompany) as unknown
+    if (role || company) {
+      lines.push(`Current/recent: ${[role, company].filter(Boolean).join(" @ ")}`)
+    }
+    if (Array.isArray(tags.yoeRange) && tags.yoeRange.length === 2) {
+      lines.push(`YoE: ${tags.yoeRange[0]}-${tags.yoeRange[1]}`)
+    }
+    if (typeof tags.workHistorySummary === "string" && tags.workHistorySummary.trim()) {
+      lines.push(`History: ${String(tags.workHistorySummary).slice(0, 400)}`)
+    }
+    // tags.skills is an array of Skill objects ({ name, bucket, ... }), not strings.
+    if (Array.isArray(tags.skills) && tags.skills.length) {
+      const skillNames = (tags.skills as unknown[])
+        .map((s) => (typeof s === "string" ? s : (s as Record<string, unknown> | null)?.name))
+        .filter((n): n is string => typeof n === "string" && n.length > 0)
+        .slice(0, 20)
+      if (skillNames.length) lines.push(`Skills: ${skillNames.join(", ")}`)
+    }
+    const parsedResume = await loadSharedOnboardingParsedResumeForPrompt(db, userId, user).catch(() => null)
+    if (parsedResume) {
+      const r = parsedResume as Record<string, unknown>
+      // Parsed-resume summary lives under one of these keys (see summaryTextFrom).
+      const summary =
+        r.candidateProfileSummary ?? r.profileSummary ?? r.resumeSummary ?? r.summary
+      if (typeof summary === "string" && summary.trim()) {
+        lines.push(`Résumé summary: ${summary.slice(0, 400)}`)
+      }
+    }
+    return lines.join("\n").slice(0, 1200)
+  } catch {
+    return ""
+  }
+}
+
+/** Production LLM caller — gpt-5.4-nano JSON-mode (keyword-set judge). */
+function makeProductionClarifyComposer(candidateContext = ""): PreScreenClarifyComposer {
   return async (input) => {
     const hardFilterText = hardFilterClarifyText(input.question.qId, input.lang)
     if (hardFilterText) return hardFilterText
@@ -185,6 +257,7 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       "Do not ask a checklist. Pick one natural angle: their role, technical depth, systems touched, tradeoff, failure, user/customer impact, or measurable outcome.",
       "Do not ask for business impact, ownership, systems touched, or validation again if the session evidence already covers it. Ask for the missing signal instead.",
       "For technical-depth questions, prefer the weakest required technology or implementation detail; do not drift back to role-fit impact/ownership unless that is the only missing signal.",
+      "If the candidate has signaled they cannot produce the artifact, or the profile/résumé context already answers this, do NOT keep probing the same point — acknowledge and move on.",
       "Keep it under 360 characters. Output strict JSON only: {\"text\":\"...\"}.",
     ].join("\n")
 
@@ -200,8 +273,13 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
       `Already-covered session evidence from other questions: ${sessionEvidence}`,
       `Merged score: s=${input.merged.aggregate.s.toFixed(2)} c=${input.merged.aggregate.c.toFixed(2)} summary=${input.merged.aggregate.summary}`,
       `Weak or missing areas JSON: ${JSON.stringify(weakCells)}`,
+      candidateContext
+        ? `Candidate résumé/profile context (don't re-ask what this already proves):\n${candidateContext}`
+        : "",
       `If unsure, use this fallback intent without copying it verbatim: ${input.fallbackText}`,
-    ].join("\n")
+    ]
+      .filter(Boolean)
+      .join("\n")
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -316,29 +394,44 @@ async function findActiveSession(
   const doc = candidates[0]!
   const data = doc.data() as Record<string, unknown>
   const lastActiveMs = timestampMs(data.updatedAt) ?? timestampMs(data.createdAt)
+  const createdAtMs = timestampMs(data.createdAt)
   const nowMs = opts.nowMs ?? Date.now()
-  if (lastActiveMs !== null && nowMs - lastActiveMs > ACTIVE_PRESCREEN_TIMEOUT_MS) {
+  const inactivityExpired = lastActiveMs !== null && nowMs - lastActiveMs > ACTIVE_PRESCREEN_TIMEOUT_MS
+  // Zombie-prescreen fix (Adam 2026-06-21): a createdAt-keyed absolute age cap that the
+  // clarify-loop updatedAt self-refresh CANNOT poison. Without it a session stuck on Q1
+  // re-bumps its own updatedAt on every captured turn → the inactivity clock never fires
+  // → it hijacks unrelated future inbounds (job-rec "yes") into prescreen probes forever.
+  const pastMaxAge = isPrescreenSessionPastMaxAge(createdAtMs, nowMs)
+  if (inactivityExpired || pastMaxAge) {
     const nowIso = new Date(nowMs).toISOString()
-    await doc.ref.set(
-      {
-        terminal: "PAUSE",
-        terminalReason: "expired_inactive_prescreen_session",
-        currentQId: null,
-        updatedAt: nowIso,
-        workSession: {
-          kind: "job_prescreen",
-          status: "ended",
-          endedAt: nowIso,
-          boundary: "timeout",
-        },
-      },
-      { merge: true },
-    )
+    const createdAtIso = createdAtMs !== null ? new Date(createdAtMs).toISOString() : null
+    const ageMs = createdAtMs !== null ? nowMs - createdAtMs : null
+    // CANCEL CONTEXT CLEANLY (Adam 2026-06-21 #2): one canonical stale-closed terminal patch so the
+    // session is truly closed for routing — no detector re-picks it, and the stale-closed copy path
+    // narrates it as "timed out" (never "under review"). expiryNoticeSentAt is stamped LATER, on the
+    // turn that actually sends the candidate notice (the one-time idempotency gate).
+    await doc.ref.set(buildStalePrescreenSweepPatch(nowIso), { merge: true })
+    // STORE PROPERLY (Adam 2026-06-21 #3): an auditable expiry record in the session's turns
+    // subcollection — best-effort, never blocks the sweep.
+    try {
+      await doc.ref.collection("turns").add(
+        buildStalePrescreenSweepTurn({ createdAtIso, nowIso, ageMs, detector: "find_active_session" }),
+      )
+    } catch (err) {
+      opts.log?.("prescreen.turn.expired_audit_write_failed", {
+        userId,
+        sessionId: doc.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
     opts.log?.("prescreen.turn.expired_inactive_session", {
       userId,
       sessionId: doc.id,
-      lastActiveAt: new Date(lastActiveMs).toISOString(),
+      lastActiveAt: lastActiveMs !== null ? new Date(lastActiveMs).toISOString() : null,
       timeoutMinutes: ACTIVE_PRESCREEN_TIMEOUT_MS / 60_000,
+      reason: pastMaxAge ? "max_age" : "inactivity",
+      ageMs,
+      ...(createdAtIso !== null ? { createdAt: createdAtIso } : {}),
     })
     return {
       kind: "expired",
@@ -437,6 +530,15 @@ export interface RunPrescreenTurnArgs {
   userId: string
   toE164: string
   replyText: string
+  /**
+   * Optional inbound media (iMessage image attachment URL). When a candidate
+   * answers a scoring prescreen question with ONLY a screenshot/image and no
+   * usable text, the reply would otherwise reach the judge as empty text →
+   * scored 0 → unfair HARD_STOP (live victim 2026-06-19: proof arrived as 3
+   * analytics screenshots). `runPrescreenTurnIfActive` uses this to ask for the
+   * text/link instead of hard-stopping. See the image-proof guard below.
+   */
+  mediaUrl?: string
   lang?: "zh" | "en"
   sendSms?: RuntimeSmsSender
   runTerminalAction?: typeof runPrescreenTerminalAction
@@ -686,9 +788,15 @@ function postPrescreenOnboardingPrompt(_lang: "zh" | "en", terminal?: string | n
     : "Thanks for taking the time. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
-function pendingReviewFollowupAckText(_lang: "zh" | "en"): string {
+function pendingReviewFollowupAckText(_lang: "zh" | "en", terminal?: string | null): string {
   // Claire IS the WeKruit recruiting team — warm, human, on-their-side. Not a
   // detached "I won't guess at the decision" bot (Adam 2026-06-14: felt robotic).
+  // VERDICT-AWARE (live bug 2026-06-19): the "pitch you to the hiring manager" framing implies a PASS
+  // and MUST NOT fire on a NOT_PASS (FAIL / HARD_STOP) outcome held for review — that reads as a
+  // fabricated pass on a rejection. A NOT_PASS gets warm, honest holding copy instead.
+  if (terminal === "FAIL" || terminal === "HARD_STOP") {
+    return "thank you — really appreciate you taking the time on this 🙏 i've got your full screen now and the WeKruit team is reviewing where things landed. i'll text you the moment there's an update either way — and in the meantime i'm keeping an eye out for other roles that fit you."
+  }
   return "thank you — really appreciate you taking the time on this 🙏 i've got your full screen now, and the WeKruit team is reviewing it to help pitch you to the hiring manager. i'll text you the moment there's an update — and in the meantime i'm keeping an eye out for other roles that fit you."
 }
 
@@ -935,11 +1043,50 @@ function hasActiveUserPostMatchRetention(user: Record<string, unknown> | undefin
   return typeof stage === "string" && stage !== "complete"
 }
 
+// thin-Claire's post-terminal matching OFFER copy ("want me to pull a few other design roles?",
+// "i can line up other roles", "want me to surface more matches"). Used to detect that a following
+// bare affirmative is ACCEPTING an offer (→ fire find_match), not acking the terminal.
+const MATCH_OFFER_RE_A =
+  /\b(?:pull|line\s*up|surface|show\s+you|send\s+you|find\s+you|round\s+up)\b[^?]{0,55}\b(?:roles?|jobs?|positions?|openings?|matches|opportunities)\b/i
+const MATCH_OFFER_RE_B =
+  /\bwant\s+me\s+to\b[^?]{0,75}\b(?:roles?|jobs?|positions?|design|pull|matches|openings?|opportunities)\b/i
+
+/**
+ * True when a roles/matches OFFER we sent is the candidate's most recent context (within the
+ * recent-terminal window). Reads recent pa-outbound (no orderBy → no composite index needed; sorts
+ * in memory). Best-effort; false on any error.
+ */
+async function hasRecentMatchOfferForUser(
+  db: Firestore,
+  userId: string,
+  nowMs: number,
+): Promise<boolean> {
+  try {
+    const snap = await db.collection("pa-outbound").where("userId", "==", userId).limit(25).get()
+    const rows = (snap.docs ?? [])
+      .map((d) => d.data() as Record<string, unknown>)
+      .filter((r) => typeof r.createdAt === "string")
+      .sort((a, b) => Date.parse(String(b.createdAt)) - Date.parse(String(a.createdAt)))
+      .slice(0, 6)
+    for (const r of rows) {
+      const ageMs = nowMs - Date.parse(String(r.createdAt))
+      if (ageMs > RECENT_TERMINAL_PRESCREEN_GUARD_MS) continue
+      const body = String(r.body ?? "")
+      if (MATCH_OFFER_RE_A.test(body) || MATCH_OFFER_RE_B.test(body)) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 async function shouldHandleRecentTerminalSession(args: {
   db: Firestore
   userId: string
   replyText: string
   terminal?: string | null
+  /** The terminal outcome is held for human review (auto-draft path) — see live bug 2026-06-19. */
+  pendingReview?: boolean
   log: (event: string, payload: Record<string, unknown>) => void
 }): Promise<boolean> {
   let user: Record<string, unknown> | undefined
@@ -953,6 +1100,34 @@ async function shouldHandleRecentTerminalSession(args: {
     })
   }
   if (isPrescreenOutcomeExplanationRequest(args.replyText)) return true
+  // OFFER-ACCEPTANCE ESCAPE (live 2026-06-23, Andrea 8PpvzWN0BSYhe6dKXh71): after a terminal,
+  // thin-Claire often makes a post-terminal matching OFFER ("want me to pull a few other design
+  // roles?"). A bare "yes" accepting it was classified as a terminal-ack (isShortTerminalAck) and
+  // SWALLOWED by this guard → the candidate said yes and got silence. When a short affirmative
+  // follows a roles offer we just made, yield to runtime so thin-Claire fires find_match. This wins
+  // even over pending-review ownership — an accepted offer is a deliberate request, not unsolicited.
+  if (
+    isShortTerminalAck(args.replyText) &&
+    (await hasRecentMatchOfferForUser(args.db, args.userId, Date.now()))
+  ) {
+    args.log("prescreen.turn.recent_terminal_yielded_to_accepted_match_offer", {
+      userId: args.userId,
+      terminal: args.terminal ?? null,
+    })
+    return false
+  }
+  // PENDING-REVIEW THREAD OWNERSHIP (live bug 2026-06-19): while a just-terminated outcome (PASS or
+  // NOT_PASS) is held for human review, prescreen owns the thread within the recent-terminal window so
+  // thin-Claire does NOT re-engage with unsolicited matching offers ("say yes and i'll pull roles") +
+  // duplicates. The ONE escape hatch is an EXPLICIT fresh job-search / new-intent ask from the
+  // candidate — that is a deliberate request, not an unsolicited re-engagement, so we yield to runtime.
+  if (args.pendingReview && !isExplicitNewIntentAfterTerminal(args.replyText)) {
+    args.log("prescreen.turn.recent_terminal_owned_pending_review", {
+      userId: args.userId,
+      terminal: args.terminal ?? null,
+    })
+    return true
+  }
   if (hasActiveUserPostMatchRetention(user)) {
     args.log("prescreen.turn.recent_terminal_guard_yielded_to_post_match_retention", {
       userId: args.userId,
@@ -1057,17 +1232,24 @@ export async function runPrescreenTurnIfActive(
   }
 
   if (lookup.kind === "recent_terminal") {
+    // Fetch the session up-front so the guard can see whether the terminal outcome is held for
+    // human review. A pending-review session MUST keep ownership of the thread (within the recent-
+    // terminal window) so thin-Claire does NOT re-engage with unsolicited matching offers on a turn
+    // whose verdict has not yet been committed (live bug 2026-06-19: a HARD_STOP held for review was
+    // followed by "say yes and i'll pull roles" matching re-engagement + duplicates).
+    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
+    const sessSnap = await sessionRef.get()
+    const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
+    const pendingReview = sessData.terminalActionPendingReview === true
     const shouldGuard = await shouldHandleRecentTerminalSession({
       db: args.db,
       userId: args.userId,
       replyText: args.replyText,
       terminal: lookup.terminal,
+      pendingReview,
       log,
     })
     if (!shouldGuard) return { handled: false }
-    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
-    const sessSnap = await sessionRef.get()
-    const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
     const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
     const nowIso = new Date().toISOString()
 
@@ -1152,8 +1334,8 @@ export async function runPrescreenTurnIfActive(
       }
     }
 
-    if (sessData.terminalActionPendingReview === true) {
-      const text = pendingReviewFollowupAckText(args.lang ?? "en")
+    if (pendingReview) {
+      const text = pendingReviewFollowupAckText(args.lang ?? "en", lookup.terminal)
       await sessionRef.collection("turns").add({
         qId: "terminal",
         reply: args.replyText,
@@ -1466,6 +1648,17 @@ export async function runPrescreenTurnIfActive(
     }
   }
   if (lookup.kind === "expired") {
+    const sessionRef = args.db.collection("pa-prescreen-sessions").doc(lookup.sessionId)
+    // IDEMPOTENCY GATE (Adam 2026-06-21 #1): notify EXACTLY ONCE. A session that already carries
+    // expiryNoticeSentAt has told the candidate — do NOT re-send the timeout notice on a later turn
+    // that still resolves to this (now-terminal) session. expiryNoticeSentAt is the one-time gate.
+    let alreadyNotified = false
+    try {
+      const snap = await sessionRef.get()
+      alreadyNotified = typeof snap.data()?.expiryNoticeSentAt === "string"
+    } catch {
+      /* fail-open → treat as not-yet-notified; the send idempotencyKey is the secondary guard */
+    }
     try {
       await terminalAction({
         db: args.db,
@@ -1484,6 +1677,13 @@ export async function runPrescreenTurnIfActive(
       })
     }
     const text = expiredSessionText(args.lang ?? "en")
+    if (alreadyNotified) {
+      log("prescreen.turn.expired_notice_already_sent", { sessionId: lookup.sessionId })
+      // Already told them once — let this turn fall through to triage/matching so their CURRENT
+      // message intent (e.g. "yes" to job recs) still gets a coherent reply downstream.
+      return { handled: false, sessionId: lookup.sessionId, terminal: "PAUSE" }
+    }
+    let noticeSent = false
     try {
       await sendSms({
         to: args.toE164,
@@ -1493,11 +1693,24 @@ export async function runPrescreenTurnIfActive(
         runtimeSource: "pa_prescreen_runtime",
         idempotencyKey: `prescreen_expired:${lookup.sessionId}`,
       })
+      noticeSent = true
     } catch (err) {
       log("prescreen.turn.expired_notice_send_failed", {
         sessionId: lookup.sessionId,
         error: err instanceof Error ? err.message : String(err),
       })
+    }
+    if (noticeSent) {
+      // Stamp the one-time gate ONLY after the notice actually went out (a failed send leaves it
+      // unset so a retry can still notify).
+      try {
+        await sessionRef.set({ expiryNoticeSentAt: new Date().toISOString() }, { merge: true })
+      } catch (err) {
+        log("prescreen.turn.expired_notice_stamp_failed", {
+          sessionId: lookup.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
     return { handled: true, sessionId: lookup.sessionId, terminal: "PAUSE", textSent: text }
   }
@@ -1676,8 +1889,11 @@ export async function runPrescreenTurnIfActive(
     return { handled: true, sessionId, terminal: "PAUSE", textSent: text }
   }
 
-  // Build PreScreenQuestion bindings with production LLM caller
-  const caller = args.keywordSetCaller ?? makeProductionKeywordSetCaller()
+  // Build PreScreenQuestion bindings with production LLM caller. Best-effort
+  // candidate context (résumé/profile) so the judge credits proven evidence
+  // and the clarify composer stops re-asking what the profile already proves.
+  const candidateContext = await buildPrescreenCandidateContext(args.db, args.userId)
+  const caller = args.keywordSetCaller ?? makeProductionKeywordSetCaller(candidateContext)
   const questions: Record<string, PreScreenQuestion> = {}
   for (const q of cfgSnapshot.questions) {
     questions[q.qId] = {
@@ -1689,6 +1905,7 @@ export async function runPrescreenTurnIfActive(
         keywords: q.keywords,
         questionPrompt: q.prompt.en,
         llmCaller: caller,
+        candidateContext,
       }),
     }
   }
@@ -1696,7 +1913,7 @@ export async function runPrescreenTurnIfActive(
     questions,
     store,
     log,
-    composeClarify: args.clarifyComposer ?? makeProductionClarifyComposer(),
+    composeClarify: args.clarifyComposer ?? makeProductionClarifyComposer(candidateContext),
   })
   const runReducerTurn = (reply: string) =>
     pipeline.runTurn({
@@ -1706,6 +1923,56 @@ export async function runPrescreenTurnIfActive(
       nowIso: new Date().toISOString(),
       judgeCtx: { userId: args.userId, turnId: `t_${Date.now()}` },
     })
+
+  // ── Image-proof guard (live victim 2026-06-19) ───────────────────────────
+  // A candidate answered a scoring question with ONLY a screenshot (3 analytics
+  // images) and no text → the reply reached the judge empty → scored 0 →
+  // HARD_STOP. That's an unfair rejection for someone whose only sin was
+  // sending an image. When an image arrives with no usable text on a real
+  // scoring question, ask for the text/link INSTEAD of scoring it — never
+  // advance, never terminal. The outbox idempotency key (per session+qId) keeps
+  // a candidate who spams images from being re-pinged. Vision/OCR extraction
+  // (reuse cv-ingest, needs ANTHROPIC_API_KEY) can later slot in here to read
+  // the screenshot directly; until then the ask-guard is the correctness floor.
+  if (
+    isLikelyImageMediaUrl(args.mediaUrl) &&
+    args.replyText.trim().length < 3 &&
+    questions[activeQId] !== undefined
+  ) {
+    const askText =
+      "i can't read a screenshot directly here — can you paste the key numbers/text (or a link) so it counts toward your screen? that way i log it properly and it's credited."
+    try {
+      await sendSms({
+        to: args.toE164,
+        content: askText,
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_image_ask:${sessionId}:${activeQId}`,
+      })
+    } catch (err) {
+      log("prescreen.turn.image_ask_send_failed", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    try {
+      await args.db
+        .collection("pa-prescreen-sessions")
+        .doc(sessionId)
+        .collection("turns")
+        .add({
+          qId: activeQId,
+          reply: `[image attachment: ${args.mediaUrl ?? ""}]`,
+          action: { kind: "image_proof_ask", reason: "image_only_reply_no_text" },
+          ts: new Date().toISOString(),
+        })
+    } catch {
+      // observability only — never block
+    }
+    log("prescreen.turn.image_proof_ask", { sessionId, activeQId })
+    return { handled: true, sessionId, terminal: null, textSent: askText }
+  }
 
   // ── P3 scoped prescreen agent (flag `paAgenticPrescreenEnabled`, default OFF)
   // Flag OFF (default) → this whole block is skipped and the deterministic
@@ -1818,6 +2085,50 @@ async function finalizePrescreenTurnResult(params: {
       action: result.action,
       ts: new Date().toISOString(),
     })
+
+  // ── Mirror the turn into pa-messages (2026-06-21, P2 cross-pipeline) ───────
+  // Prescreen turns previously lived ONLY in pa-prescreen-sessions/{id}/turns,
+  // so the conversation extractor (reads pa-messages by userId) and thin-Claire
+  // never saw the screen — the runner started blind to what the candidate just
+  // told the screen. Mirror the inbound reply (role:user) + the outbound text
+  // (role:assistant) as the SAME pa-messages shape cutover.ts writes. Idempotent
+  // on content; fail-open (never block the turn). Carries the prescreen
+  // sessionId in rawMeta for audit.
+  try {
+    const mirrorIso = new Date().toISOString()
+    const replyText = args.replyText.trim()
+    if (replyText.length > 0) {
+      const userMsgId = `prescreen-msg-user:${sessionId}:${turnQId}:${stablePrescreenSendKey(replyText)}`
+      await args.db.collection(PA_COLLECTIONS.messages).doc(userMsgId).set({
+        id: userMsgId,
+        sessionId,
+        userId: args.userId,
+        role: "user",
+        body: replyText,
+        createdAt: mirrorIso,
+        idempotencyKey: userMsgId,
+        rawMeta: { source: "prescreen_persist", prescreenSessionId: sessionId, qId: turnQId },
+      })
+    }
+    if (result.text && result.text.trim().length > 0) {
+      const asstMsgId = `prescreen-msg-asst:${sessionId}:${turnQId}:${stablePrescreenSendKey(result.text)}`
+      await args.db.collection(PA_COLLECTIONS.messages).doc(asstMsgId).set({
+        id: asstMsgId,
+        sessionId,
+        userId: args.userId,
+        role: "assistant",
+        body: result.text.trim(),
+        createdAt: mirrorIso,
+        idempotencyKey: asstMsgId,
+        rawMeta: { source: "prescreen_persist", prescreenSessionId: sessionId, qId: turnQId },
+      })
+    }
+  } catch (mirrorErr) {
+    log("prescreen.turn.pa_messages_mirror_failed", {
+      sessionId,
+      error: mirrorErr instanceof Error ? mirrorErr.message : String(mirrorErr),
+    })
+  }
 
   // DEFAULT AI-acceleration question (Adam directive) — ASK-ONCE persist on the LEGACY/FSM path.
   // When the appended q_ai_acceleration was the question just answered on this turn (it is appended

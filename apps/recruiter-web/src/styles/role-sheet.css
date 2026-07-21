@@ -635,6 +635,11 @@
 .rs-brief__co a { color: #6a6a64; text-decoration: none; }
 .rs-brief__co a:hover { color: #9a4421; text-decoration: underline; }
 .rs-brief__comp { margin: 6px 0 0; font-size: 12.5px; color: #897462; line-height: 1.4; }
+.rs-brief__logi { margin: 12px 0 0; display: grid; grid-template-columns: 1fr; gap: 6px; }
+.rs-brief__logi > div { display: grid; grid-template-columns: 72px 1fr; gap: 8px; align-items: baseline; }
+.rs-brief__logi dt { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #9a8c7b; margin: 0; }
+.rs-brief__logi dd { margin: 0; font-size: 12.5px; color: #3a3a36; line-height: 1.35; }
+.rs-brief__logi dd.is-missing { color: #b6a892; font-style: italic; }
 
 .rs-brief__rubric { margin-top: 16px; border-top: 1px solid #efe7dc; padding-top: 14px; }
 .rs-brief__rubric-h { margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #8a8a82; }

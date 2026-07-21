@@ -6,14 +6,25 @@
  * primitive + useTable hook.
  */
 import { Fragment, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
-import { arrayUnion, collection, doc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
-import { createEvaluationAttemptId } from "@pa/core-types"
+import { arrayUnion, collection, doc, getDoc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
 import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { EvalLabelForm } from "../components/prescreen/EvalLabelForm.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
+import { SUBMISSION_FEEDBACK_REASONS, feedbackReasonLabel, ReasonChips } from "../components/recruiter-reasons.js"
 import { auth, db } from "../lib/firebase.js"
+import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
+import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
+import {
+  upsertCompanySend,
+  removeCompanySend,
+  sendRecruiterSubmissionComment,
+  COMPANY_SEND_STATUS_LABEL,
+  type CompanySend,
+  type CompanySendStatus,
+} from "../lib/recruiter-submission-actions-api.js"
+import { getRecruiterSubmissionsList, type RecruiterSubmissionsListResult } from "../lib/recruiter-submissions-list-api.js"
 import { replaceRecruiterInviteCode, resendRecruiterInviteCodeEmail, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 import {
   buildRoleApplicationReview,
@@ -41,8 +52,11 @@ interface SubmissionDoc {
     name?: string
     email?: string
     link?: string
+    linkedinUrl?: string
+    resumeUrl?: string
     currentRole?: string
     yoe?: string
+    compensationExpectation?: string
     notes?: string
   }
   candidateConsentStatus?: string
@@ -51,6 +65,7 @@ interface SubmissionDoc {
   aiEvaluation?: {
     verdict?: "advance" | "borderline" | "reject"
     confidence?: number
+    identityConflict?: boolean
     summary?: string
     reasons?: string[]
     background?: {
@@ -84,6 +99,11 @@ interface SubmissionDoc {
     antiTotal: number
   }
   status?: string
+  adminDecision?: {
+    by?: string
+    at?: string
+    note?: string
+  }
   statusHistory?: Array<{
     status?: string
     by?: string
@@ -92,6 +112,10 @@ interface SubmissionDoc {
     rating?: number
     reasons?: string[]
   }>
+  companySends?: CompanySend[]
+  requestedInfo?: Array<{ message?: string; at?: string; by?: string }>
+  adminCommentCount?: number | null
+  adminLastCommentAt?: { seconds?: number; _seconds?: number; toDate?: () => Date } | string | null
   inboundJobId?: string
   recruiterId?: string | null
   recruiterEmail?: string
@@ -137,13 +161,12 @@ function recruiterVerdictToOutcomeKind(
   return "hold"
 }
 
-// Resolve the canonical attempt id: prefer the stamp written by the trigger;
-// fall back to recomputing the same deterministic hash for legacy rows that
-// predate the stamp (backfill will fill them in too).
+// Resolve the canonical attempt id from the STORED stamp only. The sha256
+// fallback (createEvaluationAttemptId) is server-only — node:crypto is shimmed
+// to throw in the dashboard bundle, so computing it here white-screens the
+// drawer. Legacy rows without the stamp resolve to null (eval just doesn't load).
 function resolveSubmissionAttemptId(row: SubmissionDoc): string | null {
-  if (row.evaluationAttemptId) return row.evaluationAttemptId
-  if (!row.jobId) return null
-  return createEvaluationAttemptId({ source: "recruiter_submission", jobId: row.jobId, salt: row.id })
+  return row.evaluationAttemptId ?? null
 }
 
 const CHECKLIST_TIER_DISPLAY_ORDER: ChecklistTierKind[] = ["hard", "fit", "anti", "bonus"]
@@ -357,56 +380,39 @@ const TRIAGE_SORT_BOOST_MS = 1e15
 const ADVANCED_SUBMISSION_STATUSES = ["advanced", "wekruit_interview", "interviewing", "offer", "client_review", "hired"]
 const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
+const RECRUITER_INACTIVITY_WINDOW_DAYS = 14
 const RECRUITER_INTERVIEW_RATE_TARGET = 50
+const INITIAL_RECRUITER_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
 
-// Quick reject/accept reasons, grouped so a reviewer one-taps instead of typing.
-// "over_leveled" carries the "too senior" signal — age is never a reason (legal).
-const SUBMISSION_FEEDBACK_REASONS = [
-  // Positive
-  { id: "strong_match", label: "Strong match", group: "Positive" },
-  { id: "clear_evidence", label: "Clear evidence", group: "Positive" },
-  { id: "good_candidate_motivation", label: "Candidate motivated", group: "Positive" },
-  // Background pillars (school · GPA · degree · company)
-  { id: "weak_school", label: "Weak / non-target school", group: "Background" },
-  { id: "low_gpa", label: "Low GPA", group: "Background" },
-  { id: "degree_mismatch", label: "Degree / field mismatch", group: "Background" },
-  { id: "weak_company_pedigree", label: "Weak company pedigree", group: "Background" },
-  { id: "no_relevant_domain", label: "No relevant domain", group: "Background" },
-  // Engineering depth
-  { id: "no_end_to_end", label: "No end-to-end ownership", group: "Depth" },
-  { id: "weak_technical_depth", label: "Lacks technical depth", group: "Depth" },
-  { id: "not_hands_on", label: "Not a hands-on builder", group: "Depth" },
-  { id: "no_impact_evidence", label: "No quantifiable impact", group: "Depth" },
-  // Role-specific
-  { id: "no_strong_portfolio", label: "No strong portfolio (design)", group: "Role-specific" },
-  { id: "weak_product_design", label: "Weak product/UX depth (design)", group: "Role-specific" },
-  { id: "weak_social_presence", label: "Weak social/channel record (GTM)", group: "Role-specific" },
-  { id: "no_growth_track_record", label: "No growth results (GTM)", group: "Role-specific" },
-  // Level & fit
-  { id: "below_experience_bar", label: "Below experience bar", group: "Level & fit" },
-  { id: "over_leveled", label: "Over-leveled / overqualified", group: "Level & fit" },
-  { id: "seniority_mismatch", label: "Seniority mismatch", group: "Level & fit" },
-  { id: "comp_mismatch", label: "Comp mismatch", group: "Level & fit" },
-  { id: "location_mismatch", label: "Location mismatch", group: "Level & fit" },
-  // Process / signal
-  { id: "missing_hard_filter", label: "Missing hard filter", group: "Process" },
-  { id: "weak_evidence", label: "Weak evidence in submission", group: "Process" },
-  { id: "candidate_not_interested", label: "Candidate not interested", group: "Process" },
-  { id: "duplicate", label: "Duplicate", group: "Process" },
-] as const
-
-const SUBMISSION_FEEDBACK_REASON_GROUPS = [
-  "Positive", "Background", "Depth", "Role-specific", "Level & fit", "Process",
-] as const
-
-function feedbackReasonLabel(reason: string): string {
-  return SUBMISSION_FEEDBACK_REASONS.find((r) => r.id === reason)?.label ?? reason
-}
+// Reason taxonomy + the grouped chip UI now live in the shared component
+// ../components/recruiter-reasons.js, so the Submission view and the Recruiter
+// Board render the SAME candidate-review reasons (Adam 2026-06-23).
 
 function normalizeFeedbackRating(rating: unknown): number | null {
   const n = typeof rating === "number" ? rating : Number(rating)
   if (!Number.isInteger(n) || n < 1 || n > 4) return null
   return n
+}
+
+function hasWeKruitSubmissionResponse(submission: Pick<
+  SubmissionDoc,
+  "adminDecision" | "companySends" | "recruiterFeedbackNote" | "recruiterFeedbackRating" | "recruiterFeedbackReasons" | "recruiterFeedbackUpdatedAt" | "requestedInfo" | "status"
+>): boolean {
+  const status = submission.status ?? "submitted"
+  return (
+    !INITIAL_RECRUITER_SUBMISSION_STATUSES.includes(status) ||
+    Boolean(submission.adminDecision) ||
+    Boolean(submission.recruiterFeedbackUpdatedAt) ||
+    Boolean(submission.recruiterFeedbackNote?.trim()) ||
+    normalizeFeedbackRating(submission.recruiterFeedbackRating) !== null ||
+    Boolean(submission.recruiterFeedbackReasons?.length) ||
+    Boolean(submission.requestedInfo?.length) ||
+    Boolean(submission.companySends?.length)
+  )
+}
+
+function isPendingWeKruitSubmissionResponse(submission: SubmissionDoc): boolean {
+  return !hasWeKruitSubmissionResponse(submission)
 }
 
 function feedbackRatingLabel(rating: unknown): string {
@@ -488,6 +494,7 @@ interface SourcedCandidateDoc {
     link?: string
     currentRole?: string
     yoe?: string
+    compensationExpectation?: string
     notes?: string
   }
   calibrationStatus?: string
@@ -654,8 +661,10 @@ interface RecruiterQualityRow {
   avgRating: number | null
   submissionsTotal: number
   submissions7d: number
+  submissions14d: number
   weeklyTargetPct: number
   activeSubmissions: number
+  pendingWeKruitResponse: number
   advancedCount: number
   movementRate: number
   rejectionDrag: number
@@ -665,16 +674,107 @@ interface RecruiterQualityRow {
   pendingApplications: number
   roleCoveragePct: number
   coveredApprovedRoles: number
+  lastSubmissionMs: number
   lastActivityMs: number
+}
+
+interface SubmissionCommentDoc {
+  id: string
+  message?: string
+  by?: string
+  authorName?: string
+  authorEmail?: string
+  at?: string
+}
+
+interface ConversationEntry {
+  key: string
+  kind: "comment" | "request"
+  side: "left" | "right"
+  author: string
+  at?: string
+  message: string
+  pending?: boolean
 }
 
 function timestampToMs(raw: unknown): number {
   if (!raw) return 0
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw
   if (typeof raw === "string") return Date.parse(raw) || 0
   if (typeof raw === "object" && typeof (raw as { seconds?: unknown }).seconds === "number") {
     return ((raw as { seconds: number }).seconds) * 1000
   }
+  if (typeof raw === "object" && typeof (raw as { _seconds?: unknown })._seconds === "number") {
+    return ((raw as { _seconds: number })._seconds) * 1000
+  }
+  if (typeof raw === "object" && typeof (raw as { toDate?: unknown }).toDate === "function") {
+    const date = (raw as { toDate: () => Date }).toDate()
+    const ms = date.getTime()
+    return Number.isFinite(ms) ? ms : 0
+  }
   return 0
+}
+
+function normalizedCommentCount(submission: Pick<SubmissionDoc, "adminCommentCount">): number {
+  return Math.max(0, Math.trunc(Number(submission.adminCommentCount ?? 0)) || 0)
+}
+
+function latestCommentAt(comments: SubmissionCommentDoc[]): string | null {
+  let latestMs = 0
+  let latestAt: string | null = null
+  for (const comment of comments) {
+    const ms = comment.at ? Date.parse(comment.at) : 0
+    if (ms > latestMs) {
+      latestMs = ms
+      latestAt = comment.at ?? null
+    }
+  }
+  return latestAt
+}
+
+function buildConversationEntries(
+  comments: Array<{ id: string; message?: string; by?: string; authorName?: string; at?: string }>,
+  requestedInfo: Array<{ message?: string; at?: string; by?: string }> | undefined,
+): ConversationEntry[] {
+  const entries: ConversationEntry[] = []
+  ;(requestedInfo ?? []).forEach((entry, i) => {
+    const message = entry?.message?.trim()
+    if (!message) return
+    entries.push({
+      key: `request-${i}`,
+      kind: "request",
+      side: "right",
+      author: entry.by?.trim() || "WeKruit",
+      at: entry.at,
+      message,
+    })
+  })
+  for (const comment of comments) {
+    const message = comment.message?.trim()
+    if (!message) continue
+    const fromWekruit = comment.by === "wekruit"
+    entries.push({
+      key: `comment-${comment.id}`,
+      kind: "comment",
+      side: fromWekruit ? "right" : "left",
+      author: comment.authorName?.trim() || (fromWekruit ? "WeKruit" : "Recruiter"),
+      at: comment.at,
+      message,
+    })
+  }
+  return entries.sort((a, b) => (Date.parse(a.at ?? "") || 0) - (Date.parse(b.at ?? "") || 0))
+}
+
+function linkLabel(value: string): string {
+  try {
+    return new URL(value).hostname
+  } catch {
+    return value.length > 36 ? `${value.slice(0, 36)}...` : value
+  }
+}
+
+function recruiterConversationLabel(row: Pick<SubmissionDoc, "recruiterEmail" | "recruiterId">): string {
+  return row.recruiterEmail?.trim() || row.recruiterId?.trim() || "this recruiter"
 }
 
 function toDatetimeLocalValue(date: Date): string {
@@ -825,6 +925,12 @@ function recruiterKeyMatches(row: { recruiterId?: string | null; recruiterEmail?
   return row.recruiterId === profile.id || Boolean(email && row.recruiterEmail?.trim().toLowerCase() === email)
 }
 
+function isSyntheticRecruiterProfile(profile: RecruiterProfileDoc): boolean {
+  const email = profile.email?.trim().toLowerCase() ?? ""
+  const name = profile.name?.trim().toLowerCase() ?? ""
+  return email.endsWith("@example.com") || email.endsWith(".example.com") || name.includes("qa live") || name.includes("synthetic")
+}
+
 function rowJobKey(row: { inboundJobId?: string; jobId?: string }): string {
   return (row.inboundJobId || row.jobId || "").trim()
 }
@@ -835,7 +941,9 @@ function computeRecruiterQualityRows(
   sourcedCandidates: SourcedCandidateDoc[],
   applications: RecruiterRoleApplicationDoc[],
 ): RecruiterQualityRow[] {
-  const weekStartMs = Date.now() - 7 * 86_400_000
+  const nowMs = Date.now()
+  const weekStartMs = nowMs - 7 * 86_400_000
+  const inactivityStartMs = nowMs - RECRUITER_INACTIVITY_WINDOW_DAYS * 86_400_000
   return profiles.map((profile) => {
     const recruiterSubmissions = submissions.filter((s) => recruiterKeyMatches(s, profile))
     const recruiterCandidates = sourcedCandidates.filter((c) => recruiterKeyMatches(c, profile))
@@ -845,7 +953,10 @@ function computeRecruiterQualityRows(
       .filter((n): n is number => n !== null)
     const avgRating = ratings.length ? ratings.reduce((sum, n) => sum + n, 0) / ratings.length : null
     const submissions7d = recruiterSubmissions.filter((s) => timestampToMs(s.createdAt) >= weekStartMs).length
+    const submissions14d = recruiterSubmissions.filter((s) => timestampToMs(s.createdAt) >= inactivityStartMs).length
+    const lastSubmissionMs = Math.max(0, ...recruiterSubmissions.map((s) => timestampToMs(s.createdAt)))
     const activeSubmissions = recruiterSubmissions.filter((s) => ACTIVE_SUBMISSION_STATUSES.includes(s.status ?? "submitted")).length
+    const pendingWeKruitResponse = recruiterSubmissions.filter(isPendingWeKruitSubmissionResponse).length
     const advancedCount = recruiterSubmissions.filter((s) => ADVANCED_SUBMISSION_STATUSES.includes(s.status ?? "")).length
     const negativeCount = recruiterSubmissions.filter((s) => NEGATIVE_SUBMISSION_STATUSES.includes(s.status ?? "")).length
     const movementRate = recruiterSubmissions.length ? Math.round((advancedCount / recruiterSubmissions.length) * 100) : 0
@@ -903,8 +1014,10 @@ function computeRecruiterQualityRows(
       avgRating,
       submissionsTotal: recruiterSubmissions.length,
       submissions7d,
+      submissions14d,
       weeklyTargetPct,
       activeSubmissions,
+      pendingWeKruitResponse,
       advancedCount,
       movementRate,
       rejectionDrag,
@@ -914,6 +1027,7 @@ function computeRecruiterQualityRows(
       pendingApplications,
       roleCoveragePct,
       coveredApprovedRoles,
+      lastSubmissionMs,
       lastActivityMs,
     }
   })
@@ -926,6 +1040,8 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
   const [rows, setRows] = useState<SubmissionDoc[]>([])
   const [jobsByKey, setJobsByKey] = useState<Map<string, RecruiterBoardAdminJobDoc>>(new Map())
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Full submission docs fetched on drawer-open (the list rows are trimmed).
+  const [fullById, setFullById] = useState<Map<string, SubmissionDoc>>(new Map())
 
   useEffect(() => {
     if (!isSubmissions) {
@@ -938,18 +1054,16 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     void (async () => {
       try {
         setLoading(true)
-        const q = query(
-          collection(db(), "pa-recruiter-submissions"),
-          orderBy("createdAt", "desc"),
-          limit(500),
-        )
-        const [snap, jobSnap] = await Promise.all([
-          getDocs(q),
+        // ALL submissions (trimmed) via the admin callable — not the recent 500.
+        // Loading 3.8k full docs client-side is ~19.5MB; the callable returns
+        // ~2.6MB of just the table/search/filter fields so search + the state
+        // filter see the whole pool. Cached (in-mem 3-min) for instant re-open.
+        const [listResult, jobSnap] = await Promise.all([
+          cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
           getDocs(query(collection(db(), "pa-jobs"), limit(500))),
         ])
         if (cancelled) return
-        const all = snap.docs.map((d) => {
-          const data = d.data() as Omit<SubmissionDoc, "id">
+        const all = (listResult.rows as (Omit<SubmissionDoc, "id"> & { id: string })[]).map((data) => {
           const createdAtMs = data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0
           const triageSortMs = TRIAGE_FIRST_STATUSES.includes(data.status ?? "new")
             ? createdAtMs + TRIAGE_SORT_BOOST_MS
@@ -957,7 +1071,7 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
           const hardScorePct = data.score?.hardTotal
             ? data.score.hardChecked / data.score.hardTotal
             : 0
-          return { id: d.id, ...data, createdAtMs, triageSortMs, hardScorePct }
+          return { ...data, createdAtMs, triageSortMs, hardScorePct }
         })
         const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
         for (const d of jobSnap.docs) {
@@ -1048,6 +1162,25 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
       },
     ],
   })
+
+  // The list is trimmed (no aiEvaluation / statusHistory / candidateBackground,
+  // to keep the payload ~2.6MB instead of ~19.5MB). Fetch the FULL submission
+  // doc when a row is opened so the detail drawer has everything. MUST stay
+  // above the early returns below so the hook count is stable (React #310).
+  useEffect(() => {
+    if (!expandedId || fullById.has(expandedId)) return
+    let cancel = false
+    void getDoc(doc(db(), "pa-recruiter-submissions", expandedId))
+      .then((s) => {
+        if (!cancel && s.exists()) {
+          setFullById((m) => new Map(m).set(s.id, { id: s.id, ...(s.data() as Omit<SubmissionDoc, "id">) }))
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancel = true
+    }
+  }, [expandedId, fullById])
 
   const header = (
     <>
@@ -1209,16 +1342,22 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
         <>
           <div>{r.candidate?.name ?? "—"}</div>
           {r.candidate?.email && <div style={{ color: "#777", fontSize: 11 }}>{r.candidate.email}</div>}
-          {r.candidate?.link && (
-            <a
-              href={r.candidate.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              style={{ fontSize: 11, color: "#2a5fb8" }}
-            >
-              {r.candidate.link.length > 36 ? r.candidate.link.slice(0, 36) + "…" : r.candidate.link}
-            </a>
+          {(r.candidate?.resumeUrl || r.candidate?.linkedinUrl || r.candidate?.link || normalizedCommentCount(r) > 0) && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 3, fontSize: 11 }}>
+              {r.candidate?.resumeUrl && (
+                <a href={r.candidate.resumeUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "#2a5fb8" }}>
+                  Resume
+                </a>
+              )}
+              {(r.candidate?.linkedinUrl || r.candidate?.link) && (
+                <a href={r.candidate.linkedinUrl ?? r.candidate.link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "#2a5fb8" }}>
+                  LinkedIn
+                </a>
+              )}
+              {normalizedCommentCount(r) > 0 && (
+                <span style={{ color: "#777" }}>{normalizedCommentCount(r)} msg</span>
+              )}
+            </div>
           )}
         </>
       ),
@@ -1297,7 +1436,8 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     },
   ]
 
-  const selectedRow = expandedId ? rows.find((r) => r.id === expandedId) ?? null : null
+  const baseRow = expandedId ? rows.find((r) => r.id === expandedId) ?? null : null
+  const selectedRow = baseRow ? { ...baseRow, ...(fullById.get(baseRow.id ?? "") ?? {}) } : null
 
   return (
     <div>
@@ -1338,6 +1478,21 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
               onClose={() => setExpandedId(null)}
               onUpdated={(next) => {
                 setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next } : r))
+                setFullById((m) => {
+                  const cur = m.get(next.id ?? "")
+                  return cur ? new Map(m).set(next.id ?? "", { ...cur, ...next }) : m
+                })
+                // Keep the cached list in sync so re-opening the tab shows the
+                // new status immediately (server cache self-heals within 60s).
+                const cached = readCache<RecruiterSubmissionsListResult>("recruiter-submissions:list", 3 * 60_000)
+                if (cached) {
+                  writeCache("recruiter-submissions:list", {
+                    ...cached.data,
+                    rows: cached.data.rows.map((rr) =>
+                      (rr as { id?: string }).id === next.id ? { ...rr, ...next } : rr,
+                    ),
+                  })
+                }
               }}
             />
           ) : (
@@ -1455,25 +1610,36 @@ function RecruiterRolesPanel() {
   const [savingPriorityId, setSavingPriorityId] = useState<string | null>(null)
   const [priorityErr, setPriorityErr] = useState<string | null>(null)
 
-  const reload = async () => {
+  const reload = async (force = false) => {
     setLoading(true)
     setErr(null)
     try {
-      const [jobSnap, submissionSnap, candidateSnap, applicationSnap, feedbackSnap, questionSnap] = await Promise.all([
-        getDocs(query(collection(db(), "pa-jobs"), limit(500))),
-        getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-feedback"), limit(1000))),
-        getDocs(query(collection(db(), "pa-recruiter-role-questions"), limit(1000))),
-      ])
-      const jobs = jobSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterBoardAdminJobDoc, "id">) }))
-      const submissions = submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) }))
-      const candidates = candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) }))
-      const applications = applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) }))
-      const feedback = feedbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleFeedbackDoc, "id">) }))
-      const questions = questionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleQuestionDoc, "id">) }))
-      setRows(buildRecruiterRoleOpsRows({ jobs, submissions, candidates, applications, feedback, questions }))
+      // Cache-through (3-min TTL): mount serves the built rows from cache (the
+      // ~5k-doc read is the slow part); mutations + the Refresh button pass
+      // force=true to re-read.
+      const built = await cachedLoad(
+        "recruiter-role-ops:rows",
+        async () => {
+          const [jobSnap, submissionSnap, candidateSnap, applicationSnap, feedbackSnap, questionSnap] = await Promise.all([
+            getDocs(query(collection(db(), "pa-jobs"), limit(500))),
+            getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-feedback"), limit(1000))),
+            getDocs(query(collection(db(), "pa-recruiter-role-questions"), limit(1000))),
+          ])
+          const jobs = jobSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterBoardAdminJobDoc, "id">) }))
+          const submissions = submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) }))
+          const candidates = candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) }))
+          const applications = applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) }))
+          const feedback = feedbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleFeedbackDoc, "id">) }))
+          const questions = questionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleQuestionDoc, "id">) }))
+          return buildRecruiterRoleOpsRows({ jobs, submissions, candidates, applications, feedback, questions })
+        },
+        undefined,
+        force,
+      )
+      setRows(built)
     } catch (error) {
       setErr(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1517,7 +1683,7 @@ function RecruiterRolesPanel() {
         delete next[row.id]
         return next
       })
-      await reload()
+      await reload(true)
     } catch (error) {
       setPriorityErr(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1809,7 +1975,7 @@ function RecruiterRolesPanel() {
       <Panel
         title="Role priorities"
         eyebrow="pa-jobs, recruiterBoard, applications, calibration"
-        actions={<button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>}
+        actions={<button type="button" onClick={() => void reload(true)} disabled={loading}>Refresh</button>}
       >
         {priorityErr && (
           <div style={{ marginBottom: 12 }}>
@@ -2410,14 +2576,14 @@ function RecruiterQualityPanel() {
     setLoading(true)
     setErr(null)
     try {
-      const [profileSnap, submissionSnap, candidateSnap, applicationSnap] = await Promise.all([
+      const [profileSnap, submissionList, candidateSnap, applicationSnap] = await Promise.all([
         getDocs(collection(db(), "pa-recruiter-users")),
-        getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
+        cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
         getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
         getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
       ])
       setProfiles(profileSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterProfileDoc, "id">) })))
-      setSubmissions(submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) })))
+      setSubmissions(submissionList.rows as unknown as SubmissionDoc[])
       setCandidates(candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) })))
       setApplications(applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) })))
     } catch (e) {
@@ -2431,9 +2597,14 @@ function RecruiterQualityPanel() {
     void reload()
   }, [])
 
+  const managementProfiles = useMemo(
+    () => profiles.filter((profile) => !isSyntheticRecruiterProfile(profile)),
+    [profiles],
+  )
+
   const rows = useMemo(
-    () => computeRecruiterQualityRows(profiles, submissions, candidates, applications),
-    [applications, candidates, profiles, submissions],
+    () => computeRecruiterQualityRows(managementProfiles, submissions, candidates, applications),
+    [applications, candidates, managementProfiles, submissions],
   )
 
   const table = useTable<RecruiterQualityRow>(rows, {
@@ -2444,6 +2615,31 @@ function RecruiterQualityPanel() {
       r.email.toLowerCase().includes(q) ||
       (r.profile.reviewNote?.toLowerCase().includes(q) ?? false),
     chips: [
+      {
+        id: "pace",
+        label: "Pace",
+        multi: true,
+        options: [
+          {
+            key: "no_work_7d",
+            label: "No work 7d",
+            title: "Recruiters with no submissions in the last 7 days and no submissions waiting on WeKruit.",
+            test: (r: RecruiterQualityRow) => r.submissions7d === 0 && r.pendingWeKruitResponse === 0,
+          },
+          {
+            key: "no_work_14d",
+            label: "No work 14d",
+            title: "Recruiters with no submissions in the last 14 days and no submissions waiting on WeKruit.",
+            test: (r: RecruiterQualityRow) => r.submissions14d === 0 && r.pendingWeKruitResponse === 0,
+          },
+          {
+            key: "needs_wekruit_feedback",
+            label: "Needs WK feedback",
+            title: "Recruiters with at least one submitted candidate that has no WeKruit response or feedback yet.",
+            test: (r: RecruiterQualityRow) => r.pendingWeKruitResponse > 0,
+          },
+        ],
+      },
       {
         id: "status",
         label: "Account",
@@ -2476,6 +2672,8 @@ function RecruiterQualityPanel() {
         .reduce((sum, r, _, ratedRows) => sum + (r.avgRating ?? 0) / Math.max(1, ratedRows.length), 0)
       : 0,
     weeklySubmissions: rows.reduce((sum, r) => sum + r.submissions7d, 0),
+    noWork14d: rows.filter((r) => r.submissions14d === 0 && r.pendingWeKruitResponse === 0).length,
+    pendingResponse: rows.filter((r) => r.pendingWeKruitResponse > 0).length,
   }
 
   if (loading) return <LoadingState label="Loading recruiter quality..." />
@@ -2523,11 +2721,25 @@ function RecruiterQualityPanel() {
       render: (r) => r.avgRating === null ? "unrated" : `${r.avgRating.toFixed(1)}/4`,
     },
     {
+      key: "pendingWeKruitResponse",
+      label: "WK pending",
+      sortable: true,
+      width: 105,
+      render: (r) => r.pendingWeKruitResponse || "—",
+    },
+    {
       key: "submissions7d",
       label: "7d pace",
       sortable: true,
       width: 105,
       render: (r) => `${r.submissions7d}/${RECRUITER_WEEKLY_SUBMISSION_TARGET}`,
+    },
+    {
+      key: "submissions14d",
+      label: "14d",
+      sortable: true,
+      width: 90,
+      render: (r) => r.submissions14d,
     },
     {
       key: "roleCoveragePct",
@@ -2544,6 +2756,13 @@ function RecruiterQualityPanel() {
       render: (r) => `${r.movementRate}%`,
     },
     {
+      key: "lastSubmissionMs",
+      label: "Last submission",
+      sortable: true,
+      width: 130,
+      render: (r) => formatCompactOpsDate(r.lastSubmissionMs),
+    },
+    {
       key: "lastActivityMs",
       label: "Last activity",
       sortable: true,
@@ -2554,9 +2773,11 @@ function RecruiterQualityPanel() {
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
         <OpsMetric label="Recruiters" value={metrics.total} />
         <OpsMetric label="Needs review" value={metrics.needsReview} />
+        <OpsMetric label="Pending response" value={metrics.pendingResponse} />
+        <OpsMetric label="No work 14d" value={metrics.noWork14d} />
         <OpsMetric label="Avg rating" value={metrics.avgRating ? `${metrics.avgRating.toFixed(1)}/4` : "unrated"} />
         <OpsMetric label="7d submissions" value={metrics.weeklySubmissions} meta={`Target ${rows.length * RECRUITER_WEEKLY_SUBMISSION_TARGET}`} />
       </div>
@@ -2650,10 +2871,12 @@ function RecruiterQualityDetailPanel({
 
   return (
     <Panel title="Recruiter account review" eyebrow={row.email}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
         <OpsMetric label="Quality score" value={row.qualityScore} meta={row.reviewLabel} />
         <OpsMetric label="Rating" value={row.avgRating === null ? "unrated" : `${row.avgRating.toFixed(1)}/4`} />
+        <OpsMetric label="WK pending" value={row.pendingWeKruitResponse} meta={row.pendingWeKruitResponse ? "needs our response" : "clear"} />
         <OpsMetric label="7d pace" value={`${row.submissions7d}/${RECRUITER_WEEKLY_SUBMISSION_TARGET}`} meta={`${row.weeklyTargetPct}% of target`} />
+        <OpsMetric label="14d submissions" value={row.submissions14d} meta={row.lastSubmissionMs ? `Last ${formatCompactOpsDate(row.lastSubmissionMs)}` : "never submitted"} />
         <OpsMetric label="Coverage" value={row.approvedRoles ? `${row.coveredApprovedRoles}/${row.approvedRoles}` : "0"} meta={row.approvedRoles ? `${row.roleCoveragePct}% approved roles active` : "no approved roles"} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
@@ -2661,6 +2884,8 @@ function RecruiterQualityDetailPanel({
           <div><b>Recruiter:</b> {row.name}</div>
           <div><b>Email:</b> {row.email}</div>
           <div><b>Total submissions:</b> {row.submissionsTotal}</div>
+          <div><b>Last submission:</b> {formatOpsDate(row.lastSubmissionMs)}</div>
+          <div><b>Pending WeKruit response:</b> {row.pendingWeKruitResponse}</div>
           <div><b>Active submissions:</b> {row.activeSubmissions}</div>
           <div><b>Advanced/interview/offer/hired:</b> {row.advancedCount} ({row.movementRate}%)</div>
           <div><b>Rejected/duplicate drag:</b> {row.rejectionDrag}%</div>
@@ -3858,6 +4083,11 @@ function SourcedCandidateDetailPanel({
               <a href={row.candidate.link} target="_blank" rel="noopener noreferrer">{row.candidate.link}</a>
             </p>
           )}
+          {row.candidate?.compensationExpectation && (
+            <p style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+              <strong>Expected salary:</strong> {row.candidate.compensationExpectation}
+            </p>
+          )}
           {row.candidate?.notes && (
             <>
               <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>Recruiter note</h4>
@@ -4037,6 +4267,247 @@ function ChecklistTierMatrix({ review }: { review: ChecklistTierReview }) {
   )
 }
 
+const COMPANY_SEND_STATUS_OPTIONS: CompanySendStatus[] = ["sent", "waiting_hm", "interested", "passed"]
+const companySendTone = (s: CompanySendStatus): Parameters<typeof Badge>[0]["tone"] =>
+  s === "interested" ? "ok" : s === "passed" ? "warn" : s === "waiting_hm" ? "info" : "muted"
+
+/**
+ * Per-company "waiting for hiring manager" tracker. Lets ops mark which companies
+ * a candidate was sent to, each with its own status (sent → waiting HM →
+ * interested/passed) + hiring-manager feedback. Writes via the admin action
+ * callable; the FSM submission status flips to "with client" on the first send.
+ */
+function CompanySendsPanel({ submissionId, initial }: { submissionId: string; initial?: CompanySend[] }) {
+  const [sends, setSends] = useState<CompanySend[]>(initial ?? [])
+  const [newCompany, setNewCompany] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const run = async (fn: () => Promise<CompanySend[]>) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      setSends(await fn())
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const add = () => {
+    const c = newCompany.trim()
+    if (!c) return
+    setNewCompany("")
+    void run(() => upsertCompanySend(submissionId, { company: c, status: "sent" }))
+  }
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Company sends — waiting for hiring manager
+      </h4>
+      {err && <p style={{ color: "#c0392b", fontSize: 12, margin: "0 0 6px" }}>{err}</p>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {sends.length === 0 && (
+          <p style={{ margin: 0, fontSize: 13, color: "#999" }}>
+            No companies yet. Add each company you send this candidate to, then track the hiring-manager response.
+          </p>
+        )}
+        {sends.map((s) => (
+          <div key={s.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>{s.company}</strong>
+              <Badge tone={companySendTone(s.status)}>{COMPANY_SEND_STATUS_LABEL[s.status]}</Badge>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                disabled={busy}
+                value={s.status}
+                onChange={(e) => void run(() => upsertCompanySend(submissionId, { id: s.id, company: s.company, status: e.target.value as CompanySendStatus }))}
+              >
+                {COMPANY_SEND_STATUS_OPTIONS.map((o) => (
+                  <option key={o} value={o}>{COMPANY_SEND_STATUS_LABEL[o]}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(() => removeCompanySend(submissionId, s.id))}
+                style={{ marginLeft: "auto", fontSize: 12, color: "#c0392b", background: "none", border: "none", cursor: "pointer" }}
+              >
+                Remove
+              </button>
+            </div>
+            <textarea
+              defaultValue={s.feedback ?? ""}
+              placeholder="Hiring manager feedback…"
+              onBlur={(e) => {
+                const v = e.target.value.trim()
+                if (v !== (s.feedback ?? "")) void run(() => upsertCompanySend(submissionId, { id: s.id, company: s.company, feedback: v }))
+              }}
+              style={{ width: "100%", minHeight: 44, fontSize: 13, padding: 6, borderRadius: 6, border: "1px solid #ddd", boxSizing: "border-box" }}
+            />
+            <span style={{ fontSize: 11, color: "#999" }}>
+              Updated {formatOpsDate(s.updatedAt)}{s.by ? ` · ${s.by}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <input
+          type="text"
+          value={newCompany}
+          placeholder="Company name…"
+          disabled={busy}
+          onChange={(e) => setNewCompany(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") add() }}
+          style={{ flex: 1, fontSize: 13, padding: "6px 8px", borderRadius: 6, border: "1px solid #ddd" }}
+        />
+        <button type="button" disabled={busy || !newCompany.trim()} onClick={add} style={{ fontSize: 13, padding: "6px 12px" }}>
+          Add company
+        </button>
+      </div>
+    </>
+  )
+}
+
+function SubmissionConversationPanel({
+  row,
+  onUpdated,
+}: {
+  row: SubmissionDoc
+  onUpdated: (row: Partial<SubmissionDoc> & { id: string }) => void
+}) {
+  const [comments, setComments] = useState<SubmissionCommentDoc[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [draft, setDraft] = useState("")
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [pendingComment, setPendingComment] = useState<SubmissionCommentDoc | null>(null)
+
+  async function fetchComments(): Promise<SubmissionCommentDoc[]> {
+    const snap = await getDocs(
+      query(collection(db(), "pa-recruiter-submissions", row.id, "comments"), orderBy("at", "asc")),
+    )
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionCommentDoc, "id">) }))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const rows = await fetchComments()
+        if (cancelled) return
+        setComments(rows)
+        setLoadError(null)
+        onUpdated({ id: row.id, adminCommentCount: rows.length, adminLastCommentAt: latestCommentAt(rows) })
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [row.id])
+
+  async function handleSend() {
+    const message = draft.trim()
+    if (!message || sending) return
+    setSending(true)
+    setSendError(null)
+    setPendingComment({
+      id: `pending-${Date.now()}`,
+      message,
+      by: "wekruit",
+      authorName: "you",
+      at: new Date().toISOString(),
+    })
+    setDraft("")
+    try {
+      await sendRecruiterSubmissionComment({ submissionId: row.id, message })
+      const rows = await fetchComments()
+      setComments(rows)
+      onUpdated({ id: row.id, adminCommentCount: rows.length, adminLastCommentAt: latestCommentAt(rows) })
+      setPendingComment(null)
+    } catch (e) {
+      setPendingComment(null)
+      setDraft(message)
+      setSendError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const entries = buildConversationEntries(comments ?? [], row.requestedInfo)
+  const recruiterLabel = recruiterConversationLabel(row)
+  if (pendingComment) {
+    entries.push({
+      key: pendingComment.id,
+      kind: "comment",
+      side: "right",
+      author: pendingComment.authorName ?? "you",
+      at: pendingComment.at,
+      message: pendingComment.message ?? "",
+      pending: true,
+    })
+  }
+
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Recruiter-specific chat
+      </h4>
+      <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, display: "grid", gap: 8 }}>
+        <div style={{ fontSize: 12, color: "#666" }}>
+          Thread with <strong>{recruiterLabel}</strong>. Stored on this recruiter submission, so moving or rejecting the candidate does not hide it.
+        </div>
+        {loadError && <div style={{ color: "#9c3a1d", fontSize: 12 }}>Failed to load comments: {loadError}</div>}
+        {comments === null && !loadError ? (
+          <div style={{ color: "#777", fontSize: 12 }}>Loading conversation...</div>
+        ) : entries.length === 0 ? (
+          <div style={{ color: "#777", fontSize: 12 }}>No messages yet. Use the box below to start this recruiter conversation.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 6 }}>
+            {entries.map((entry) => (
+              <div key={entry.key} style={{ display: "flex", justifyContent: entry.side === "right" ? "flex-end" : "flex-start" }}>
+                <div
+                  style={{
+                    maxWidth: 420,
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${entry.side === "right" ? "#d7e3f6" : "#e6e2d8"}`,
+                    background: entry.side === "right" ? "#eef3fb" : "#fdfcf8",
+                    opacity: entry.pending ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: "#777", marginBottom: 2 }}>
+                    <strong>{entry.author}</strong>
+                    {entry.kind === "request" && <Badge tone="info">request</Badge>}
+                    <span>{formatOpsDate(entry.at)}</span>
+                    {entry.pending && <span>sending...</span>}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#333", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{entry.message}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {sendError && <div style={{ color: "#9c3a1d", fontSize: 12 }}>{sendError}</div>}
+        <textarea
+          value={draft}
+          disabled={sending}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Message the recruiter..."
+          style={{ width: "100%", minHeight: 54, fontSize: 13, padding: 8, borderRadius: 6, border: "1px solid #ddd", boxSizing: "border-box" }}
+        />
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button type="button" disabled={sending || !draft.trim()} onClick={handleSend} style={{ fontSize: 13, padding: "6px 12px" }}>
+            Send message
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
 function RowDetailPanel({
   row,
   role,
@@ -4165,6 +4636,25 @@ function RowDetailPanel({
         </button>
       }
     >
+      {row.aiEvaluation?.identityConflict && (
+        <div
+          style={{
+            margin: "0 0 12px",
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid #f0b429",
+            background: "#fffaf0",
+            color: "#8a5800",
+            fontSize: 13,
+            lineHeight: 1.45,
+          }}
+        >
+          <strong>⚠️ Possible wrong-identity research.</strong> The LinkedIn profile pulled for this
+          candidate appears to be a <strong>different person</strong> (or stale Coresignal data) than the
+          submitted résumé — so the AI verdict was set to <strong>review</strong> and the research was{" "}
+          <strong>not</strong> used to reject. Verify against the résumé below before deciding.
+        </div>
+      )}
       <div className="sub-detail__metrics">
         <OpsMetric label="Review verdict" value={reviewSummary.title} />
         <OpsMetric
@@ -4253,6 +4743,25 @@ function RowDetailPanel({
               </a>
             </p>
           )}
+          {(row.candidate?.resumeUrl || row.candidate?.linkedinUrl) && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6, fontSize: 12 }}>
+              {row.candidate.resumeUrl && (
+                <a href={row.candidate.resumeUrl} target="_blank" rel="noopener noreferrer">
+                  Open resume ({linkLabel(row.candidate.resumeUrl)})
+                </a>
+              )}
+              {row.candidate.linkedinUrl && (
+                <a href={row.candidate.linkedinUrl} target="_blank" rel="noopener noreferrer">
+                  Open LinkedIn ({linkLabel(row.candidate.linkedinUrl)})
+                </a>
+              )}
+            </div>
+          )}
+          {row.candidate?.compensationExpectation && (
+            <p style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+              <strong>Expected salary:</strong> {row.candidate.compensationExpectation}
+            </p>
+          )}
           <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
             Candidate confirmation
           </h4>
@@ -4269,6 +4778,18 @@ function RowDetailPanel({
                 Notes
               </h4>
               <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{row.candidate.notes}</p>
+            </>
+          )}
+          {(row.candidate?.resumeUrl || row.candidate?.linkedinUrl || row.candidate?.link) && (
+            <>
+              <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+                Résumé
+              </h4>
+              <CandidateResumePreview
+                resumeUrl={row.candidate?.resumeUrl}
+                linkedinUrl={row.candidate?.linkedinUrl ?? row.candidate?.link}
+                height="60vh"
+              />
             </>
           )}
         </div>
@@ -4313,6 +4834,9 @@ function RowDetailPanel({
           ) : (
             <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No status history stored.</p>
           )}
+
+          <CompanySendsPanel submissionId={row.id} initial={row.companySends} />
+          <SubmissionConversationPanel row={row} onUpdated={onUpdated} />
 
           <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
             Role evidence matrix
@@ -4379,7 +4903,12 @@ function RowDetailPanel({
                     {verdictLabel}
                   </span>
                   {typeof ai?.confidence === "number" && (
-                    <span style={{ fontSize: 12, color: "#777" }}>confidence {(ai.confidence * 100).toFixed(0)}%</span>
+                    <span
+                      style={{ fontSize: 12, color: "#777" }}
+                      title="How sure the AI is about THIS verdict — not a candidate score. e.g. 'reject · 92% sure' = 92% confident in rejecting, not a 92% rating."
+                    >
+                      {(ai.confidence * 100).toFixed(0)}% sure in this verdict
+                    </span>
                   )}
                 </div>
                 {ai?.summary && (
@@ -4446,41 +4975,8 @@ function RowDetailPanel({
             {saving ? "Saving..." : "Save"}
           </button>
         </div>
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-          {SUBMISSION_FEEDBACK_REASON_GROUPS.map((groupName) => {
-            const groupReasons = SUBMISSION_FEEDBACK_REASONS.filter((r) => r.group === groupName)
-            if (!groupReasons.length) return null
-            return (
-              <div key={groupName}>
-                <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.04em", color: "#999", marginBottom: 4 }}>{groupName}</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {groupReasons.map((reason) => {
-                    const active = draftReasons.includes(reason.id)
-                    const positive = reason.group === "Positive"
-                    const activeBg = positive ? "#0f6e56" : "#993c1d"
-                    return (
-                      <button
-                        type="button"
-                        key={reason.id}
-                        onClick={() => toggleReason(reason.id)}
-                        style={{
-                          padding: "5px 8px",
-                          border: active ? `1px solid ${activeBg}` : "1px solid #ddd",
-                          background: active ? activeBg : "#fff",
-                          color: active ? "#fff" : "#555",
-                          borderRadius: 999,
-                          fontSize: 12,
-                          cursor: "pointer",
-                        }}
-                      >
-                        {reason.label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })}
+        <div style={{ marginTop: 10 }}>
+          <ReasonChips selected={draftReasons} onToggle={toggleReason} />
         </div>
         <div style={{ marginTop: 14, border: "1px solid #eadfce", borderRadius: 10, background: "#fffaf3", padding: 12 }}>
           <h4 style={{ margin: "0 0 8px", fontSize: 12, textTransform: "uppercase", color: "#7a4a16" }}>
