@@ -126,10 +126,21 @@ export default function YcStartupSchool() {
           <a href="#founders" className="ycs-pill">
             FOUNDERS
           </a>
+          <a href="#how" className="ycs-pill">
+            HOW
+          </a>
+          <Link to="/market" className="ycs-pill">
+            ALL ROLES
+          </Link>
         </nav>
-        <Link to="/login" className="ycs-signin">
-          SIGN IN
-        </Link>
+        <div className="ycs-nav-right">
+          <Link to="/login" className="ycs-signin">
+            SIGN IN
+          </Link>
+          <Link to={ONBOARDING_HREF} className="ycs-btn ycs-btn--solid ycs-btn--nav">
+            Get matched
+          </Link>
+        </div>
       </header>
 
       <section className="ycs-hero">
@@ -154,6 +165,13 @@ export default function YcStartupSchool() {
           <p>OF YC STARTUP SCHOOL 2026</p>
         </div>
       </section>
+
+      {founders.length > 0 ? (
+        <p className="ycs-hero-live">
+          <span className="ycs-hero-live-dot" aria-hidden="true" />
+          {founders.length} live roles from founders on WeKruit right now
+        </p>
+      ) : null}
 
       <div className="ycs-rule" />
 
@@ -229,7 +247,10 @@ export default function YcStartupSchool() {
             <div className="ycs-grid">
               {founders.map((f) => (
                 <Link key={f.id} to={`/j/${f.id}?source=${YC_SOURCE}`} className="ycs-founder">
-                  <span className="ycs-founder-company">{f.company}</span>
+                  <span className="ycs-founder-company">
+                    {f.company}
+                    {f.collaborated ? <span className="ycs-founder-chip">WeKruit partner</span> : null}
+                  </span>
                   <span className="ycs-founder-role">{f.title}</span>
                   {f.founder ? (
                     <span className="ycs-founder-person">
@@ -247,7 +268,7 @@ export default function YcStartupSchool() {
           )}
         </section>
 
-        <section className="ycs-card">
+        <section id="how" className="ycs-card">
           <p className="ycs-slug">/HOW</p>
           <h3>How matching works</h3>
           <ol className="ycs-steps">
@@ -292,12 +313,24 @@ export default function YcStartupSchool() {
 
       <footer className="ycs-footer">
         <span>WEKRUIT × YC STARTUP SCHOOL ATTENDEES</span>
-        <span>
+        <nav className="ycs-footer-links" aria-label="WeKruit">
+          <Link to="/" className="ycs-inline-link">
+            WEKRUIT
+          </Link>
+          <Link to="/market" className="ycs-inline-link">
+            ALL ROLES
+          </Link>
+          <Link to="/me" className="ycs-inline-link">
+            MY WEKRUIT
+          </Link>
+          <Link to="/employers" className="ycs-inline-link">
+            FOR EMPLOYERS
+          </Link>
           <Link to="/legal" className="ycs-inline-link">
             LEGAL
-          </Link>{" "}
-          · NOT AFFILIATED WITH Y COMBINATOR
-        </span>
+          </Link>
+        </nav>
+        <span>NOT AFFILIATED WITH Y COMBINATOR</span>
       </footer>
     </div>
   )
@@ -321,6 +354,8 @@ const YCS_STYLES = `
   font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
 }
 
+/* Solid sticky nav — NO backdrop-filter/color-mix: blur on sticky elements breaks
+   full-page screenshot stitching (blank strips) and costs Safari paint time. */
 .ycs-nav {
   position: sticky;
   top: 0;
@@ -328,11 +363,13 @@ const YCS_STYLES = `
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px clamp(16px, 4vw, 48px);
-  background: color-mix(in srgb, var(--cream, #F5EDE3) 90%, transparent);
-  backdrop-filter: blur(6px);
+  gap: 12px;
+  padding: 14px clamp(16px, 4vw, 48px);
+  background: var(--cream, #F5EDE3);
   border-bottom: 1px solid var(--border, #E3D6C3);
 }
+.ycs-nav-right { display: flex; align-items: center; gap: 16px; }
+.ycs .ycs-btn--nav { padding: 9px 18px; font-size: 13px; }
 .ycs .ycs-mark {
   display: grid;
   place-items: center;
@@ -416,6 +453,28 @@ const YCS_STYLES = `
 
 .ycs-rule { border-top: 1px solid var(--border, #E3D6C3); }
 
+.ycs-hero-live {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 16px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--ink-2, #5A4636);
+  background: var(--cream-2, #EFE4D4);
+  border-bottom: 1px solid var(--border, #E3D6C3);
+}
+.ycs-hero-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success, #4F6B3C);
+  box-shadow: 0 0 0 3px rgba(79, 107, 60, 0.18);
+}
+
 .ycs-main {
   display: grid;
   gap: 26px;
@@ -481,7 +540,25 @@ const YCS_STYLES = `
   transform: translateY(-2px);
   box-shadow: 0 6px 18px rgba(45, 26, 10, 0.08);
 }
-.ycs-founder-company { font-family: var(--font-serif, Georgia, serif); font-weight: 500; font-size: 18px; }
+.ycs-founder-company {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: var(--font-serif, Georgia, serif);
+  font-weight: 500;
+  font-size: 18px;
+}
+.ycs-founder-chip {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--success-bg, #E6E9D9);
+  color: var(--success, #4F6B3C);
+}
 .ycs-founder-role { font-size: 14px; color: var(--ink-2, #5A4636); }
 .ycs-founder-person { font-size: 13px; color: var(--ink-2, #5A4636); }
 .ycs-founder-meta { font-size: 11px; letter-spacing: 0.04em; color: var(--ink-3, #897462); }
@@ -519,7 +596,7 @@ const YCS_STYLES = `
 .ycs-footer {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px 24px;
   align-items: center;
   justify-content: space-between;
   padding: 22px clamp(16px, 4vw, 48px);
@@ -528,10 +605,12 @@ const YCS_STYLES = `
   letter-spacing: 0.1em;
   color: var(--ink-3, #897462);
 }
+.ycs-footer-links { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 
 @media (max-width: 780px) {
   .ycs-hero { grid-template-columns: 1fr; justify-items: center; text-align: center; min-height: 0; }
   .ycs-hero-corner--right { text-align: center; }
   .ycs-nav-pills { display: none; }
+  .ycs-signin { display: none; }
 }
 `
