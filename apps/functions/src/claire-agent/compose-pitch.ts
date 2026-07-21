@@ -670,6 +670,10 @@ export async function composePitchTurn(
     Boolean((userDoc as { pitchedAt?: unknown }).pitchedAt) ||
     (userDoc as { onboardingStatus?: unknown }).onboardingStatus === "complete"
   const resumeIsRich = Boolean(resume) && isThinEvidence(profile) === false
+  // YC FOUNDER-MATCH ENTRY (Adam 2026-07-20 "换个口吻…不用推进"): a /yc-startup arrival keeps the
+  // we-know-you confirmation + pitch, but the CLOSER never pushes ("want me to pull roles?") — it
+  // states the notify promise instead: in the founder pool, text here + email when a match pops.
+  const ycPosture = (userDoc as { source?: unknown }).source === "yc_startup_school"
 
   // R2 (Adam 2026-06-04): compose through the injected PitchComposer (default = gpt-5.4-mini). Swapping
   // the composer changes HOW the pitch is processed without touching this orchestration or any caller.
@@ -685,18 +689,27 @@ export async function composePitchTurn(
   // CONFIRMATION — when a rich résumé is in play (whether this is the candidate's FIRST pitch or an
   // IMPROVEMENT of an earlier one), acknowledge the RÉSUMÉ and that we ADDED the technical detail (Adam:
   // it's an improvement, not a re-pitch). LinkedIn-only keeps the original opener.
-  let confirmation = resumeIsRich
-    ? "got it — went through your résumé, added the technical detail to your pitch 👍"
-    : profile.recentCompany
-      ? `got it — pulled your full ${profile.recentCompany} experience from linkedin 👍`
-      : "got it — pulled your experience from linkedin 👍"
+  // YC posture NEVER frames the read-back as "your pitch" (Adam 2026-07-20: founder
+  // matching is not pitch-coaching) — it's "here's what stands out", then the pool promise.
+  let confirmation = ycPosture
+    ? resumeIsRich
+      ? "got it — read through your résumé, here's what stands out 👀"
+      : profile.recentCompany
+        ? `got it — pulled your ${profile.recentCompany} experience, here's what stands out 👀`
+        : "got it — pulled your experience, here's what stands out 👀"
+    : resumeIsRich
+      ? "got it — went through your résumé, added the technical detail to your pitch 👍"
+      : profile.recentCompany
+        ? `got it — pulled your full ${profile.recentCompany} experience from linkedin 👍`
+        : "got it — pulled your experience from linkedin 👍"
 
   // OFFER — a rich résumé just arrived → never re-ask for a résumé (we just got it); offer to match or
   // tweak. Otherwise: thin profile + not-yet-asked → the short optional evidence ask (once, stamped);
   // rich/already-asked → the normal offer.
   const alreadyAsked = Boolean((userDoc as { evidenceAskedAt?: unknown }).evidenceAskedAt)
   const thin = isThinEvidence(profile)
-  const askForEvidence = thin && !alreadyAsked
+  // yc posture: the optional evidence ask is a push — never fire it for a founder-match entry.
+  const askForEvidence = thin && !alreadyAsked && !ycPosture
   // LIGHT role soft-confirm (Adam #2 2026-06-05): the pitch turn ends by softly confirming the role we
   // auto-derived (tags.targetRoleFunction) BEFORE recs — conversational, NOT a wall, NOT a blocking
   // question. If the user redirects ("actually product"), the conversational re-enrich path rewrites the
@@ -723,6 +736,12 @@ export async function composePitchTurn(
   if (askForEvidence && !resumeIsRich) {
     void db.collection(USERS).doc(userId).set({ evidenceAskedAt: nowIso }, { merge: true }).catch(() => {})
   }
+  // YC closer — replaces every offer shape above AND skips the framing composer's closer below
+  // (the framed closer is validated as a single-clear-PULL-ask, exactly the push yc must not make).
+  if (ycPosture) {
+    offer =
+      "you're in the founder-match pool now — nothing else you need to do 🤝 i'll text you right here (and drop you an email) the moment a founder match pops. and if you want a peek at who's building right now, just say the word"
+  }
   // MODEL-COMPOSED FRAMING (Adam 2026-06-07: "the main thing is to avoid the agent generating same texts
   // again and again"). Replace the deterministic confirmation + closer with a VARIED pair on the same
   // gpt-5.4-mini tier — but ONLY for the normal/rich closer (NOT the thin-evidence either/or ask, which is
@@ -730,7 +749,7 @@ export async function composePitchTurn(
   // closer fails the locked single-clear-pull-ask validation → we keep the deterministic template, so a bad
   // generation can NEVER break the "a bare 'sure' = pull" contract. Reliable delivery + same-text dedup
   // (the per-parse outbound scope in cutover) remain the backstop.
-  if (!askForEvidence) {
+  if (!askForEvidence && !ycPosture) {
     const roleLabel =
       roleFns.length > 0
         ? roleFns.slice(0, 2).map((t) => t.replace(/_and_/g, " & ").replace(/_/g, " ")).join(" / ")

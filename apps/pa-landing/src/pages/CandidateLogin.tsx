@@ -1536,6 +1536,9 @@ export default function CandidateLogin() {
       : onboardingNext
         ? nextDest.to
         : onboardingDestination(peekSource())
+  // YC Startup School funnel (wekruit.com/yc-startup) — the sticky wko_source
+  // cookie survives the OAuth round-trip, so the gate can speak to the entry.
+  const ycEntry = peekSource() === "yc_startup_school"
   const loginEyebrow = showCompletingLink
     ? "Finishing sign-in"
     : roleInterviewNext
@@ -1543,7 +1546,9 @@ export default function CandidateLogin() {
       : roleSignalNext
         ? "Role signal"
       : onboardingNext
-        ? "Start with Claire"
+        ? ycEntry
+          ? "YC Startup School × WeKruit"
+          : "Start with Claire"
       : referralNext
         ? "Referral dashboard"
         : "Pick up where you left off"
@@ -1568,7 +1573,9 @@ export default function CandidateLogin() {
         : roleSignalNext
           ? "Sign in and Claire will add this role to your durable profile signals."
         : onboardingNext
-          ? "Sign in once and Claire starts a guided profile chat: resume or LinkedIn first, then target roles, constraints, and nearest-work evidence."
+          ? ycEntry
+            ? "Sign in once and drop your résumé — Claire matches your interests and experience with founders building right now, and pings you here + email when one lines up."
+            : "Sign in once and Claire starts a guided profile chat: resume or LinkedIn first, then target roles, constraints, and nearest-work evidence."
         : referralNext
           ? "Sign in once to track referral invites, verified interview rewards, and offer/start payouts."
           : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."

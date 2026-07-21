@@ -226,7 +226,9 @@ export default function Onboarding() {
     ? "Claire keeps the role context attached"
     : source === "WeKruit_Laid_Off"
       ? "WeKruit Open · for people between things"
-      : "WeKruit · meet your AI recruiter"
+      : source === "yc_startup_school"
+        ? "WeKruit · founder matching for Startup School attendees"
+        : "WeKruit · meet your AI recruiter"
 
   useEffect(() => {
     const rawNext = searchParams.get("next")
@@ -581,6 +583,7 @@ export default function Onboarding() {
               showProfileLink={portalReady}
               returnJobId={returnJobId}
               claireConversationStarted={claireConversationStarted}
+              signupSource={source}
               onGo={(r) => {
                 if (r === "dashboard") {
                   if (!portalReady) return
@@ -1129,6 +1132,10 @@ function FormIntake({
             ? skipLinkedinField
               ? "Claire already has the role path; add the evidence she needs while the role context stays attached. LinkedIn is linked from sign-in, so a resume or site is enough to continue the same role interview in iMessage."
               : "Claire already has the role path; add the evidence she needs while the role context stays attached. Share a resume, LinkedIn, or site, then continue the same role interview in iMessage."
+            : source === "yc_startup_school"
+              ? skipLinkedinField
+                ? "Tell us who you are and drop your résumé (LinkedIn is already linked from sign-in) — that's what Claire matches with founders. Next you'll open iMessage to say hi."
+                : "Tell us who you are and drop your résumé — that's what Claire matches with founders. Next you'll open iMessage to say hi."
             : skipLinkedinField
               ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to talk to Claire."
               : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to talk to Claire."}
@@ -1376,12 +1383,14 @@ function Done({
   showProfileLink,
   returnJobId,
   claireConversationStarted,
+  signupSource,
   onGo,
 }: {
   profile: Profile
   showProfileLink: boolean
   returnJobId: string | null
   claireConversationStarted: boolean
+  signupSource?: SignupSource
   onGo: (r: "dashboard" | "landing") => void
 }) {
   const number = profile.listPosition
@@ -1442,6 +1451,8 @@ function Done({
                 ? "Your profile and this role are connected. Send the pre-filled code exactly as shown; Claire will continue the role interview from there."
                 : claireConversationStarted
                   ? "Claire already has your thread. Send the pre-filled code exactly as shown if this page asks for it; she will pick up from the existing conversation."
+                : signupSource === "yc_startup_school"
+                  ? "You're in the founder-match pool. Open iMessage and send the pre-filled code to say hi to Claire — she'll text you here (and email you) the moment a founder match pops. Nothing else to do."
                 : "Your resume and profile are saved. Open iMessage and send the pre-filled code exactly as shown."}
             </>
           ) : (

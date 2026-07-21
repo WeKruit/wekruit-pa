@@ -1503,6 +1503,9 @@ export async function maybeRunThinClaire(
         // greet back + offer matches, NEVER the offer kickoff NOR the legacy target_role question.
         // Canary-only by construction (mode-selector gates it behind isCanaryUser).
         ...(decision.warmReturningGreeting ? { warmReturningGreeting: true } : {}),
+        // ENTRY POSTURE (Adam 2026-07-20): entry-page tone overlay (yc_startup_school = founder-scene
+        // chat, no pushing, notify-on-match promise). Set by mode-selector from pa-users.source.
+        ...(decision.entryPosture ? { entryPosture: decision.entryPosture } : {}),
         // COLD OFFER-FIRST (Adam 2026-06-03): brand-new candidate → deterministic LinkedIn-recommended /
         // résumé offer + NO onboarding question (pitch fires after they connect/drop). Canary by construction.
         ...(decision.offerFirstKickoff ? { offerFirstKickoff: true } : {}),

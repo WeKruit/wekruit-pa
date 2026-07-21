@@ -23,6 +23,7 @@ import Employers, { EmployersInbox } from "./pages/Employers.js"
 import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
 import AutoApplyBeta from "./pages/AutoApplyBeta.js"
 import PartnerApiDoc from "./pages/PartnerApiDoc.js"
+import YcStartupSchool from "./pages/YcStartupSchool.js"
 
 // GA4 init — fire-and-forget, never throws, no-ops on localhost/unsupported.
 // Page views come from GA4 enhanced measurement; only custom events are coded.
@@ -102,6 +103,7 @@ const fullRoutes = (
     <Route path="/employers" element={<Employers />} />
     <Route path="/employers/inbox" element={<EmployersInbox />} />
     <Route path="/auto-apply" element={<AutoApplyBeta />} />
+    <Route path="/yc-startup" element={<YcStartupSchool />} />
     <Route path="/refer" element={<ReferPublicPage />} />
     <Route path="/r/:slug" element={<ReferPublicPage />} />
     <Route path="/me/refer" element={<ReferPage />} />

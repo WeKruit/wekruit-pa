@@ -363,6 +363,8 @@ export function onboardingDestination(source: SignupSource = peekSource()): stri
   switch (source) {
     case "WeKruit_Laid_Off":
       return "/onboarding?source=layoff"
+    case "yc_startup_school":
+      return "/onboarding?source=yc_startup_school"
     case "candidate":
     case "layoffhedge":
       return "/onboarding"

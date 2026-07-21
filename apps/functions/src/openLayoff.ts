@@ -26,7 +26,7 @@ import { getApps, initializeApp } from "firebase-admin/app"
 
 import { findSendbluePoolNumber, loadSendbluePool, pickFromNumber, sendblueGroupId, hashStringToUint } from "./sendblue/pool.js"
 import { normalizePeer } from "./sendblue/peer.js"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { PA_COLLECTIONS, isPaUserSource, type PaUserSource } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
 import {
   WEKRUIT_LAYOFF_SOURCE,
@@ -114,8 +114,8 @@ export type RegisterInput = {
    *   - "refresh" → if phone exists, reuse candidateId + overwrite layoffContext + refresh lastLaidOffAt
    */
   mode?: "auto" | "reuse" | "refresh"
-  /** Source selected by the host funnel: layoff.wekruit.com or candidate.wekruit.com. */
-  source?: WekruitSignupSource
+  /** Source selected by the host funnel (wekruit.com, layoff.wekruit.com, /yc-startup, …). */
+  source?: PaUserSource
 }
 
 type CallableAuth = {
@@ -222,9 +222,10 @@ export async function runRegisterLayoffCandidate(
   deps: OpenLayoffDeps
 ): Promise<Record<string, unknown>> {
   const mode = v.mode ?? "auto"
-  const source: WekruitSignupSource = isWekruitSignupSource(v.source)
-    ? v.source
-    : WEKRUIT_LAYOFF_SOURCE
+  // Accept ANY canonical pa-users source label (yc_startup_school, layoffhedge,
+  // …) — the label is attribution only. Flow branching stays layoff-vs-rest via
+  // isLayoff below. Legacy no-source calls keep the layoff default.
+  const source: PaUserSource = isPaUserSource(v.source) ? v.source : WEKRUIT_LAYOFF_SOURCE
   const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
   const lastCompany = cleanString(v.lastCompany, 200)
   if (!v.firstName || !v.lastName || !v.email || !v.consent || (isLayoff && !lastCompany)) {
@@ -494,10 +495,14 @@ export async function runInitiateSmsPrescreen(
   const doc = await userRef.get()
   if (!doc.exists) throw new HttpsError("not-found", "User not found")
   const u = doc.data()!
-  if (!isWekruitSignupSource(u.source)) {
+  if (!isPaUserSource(u.source)) {
     throw new HttpsError("failed-precondition", "user_source_unsupported")
   }
-  const userSource = u.source as WekruitSignupSource
+  // Runtime kickoff branches layoff-vs-candidate only; every other canonical
+  // source (yc_startup_school, layoffhedge, …) rides the candidate opener.
+  const userSource: WekruitSignupSource = isWekruitSignupSource(u.source)
+    ? u.source
+    : WEKRUIT_CANDIDATE_SOURCE
 
   const phoneE164 = u.phoneE164 as string
   const result = await runLayoffSmsStart({

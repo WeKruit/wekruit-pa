@@ -160,3 +160,39 @@ test("isLayoffArrival FALSE for ?source=organic", async () => {
     assert.equal(mod.isLayoffArrival(), false)
   })
 })
+
+test("resolveSource returns yc_startup_school for ?source=yc_startup_school", async () => {
+  const mod = await import("./source.js?case=urlYcFull")
+  withBrowser("https://wekruit.com/yc-startup?source=yc_startup_school", "", () => {
+    assert.equal(mod.resolveSource(), "yc_startup_school")
+  })
+})
+
+test("resolveSource accepts the short ?source=yc alias", async () => {
+  const mod = await import("./source.js?case=urlYcShort")
+  withBrowser("https://wekruit.com/onboarding?source=yc", "", () => {
+    assert.equal(mod.resolveSource(), "yc_startup_school")
+  })
+})
+
+test("resolveSource honors a previously-written yc_startup_school cookie", async () => {
+  const mod = await import("./source.js?case=cookieYc")
+  withBrowser("https://wekruit.com/onboarding", "wko_source=yc_startup_school", () => {
+    assert.equal(mod.resolveSource(), "yc_startup_school")
+  })
+})
+
+test("stickExplicitSource writes the yc cookie for later onboarding nav", async () => {
+  const mod = await import("./source.js?case=stickExplicitYc")
+  withBrowser("https://wekruit.com/yc-startup", "", () => {
+    mod.stickExplicitSource("yc_startup_school")
+    assert.match((globalThis as any).document.cookie, /wko_source=yc_startup_school/)
+  })
+})
+
+test("isLayoffArrival FALSE for a yc arrival", async () => {
+  const mod = await import("./source.js?case=arrivalYc")
+  withBrowser("https://wekruit.com/yc-startup?source=yc", "", () => {
+    assert.equal(mod.isLayoffArrival(), false)
+  })
+})
