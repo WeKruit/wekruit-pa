@@ -179,3 +179,13 @@ test("triage status copy covers timed_out/paused and bans the words 'human revie
   assert.ok(/STATUS = paused/.test(triage))
   assert.ok(/NEVER use the words 'human review'/.test(triage))
 })
+
+test("ENTRY POSTURE — yc_startup_school renders the founder-scene no-push directive; absent by default", () => {
+  const withPosture = buildClaireTurnContext({ mode: "triage", lang: "en", entryPosture: "yc_startup_school" })
+  assert.match(withPosture, /ENTRY POSTURE — YC STARTUP SCHOOL/)
+  assert.match(withPosture, /do NOT run any structured intake/)
+  assert.match(withPosture, /text them RIGHT HERE and email them/)
+  assert.match(withPosture, /their pull, never your push/)
+  const without = buildClaireTurnContext({ mode: "triage", lang: "en" })
+  assert.doesNotMatch(without, /ENTRY POSTURE/)
+})

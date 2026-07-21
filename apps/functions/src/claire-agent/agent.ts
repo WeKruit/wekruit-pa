@@ -800,6 +800,10 @@ export interface RunClaireTurnDeps {
    *  cutover from the mode-selector cold-start triage short-path. Drives the warm-greet-back directive —
    *  no offer kickoff, no onboarding question. */
   warmReturningGreeting?: boolean
+  /** ENTRY POSTURE (Adam 2026-07-20): tone overlay keyed off the entry page (pa-users.source, set by
+   *  mode-selector). yc_startup_school = founder-scene chat, no pushing, notify-on-match promise.
+   *  Persona-level (NOT a deterministic pattern) — survives the anti-silence fallback strip. */
+  entryPosture?: "yc_startup_school"
   /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention context
    *  (buildCandidateContext.prescreenContextText) — prior screens + terminals + real reasons + borderline
    *  gaps + capture/offer-other-roles directive. Set by cutover for a post-terminal/retention turn that
@@ -1053,6 +1057,9 @@ export async function runClaireTurn(
     locationSalaryAsk: fallback ? undefined : deps.locationSalaryAsk,
     // WARM RETURNING GREETING — per-turn directive for a known candidate's cold greeting, trailing only.
     warmReturningGreeting: fallback ? undefined : deps.warmReturningGreeting,
+    // ENTRY POSTURE — persona tone, NOT a deterministic pattern: survives the fallback strip so the
+    // fresh reply still speaks in the entry page's voice (yc: no pushing, notify-on-match).
+    entryPosture: deps.entryPosture,
     // PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block.
     // Per-turn, trailing only, rendered in ANY mode. Stripped on the anti-silence fallback re-entry.
     candidateContext: fallback ? undefined : deps.candidateContext,

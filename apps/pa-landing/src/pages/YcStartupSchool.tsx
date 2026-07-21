@@ -8,9 +8,11 @@
  * building. Founder cards come from the SAME cached pa-jobs raw query the
  * homepage hero uses (shared TanStack key — zero extra Firestore reads).
  *
- * Visual language intentionally echoes an event microsite (cream, mono type,
- * orange sun, marquee ticker) while staying on WeKruit brand tokens. This is
- * a WeKruit page FOR Startup School attendees — it does not claim to be a
+ * Visual language: WeKruit brand (Newsreader serif display, Hanken Grotesk
+ * body, cream + peach-halo palette, lifted warm cards) carrying event-microsite
+ * STRUCTURE cues (corner hero + sun arc, mono /SECTION slugs, marquee ticker,
+ * big display closer) — a mix, not a YC clone (Adam 2026-07-20). This is a
+ * WeKruit page FOR Startup School attendees — it does not claim to be a
  * Y Combinator property, and it fabricates no speakers, dates, or counts.
  */
 import { useEffect } from "react"
@@ -133,9 +135,9 @@ export default function YcStartupSchool() {
       <section className="ycs-hero">
         <div className="ycs-hero-corner ycs-hero-corner--left">
           <h1>
-            YC STARTUP
+            YC Startup School,
             <br />
-            SCHOOL
+            <em>matched.</em>
           </h1>
           <p className="ycs-hero-sub">founder matching by WeKruit</p>
         </div>
@@ -148,7 +150,7 @@ export default function YcStartupSchool() {
           </div>
         </div>
         <div className="ycs-hero-corner ycs-hero-corner--right">
-          <h2>FOR ATTENDEES</h2>
+          <h2>For attendees</h2>
           <p>OF YC STARTUP SCHOOL 2026</p>
         </div>
       </section>
@@ -177,7 +179,8 @@ export default function YcStartupSchool() {
           </ul>
           <p>
             One profile does both. If you already have a WeKruit profile, sign in and it keeps working here —
-            nothing to re-upload, nothing to re-type.
+            nothing to re-upload, nothing to re-type. No chasing either: Claire texts you right here (and emails
+            you) when a founder match pops.
           </p>
           <div className="ycs-cta-row">
             <Link
@@ -185,14 +188,14 @@ export default function YcStartupSchool() {
               className="ycs-btn ycs-btn--solid"
               onClick={() => void trackEvent("yc_startup_cta", { cta: "join" })}
             >
-              JOIN AS A CANDIDATE →
+              Join as a candidate →
             </Link>
             <a
               href="#founders"
               className="ycs-btn"
               onClick={() => void trackEvent("yc_startup_cta", { cta: "talk" })}
             >
-              TALK TO FOUNDERS ↓
+              Talk to founders ↓
             </a>
           </div>
         </section>
@@ -262,7 +265,8 @@ export default function YcStartupSchool() {
             </li>
             <li>
               <strong>04 — Meet.</strong> As a candidate, Claire starts the first interview. Just talking? She
-              opens the thread with the founder&rsquo;s team.
+              opens the thread with the founder&rsquo;s team — and until a match pops, there&rsquo;s nothing to
+              chase: she texts and emails you when it does.
             </li>
           </ol>
         </section>
@@ -277,14 +281,12 @@ export default function YcStartupSchool() {
 
       <section className="ycs-closer">
         <p>
-          MEET THE PEOPLE
+          Meet the people
           <br />
-          BUILDING
-          <br />
-          WHAT&rsquo;S NEXT
+          building <em>what&rsquo;s next</em>
         </p>
         <Link to={ONBOARDING_HREF} className="ycs-btn ycs-btn--solid ycs-btn--big">
-          GET MATCHED →
+          Get matched →
         </Link>
       </section>
 
@@ -303,21 +305,19 @@ export default function YcStartupSchool() {
 
 const YCS_STYLES = `
 .ycs {
-  --ycs-cream: #F5F1E3;
-  --ycs-ink: #2D1A0A;
-  --ycs-orange: #EE5B2B;
-  --ycs-orange-soft: rgba(238, 91, 43, 0.14);
-  --ycs-line: rgba(45, 26, 10, 0.22);
+  --ycs-orange: #D9541F;          /* warm burnt orange — accent, not the whole page */
+  --ycs-orange-soft: rgba(217, 84, 31, 0.10);
   min-height: 100vh;
-  background: var(--ycs-cream);
-  color: var(--ycs-ink);
-  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
-  letter-spacing: 0.01em;
+  background: var(--cream, #F5EDE3);
+  color: var(--ink, #2D1A0A);
+  font-family: var(--font-sans, 'Hanken Grotesk', -apple-system, sans-serif);
+  letter-spacing: 0.005em;
 }
 .ycs a { color: inherit; text-decoration: none; }
-/* Global wekruit-pages.css styles h1-h3 with the serif family — this page is
-   deliberately full-mono (event-microsite look), so re-assert the family. */
-.ycs h1, .ycs h2, .ycs h3, .ycs p, .ycs li, .ycs ol, .ycs ul, .ycs a, .ycs span {
+/* WeKruit voice: serif display for headings; mono ONLY for slugs/labels/ticker. */
+.ycs h1, .ycs h2, .ycs h3 { font-family: var(--font-serif, 'Newsreader', Georgia, serif); font-weight: 400; }
+.ycs-slug, .ycs-signin, .ycs-pill, .ycs-hero-corner--right p, .ycs-founder-meta,
+.ycs-founder-go, .ycs-ticker-track span, .ycs-footer, .ycs-sun-copy {
   font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
 }
 
@@ -328,30 +328,34 @@ const YCS_STYLES = `
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px clamp(16px, 4vw, 48px);
-  background: color-mix(in srgb, var(--ycs-cream) 88%, transparent);
+  padding: 16px clamp(16px, 4vw, 48px);
+  background: color-mix(in srgb, var(--cream, #F5EDE3) 90%, transparent);
   backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border, #E3D6C3);
 }
-.ycs-mark {
+.ycs .ycs-mark {
   display: grid;
   place-items: center;
   width: 38px;
   height: 38px;
-  background: var(--ycs-orange);
-  color: var(--ycs-cream);
-  font-weight: 700;
+  border-radius: 10px;
+  background: var(--ink, #2D1A0A);
+  color: var(--cream, #F5EDE3);
+  font-family: var(--font-serif, Georgia, serif);
+  font-weight: 600;
   font-size: 20px;
 }
 .ycs-nav-pills { display: flex; gap: 10px; }
 .ycs-pill {
   padding: 8px 18px;
-  border: 1px solid var(--ycs-line);
+  border: 1px solid var(--border-strong, #C9B69E);
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
   transition: border-color 120ms ease, background 120ms ease;
 }
-.ycs-pill:hover { border-color: var(--ycs-ink); background: var(--ycs-orange-soft); }
-.ycs-signin { font-size: 13px; letter-spacing: 0.12em; }
+.ycs-pill:hover { border-color: var(--ink, #2D1A0A); background: var(--ycs-orange-soft); }
+.ycs-signin { font-size: 12px; letter-spacing: 0.14em; }
 .ycs-signin:hover { color: var(--ycs-orange); }
 
 .ycs-hero {
@@ -360,24 +364,26 @@ const YCS_STYLES = `
   grid-template-columns: 1fr auto 1fr;
   align-items: start;
   gap: 16px;
-  padding: 28px clamp(16px, 4vw, 48px) 0;
+  padding: 34px clamp(16px, 4vw, 48px) 0;
   min-height: 380px;
+  background: var(--halo-hero, var(--cream, #F5EDE3));
 }
-.ycs-hero-corner h1, .ycs-hero-corner h2 {
+.ycs-hero-corner h1 {
   margin: 0;
-  font-size: clamp(22px, 2.6vw, 34px);
-  font-weight: 500;
-  line-height: 1.3;
+  font-size: clamp(30px, 3.4vw, 46px);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
 }
+.ycs-hero-corner h1 em, .ycs-closer em { font-style: italic; color: var(--ycs-orange); }
 .ycs-hero-corner--right { text-align: right; }
-.ycs-hero-corner--right h2 { font-size: clamp(18px, 2.2vw, 28px); }
-.ycs-hero-corner--right p { margin: 8px 0 0; font-size: 12px; letter-spacing: 0.14em; }
-.ycs-hero-sub { margin: 10px 0 0; font-size: 13px; color: rgba(45,26,10,0.65); }
+.ycs-hero-corner--right h2 { margin: 0; font-size: clamp(22px, 2.4vw, 32px); font-style: italic; }
+.ycs-hero-corner--right p { margin: 10px 0 0; font-size: 11px; letter-spacing: 0.16em; color: var(--ink-3, #897462); }
+.ycs-hero-sub { margin: 12px 0 0; font-size: 14px; color: var(--ink-2, #5A4636); }
 
 .ycs-sun {
   position: relative;
-  width: clamp(260px, 42vw, 560px);
-  height: clamp(200px, 30vw, 380px);
+  width: clamp(260px, 40vw, 540px);
+  height: clamp(200px, 29vw, 370px);
   overflow: hidden;
   display: grid;
   place-items: end center;
@@ -386,8 +392,13 @@ const YCS_STYLES = `
   position: absolute;
   inset: 0;
   background:
-    repeating-linear-gradient(90deg, rgba(245,241,227,0.28) 0 1px, transparent 1px 28px),
-    radial-gradient(circle at 50% 100%, var(--ycs-orange) 0%, #F07A44 42%, rgba(240,122,68,0.55) 62%, transparent 74%);
+    repeating-linear-gradient(90deg, rgba(245, 237, 227, 0.22) 0 1px, transparent 1px 30px),
+    radial-gradient(circle at 50% 100%,
+      var(--ycs-orange) 0%,
+      #E8845A 40%,
+      var(--peach-300, #E8A988) 56%,
+      var(--peach-glow, rgba(232,169,136,0.55)) 68%,
+      transparent 78%);
   border-radius: 50% 50% 0 0 / 100% 100% 0 0;
 }
 .ycs-sun-copy {
@@ -396,36 +407,38 @@ const YCS_STYLES = `
   justify-items: center;
   gap: 8px;
   padding-bottom: 26px;
-  color: var(--ycs-cream);
+  color: var(--cream, #F5EDE3);
   text-align: center;
 }
-.ycs-sun-big { font-size: clamp(48px, 7vw, 96px); font-weight: 700; line-height: 0.95; }
-.ycs-sun-label { font-size: clamp(13px, 1.4vw, 18px); letter-spacing: 0.5em; }
-.ycs-sun-tick { font-size: 12px; letter-spacing: 0.16em; opacity: 0.9; }
+.ycs-sun-big { font-size: clamp(44px, 6.4vw, 88px); font-weight: 700; line-height: 0.95; }
+.ycs-sun-label { font-size: clamp(12px, 1.3vw, 17px); letter-spacing: 0.5em; }
+.ycs-sun-tick { font-size: 11px; letter-spacing: 0.16em; opacity: 0.92; }
 
-.ycs-rule { border-top: 1px solid var(--ycs-line); }
+.ycs-rule { border-top: 1px solid var(--border, #E3D6C3); }
 
 .ycs-main {
   display: grid;
-  gap: 28px;
+  gap: 26px;
   max-width: 1020px;
   margin: 0 auto;
   padding: 44px clamp(16px, 4vw, 48px) 64px;
 }
 .ycs-card {
-  border: 1px solid var(--ycs-line);
-  border-radius: 22px;
+  border: 1px solid var(--border, #E3D6C3);
+  border-radius: 20px;
   padding: clamp(24px, 4vw, 44px);
-  background: transparent;
+  background: var(--cream-3, #FAF5EC);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(45, 26, 10, 0.06));
 }
-.ycs-slug { margin: 0 0 18px; font-size: 12px; letter-spacing: 0.18em; color: rgba(45,26,10,0.6); }
-.ycs-card h3 { margin: 0 0 14px; font-size: clamp(19px, 2vw, 24px); font-weight: 700; line-height: 1.35; }
-.ycs-card p, .ycs-card li { font-size: 14.5px; line-height: 1.7; }
+.ycs-slug { margin: 0 0 16px; font-size: 11px; letter-spacing: 0.2em; color: var(--ycs-orange); }
+.ycs-card h3 { margin: 0 0 14px; font-size: clamp(24px, 2.6vw, 32px); line-height: 1.2; }
+.ycs-card p, .ycs-card li { font-size: 15.5px; line-height: 1.65; color: var(--ink-2, #5A4636); }
 .ycs-card p { margin: 0 0 14px; }
+.ycs-card strong { color: var(--ink, #2D1A0A); }
 .ycs-card ul, .ycs-steps { margin: 0 0 14px; padding-left: 20px; display: grid; gap: 10px; }
 .ycs-steps { list-style: none; padding-left: 0; }
-.ycs-strong { font-weight: 700; }
-.ycs-muted { color: rgba(45,26,10,0.6); }
+.ycs-strong { font-weight: 700; color: var(--ink, #2D1A0A); }
+.ycs-muted { color: var(--ink-3, #897462); }
 .ycs-inline-link { text-decoration: underline; text-underline-offset: 3px; }
 .ycs-inline-link:hover { color: var(--ycs-orange); }
 
@@ -434,17 +447,19 @@ const YCS_STYLES = `
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 13px 24px;
-  border: 1px solid var(--ycs-ink);
+  padding: 13px 26px;
+  border: 1px solid var(--border-strong, #C9B69E);
   border-radius: 999px;
-  font-size: 13px;
-  letter-spacing: 0.08em;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink, #2D1A0A);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
-.ycs-btn:hover { background: var(--ycs-orange-soft); border-color: var(--ycs-orange); }
-.ycs-btn--solid { background: var(--ycs-orange); border-color: var(--ycs-orange); color: var(--ycs-cream); }
-.ycs-btn--solid:hover { background: #D44E20; color: var(--ycs-cream); }
-.ycs-btn--big { padding: 16px 34px; font-size: 15px; }
+.ycs-btn:hover { border-color: var(--ycs-orange); background: var(--ycs-orange-soft); transform: translateY(-1px); }
+/* .ycs a { color: inherit } is 0-1-1 — these must be 0-2-0 to actually win. */
+.ycs .ycs-btn--solid { background: var(--ink, #2D1A0A); border-color: var(--ink, #2D1A0A); color: var(--cream, #F5EDE3); }
+.ycs .ycs-btn--solid:hover { background: var(--ycs-orange); border-color: var(--ycs-orange); color: #FFF8F0; }
+.ycs-btn--big { padding: 16px 36px; font-size: 17px; }
 
 .ycs-grid {
   display: grid;
@@ -456,30 +471,50 @@ const YCS_STYLES = `
   display: grid;
   gap: 6px;
   padding: 18px;
-  border: 1px solid var(--ycs-line);
-  border-radius: 16px;
-  transition: border-color 120ms ease, transform 120ms ease;
+  border: 1px solid var(--border, #E3D6C3);
+  border-radius: 14px;
+  background: var(--cream, #F5EDE3);
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
 }
-.ycs-founder:hover { border-color: var(--ycs-orange); transform: translateY(-2px); }
-.ycs-founder-company { font-weight: 700; font-size: 15px; }
-.ycs-founder-role { font-size: 13.5px; }
-.ycs-founder-person { font-size: 12.5px; color: rgba(45,26,10,0.7); }
-.ycs-founder-meta { font-size: 12px; color: rgba(45,26,10,0.55); }
-.ycs-founder-go { margin-top: 8px; font-size: 11.5px; letter-spacing: 0.14em; color: var(--ycs-orange); }
+.ycs-founder:hover {
+  border-color: var(--border-strong, #C9B69E);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(45, 26, 10, 0.08);
+}
+.ycs-founder-company { font-family: var(--font-serif, Georgia, serif); font-weight: 500; font-size: 18px; }
+.ycs-founder-role { font-size: 14px; color: var(--ink-2, #5A4636); }
+.ycs-founder-person { font-size: 13px; color: var(--ink-2, #5A4636); }
+.ycs-founder-meta { font-size: 11px; letter-spacing: 0.04em; color: var(--ink-3, #897462); }
+.ycs-founder-go { margin-top: 8px; font-size: 11px; letter-spacing: 0.14em; color: var(--ycs-orange); }
 
-.ycs-ticker { overflow: hidden; border-top: 1px solid var(--ycs-line); border-bottom: 1px solid var(--ycs-line); padding: 14px 0; }
+.ycs-ticker {
+  overflow: hidden;
+  border-top: 1px solid var(--border, #E3D6C3);
+  border-bottom: 1px solid var(--border, #E3D6C3);
+  padding: 13px 0;
+  background: var(--cream-2, #EFE4D4);
+}
 .ycs-ticker-track { display: flex; white-space: nowrap; animation: ycs-marquee 40s linear infinite; }
-.ycs-ticker-track span { font-size: 13px; letter-spacing: 0.14em; padding-right: 8px; }
+.ycs-ticker-track span { font-size: 12px; letter-spacing: 0.14em; padding-right: 8px; color: var(--ink-2, #5A4636); }
 @keyframes ycs-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @media (prefers-reduced-motion: reduce) { .ycs-ticker-track { animation: none; } }
 
-.ycs-closer { display: grid; justify-items: center; gap: 30px; padding: 90px 20px; text-align: center; }
+.ycs-closer {
+  display: grid;
+  justify-items: center;
+  gap: 30px;
+  padding: 96px 20px;
+  text-align: center;
+  background: var(--halo-cta, var(--cream, #F5EDE3));
+}
 .ycs-closer p {
   margin: 0;
-  font-size: clamp(40px, 8vw, 104px);
-  font-weight: 700;
-  line-height: 1.02;
-  color: var(--ycs-orange);
+  font-family: var(--font-serif, 'Newsreader', Georgia, serif);
+  font-size: clamp(40px, 7vw, 92px);
+  font-weight: 400;
+  line-height: 1.04;
+  letter-spacing: -0.015em;
+  color: var(--ink, #2D1A0A);
 }
 .ycs-footer {
   display: flex;
@@ -488,10 +523,10 @@ const YCS_STYLES = `
   align-items: center;
   justify-content: space-between;
   padding: 22px clamp(16px, 4vw, 48px);
-  border-top: 1px solid var(--ycs-line);
-  font-size: 11.5px;
+  border-top: 1px solid var(--border, #E3D6C3);
+  font-size: 11px;
   letter-spacing: 0.1em;
-  color: rgba(45,26,10,0.65);
+  color: var(--ink-3, #897462);
 }
 
 @media (max-width: 780px) {

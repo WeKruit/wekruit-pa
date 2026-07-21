@@ -515,3 +515,40 @@ test("T8 — ACTIVE onboarding, both tags present, NON-canary → triage (existi
   assert.equal(decision.mode, "triage", "active-branch tag-satisfaction completion unchanged")
   assert.equal(writes().some((w) => w.onboardingState === "complete"), true, "active branch still marks complete")
 })
+
+// ─── YC FOUNDER-MATCH ENTRY POSTURE (Adam 2026-07-20 "换个口吻…不用推进") ────────────────────────────
+// A /yc-startup arrival (pa-users.source=yc_startup_school) NEVER gets the structured onboarding
+// push — light chat posture; the prompt directive owns the tone + the notify-on-match promise.
+
+test("YC entry: incomplete onboarding + NO background → triage + entryPosture, never the wall/offer", async () => {
+  const { db, writes } = makeDb({ source: "yc_startup_school" })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
+  assert.equal(decision.mode, "triage", "no onboarding mode for a yc arrival")
+  assert.equal(decision.entryPosture, "yc_startup_school")
+  assert.notEqual(decision.offerFirstKickoff, true, "no offer kickoff push")
+  const bootstrapped = writes().some((w) => w.onboardingState === "pending")
+  assert.equal(bootstrapped, false, "must NOT bootstrap the onboarding wall")
+})
+
+test("YC entry: ingested background → we-know-you PITCH + entryPosture, marks complete", async () => {
+  const { db, writes } = makeDb({ source: "yc_startup_school", latestResumeArtifactId: "candidate_upload_x" })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.postParsePitch, true, "pitch what we hold — the closer is the notify promise")
+  assert.equal(decision.entryPosture, "yc_startup_school")
+  const completed = writes().some((w) => w.onboardingState === "complete")
+  assert.equal(completed, true, "self-heal: never re-enter the wall")
+})
+
+test("YC entry: completed onboarding plain turn still carries entryPosture on triage", async () => {
+  const { db } = makeDb({ source: "yc_startup_school", onboardingState: "complete" })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "what kind of startups do you know?" })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.entryPosture, "yc_startup_school")
+})
+
+test("non-YC sources carry NO entryPosture (byte-unchanged decisions)", async () => {
+  const { db } = makeDb({ source: "candidate", onboardingState: "complete" })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
+  assert.equal(decision.entryPosture, undefined)
+})

@@ -157,6 +157,12 @@ export interface ModeDecision {
    *  onboarding question. Route to triage with this directive → Claire warmly greets them back by name
    *  and offers to pull fresh matches / asks how she can help. Set on the cold-start triage branch. */
   warmReturningGreeting?: boolean
+  /** ENTRY POSTURE (Adam 2026-07-20): tone/behavior overlay keyed off pa-users.source — the page the
+   *  candidate entered through. `yc_startup_school` (wekruit.com/yc-startup) = light founder-scene chat,
+   *  NO structured onboarding push, NO next-step pushing; Claire states once that she'll text here +
+   *  email when a founder match pops. Per-user-stable (source is frozen at registration). Add future
+   *  entry pages here as new literals. */
+  entryPosture?: "yc_startup_school"
 }
 
 export interface SelectModeArgs {
@@ -612,6 +618,13 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   const shared = (user.sharedOnboarding ?? null) as Record<string, unknown> | null
   const onboardingComplete = shared?.completed === true || user.onboardingState === "complete"
 
+  // ENTRY POSTURE (Adam 2026-07-20): the /yc-startup funnel stamps pa-users.source=yc_startup_school.
+  // Those candidates get a tone overlay on every agent turn (light founder-scene chat, no pushing,
+  // "I'll text here + email when a founder match pops") instead of the standard progression posture.
+  // Pure structured read off the SAME snapshot — zero extra reads, NO LLM.
+  const posture: { entryPosture?: "yc_startup_school" } =
+    user.source === "yc_startup_school" ? { entryPosture: "yc_startup_school" } : {}
+
   // 2026-06-04 (#1 re-ask fix): the canonical user tags + the legacy statedPreferences mirror from the
   // SAME pa-users snapshot (zero extra read). The onboarding slot picker consults these so it NEVER
   // re-asks an axis whose canonical tag is already present (e.g. a résumé-enriched candidate carrying
@@ -644,7 +657,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // here (e.g. a file WITH a caption) so it routes to the agent instead of the hold ack.
   if (enrichmentInFlight && !args.hasInboundMedia && !isSharedOnboardingActiveUser(user)) {
     log("mode.enrichment_in_flight_ack", { userId: args.userId })
-    return { mode: "triage", ...inFlightDecision }
+    return { mode: "triage", ...inFlightDecision, ...posture }
   }
 
   // LINKEDIN-DONE RE-ENTRY (Adam 2026-06-03, Image #25): the candidate tapped "log in with LinkedIn"
@@ -665,7 +678,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
       return { mode: "triage", suppressReply: true, suppressReason: "linkedin_done_already_enriched" }
     }
     log("mode.linkedin_just_connected", { userId: args.userId })
-    return { mode: "triage", linkedinJustConnected: true }
+    return { mode: "triage", linkedinJustConnected: true, ...posture }
   }
 
   // WS-3(b) GMAIL NUDGE (Adam 2026-06-03): occasionally ask the candidate to connect Gmail on
@@ -699,7 +712,18 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
           log("mode.cv_parsed_enriched_markcomplete_failed", { userId: args.userId, error: String(err) })
         }
         log("mode.cv_parsed_pitch_enriched_no_wall", { userId: args.userId })
-        return { mode: "triage", postParsePitch: true }
+        return { mode: "triage", postParsePitch: true, ...posture }
+      }
+      // YC FOUNDER-MATCH ENTRY: the parse landed but the profile is thin — still NO question wall
+      // (Adam 2026-07-20 "不用推进"). Pitch what we have in triage; the posture directive owns the rest.
+      if (posture.entryPosture) {
+        try {
+          await markSharedOnboardingComplete(args.db, args.userId, now)
+        } catch (err) {
+          log("mode.entry_posture_markcomplete_failed", { userId: args.userId, error: String(err) })
+        }
+        log("mode.cv_parsed_entry_posture_no_wall", { userId: args.userId })
+        return { mode: "triage", postParsePitch: true, ...posture }
       }
       try {
         if (!isSharedOnboardingActiveUser(user)) {
@@ -762,7 +786,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     } else {
       // Returning user re-uploaded a résumé → pitch in triage, then OFFER find_match.
       log("mode.cv_parsed_pitch_triage", { userId: args.userId })
-      return { mode: "triage", postParsePitch: true }
+      return { mode: "triage", postParsePitch: true, ...posture }
     }
   }
 
@@ -809,14 +833,28 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     // texts fall to the warm greeting alone (no re-pitch). Deterministic — NO LLM, NO text→enum regex.
     if (hasIngestedBackground(user) && user.pitchedAt == null) {
       log("mode.recognized_first_pitch_on_text", { userId: args.userId })
-      return { mode: "triage", postParsePitch: true, warmReturningGreeting: true, ...inFlightDecision }
+      return { mode: "triage", postParsePitch: true, warmReturningGreeting: true, ...inFlightDecision, ...posture }
     }
     log("mode.warm_returning_greeting", { userId: args.userId })
-    return { mode: "triage", warmReturningGreeting: true, ...inFlightDecision }
+    return { mode: "triage", warmReturningGreeting: true, ...inFlightDecision, ...posture }
   }
 
   if (!onboardingComplete) {
     try {
+      // YC FOUNDER-MATCH ENTRY (Adam 2026-07-20 "聊一嘴…不用推进"): NEVER the structured onboarding
+      // question sequence for a /yc-startup arrival. Their registration résumé carries the matching
+      // signal; the posture turn-directive owns the tone + the "text here + email on match" promise.
+      // With an ingested background, ride the we-know-you PITCH turn (composePitchTurn swaps its
+      // closer to the notify promise for this source); otherwise plain triage — no questions, no wall.
+      if (posture.entryPosture) {
+        if (hasIngestedBackground(user)) {
+          await markSharedOnboardingComplete(args.db, args.userId, now)
+          log("mode.entry_posture_pitch", { userId: args.userId, source: user.source })
+          return { mode: "triage", postParsePitch: true, ...inFlightDecision, ...posture }
+        }
+        log("mode.entry_posture_no_push", { userId: args.userId, source: user.source })
+        return { mode: "triage", ...inFlightDecision, ...posture }
+      }
       if (!isSharedOnboardingActiveUser(user)) {
         // UNIVERSAL GAP-AWARE COLD START (Adam 2026-06-05: "ONLY ask for non-existing info").
         // A profiled cold-opener (LinkedIn/résumé/role/location already on file) must NOT be walked
@@ -969,10 +1007,11 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
 
   // WS-3(b): a plain conversational triage turn is the right place for the occasional Gmail nudge
   // (not mid-onboarding, not a pitch, not enrichment-in-flight). Stamp the cooldown when it fires.
-  if (gmailNudgeEligible) {
+  // Entry-posture users never get the Gmail nudge — it's a push, and their posture is no-push.
+  if (gmailNudgeEligible && !posture.entryPosture) {
     await stampGmailNudge(args.db, args.userId, now)
     log("mode.gmail_nudge", { userId: args.userId })
     return { mode: "triage", ...inFlightDecision, gmailNudge: true }
   }
-  return { mode: "triage", ...inFlightDecision }
+  return { mode: "triage", ...inFlightDecision, ...posture }
 }

@@ -62,6 +62,11 @@ export interface ClairePromptOptions {
    *  pull fresh matches / ask how to help — NEVER re-offer the cold kickoff, NEVER ask the onboarding
    *  target_role question. Set by mode-selector on the cold-start triage short-path (canary). */
   warmReturningGreeting?: boolean
+  /** ENTRY POSTURE (Adam 2026-07-20): tone/behavior overlay keyed off the page the candidate entered
+   *  through (pa-users.source, threaded by mode-selector). `yc_startup_school` = the wekruit.com/yc-startup
+   *  founder-matching funnel: light founder-scene chat, NO structured onboarding, NO next-step pushing;
+   *  say once (naturally) that they'll be texted here + emailed when a founder match pops. */
+  entryPosture?: "yc_startup_school"
   /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block
    *  built by buildCandidateContext — prior job screens (terminal + real reason + borderline gap),
    *  pending-review note, and the capture/offer-other-roles directive. Unlike `prescreenContext` (gated on
@@ -988,6 +993,14 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
     // and DO NOT match this turn — find_match resumes next turn once they answer.
     opts.locationSalaryAsk
       ? "BEFORE MATCHING — ONE quick ask: you don't have their location or target salary on file yet. In ONE short, warm message, ask (a) where in the US they want to work (a city/metro, or 'remote') and (b) their rough target salary — frame it as 'so I only send you roles that actually fit'. US-only. Do NOT call find_match THIS turn; once they answer, you'll match next turn. Ask both together; keep it light, not a form."
+      : "",
+    // ENTRY POSTURE — YC STARTUP SCHOOL (Adam 2026-07-20 "换个口吻…不用推进"): this candidate came in
+    // from the wekruit.com/yc-startup founder-matching page. Tone overlay for EVERY turn: peer-level
+    // founder-scene chat, never a recruiter running a process. It re-frames the default progression
+    // posture (offers, next steps, intake) without disabling any capability — find_match etc. still
+    // work when THEY ask.
+    opts.entryPosture === "yc_startup_school"
+      ? "ENTRY POSTURE — YC STARTUP SCHOOL: this person signed up through the YC Startup School founder-matching page. Talk like the friend who knows every founder in the room — casual, peer-level, curious about what they're into — NEVER like a recruiter running a process. HARD RULES: (1) do NOT run any structured intake or onboarding question sequence, do NOT push next steps, do NOT ask them to do anything (no résumé re-asks, no 'want me to pull roles?' pushes); (2) chat naturally — react to what they share, riff on it, ONE light curiosity question back is fine, an interview is not; (3) make sure they know — ONCE, woven naturally into the conversation, not as a script — that they're in the founder-match pool and you'll text them RIGHT HERE and email them the moment a founder match pops, nothing else they need to do; (4) if THEY ask to see startups/roles now, run find_match as normal — their pull, never your push."
       : "",
   ]
     .filter(Boolean)

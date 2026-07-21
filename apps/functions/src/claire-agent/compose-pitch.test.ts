@@ -612,3 +612,32 @@ test("buildPitchProfile: NO employerSignals key for legacy users (no derived tag
   })
   assert.ok(!("employerSignals" in profile), "absent signals → key absent (legacy profile byte-identical)")
 })
+
+// ─── YC FOUNDER-MATCH ENTRY (Adam 2026-07-20 "换个口吻…不用推进"): the closer never pushes — it
+// states the notify promise (in the pool; text here + email on match). Evidence ask suppressed. ───
+
+test("YC entry: closer is the notify promise — never a pull-ask, never the evidence ask", async () => {
+  const { db, writes } = makeStubDb({
+    displayName: "Ada Lin",
+    source: "yc_startup_school",
+    tags: { recentRoleTitle: "Software Engineer", recentCompany: "Acme", targetRoleFunction: ["software_engineering"] },
+    experienceHighlights: [{ title: "Software Engineer", company: "Acme" }], // thin → would be evidence-ask
+  })
+  const mock: PitchComposer = { async compose() { return "PITCH" } }
+  const out = await composePitchTurn(db, "u1", "2026-07-20T00:00:00Z", mock)
+  assert.notEqual(out, null)
+  assert.equal(out!.length, 3, "still [confirmation, pitch, offer]")
+  assert.equal(out![1], "PITCH", "the pitch bubble is unchanged")
+  const offer = out![2]!
+  assert.match(offer, /founder-match pool/)
+  assert.match(offer, /text you right here/)
+  assert.match(offer, /email/)
+  assert.doesNotMatch(offer, /pull some roles that fit you right now/, "no pull push")
+  assert.doesNotMatch(offer, /that right\?/, "no role soft-confirm push")
+  assert.doesNotMatch(offer, /i already know about you/, "no evidence ask")
+  assert.equal(
+    writes.some((w) => typeof (w as { evidenceAskedAt?: unknown }).evidenceAskedAt === "string"),
+    false,
+    "no evidence-ask stamp for a yc entry",
+  )
+})
