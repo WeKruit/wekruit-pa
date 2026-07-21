@@ -56,6 +56,8 @@ import {
   type OutreachEvent,
   type OutreachPlan,
   type SourceQualityMetric,
+  type ConversationFeedbackInput,
+  type ConversationFeedbackResponse,
 } from "@pa/core-types"
 import {
   type DocumentData,
@@ -985,6 +987,17 @@ export const exportEvaluationLabels = callable<
   ExportEvaluationLabelsInput,
   ExportEvaluationLabelsResult
 >("paExportEvaluationLabels")
+
+// ---------------------------------------------------------------------------
+// Negative-feedback review dashboard (/admin/conversation-feedback)
+// ---------------------------------------------------------------------------
+// paAdminConversationFeedback returns pa-conversation-sentiment rows (unhappy
+// first) with the full transcript for the master-detail preview. The wire
+// shapes live in @pa/core-types so the CF and the dashboard stay in sync.
+export const loadConversationFeedback = callable<
+  ConversationFeedbackInput,
+  ConversationFeedbackResponse
+>("paAdminConversationFeedback")
 
 export const draftPrescreenReviewMessages = callable<
   DraftPrescreenReviewMessagesInput,

@@ -17,7 +17,7 @@
     "pretypecheck": "npm run ensure:node && npm run build --workspace=@wekruit/shared-tags",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run ensure:node && npm run build --workspace=@wekruit/shared-tags",
-    "test": "node --import tsx --test src/marketplace.test.ts src/scheduled-jobs.test.ts src/external-supply.test.ts src/evaluation.test.ts src/candidate-profile-classifier.test.ts src/prescreen-review-classification.test.ts src/prescreen-engagement.test.ts src/sources.test.ts src/interview-bookings.test.ts src/job-description.test.ts src/job-logistics.test.ts",
+"test": "node --import tsx --test src/marketplace.test.ts src/scheduled-jobs.test.ts src/external-supply.test.ts src/evaluation.test.ts src/candidate-profile-classifier.test.ts src/prescreen-review-classification.test.ts src/prescreen-engagement.test.ts src/sources.test.ts src/interview-bookings.test.ts src/job-description.test.ts src/job-logistics.test.ts src/conversation-sentiment.test.ts",
     "ensure:node": "node ../../scripts/ensure-node24.mjs"
   },
   "dependencies": {
