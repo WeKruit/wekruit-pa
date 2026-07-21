@@ -236,6 +236,14 @@ export type CandidateMatchCard = {
   rank?: number
   computedAt: string
   reviewDecision?: CandidateReviewDecision
+  /** Present when a real interview slot is booked (status === "scheduled"). */
+  booking?: {
+    bookingId: string
+    status: string
+    slotIso?: string
+    meetingUrl?: string
+    timeZone?: string
+  }
 }
 
 type CandidateMatchesResult = {
@@ -763,7 +771,7 @@ function CandidateMeReady({
   // Real-status → v3 buckets. No mocked rows: everything below derives from the
   // claim-profile + list-matches callables (or hides when we don't have it yet).
   const upNext = allMatches.filter(
-    (m) => m.status === "invited" || m.status === "interview_started",
+    (m) => m.status === "invited" || m.status === "interview_started" || m.status === "scheduled",
   )
   const recommended = allMatches.filter((m) => m.status === "recommended")
   const pipelineMatches = allMatches.filter((m) => m.status !== "recommended")
@@ -782,6 +790,24 @@ function CandidateMeReady({
   const interviewActions: MeAction[] = upNext.map((m) => {
     const display = getCandidateJobStatusDisplay(m.status, m.job.title)
     const claire = m.status === "interview_started"
+    // Scheduled → surface the booked slot + a Join link (booking.meetingUrl).
+    if (m.status === "scheduled" && m.booking) {
+      const slotLabel = meSlotWhen(m.booking.slotIso, m.booking.timeZone)
+      const hasJoin = Boolean(m.booking.meetingUrl)
+      return {
+        key: m.matchId,
+        logo: (m.job.company[0] ?? "?").toUpperCase(),
+        logoBg: LOGO_BG_POOL[djb2(m.jobId || m.job.company) % LOGO_BG_POOL.length],
+        urgent: true,
+        meta: `${display.label} · ${m.job.title}`,
+        title: slotLabel ? `Interview booked for ${slotLabel}` : display.nextStep,
+        sub: [m.job.company, m.job.location].filter(Boolean).join(" · "),
+        cta: hasJoin ? "Join the interview" : display.ctaLabel,
+        href: hasJoin ? m.booking.meetingUrl! : m.job.href,
+        external: hasJoin,
+        when: slotLabel || meWhen(m.computedAt),
+      }
+    }
     return {
       key: m.matchId,
       logo: (m.job.company[0] ?? "?").toUpperCase(),
@@ -921,6 +947,32 @@ function meWhen(iso?: string): string {
   if (diff < day) return "Today"
   if (diff < 2 * day) return "Yesterday"
   return `${Math.floor(diff / day)}d ago`
+}
+
+// Forward-looking label for a booked interview slot (a real future datetime),
+// e.g. "Tue, Jun 30, 2:00 PM". Falls back to "" on an unparseable slot.
+function meSlotWhen(iso?: string, timeZone?: string): string {
+  if (!iso) return ""
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ""
+  try {
+    return new Date(t).toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      ...(timeZone ? { timeZone } : {}),
+    })
+  } catch {
+    return new Date(t).toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    })
+  }
 }
 
 // Profile completeness is computed from which durable fields actually exist on
@@ -1063,6 +1115,7 @@ function deriveVisibilityFromMatches(matches: CandidateMatchCard[]): MeVisibilit
     (m) =>
       m.status === "invited" ||
       m.status === "interview_started" ||
+      m.status === "scheduled" ||
       m.status === "review_pending",
   ).length
   const matchCount = matches.filter((m) => m.status === "recommended").length
@@ -1592,6 +1645,12 @@ function meStageChip(status: CandidateJobStatus) {
           <PulseDot size={6} color="#1f6feb" /> Screening
         </span>
       )
+    case "scheduled":
+      return (
+        <span className="wkv3-chip wkv3-chip--warm">
+          <Icon name="check" size={11} stroke={2.4} /> Interview booked
+        </span>
+      )
     case "review_pending":
       return <span className="wkv3-chip wkv3-chip--ink">Reviewing</span>
     case "passed":
@@ -1618,6 +1677,10 @@ function meStageChip(status: CandidateJobStatus) {
 }
 
 function pipelineActionForMatch(match: CandidateMatchCard, claireHref: string | null) {
+  // A booked interview → Join link (the meeting URL) wins.
+  if (match.status === "scheduled" && match.booking?.meetingUrl) {
+    return { external: true, url: match.booking.meetingUrl, label: "Join the interview" }
+  }
   if (match.status === "interview_started" && claireHref) {
     return { external: true, url: claireHref, label: "Continue with Claire" }
   }
@@ -1712,6 +1775,12 @@ function StageChip({ status }: { status: CandidateJobStatus }) {
     return (
       <span className="wkv2-chip wkv2-chip--blue">
         <PulseDot size={6} color="#1f6feb" /> Screening
+      </span>
+    )
+  if (status === "scheduled")
+    return (
+      <span className="wkv2-chip wkv2-chip--warm">
+        <Icon name="check" size={11} stroke={2.4} /> Interview booked
       </span>
     )
   if (status === "review_pending")

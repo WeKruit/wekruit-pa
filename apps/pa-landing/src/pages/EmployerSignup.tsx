@@ -185,6 +185,12 @@ export default function EmployerSignup() {
               See sample pass
             </Link>
           </div>
+          <p style={{ marginTop: 12, fontSize: 13.5, color: "var(--ink-3)" }}>
+            Setting up your team?{" "}
+            <Link to="/employer/onboarding" style={{ color: "var(--live)", fontWeight: 600 }}>
+              Get live with WeKruit →
+            </Link>
+          </p>
           {!done ? <EmployerRolePacketProgressDock summary={readiness} onFieldJump={handleFieldJump} /> : null}
           {done ? <SuccessCard form={form} onStartAnother={() => {
             setForm(EMPTY_FORM)

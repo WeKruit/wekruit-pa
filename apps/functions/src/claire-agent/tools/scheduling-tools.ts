@@ -22,6 +22,7 @@
  *     reducer that picks the ISO, books, and writes state (v2.0 rule: LLM never
  *     directly controls state).
  */
+import { randomBytes } from "node:crypto"
 import { tool, z } from "../sdk.js"
 import type { Firestore } from "firebase-admin/firestore"
 import { InterviewBookingSchema, interviewBookingDocId, PA_COLLECTIONS } from "@pa/core-types"
@@ -37,6 +38,8 @@ import { resolveEventTypeId } from "../../calcom/event-type-routing.js"
 import { sendInterviewConfirmationEmail } from "../../calcom/interview-confirmation-email.js"
 import type { ClaireToolContext } from "../types.js"
 import { SCHEDULING_DEV_UIDS, isSchedulingEligible } from "../scheduling-gate.js"
+import { commitCandidateJobEvent } from "../reducers/candidate-job-state.js"
+import type { CandidateJobEvent } from "@pa/core-types"
 
 const INTERVIEW_BOOKINGS_COLLECTION = "pa-interview-bookings"
 const PA_USERS_COLLECTION = "pa-users"
@@ -575,11 +578,53 @@ export type InterviewOfferResult =
       slots: Array<{ number: number; iso: string; label: string }>
       count: number
       filteredEmpty: boolean
+      /**
+       * High-entropy per-offer token authorizing the public "book this time"
+       * email link (paBookInterviewViaLink). Reused across re-offers so prior
+       * emailed links stay valid. The email-sending caller builds the link
+       * `?u=<userId>&j=<jobId>&t=<offerToken>&s=<iso>` from this.
+       */
+      offerToken: string
     }
   | { ok: false; reason: "no_schedulable_job" }
   | { ok: false; reason: "needs_job_choice"; jobs: Array<{ jobId: string; label: string }> }
   | { ok: false; reason: "calcom_unavailable" }
   | { ok: false; reason: "no_slots" }
+
+/**
+ * Args for the SDK-free book core. The LLM (candidate path) or operator
+ * (headhunter book-on-behalf) PROPOSES these; the core is the deterministic
+ * reducer that resolves the ISO from the persisted offer + books + writes state.
+ */
+export interface BookInterviewSlotArgs {
+  /** 1-based index into the persisted offeredSlots (preferred). */
+  slotNumber?: number | null
+  /** exact ISO that MUST be in the persisted offered set. */
+  slotIso?: string | null
+  /** candidate's verbatim time words (AM/PM + weekday mismatch backstop). "" / null disables the guard. */
+  statedTime?: string | null
+  candidateEmail?: string | null
+  candidateName?: string | null
+  timeZone?: string | null
+}
+
+/**
+ * Discriminated result of the book core. The SUCCESS shapes + every failure
+ * reason are byte-identical to what book_interview_slot's execute historically
+ * returned (the candidate path's wire contract — do NOT change without updating
+ * the prompt + tests).
+ */
+export type BookInterviewSlotResult =
+  | { ok: true; action: "booked"; slotIso: string; when: string; meetingUrl: string; emailed: boolean; calBookingUid: string }
+  | { ok: true; action: "already_booked"; slotIso: string; when: string; meetingUrl: string; emailed: boolean; calBookingUid: string }
+  | { ok: false; reason: "slots_expired"; retryable: true }
+  | { ok: false; reason: "slot_not_offered" }
+  | { ok: false; reason: "no_slot_selected" }
+  | { ok: false; reason: "slot_time_mismatch"; stated: string; offered: string[] }
+  | { ok: false; reason: "need_email" }
+  | { ok: false; reason: "already_booked_other_slot"; when: string }
+  | { ok: false; reason: "slot_unavailable"; retryable: true }
+  | { ok: false; reason: "calcom_unavailable"; retryable: true }
 
 /**
  * Build (and persist) a real Cal.com interview offer for the active opportunity.
@@ -671,9 +716,17 @@ export async function buildInterviewOffer(
   // slotNumber would degrade).
   const docId = interviewBookingDocId({ userId: ctx.userId, jobId })
   const nowIso = ctx.nowIso()
+  // Random url-safe token (24 hex chars = 12 bytes ≈ 96 bits) authorizing the
+  // public email "book this time" link. node:crypto.randomBytes is CSPRNG and
+  // available in the CF runtime (NOT Math.random). REUSE an existing token on a
+  // re-offer so links from prior emails keep working; only mint one when absent.
+  let offerToken = randomBytes(12).toString("hex")
   try {
     const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(docId)
     const existing = await loadBooking(ctx.db, docId)
+    if (existing && typeof existing.offerToken === "string" && existing.offerToken.length > 0) {
+      offerToken = existing.offerToken
+    }
     await ref.set(
       {
         id: docId,
@@ -684,6 +737,7 @@ export async function buildInterviewOffer(
         timeZone: tz,
         offeredSlots: picked.map((s) => ({ iso: s.iso, date: s.date })),
         offeredAt: nowIso,
+        offerToken,
         sessionId: ctx.sessionId,
         updatedAt: nowIso,
         ...(existing ? {} : { createdAt: nowIso }),
@@ -715,6 +769,375 @@ export async function buildInterviewOffer(
     slots: picked.map((s, i) => ({ number: i + 1, iso: s.iso, label: humanLabel(s.iso, tz) })),
     count: picked.length,
     filteredEmpty,
+    offerToken,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Book core (SDK-free) — shared by the book_interview_slot candidate tool AND
+// the headhunter book-on-behalf runner (headhunter-mcp/scheduling.ts). Does NOT
+// call tool()/the @openai/agents SDK and never throws (fail-OPEN: every path
+// returns a discriminated reason). Mirrors buildInterviewOffer's extraction: the
+// candidate tool becomes a thin gate + delegate.
+//
+// IMPORTANT: this is the EXACT reducer book_interview_slot's execute used to run
+// inline — the success shapes + every failure reason are byte-identical (the
+// candidate wire contract). It reads ONLY ctx fields a partial cast provides
+// (db, userId, jobId, sessionId, nowIso, log, toE164?) — never the messaging
+// `transport` — so a headhunter-built ctx (no transport, no toE164) is safe.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the candidate's chosen offered slot from the persisted booking doc and
+ * create a REAL Cal.com booking (then persist booked→confirmed + send the WeKruit
+ * confirmation email). The caller (candidate tool OR headhunter runner) is
+ * responsible for the eligibility gate BEFORE calling this — the core itself does
+ * NOT re-gate (so a future caller cohort doesn't have to be in scheduling-tools).
+ */
+export async function bookInterviewSlotCore(
+  ctx: ClaireToolContext,
+  args: BookInterviewSlotArgs,
+): Promise<BookInterviewSlotResult> {
+  const { slotNumber, slotIso, statedTime, candidateEmail, candidateName, timeZone } = args
+  // Recover the real jobId across turns: the slot pick almost always lands
+  // on a TRIAGE turn (prescreen already terminal → ctx.jobId undefined). The
+  // offer was persisted under the real jobId's doc, so we MUST read that
+  // same doc, not recompute the docId from a missing jobId.
+  const jobId = await resolveActiveSchedulingJobId(ctx)
+  const docId = interviewBookingDocId({ userId: ctx.userId, jobId })
+  const doc = await loadBooking(ctx.db, docId)
+  // Resolve slotNumber against the FULL offered list (the candidate's 1-based
+  // numbering maps to the exact order we presented), THEN apply staleness.
+  const offered = Array.isArray(doc?.offeredSlots) ? doc!.offeredSlots! : []
+
+  // (1b) STALENESS — an offer from a prior day can have slots already in the
+  // past by the time the candidate replies. If EVERY offered slot is in the
+  // past, return a distinct slots_expired so the agent re-offers fresh times
+  // proactively rather than blind-POSTing a past instant Cal will 4xx.
+  const nowMs = Date.parse(ctx.nowIso())
+  const isFuture = (iso: string): boolean => {
+    const t = Date.parse(iso)
+    return !Number.isFinite(nowMs) || !Number.isFinite(t) || t > nowMs
+  }
+  if (offered.length > 0 && !offered.some((s) => isFuture(s.iso))) {
+    ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slots_expired_all" })
+    return { ok: false as const, reason: "slots_expired" as const, retryable: true }
+  }
+
+  // (2) resolve the chosen ISO STRICTLY from the persisted offered set.
+  const offeredIsos = new Set(offered.map((s) => s.iso))
+  let chosenIso = ""
+  const argIso = (slotIso ?? "").trim()
+  if (argIso) {
+    if (offeredIsos.has(argIso)) chosenIso = argIso
+    else {
+      ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slot_not_offered_iso" })
+      return { ok: false as const, reason: "slot_not_offered" as const }
+    }
+  } else if (typeof slotNumber === "number") {
+    const idx = slotNumber - 1
+    if (idx >= 0 && idx < offered.length) chosenIso = offered[idx]!.iso
+    else {
+      ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slot_not_offered_number" })
+      return { ok: false as const, reason: "slot_not_offered" as const }
+    }
+  } else {
+    return { ok: false as const, reason: "no_slot_selected" as const }
+  }
+
+  // (2b) The candidate picked a SPECIFIC slot that's already in the past →
+  // slots_expired (distinct from Cal's slot_unavailable) so the agent re-offers.
+  if (!isFuture(chosenIso)) {
+    ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slots_expired_picked" })
+    return { ok: false as const, reason: "slots_expired" as const, retryable: true }
+  }
+
+  // (2c) STATED-TIME GUARD — the deterministic backstop for the LLM snapping a
+  // candidate's wall-clock words onto the wrong offered slot (2026-06-01: "9am
+  // mon" → got the mon 9PM slot, because the agent matched day+hour and dropped
+  // AM/PM). The slots were PRESENTED in doc.timeZone, so compare in that same tz.
+  // We only reject on a CONFIDENT conflict (explicit meridiem / unambiguous
+  // weekday) — an unparseable phrase ("first one", "2") leaves both null and
+  // falls through, so this never blocks a legit numbered pick. A headhunter
+  // operator passing slotNumber with empty statedTime → no guard (intended).
+  const presentedTz = doc?.timeZone || DEFAULT_TIMEZONE
+  const stated = parseStatedTime(statedTime ?? "")
+  if (stated.hour24 !== null || stated.weekday !== null) {
+    const chosenHour = localHour(chosenIso, presentedTz)
+    const chosenWd = localWeekday(chosenIso, presentedTz)
+    const hourConflict = stated.hour24 !== null && stated.hour24 !== chosenHour
+    const dayConflict = stated.weekday !== null && chosenWd >= 0 && stated.weekday !== chosenWd
+    if (hourConflict || dayConflict) {
+      ctx.log("pa.claire.book_interview_slot", {
+        userId: ctx.userId,
+        jobId,
+        reason: "slot_time_mismatch",
+        stated: statedTime ?? "",
+        statedHour: stated.hour24,
+        statedWeekday: stated.weekday,
+        chosenHour,
+        chosenWd,
+      })
+      return {
+        ok: false as const,
+        reason: "slot_time_mismatch" as const,
+        stated: (statedTime ?? "").trim(),
+        offered: offered.filter((s) => isFuture(s.iso)).map((s) => humanLabel(s.iso, presentedTz)),
+      }
+    }
+  }
+
+  // (3) email — required (Cal attendee + our confirmation both need it).
+  const email = (candidateEmail ?? "").trim().toLowerCase() || (await resolveCandidateEmail(ctx))
+  if (!email) {
+    ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "need_email" })
+    return { ok: false as const, reason: "need_email" as const }
+  }
+
+  // (4) dedup — a live Cal.com booking already exists. Key off the live
+  // booking id/uid (NOT status), because a re-offer can re-stamp
+  // status:"offered" over a prior confirmed booking while leaving the live
+  // calBookingId/Uid + selectedSlotIso intact.
+  const hasLiveBooking =
+    (typeof doc?.calBookingId === "number" && doc.calBookingId > 0) ||
+    (typeof doc?.calBookingUid === "string" && doc.calBookingUid.length > 0)
+
+  // (4a) SAME slot already booked → already_booked, no 2nd POST (idempotent).
+  if (
+    (doc?.status === "booked" || doc?.status === "confirmed" || hasLiveBooking) &&
+    doc?.selectedSlotIso === chosenIso
+  ) {
+    ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, action: "already_booked" })
+    return {
+      ok: true as const,
+      action: "already_booked" as const,
+      slotIso: chosenIso,
+      when: humanLabel(chosenIso, doc?.timeZone || DEFAULT_TIMEZONE),
+      // Surface the join link from the persisted doc so Claire can re-share it
+      // in chat on a repeat ask (same field the email rendered). Absent → "".
+      meetingUrl: typeof doc?.meetingUrl === "string" ? doc.meetingUrl : "",
+      emailed: !!doc?.confirmationEmailMessageId,
+      calBookingUid: doc?.calBookingUid ?? "",
+    }
+  }
+
+  // (4b) RESCHEDULE GUARD — there is ALREADY a live Cal.com booking on this
+  // (user × job) doc for a DIFFERENT slot. A blind second POST would create a
+  // second real interview AND orphan the first on the interviewer's calendar
+  // (it would never be cancelled). v1 does NOT support reschedule, so refuse:
+  // the agent tells the candidate the time is locked and a teammate handles
+  // any change.
+  if (hasLiveBooking && doc?.selectedSlotIso && doc.selectedSlotIso !== chosenIso) {
+    ctx.log("pa.claire.book_interview_slot", {
+      userId: ctx.userId,
+      jobId,
+      reason: "already_booked_other_slot",
+    })
+    return {
+      ok: false as const,
+      reason: "already_booked_other_slot" as const,
+      when: humanLabel(doc.selectedSlotIso, doc?.timeZone || DEFAULT_TIMEZONE),
+    }
+  }
+
+  const name = (candidateName ?? "").trim() || (await resolveCandidateName(ctx))
+  // (5) tz precedence: an explicit, plausible arg wins; else PREFER the tz
+  // the slots were actually PRESENTED in (doc.timeZone) so the booking +
+  // confirmation email show the SAME wall-clock the candidate picked from;
+  // only then fall back to user-tags/default. (resolveTimeZone never returns
+  // empty, so the old `|| doc?.timeZone` after it was dead — this mirrors the
+  // eventTypeId precedence just below, which prefers doc.eventTypeId first.)
+  const argTz = (timeZone ?? "").trim()
+  const tz =
+    argTz && isPlausibleIana(argTz)
+      ? argTz
+      : doc?.timeZone || (await resolveTimeZone(ctx, null))
+  const eventTypeId =
+    typeof doc?.eventTypeId === "number" && doc.eventTypeId > 0
+      ? doc.eventTypeId
+      : resolveEventTypeId(await resolveRoleFunctions(ctx, jobId)).eventTypeId
+  const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(docId)
+  const nowIso = ctx.nowIso()
+  const baseVersion = typeof doc?.version === "number" ? doc.version : 0
+
+  // (6) createBooking — the real WRITE.
+  let booking: Awaited<ReturnType<typeof createBooking>>
+  try {
+    booking = await createBooking({
+      start: chosenIso,
+      eventTypeId,
+      attendee: {
+        name,
+        email,
+        timeZone: tz,
+        language: "en",
+        ...(ctx.toE164 ? { phoneNumber: ctx.toE164 } : {}),
+      },
+      // NO hardcoded location — Cal 400s a location whose integration doesn't
+      // match the event-type's configured one ("integration cal-video not valid
+      // for event type … allowed: google-meet"). Omitting it makes Cal apply the
+      // event-type's OWN integration. (2026-06-01: the cal-video hardcode failed
+      // EVERY booking on google-meet event-types → surfaced as "slot got taken".)
+      metadata: { wekruitUserId: ctx.userId, wekruitJobId: jobId, sessionId: ctx.sessionId },
+    })
+  } catch (err) {
+    if (err instanceof CalcomClientError) {
+      // 4xx (e.g. slot already taken) → failed (recoverable). Re-offer.
+      ctx.log("pa.claire.book_interview_slot", {
+        userId: ctx.userId,
+        jobId,
+        reason: "slot_unavailable",
+        status: err.status,
+      })
+      try {
+        await ref.set(
+          { id: docId, userId: ctx.userId, jobId, status: "failed", lastError: err.message.slice(0, 300), updatedAt: nowIso, version: baseVersion + 1 },
+          { merge: true },
+        )
+      } catch {
+        /* fail-soft */
+      }
+      return { ok: false as const, reason: "slot_unavailable" as const, retryable: true }
+    }
+    // 5xx / network / timeout / missing-key → transient; leave status offered.
+    ctx.log("pa.claire.book_interview_slot", {
+      userId: ctx.userId,
+      jobId,
+      reason: "calcom_unavailable",
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return { ok: false as const, reason: "calcom_unavailable" as const, retryable: true }
+  }
+
+  // (7) write booked.
+  const calBookingId = typeof booking.id === "number" ? booking.id : null
+  const calBookingUid = typeof booking.uid === "string" ? booking.uid : ""
+  // Video-call join link (e.g. Google Meet) parsed from the Cal response →
+  // persisted + rendered in the WeKruit confirmation email. Absent → null.
+  const meetingUrl = typeof booking.meetingUrl === "string" && booking.meetingUrl ? booking.meetingUrl : ""
+  try {
+    await ref.set(
+      {
+        id: docId,
+        userId: ctx.userId,
+        jobId,
+        status: "booked",
+        eventTypeId,
+        timeZone: tz,
+        selectedSlotIso: chosenIso,
+        calBookingId,
+        calBookingUid: calBookingUid || null,
+        meetingUrl: meetingUrl || null,
+        candidateEmail: email,
+        lastError: null,
+        sessionId: ctx.sessionId,
+        updatedAt: nowIso,
+        version: baseVersion + 1,
+      },
+      { merge: true },
+    )
+  } catch (err) {
+    // The booking IS made — a write hiccup must not flip ok:false. Log + continue.
+    ctx.log("pa.claire.book_interview_slot.persist_booked_failed", {
+      userId: ctx.userId,
+      jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // (7b) Marketplace candidate×job FSM — emit interview_booked on the PARALLEL
+  // interview track (orthogonal to pass/fail; a self-transition that never
+  // overwrites the main ladder state). FAIL-OPEN: any error here is swallowed so
+  // a successful booking turn is never broken. The eventId is DETERMINISTIC
+  // (keyed off jobId + chosen slot) so a re-entry / retry dedups to a no-op via
+  // applyCandidateJobEvent's audit-keyed transaction. actor:"orchestrator" per
+  // the Claire-agent → MarketplaceActor mapping (no parallel "agent" actor).
+  try {
+    const interviewBookedEvent: CandidateJobEvent = {
+      type: "interview_booked",
+      eventId: `interview_booked:${ctx.userId}:${jobId}:${calBookingUid || chosenIso}`,
+      candidateId: ctx.userId,
+      jobId,
+      actor: "orchestrator",
+      occurredAt: nowIso,
+      evidence: [
+        {
+          source: "system",
+          summary: `interview booked for ${chosenIso}`,
+        },
+      ],
+      interviewBookingId: docId,
+      slotIso: chosenIso,
+      ...(calBookingUid ? { calBookingUid } : {}),
+    }
+    await commitCandidateJobEvent(ctx.db, interviewBookedEvent)
+  } catch (err) {
+    ctx.log("pa.claire.book_interview_slot.fsm_emit_failed", {
+      userId: ctx.userId,
+      jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // (8) WeKruit confirmation email (supplement; Cal also auto-emails). On
+  // failure, leave status booked (never break the turn) → emailed:false.
+  let emailed = false
+  try {
+    const mail = await sendInterviewConfirmationEmail({
+      to: email,
+      name,
+      whenIso: chosenIso,
+      timeZone: tz,
+      jobId,
+      eventTypeId,
+      ...(meetingUrl ? { meetingUrl } : {}),
+      db: ctx.db,
+      userId: ctx.userId,
+    })
+    emailed = mail.ok
+    if (mail.ok) {
+      try {
+        await ref.set(
+          {
+            status: "confirmed",
+            confirmationEmailSentAt: nowIso,
+            confirmationEmailMessageId: mail.messageId || null,
+            updatedAt: nowIso,
+          },
+          { merge: true },
+        )
+      } catch {
+        /* fail-soft — the email DID send */
+      }
+    }
+  } catch (err) {
+    // sendInterviewConfirmationEmail is itself fail-open, but belt-and-suspenders.
+    ctx.log("pa.claire.book_interview_slot.email_failed", {
+      userId: ctx.userId,
+      jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  ctx.log("pa.claire.book_interview_slot", {
+    userId: ctx.userId,
+    jobId,
+    action: "booked",
+    emailed,
+    calBookingUid,
+  })
+
+  return {
+    ok: true as const,
+    action: "booked" as const,
+    slotIso: chosenIso,
+    when: humanLabel(chosenIso, tz),
+    // The video-call join link (e.g. Google Meet) so Claire can drop it
+    // straight into the iMessage lock-in bubble, not just the email. "" when
+    // Cal didn't return a parseable join URL → prompt keeps the invite wording.
+    meetingUrl,
+    emailed,
+    calBookingUid,
   }
 }
 
@@ -787,311 +1210,10 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
         return { ok: false as const, reason: "scheduling_not_enabled" as const }
       }
 
-      // Recover the real jobId across turns: the slot pick almost always lands
-      // on a TRIAGE turn (prescreen already terminal → ctx.jobId undefined). The
-      // offer was persisted under the real jobId's doc, so we MUST read that
-      // same doc, not recompute the docId from a missing jobId.
-      const jobId = await resolveActiveSchedulingJobId(ctx)
-      const docId = interviewBookingDocId({ userId: ctx.userId, jobId })
-      const doc = await loadBooking(ctx.db, docId)
-      // Resolve slotNumber against the FULL offered list (the candidate's 1-based
-      // numbering maps to the exact order we presented), THEN apply staleness.
-      const offered = Array.isArray(doc?.offeredSlots) ? doc!.offeredSlots! : []
-
-      // (1b) STALENESS — an offer from a prior day can have slots already in the
-      // past by the time the candidate replies. If EVERY offered slot is in the
-      // past, return a distinct slots_expired so the agent re-offers fresh times
-      // proactively rather than blind-POSTing a past instant Cal will 4xx.
-      const nowMs = Date.parse(ctx.nowIso())
-      const isFuture = (iso: string): boolean => {
-        const t = Date.parse(iso)
-        return !Number.isFinite(nowMs) || !Number.isFinite(t) || t > nowMs
-      }
-      if (offered.length > 0 && !offered.some((s) => isFuture(s.iso))) {
-        ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slots_expired_all" })
-        return { ok: false as const, reason: "slots_expired" as const, retryable: true }
-      }
-
-      // (2) resolve the chosen ISO STRICTLY from the persisted offered set.
-      const offeredIsos = new Set(offered.map((s) => s.iso))
-      let chosenIso = ""
-      const argIso = (slotIso ?? "").trim()
-      if (argIso) {
-        if (offeredIsos.has(argIso)) chosenIso = argIso
-        else {
-          ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slot_not_offered_iso" })
-          return { ok: false as const, reason: "slot_not_offered" as const }
-        }
-      } else if (typeof slotNumber === "number") {
-        const idx = slotNumber - 1
-        if (idx >= 0 && idx < offered.length) chosenIso = offered[idx]!.iso
-        else {
-          ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slot_not_offered_number" })
-          return { ok: false as const, reason: "slot_not_offered" as const }
-        }
-      } else {
-        return { ok: false as const, reason: "no_slot_selected" as const }
-      }
-
-      // (2b) The candidate picked a SPECIFIC slot that's already in the past →
-      // slots_expired (distinct from Cal's slot_unavailable) so the agent re-offers.
-      if (!isFuture(chosenIso)) {
-        ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slots_expired_picked" })
-        return { ok: false as const, reason: "slots_expired" as const, retryable: true }
-      }
-
-      // (2c) STATED-TIME GUARD — the deterministic backstop for the LLM snapping a
-      // candidate's wall-clock words onto the wrong offered slot (2026-06-01: "9am
-      // mon" → got the mon 9PM slot, because the agent matched day+hour and dropped
-      // AM/PM). The slots were PRESENTED in doc.timeZone, so compare in that same tz.
-      // We only reject on a CONFIDENT conflict (explicit meridiem / unambiguous
-      // weekday) — an unparseable phrase ("first one", "2") leaves both null and
-      // falls through, so this never blocks a legit numbered pick.
-      const presentedTz = doc?.timeZone || DEFAULT_TIMEZONE
-      const stated = parseStatedTime(statedTime ?? "")
-      if (stated.hour24 !== null || stated.weekday !== null) {
-        const chosenHour = localHour(chosenIso, presentedTz)
-        const chosenWd = localWeekday(chosenIso, presentedTz)
-        const hourConflict = stated.hour24 !== null && stated.hour24 !== chosenHour
-        const dayConflict = stated.weekday !== null && chosenWd >= 0 && stated.weekday !== chosenWd
-        if (hourConflict || dayConflict) {
-          ctx.log("pa.claire.book_interview_slot", {
-            userId: ctx.userId,
-            jobId,
-            reason: "slot_time_mismatch",
-            stated: statedTime ?? "",
-            statedHour: stated.hour24,
-            statedWeekday: stated.weekday,
-            chosenHour,
-            chosenWd,
-          })
-          return {
-            ok: false as const,
-            reason: "slot_time_mismatch" as const,
-            stated: (statedTime ?? "").trim(),
-            offered: offered.filter((s) => isFuture(s.iso)).map((s) => humanLabel(s.iso, presentedTz)),
-          }
-        }
-      }
-
-      // (3) email — required (Cal attendee + our confirmation both need it).
-      const email = (candidateEmail ?? "").trim().toLowerCase() || (await resolveCandidateEmail(ctx))
-      if (!email) {
-        ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "need_email" })
-        return { ok: false as const, reason: "need_email" as const }
-      }
-
-      // (4) dedup — a live Cal.com booking already exists. Key off the live
-      // booking id/uid (NOT status), because a re-offer can re-stamp
-      // status:"offered" over a prior confirmed booking while leaving the live
-      // calBookingId/Uid + selectedSlotIso intact.
-      const hasLiveBooking =
-        (typeof doc?.calBookingId === "number" && doc.calBookingId > 0) ||
-        (typeof doc?.calBookingUid === "string" && doc.calBookingUid.length > 0)
-
-      // (4a) SAME slot already booked → already_booked, no 2nd POST (idempotent).
-      if (
-        (doc?.status === "booked" || doc?.status === "confirmed" || hasLiveBooking) &&
-        doc?.selectedSlotIso === chosenIso
-      ) {
-        ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, action: "already_booked" })
-        return {
-          ok: true as const,
-          action: "already_booked" as const,
-          slotIso: chosenIso,
-          when: humanLabel(chosenIso, doc?.timeZone || DEFAULT_TIMEZONE),
-          // Surface the join link from the persisted doc so Claire can re-share it
-          // in chat on a repeat ask (same field the email rendered). Absent → "".
-          meetingUrl: typeof doc?.meetingUrl === "string" ? doc.meetingUrl : "",
-          emailed: !!doc?.confirmationEmailMessageId,
-          calBookingUid: doc?.calBookingUid ?? "",
-        }
-      }
-
-      // (4b) RESCHEDULE GUARD — there is ALREADY a live Cal.com booking on this
-      // (user × job) doc for a DIFFERENT slot. A blind second POST would create a
-      // second real interview AND orphan the first on the interviewer's calendar
-      // (it would never be cancelled). v1 does NOT support reschedule, so refuse:
-      // the agent tells the candidate the time is locked and a teammate handles
-      // any change.
-      if (hasLiveBooking && doc?.selectedSlotIso && doc.selectedSlotIso !== chosenIso) {
-        ctx.log("pa.claire.book_interview_slot", {
-          userId: ctx.userId,
-          jobId,
-          reason: "already_booked_other_slot",
-        })
-        return {
-          ok: false as const,
-          reason: "already_booked_other_slot" as const,
-          when: humanLabel(doc.selectedSlotIso, doc?.timeZone || DEFAULT_TIMEZONE),
-        }
-      }
-
-      const name = (candidateName ?? "").trim() || (await resolveCandidateName(ctx))
-      // (5) tz precedence: an explicit, plausible arg wins; else PREFER the tz
-      // the slots were actually PRESENTED in (doc.timeZone) so the booking +
-      // confirmation email show the SAME wall-clock the candidate picked from;
-      // only then fall back to user-tags/default. (resolveTimeZone never returns
-      // empty, so the old `|| doc?.timeZone` after it was dead — this mirrors the
-      // eventTypeId precedence just below, which prefers doc.eventTypeId first.)
-      const argTz = (timeZone ?? "").trim()
-      const tz =
-        argTz && isPlausibleIana(argTz)
-          ? argTz
-          : doc?.timeZone || (await resolveTimeZone(ctx, null))
-      const eventTypeId =
-        typeof doc?.eventTypeId === "number" && doc.eventTypeId > 0
-          ? doc.eventTypeId
-          : resolveEventTypeId(await resolveRoleFunctions(ctx, jobId)).eventTypeId
-      const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(docId)
-      const nowIso = ctx.nowIso()
-      const baseVersion = typeof doc?.version === "number" ? doc.version : 0
-
-      // (6) createBooking — the real WRITE.
-      let booking: Awaited<ReturnType<typeof createBooking>>
-      try {
-        booking = await createBooking({
-          start: chosenIso,
-          eventTypeId,
-          attendee: {
-            name,
-            email,
-            timeZone: tz,
-            language: "en",
-            ...(ctx.toE164 ? { phoneNumber: ctx.toE164 } : {}),
-          },
-          // NO hardcoded location — Cal 400s a location whose integration doesn't
-          // match the event-type's configured one ("integration cal-video not valid
-          // for event type … allowed: google-meet"). Omitting it makes Cal apply the
-          // event-type's OWN integration. (2026-06-01: the cal-video hardcode failed
-          // EVERY booking on google-meet event-types → surfaced as "slot got taken".)
-          metadata: { wekruitUserId: ctx.userId, wekruitJobId: jobId, sessionId: ctx.sessionId },
-        })
-      } catch (err) {
-        if (err instanceof CalcomClientError) {
-          // 4xx (e.g. slot already taken) → failed (recoverable). Re-offer.
-          ctx.log("pa.claire.book_interview_slot", {
-            userId: ctx.userId,
-            jobId,
-            reason: "slot_unavailable",
-            status: err.status,
-          })
-          try {
-            await ref.set(
-              { id: docId, userId: ctx.userId, jobId, status: "failed", lastError: err.message.slice(0, 300), updatedAt: nowIso, version: baseVersion + 1 },
-              { merge: true },
-            )
-          } catch {
-            /* fail-soft */
-          }
-          return { ok: false as const, reason: "slot_unavailable" as const, retryable: true }
-        }
-        // 5xx / network / timeout / missing-key → transient; leave status offered.
-        ctx.log("pa.claire.book_interview_slot", {
-          userId: ctx.userId,
-          jobId,
-          reason: "calcom_unavailable",
-          error: err instanceof Error ? err.message : String(err),
-        })
-        return { ok: false as const, reason: "calcom_unavailable" as const, retryable: true }
-      }
-
-      // (7) write booked.
-      const calBookingId = typeof booking.id === "number" ? booking.id : null
-      const calBookingUid = typeof booking.uid === "string" ? booking.uid : ""
-      // Video-call join link (e.g. Google Meet) parsed from the Cal response →
-      // persisted + rendered in the WeKruit confirmation email. Absent → null.
-      const meetingUrl = typeof booking.meetingUrl === "string" && booking.meetingUrl ? booking.meetingUrl : ""
-      try {
-        await ref.set(
-          {
-            id: docId,
-            userId: ctx.userId,
-            jobId,
-            status: "booked",
-            eventTypeId,
-            timeZone: tz,
-            selectedSlotIso: chosenIso,
-            calBookingId,
-            calBookingUid: calBookingUid || null,
-            meetingUrl: meetingUrl || null,
-            candidateEmail: email,
-            lastError: null,
-            sessionId: ctx.sessionId,
-            updatedAt: nowIso,
-            version: baseVersion + 1,
-          },
-          { merge: true },
-        )
-      } catch (err) {
-        // The booking IS made — a write hiccup must not flip ok:false. Log + continue.
-        ctx.log("pa.claire.book_interview_slot.persist_booked_failed", {
-          userId: ctx.userId,
-          jobId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-
-      // (8) WeKruit confirmation email (supplement; Cal also auto-emails). On
-      // failure, leave status booked (never break the turn) → emailed:false.
-      let emailed = false
-      try {
-        const mail = await sendInterviewConfirmationEmail({
-          to: email,
-          name,
-          whenIso: chosenIso,
-          timeZone: tz,
-          jobId,
-          eventTypeId,
-          ...(meetingUrl ? { meetingUrl } : {}),
-          db: ctx.db,
-          userId: ctx.userId,
-        })
-        emailed = mail.ok
-        if (mail.ok) {
-          try {
-            await ref.set(
-              {
-                status: "confirmed",
-                confirmationEmailSentAt: nowIso,
-                confirmationEmailMessageId: mail.messageId || null,
-                updatedAt: nowIso,
-              },
-              { merge: true },
-            )
-          } catch {
-            /* fail-soft — the email DID send */
-          }
-        }
-      } catch (err) {
-        // sendInterviewConfirmationEmail is itself fail-open, but belt-and-suspenders.
-        ctx.log("pa.claire.book_interview_slot.email_failed", {
-          userId: ctx.userId,
-          jobId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-
-      ctx.log("pa.claire.book_interview_slot", {
-        userId: ctx.userId,
-        jobId,
-        action: "booked",
-        emailed,
-        calBookingUid,
-      })
-
-      return {
-        ok: true as const,
-        action: "booked" as const,
-        slotIso: chosenIso,
-        when: humanLabel(chosenIso, tz),
-        // The video-call join link (e.g. Google Meet) so Claire can drop it
-        // straight into the iMessage lock-in bubble, not just the email. "" when
-        // Cal didn't return a parseable join URL → prompt keeps the invite wording.
-        meetingUrl,
-        emailed,
-        calBookingUid,
-      }
+      // (2) Delegate to the SDK-free book core (shared with the headhunter
+      // book-on-behalf runner). The core resolves the offered slot, books via
+      // Cal.com, persists booked→confirmed, and sends the WeKruit email.
+      return bookInterviewSlotCore(ctx, { slotNumber, slotIso, statedTime, candidateEmail, candidateName, timeZone })
     },
   })
 

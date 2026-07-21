@@ -11,6 +11,11 @@ import {
 import { AdminJobLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import { functions } from "../lib/firebase.js"
 import {
+  runRediscoverCallable,
+  type RediscoverResult,
+  type RediscoverTier,
+} from "../lib/job-enrich-api.js"
+import {
   MATCH_DEBUG_DEFAULT_WEIGHTS,
   MATCH_DEBUG_WEIGHT_KEYS,
   actionTone,
@@ -95,6 +100,9 @@ export function MatchDebug() {
   const [jobLimit, setJobLimit] = useState(20)
   const [candidateResult, setCandidateResult] = useState<CandidateDebugResult | null>(null)
   const [jobResult, setJobResult] = useState<JobDebugResult | null>(null)
+  const [rediscoverResult, setRediscoverResult] = useState<RediscoverResult | null>(null)
+  const [rediscoverTiers, setRediscoverTiers] = useState<RediscoverTier[]>(["tier_1", "tier_2"])
+  const [rediscovering, setRediscovering] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [weights, setWeights] = useState<Record<MatchDebugWeightKey, number>>({
@@ -129,6 +137,20 @@ export function MatchDebug() {
     }
   }
 
+  async function runRediscover(): Promise<void> {
+    setRediscovering(true)
+    setError(null)
+    setRediscoverResult(null)
+    try {
+      const res = await runRediscoverCallable(jobId, rediscoverTiers, jobLimit)
+      setRediscoverResult(res)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRediscovering(false)
+    }
+  }
+
   const canRun = direction === "candidate_to_jobs" ? userId.trim().length > 0 : jobId.trim().length > 0
 
   return (
@@ -152,7 +174,16 @@ export function MatchDebug() {
         {direction === "candidate_to_jobs" ? (
           <CandidateQuery userId={userId} setUserId={setUserId} weights={weights} setWeights={setWeights} />
         ) : (
-          <JobQuery jobId={jobId} setJobId={setJobId} jobLimit={jobLimit} setJobLimit={setJobLimit} />
+          <JobQuery
+            jobId={jobId}
+            setJobId={setJobId}
+            jobLimit={jobLimit}
+            setJobLimit={setJobLimit}
+            rediscoverTiers={rediscoverTiers}
+            setRediscoverTiers={setRediscoverTiers}
+            onRediscover={() => void runRediscover()}
+            rediscovering={rediscovering}
+          />
         )}
 
         <button
@@ -186,6 +217,12 @@ export function MatchDebug() {
       ) : null}
       {candidateResult ? <CandidateResults result={candidateResult} /> : null}
       {jobResult ? <JobResults result={jobResult} /> : null}
+      {rediscovering ? (
+        <Panel title="Rediscovering" eyebrow="silver-medalist tiered pool">
+          <LoadingState label="Ranking tiered candidate pool" />
+        </Panel>
+      ) : null}
+      {rediscoverResult ? <RediscoverResults result={rediscoverResult} /> : null}
     </div>
   )
 }
@@ -232,35 +269,87 @@ function CandidateQuery({
   )
 }
 
+const REDISCOVER_TIER_OPTIONS: RediscoverTier[] = ["tier_1", "tier_2", "tier_3"]
+
 function JobQuery({
   jobId,
   setJobId,
   jobLimit,
   setJobLimit,
+  rediscoverTiers,
+  setRediscoverTiers,
+  onRediscover,
+  rediscovering,
 }: {
   jobId: string
   setJobId: (value: string) => void
   jobLimit: number
   setJobLimit: (value: number) => void
+  rediscoverTiers: RediscoverTier[]
+  setRediscoverTiers: (value: RediscoverTier[]) => void
+  onRediscover: () => void
+  rediscovering: boolean
 }) {
+  function toggleTier(tier: RediscoverTier) {
+    setRediscoverTiers(
+      rediscoverTiers.includes(tier)
+        ? rediscoverTiers.filter((t) => t !== tier)
+        : [...rediscoverTiers, tier],
+    )
+  }
+  const canRediscover = jobId.trim().length > 0 && rediscoverTiers.length > 0 && !rediscovering
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 8 }}>
-      <input
-        type="text"
-        placeholder="matching-jobs jobId"
-        value={jobId}
-        onChange={(event) => setJobId(event.target.value)}
-        style={inputStyle}
-      />
-      <input
-        type="number"
-        min={1}
-        max={50}
-        value={jobLimit}
-        onChange={(event) => setJobLimit(Math.max(1, Math.min(50, Number(event.target.value))))}
-        style={inputStyle}
-      />
-    </div>
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 8 }}>
+        <input
+          type="text"
+          placeholder="matching-jobs jobId"
+          value={jobId}
+          onChange={(event) => setJobId(event.target.value)}
+          style={inputStyle}
+        />
+        <input
+          type="number"
+          min={1}
+          max={50}
+          value={jobLimit}
+          onChange={(event) => setJobLimit(Math.max(1, Math.min(50, Number(event.target.value))))}
+          style={inputStyle}
+        />
+      </div>
+      <details style={{ marginTop: 12 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>Rediscover silver-medalists</summary>
+        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
+          Rank the retained candidate-tier pool (strong candidates rejected on a prior role) against this job —
+          the NOT_PASS-stays-in-pool reactivation. Consent-safe: ids + scores + tier only.
+        </div>
+        <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+          {REDISCOVER_TIER_OPTIONS.map((tier) => (
+            <label key={tier} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <input type="checkbox" checked={rediscoverTiers.includes(tier)} onChange={() => toggleTier(tier)} />
+              {tier}
+            </label>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={onRediscover}
+          disabled={!canRediscover}
+          style={{
+            marginTop: 10,
+            padding: "0.45rem 1rem",
+            background: canRediscover ? "#7c3aed" : "#94a3b8",
+            color: "white",
+            border: "none",
+            borderRadius: "0.375rem",
+            cursor: canRediscover ? "pointer" : "not-allowed",
+            fontWeight: 600,
+          }}
+        >
+          {rediscovering ? "Rediscovering…" : "Rediscover silver-medalists"}
+        </button>
+      </details>
+    </>
   )
 }
 
@@ -330,6 +419,68 @@ function JobResults({ result }: { result: JobDebugResult }) {
                 <DebugList label="Risks" values={candidate.risks} />
                 <DebugList label="Missing info" values={candidate.missingInfo} />
                 <DebugList label="Blocked" values={candidate.blockedSignals} />
+              </article>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </>
+  )
+}
+
+function RediscoverResults({ result }: { result: RediscoverResult }) {
+  if (result.error) {
+    return (
+      <Panel title="Rediscover" eyebrow="silver-medalist tiered pool">
+        <EmptyState
+          title="Job not in the matchable catalog yet"
+          body={`${result.error}\n\nThis job (${result.jobId}) isn't indexed in matching-jobs — collab jobs created via the admin form may not be scraped/indexed yet. Rediscover currently ranks against the matching-jobs catalog.`}
+        />
+      </Panel>
+    )
+  }
+  const candidates = result.candidates ?? []
+  return (
+    <>
+      <Panel title="Rediscover summary" eyebrow="silver-medalist tiered pool">
+        <div>
+          Tier pool loaded: <strong>{result.candidatePool?.totalLoaded ?? 0}</strong> · Returned:{" "}
+          <strong>{result.candidatePool?.totalReturned ?? candidates.length}</strong>
+        </div>
+        <div style={mutedStyle}>
+          <AdminJobLink jobId={result.jobId}>{result.job?.jobTitle ?? result.jobId}</AdminJobLink> @{" "}
+          {result.job?.companyName ?? "(company unknown)"} · tiers=[{(result.tiers ?? []).join(", ")}]
+        </div>
+      </Panel>
+      <Panel title={`Top ${candidates.length} silver-medalists`} eyebrow="retained-pool reactivation">
+        {candidates.length === 0 ? (
+          <EmptyState title="No tiered candidates" body="No tier_1/tier_2/tier_3 candidates matched this job." />
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {candidates.map((candidate) => (
+              <article key={candidate.candidateId} style={rowStyle}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                  <strong>
+                    {candidate.finalRank ?? "-"} ·{" "}
+                    <AdminUserLink userId={candidate.candidateId}>
+                      {candidate.displayName ?? candidate.candidateId}
+                    </AdminUserLink>
+                  </strong>
+                  <span style={{ display: "flex", gap: 6 }}>
+                    {candidate.globalTier ? <span style={badgeStyle("muted")}>{candidate.globalTier}</span> : null}
+                    <span style={badgeStyle(actionTone(candidate.recommendedAction))}>
+                      {candidate.recommendedAction ? candidate.recommendedAction.replaceAll("_", " ") : "no action"}
+                    </span>
+                  </span>
+                </div>
+                <div style={mutedStyle}>
+                  final={formatScore(candidate.finalScore)} · soft={formatScore(candidate.softScore)} · llm=
+                  {formatScore(candidate.llmScore)} · emb={formatScore(candidate.embeddingScore)} · hard=
+                  {candidate.hardFilterResult ?? "-"}
+                  {candidate.tierReusable === false ? " · tier not reusable" : ""}
+                </div>
+                <DebugList label="Reasons" values={candidate.reasons} />
+                <DebugList label="Risks" values={candidate.risks} />
               </article>
             ))}
           </div>

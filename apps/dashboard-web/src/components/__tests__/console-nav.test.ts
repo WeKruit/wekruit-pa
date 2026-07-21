@@ -112,11 +112,11 @@ test("recruiters section is consolidated into the hub (legacy routes out of nav)
   )
 })
 
-test("ops mode stays founder-sized (≤ 20 items)", () => {
+test("ops mode stays founder-sized (≤ 22 items)", () => {
   const opsSections = CONSOLE_NAV.filter((sec) => sec.mode === "ops")
   assert.ok(opsSections.length > 0, "no ops-mode sections found")
   const opsItemCount = opsSections.reduce((n, sec) => n + sec.items.length, 0)
-  assert.ok(opsItemCount <= 20, `ops mode has ${opsItemCount} items (max 20)`)
+  assert.ok(opsItemCount <= 22, `ops mode has ${opsItemCount} items (max 22)`)
 })
 
 test("no duplicate route across sections", () => {

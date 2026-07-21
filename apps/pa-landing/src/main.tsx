@@ -19,6 +19,8 @@ import ConnectPhone from "./pages/ConnectPhone.js"
 import CompanyProfile from "./pages/CompanyProfile.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
+import EmployerOnboarding from "./pages/employer/EmployerOnboarding.js"
+import EmployerHome from "./pages/employer/EmployerHome.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
 import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
 import AutoApplyBeta from "./pages/AutoApplyBeta.js"
@@ -100,6 +102,8 @@ const fullRoutes = (
     <Route path="/connect-phone" element={<ConnectPhone />} />
     <Route path="/onboarding" element={<Onboarding />} />
     <Route path="/employer" element={<EmployerSignup />} />
+    <Route path="/employer/onboarding" element={<EmployerOnboarding />} />
+    <Route path="/employer/home" element={<EmployerHome />} />
     <Route path="/employers" element={<Employers />} />
     <Route path="/employers/inbox" element={<EmployersInbox />} />
     <Route path="/auto-apply" element={<AutoApplyBeta />} />

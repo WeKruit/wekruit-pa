@@ -8,6 +8,8 @@ import Legal from "./pages/Legal.js"
 import { Login } from "./pages/Login.js"
 import { Operations } from "./pages/Operations.js"
 import OperationsOverview from "./pages/OperationsOverview.js"
+import FunnelOverview from "./pages/FunnelOverview.js"
+import Interviews from "./pages/Interviews.js"
 import RejectedCandidates from "./pages/RejectedCandidates.js"
 import { Overview } from "./pages/Overview.js"
 import { UserDetail } from "./pages/UserDetail.js"
@@ -41,6 +43,10 @@ import { CanonicalTags } from "./pages/CanonicalTags.js"
 import { Companies } from "./pages/Companies.js"
 // Employer role packets — /admin/layoff-employers reviews candidate.wekruit.com /employer submissions.
 import LayoffEmployers from "./pages/LayoffEmployers.js"
+// Employer-ops admin surfaces — connect-request fulfillment inbox + team-invite
+// roster / outbound-email audit (all previously built-but-invisible collections).
+import ConnectRequests from "./pages/ConnectRequests.js"
+import OpsInbox from "./pages/OpsInbox.js"
 // Coresignal Agentic Search playground — calls /v2/agentic_search/reasoning via CF proxy.
 import CoresignalPlayground from "./pages/CoresignalPlayground.js"
 import { QaEvaluator } from "./pages/QaEvaluator.js"
@@ -86,6 +92,7 @@ import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 // Recruiter board (wekruit-recruiters.web.app/recruiters) — admin review surface.
+import EmailReview from "./pages/EmailReview.js"
 import RecruiterSubmissions from "./pages/RecruiterSubmissions.js"
 import JobQuality from "./pages/JobQuality.js"
 import RecruiterHub from "./pages/RecruiterHub.js"
@@ -111,6 +118,10 @@ import { EvaluationAgentRanking as ExternalSupplyEvaluationAgentRanking } from "
 // Post-V2 hotfix 2026-05-14 — per-company / per-job sourcing entry surface.
 import { Jobs as ExternalSupplyJobs } from "./pages/external-supply/Jobs.js"
 import { JobWorkspace } from "./pages/admin/JobWorkspace.js"
+// Enterprise onboarding (Module A) — wizard shell + persistent checklist home.
+// First slice: client-side state via localStorage (resumable); server-state
+// callable is a later slice.
+import { OnboardingWizard } from "./pages/onboarding/OnboardingWizard.js"
 
 import { auth } from "./lib/firebase.js"
 import {
@@ -172,7 +183,14 @@ export default function App() {
     >
         <Routes>
           <Route path="/" element={<Overview />} />
+          {/* Enterprise onboarding (Module A) — wizard shell + checklist home,
+              localStorage-resumable. Admin-gated by virtue of living inside
+              AppShell's authed Routes. */}
+          <Route path="/admin/setup" element={<OnboardingWizard />} />
           <Route path="/admin/operations" element={<OperationsOverview />} />
+          {/* Candidate × job funnel — point-in-time ladder counts + the
+              "passed but not employer-visible" stuck-PASS leak list. */}
+          <Route path="/admin/funnel" element={<FunnelOverview />} />
           <Route path="/conversations" element={<Users />} />
           {/* v2.0 marketplace candidate browser — replaces /conversations
               as the canonical "All candidates" surface. Reads pa-users +
@@ -200,6 +218,10 @@ export default function App() {
           <Route path="/admin/job-quality" element={<JobQuality />} />
           {/* Employer role packets — review candidate.wekruit.com /employer submissions. */}
           <Route path="/admin/layoff-employers" element={<LayoffEmployers />} />
+          {/* Employer-ops: connect-request fulfillment inbox + team-invite roster /
+              outbound-email audit (built-but-invisible collections). */}
+          <Route path="/admin/connect-requests" element={<ConnectRequests />} />
+          <Route path="/admin/ops-inbox" element={<OpsInbox />} />
           {/* Coresignal Agentic Search playground — admin-only, CF proxy. */}
           <Route path="/admin/coresignal-playground" element={<CoresignalPlayground />} />
           <Route path="/admin/qa-evaluator" element={<QaEvaluator />} />
@@ -264,6 +286,11 @@ export default function App() {
           <Route path="/admin/qr-campaigns" element={<QrCampaigns />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
+          {/* Interview bookings (pa-interview-bookings) + operator outcome-stamp. */}
+          <Route path="/admin/interviews" element={<Interviews />} />
+          {/* HITL inbound-email review — approve auto-reply drafts before send +
+              triage the unmatched (comp/visa/STOP) queue. */}
+          <Route path="/admin/email-review" element={<EmailReview />} />
           {/* Recruiter board admin surfaces. */}
           <Route path="/admin/recruiter-hub" element={<RecruiterHub />} />
           <Route path="/admin/recruiter-digests" element={<RecruiterDigests />} />

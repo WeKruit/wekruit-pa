@@ -36,6 +36,13 @@ export const InterviewBookingStatusSchema = z.enum([
   "booked", // POST /bookings accepted; Cal.com booking created
   "confirmed", // our WeKruit Mailgun confirmation email sent (booked + emailed)
   "failed", // booking attempt failed (4xx) — recoverable, candidate can retry
+  // Post-confirmation lifecycle (additive — never reached by the Cal.com tools
+  // themselves; written by downstream interview-outcome producers / ops). The
+  // booking still "dead-ended" at confirmed for the booking tools; these extend
+  // the lifecycle so an interview can be marked done / missed / cancelled.
+  "completed", // the interview took place
+  "no_show", // candidate did not attend the booked interview
+  "cancelled", // the booked interview was cancelled (either side)
 ])
 export type InterviewBookingStatus = z.infer<typeof InterviewBookingStatusSchema>
 
@@ -72,6 +79,15 @@ export const InterviewBookingSchema = z.object({
   // OFFER state — persisted so slotNumber resolves to the exact ISO next turn:
   offeredSlots: z.array(OfferedSlotSchema).default([]),
   offeredAt: z.string().min(1).nullable(),
+  /**
+   * High-entropy per-offer token used to authorize an UNAUTHENTICATED public
+   * "book this time" email link (paBookInterviewViaLink). The link carries
+   * `t=<offerToken>`; the public CF constant-time-compares it to this field
+   * before booking. Re-offers REUSE the existing token (so prior emailed links
+   * stay valid). Optional + nullable so legacy docs (and loadBooking's
+   * `InterviewBookingSchema.partial().safeParse`) don't drop it.
+   */
+  offerToken: z.string().min(1).nullable().optional(),
   // BOOK state:
   selectedSlotIso: z.string().min(1).nullable(),
   calBookingId: z.number().int().nullable(),

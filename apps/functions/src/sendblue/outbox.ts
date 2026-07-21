@@ -34,6 +34,7 @@ import { countRecentSendsForNumber, effectiveSendCap, sendCapWindowCutoffIso } f
 import { outboundExpiresAtTs } from "./ttl.js"
 import { createHash } from "node:crypto"
 import { postSlackAlert as defaultPostSlackAlert } from "../lib/slack-alert.js"
+import { isSuppressed } from "../pending-outbound/suppression.js"
 import { isSyntheticRecipientNumber } from "./synthetic-recipient.js"
 
 const OUT = PA_COLLECTIONS.outbound
@@ -862,6 +863,41 @@ export async function paSendblueOutboxHandler(
         userId,
         idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
         lastError: "user not found",
+        attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
+        body,
+        terminalStatus: "failed",
+      })
+      return
+    }
+  }
+
+  // ---- 4a. Headhunter outbound (runtimeSource "headhunter_mcp") — TOCTOU
+  // suppression re-check. The headhunter tool checks isSuppressed before enqueue,
+  // but a candidate can opt out / STOP / file a privacy request — or ops can flip
+  // the global kill switch — in the minutes a row sits pending/retrying. The
+  // marketplace stop gate above does NOT cover headhunter rows (different
+  // idempotency-key prefix), so re-apply the fail-closed suppression gate here at
+  // dequeue, mirroring the RULE 1 choke, so a queued headhunter send honors a
+  // late opt-out / kill switch before the POST.
+  if (String((data as { runtimeSource?: unknown }).runtimeSource ?? "") === "headhunter_mcp") {
+    const sup = await isSuppressed(deps.db, userId, { kind: "recovery" })
+    if (sup.suppressed) {
+      const error = `headhunter outbound suppressed at dequeue: ${sup.reason}`
+      await ref.set(
+        {
+          status: "failed",
+          error,
+          blockedBySuppression: true,
+          updatedAt: now().toISOString(),
+          expiresAtTs: outboundExpiresAtTs(now()),
+        },
+        { merge: true }
+      )
+      logOutboundFailure(log, {
+        docId,
+        userId,
+        idempotencyKey: typeof data.idempotencyKey === "string" ? String(data.idempotencyKey) : undefined,
+        lastError: error,
         attempts: Number((data as { attemptCount?: unknown }).attemptCount ?? 0),
         body,
         terminalStatus: "failed",

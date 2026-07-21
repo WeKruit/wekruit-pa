@@ -101,6 +101,13 @@ export type ScoreCandidateForJobOptions = {
    * model governs both directions. Default false → byte-identical.
    */
   preferenceHardnessEnabled?: boolean
+  /**
+   * WeKruit collaboration pilot req (`wekruitCollaborationStatus:"collaborated"`).
+   * Such reqs are applied-to THROUGH WeKruit (no external ATS apply URL) and are
+   * operator-curated rather than scrape-fresh, so the `ats_apply_url_missing` and
+   * `job_stale` job-side hard gates do NOT apply. Default false → unchanged.
+   */
+  isCollaborationJob?: boolean
 }
 
 const DEFAULT_NOW_MS = Date.parse("2026-05-13T00:00:00.000Z")
@@ -252,12 +259,17 @@ export function scoreCandidateForJob(
     else blockedSignals.push("job_type_mismatch")
   }
 
-  const firstSeenMs = timestampToMs(job.firstSeenAt)
-  if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
-    blockedSignals.push("job_stale")
-  }
-  if (!job.atsApplyUrl || /jobright/i.test(job.atsApplyUrl)) {
-    blockedSignals.push("ats_apply_url_missing")
+  // WeKruit collab pilot reqs apply THROUGH WeKruit (no external ATS URL) and are
+  // operator-curated (not scrape-fresh), so the ATS-URL + staleness job-side hard
+  // gates don't apply — otherwise every candidate hard-blocks on a saved pilot req.
+  if (options.isCollaborationJob !== true) {
+    const firstSeenMs = timestampToMs(job.firstSeenAt)
+    if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
+      blockedSignals.push("job_stale")
+    }
+    if (!job.atsApplyUrl || /jobright/i.test(job.atsApplyUrl)) {
+      blockedSignals.push("ats_apply_url_missing")
+    }
   }
   if (job.dead === true) {
     blockedSignals.push("job_dead")

@@ -229,6 +229,33 @@ export async function getFlag(
 }
 
 /**
+ * Allowlist-ONLY membership check for a perUser bool flag. Unlike {@link getFlag},
+ * this DELIBERATELY ignores the global `value`, the env emergency override, and any
+ * bucket strategy — it returns true ONLY when `userId` is explicitly in the doc's
+ * `allowlist` (and not in `blocklist`).
+ *
+ * Use this for gates that must ramp PER-CANDIDATE ONLY and never globally (locked
+ * rule c — e.g. the scheduling gate): a single global `value:true` flip or env var
+ * must NOT widen the gate to the whole fleet. Returns false if the doc is absent or
+ * the flag isn't a perUser bool. Not cached — allowlist edits take effect at once.
+ */
+export async function isUserAllowlisted(
+  db: Firestore,
+  key: string,
+  userId: string | null | undefined,
+): Promise<boolean> {
+  if (typeof userId !== "string" || userId.length === 0) return false
+  const snap = await db.collection(COLLECTION).doc(key).get()
+  if (!snap.exists) return false
+  const doc = snap.data() as FlagDoc
+  if (doc.scope !== "perUser" || doc.type !== "bool") return false
+  const block = doc.blocklist ?? []
+  const allow = doc.allowlist ?? []
+  if (block.includes(userId)) return false
+  return allow.includes(userId)
+}
+
+/**
  * Write a flag + audit row in a single transaction. Caller supplies actor
  * (dashboard email) and reason (free text). Bumps `version` monotonically.
  */
@@ -422,6 +449,55 @@ export async function addUserToFlagAllowlist(
     t.set(auditRef, {
       actor: opts.actor,
       action,
+      key,
+      userId,
+      reason: opts.reason,
+      ts: nowIso,
+    })
+  })
+
+  // Invalidate every cache entry for this key (perUser hash variants too).
+  for (const k of Array.from(cache.keys())) {
+    if (k.startsWith(`${key}::`)) cache.delete(k)
+  }
+}
+
+// -----------------------------------------------------------------------------
+// removeUserFromFlagAllowlist — atomic remove + audit trail. The arrayRemove
+// sibling of addUserToFlagAllowlist, for operator-driven per-user DISABLE.
+//
+// Idempotent: arrayRemove is a no-op if the user isn't present. Touches ONLY
+// the `allowlist` array (preserve other fields, including the global `value`);
+// if the flag doc doesn't exist there is nothing to remove (no-op, no create).
+// Writes a `pa-audit-events` row ("flag.allowlist_remove") and invalidates the
+// in-memory cache for the key.
+// -----------------------------------------------------------------------------
+export async function removeUserFromFlagAllowlist(
+  db: Firestore,
+  key: string,
+  userId: string,
+  opts: { actor: string; reason: string }
+): Promise<void> {
+  const flagRef = db.collection(COLLECTION).doc(key)
+  const auditRef = db.collection(AUDIT_COLLECTION).doc()
+  const nowIso = new Date().toISOString()
+  const { FieldValue } = await import("firebase-admin/firestore")
+
+  await db.runTransaction(async (t) => {
+    const cur = await t.get(flagRef)
+    if (!cur.exists) return // nothing to remove — no doc create on disable.
+    const prev = cur.data() as FlagDoc
+    // Update only allowlist (preserve other fields, esp. global `value`).
+    t.update(flagRef, {
+      allowlist: FieldValue.arrayRemove(userId),
+      updatedAt: nowIso,
+      updatedBy: opts.actor,
+      reason: opts.reason,
+      version: (prev.version ?? 0) + 1,
+    })
+    t.set(auditRef, {
+      actor: opts.actor,
+      action: "flag.allowlist_remove",
       key,
       userId,
       reason: opts.reason,

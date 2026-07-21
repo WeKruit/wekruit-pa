@@ -2,6 +2,7 @@ export type CandidateJobStatus =
   | "recommended"
   | "invited"
   | "interview_started"
+  | "scheduled"
   | "review_pending"
   | "passed"
   | "intro_accepted"
@@ -44,6 +45,13 @@ export function getCandidateJobStatusDisplay(
         nextStep: "Continue in iMessage when you are ready to finish the first interview.",
         tone: "active",
         ctaLabel: "Continue interview",
+      }
+    case "scheduled":
+      return {
+        label: "Interview scheduled",
+        nextStep: "Your interview is booked. Join at the scheduled time using the link below.",
+        tone: "positive",
+        ctaLabel: "Join interview",
       }
     case "review_pending":
       return {

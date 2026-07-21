@@ -1,6 +1,21 @@
 {
   "indexes": [
     {
+      "_comment": "Employer home (Phase 4) — paEmployerMyReqs / paEmployerPassedCandidates list the employer's own pilot reqs: pa-jobs where createdByEmail == <email> AND source == 'employer_onboarding'. Two equality filters need a composite index.",
+      "collectionGroup": "pa-jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "createdByEmail",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "source",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "Sendblue per-number rolling send cap — count messages sent from a number within the trailing window (send-cap.ts countRecentSendsForNumber).",
       "collectionGroup": "pa-outbound",
       "queryScope": "COLLECTION",

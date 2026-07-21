@@ -99,6 +99,17 @@ function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> =
     type === "employer_snapshot_created"
       ? { employerVisibleProfileId: createEmployerVisibleProfileId("job-1", "cand-1") }
       : {}
+  const interviewFields = [
+    "interview_offered",
+    "interview_booked",
+    "interview_completed",
+    "interview_no_show",
+  ].includes(type)
+    ? {
+        interviewBookingId: "calbk-cand-1__job-1",
+        ...(type === "interview_booked" ? { slotIso: "2026-07-01T15:00:00.000Z" } : {}),
+      }
+    : {}
   return {
     eventId: `evt-${type}`,
     candidateId: "cand-1",
@@ -109,6 +120,7 @@ function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> =
     type,
     ...prescreenFields,
     ...employerFields,
+    ...interviewFields,
     ...(over as Record<string, unknown>),
   } as CandidateJobEvent
 }
@@ -1209,6 +1221,54 @@ test("candidate-job reducer preserves first-interview and lets a fresh screen re
 
   const global = reduceCandidateLifecycleState("active_job_seeker", lifecycle("retention_allowed"))
   assert.equal(global.state, "retained", "NOT_PASS is not a global exit")
+})
+
+test("candidate-job interview events are a PARALLEL track that never overwrites main state", () => {
+  // From every meaningful main state, interview events self-transition (no change).
+  for (const from of [
+    "candidate_interested",
+    "prescreen_started",
+    "prescreen_review_pending",
+    "passed",
+    "employer_visible",
+    "not_passed",
+  ] as const) {
+    for (const ev of [
+      "interview_offered",
+      "interview_booked",
+      "interview_completed",
+      "interview_no_show",
+    ] as const) {
+      const result = reduceCandidateJobState(from, job(ev))
+      assert.equal(result.state, from, `${ev} from ${from} must not change main state`)
+      assert.equal(result.changed, false, `${ev} from ${from} is a self-transition`)
+    }
+  }
+})
+
+test("candidate-job interview_booked requires booking id + slot iso", () => {
+  assert.throws(
+    () =>
+      CandidateJobEventSchema.parse({
+        eventId: "evt-interview-booked-missing",
+        candidateId: "cand-1",
+        jobId: "job-1",
+        actor: "orchestrator",
+        occurredAt: now,
+        evidence: [{ source: "system", summary: "booked" }],
+        type: "interview_booked",
+        interviewBookingId: "calbk-cand-1__job-1",
+      }),
+    /slotIso/,
+  )
+  // full payload parses
+  CandidateJobEventSchema.parse(job("interview_booked", { actor: "orchestrator" }))
+})
+
+test("candidate-job interview event after archive stays terminal", () => {
+  const result = reduceCandidateJobState("archived", job("interview_booked"))
+  assert.equal(result.state, "archived")
+  assert.equal(result.changed, false)
 })
 
 test("candidate-job prescreen events carry session evidence", () => {

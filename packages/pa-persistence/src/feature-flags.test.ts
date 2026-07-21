@@ -7,6 +7,7 @@ import {
   _getFeatureFlagCacheStats,
   djb2Hash,
   getFlag,
+  isUserAllowlisted,
   pickBucketVariant,
   revertFlag,
   setFlag,
@@ -521,4 +522,53 @@ test("getFlag: bucketStrategy userIdHash with no userId in ctx falls through to 
   ])
   const v = await getFlag(db, "ab.nouser", {})
   assert.equal(v, "fallthrough")
+})
+
+// -----------------------------------------------------------------------------
+// isUserAllowlisted — allowlist-ONLY (locked rule c, QA H2). Must IGNORE global
+// value:true, env override, and bucket strategy; honor only per-uid allowlist
+// (blocklist beats allowlist). Backs the scheduling gate.
+// -----------------------------------------------------------------------------
+
+test("isUserAllowlisted: uid in allowlist → true (even when global value:false)", async () => {
+  _clearFeatureFlagCache()
+  const { db } = seed([
+    { key: "paSchedulingEnabled", value: false, type: "bool", scope: "perUser", allowlist: ["userA"] },
+  ])
+  assert.equal(await isUserAllowlisted(db, "paSchedulingEnabled", "userA"), true)
+})
+
+test("isUserAllowlisted: global value:true but uid NOT in allowlist → FALSE (H2 invariant)", async () => {
+  _clearFeatureFlagCache()
+  const { db } = seed([
+    { key: "paSchedulingEnabled", value: true, type: "bool", scope: "perUser", allowlist: [] },
+  ])
+  // The whole point of H2: a global value flip must NOT widen the gate.
+  assert.equal(await isUserAllowlisted(db, "paSchedulingEnabled", "userZ"), false)
+})
+
+test("isUserAllowlisted: blocklist beats allowlist → false", async () => {
+  _clearFeatureFlagCache()
+  const { db } = seed([
+    {
+      key: "paSchedulingEnabled",
+      value: true,
+      type: "bool",
+      scope: "perUser",
+      allowlist: ["userB"],
+      blocklist: ["userB"],
+    },
+  ])
+  assert.equal(await isUserAllowlisted(db, "paSchedulingEnabled", "userB"), false)
+})
+
+test("isUserAllowlisted: absent doc / empty uid → false", async () => {
+  _clearFeatureFlagCache()
+  const { db } = seed([])
+  assert.equal(await isUserAllowlisted(db, "paSchedulingEnabled", "userA"), false)
+  const { db: db2 } = seed([
+    { key: "paSchedulingEnabled", value: true, type: "bool", scope: "perUser", allowlist: ["userA"] },
+  ])
+  assert.equal(await isUserAllowlisted(db2, "paSchedulingEnabled", ""), false)
+  assert.equal(await isUserAllowlisted(db2, "paSchedulingEnabled", null), false)
 })

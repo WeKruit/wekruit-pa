@@ -1,0 +1,53 @@
+# WeKruit Headhunter — Slack app manifest (HTTP events mode)
+#
+# TWO-PHASE create (because Slack verifies request_url at import time, and the
+# paHeadhunterSlack receiver is deployed in M4 — so we create WITHOUT URLs first,
+# then add the event/interactivity URLs once the receiver is live).
+#
+# ── Phase 1: create the app (paste the JSON below at api.slack.com/apps →
+#    Create New App → From a manifest → JSON tab). No request_url ⇒ no
+#    verification ⇒ clean import.
+# ── Phase 2 (after `paHeadhunterSlack` is deployed): add the `event_subscriptions`
+#    and `interactivity` blocks at the bottom of this file via the app's
+#    Event Subscriptions / Interactivity pages (URL verifies then).
+#
+# Tokens to grab after install (HTTP mode needs only TWO):
+#   • SLACK_BOT_TOKEN      — OAuth & Permissions → Bot User OAuth Token (xoxb-…)
+#   • SLACK_SIGNING_SECRET — Basic Information → App Credentials → Signing Secret
+# (No xapp- app-level token — that is Socket Mode only.)
+
+# ───────────────────────── Phase 1: create-time (JSON) ─────────────────────────
+# {
+#   "display_information": {
+#     "name": "WeKruit Headhunter",
+#     "description": "AI headhunter: search candidates, run matches, manage the pipeline.",
+#     "background_color": "#16161d"
+#   },
+#   "features": {
+#     "bot_user": { "display_name": "WeKruit Headhunter", "always_online": true },
+#     "assistant_view": {
+#       "assistant_description": "Search the candidate pool, run job and candidate matches, review passed candidates, and manage the recruiting pipeline.",
+#       "suggested_prompts": [
+#         { "title": "Find candidates for a job", "message": "Find candidates for job " },
+#         { "title": "Recruiter submissions queue", "message": "What's in the recruiter submissions queue right now?" }
+#       ]
+#     }
+#   },
+#   "oauth_config": {
+#     "scopes": { "bot": ["assistant:write","chat:write","im:history","im:read","im:write","app_mentions:read"] }
+#   },
+#   "settings": { "org_deploy_enabled": false, "socket_mode_enabled": false, "token_rotation_enabled": false }
+# }
+
+# ──────────── Phase 2: add AFTER paHeadhunterSlack is deployed + verified ────────────
+# settings:
+#   event_subscriptions:
+#     request_url: https://us-central1-wekruit-5f89b.cloudfunctions.net/paHeadhunterSlack
+#     bot_events:
+#       - assistant_thread_started
+#       - assistant_thread_context_changed
+#       - message.im
+#       - app_mention
+#   interactivity:
+#     is_enabled: true
+#     request_url: https://us-central1-wekruit-5f89b.cloudfunctions.net/paHeadhunterSlack

@@ -27,6 +27,7 @@ const SEG_LABELS: Record<string, string> = {
   "prescreen-ops": "Prescreen ops",
   "prescreen-sessions": "Prescreen sessions",
   "prescreen-feedback": "Prescreen feedback",
+  interviews: "Interviews",
   "ats-inbound": "ATS inbound",
   "bulk-resumes": "Bulk resumes",
   "outreach-ops": "Outreach ops",

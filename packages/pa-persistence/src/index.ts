@@ -250,9 +250,11 @@ export async function getUser(db: Firestore, userId: string): Promise<User | nul
 export {
   DEFAULT_TTL_MS as FEATURE_FLAG_TTL_MS,
   getFlag,
+  isUserAllowlisted,
   setFlag,
   revertFlag,
   addUserToFlagAllowlist,
+  removeUserFromFlagAllowlist,
   _clearFeatureFlagCache,
   _getFeatureFlagCacheStats,
 } from "./feature-flags.js"

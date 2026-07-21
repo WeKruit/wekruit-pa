@@ -23,6 +23,7 @@ import {
   type MemoryPoint,
 } from "../lib/memoryAdmin.js"
 import { reinitializeCandidate } from "../lib/reinitialize-candidate-api.js"
+import { getCandidateComms, type CommsTimelineRow } from "../lib/candidate-comms-api.js"
 // iter31 — HITL pause/resume admin client
 import { setRuntimeMode, type RuntimeMode } from "../lib/runtimeMode.js"
 import { fetchWorkerHealth, getWorkerHealthBaseUrl, type WorkerHealth } from "../lib/workerHealth.js"
@@ -46,7 +47,7 @@ type EventRow = { id: string; kind?: string; message?: string; createdAt?: strin
 type AnyRow = Record<string, unknown> & { id: string }
 
 type RiskLevel = "low" | "medium" | "high"
-type TabKey = "turns" | "marketplace" | "outbound" | "connectors" | "audit" | "memory"
+type TabKey = "turns" | "comms" | "marketplace" | "outbound" | "connectors" | "audit" | "memory"
 
 function relativeTime(iso: string | undefined | null): string {
   if (!iso) return "—"
@@ -119,7 +120,33 @@ export function UserDetail() {
   const [activeTab, setActiveTab] = useState<TabKey>("turns")
   const [showSystemEvents, setShowSystemEvents] = useState(false)
   const [actionNotice, setActionNotice] = useState<string | null>(null)
+  // Unified SMS + email comms timeline (paAdminCandidateComms). Lazy-loaded the
+  // first time the operator opens the Communications tab.
+  const [comms, setComms] = useState<CommsTimelineRow[] | null>(null)
+  const [commsEmail, setCommsEmail] = useState<string | undefined>(undefined)
+  const [commsLoading, setCommsLoading] = useState(false)
+  const [commsErr, setCommsErr] = useState<string | null>(null)
+  const [commsLoaded, setCommsLoaded] = useState(false)
   const workerHealthUrl = getWorkerHealthBaseUrl()
+
+  const loadComms = useMemo(
+    () => async () => {
+      if (!id) return
+      setCommsLoading(true)
+      setCommsErr(null)
+      try {
+        const res = await getCandidateComms(id)
+        setComms(res.rows)
+        setCommsEmail(res.candidateEmail)
+        setCommsLoaded(true)
+      } catch (e: unknown) {
+        setCommsErr(e instanceof Error ? e.message : String(e))
+      } finally {
+        setCommsLoading(false)
+      }
+    },
+    [id],
+  )
 
   useEffect(() => {
     if (!id) return
@@ -210,6 +237,13 @@ export function UserDetail() {
       (e) => setErr(e.message)
     )
   }, [id])
+
+  // Lazy-load the unified comms timeline the first time the tab is opened.
+  useEffect(() => {
+    if (activeTab === "comms" && !commsLoaded && !commsLoading && !commsErr) {
+      void loadComms()
+    }
+  }, [activeTab, commsLoaded, commsLoading, commsErr, loadComms])
 
   useEffect(() => {
     if (!id) return
@@ -538,6 +572,7 @@ export function UserDetail() {
         {(
           [
             { key: "turns", label: "Turns" },
+            { key: "comms", label: "Communications" },
             { key: "marketplace", label: "Marketplace" },
             { key: "outbound", label: "Outbound" },
             { key: "connectors", label: "Connectors" },
@@ -583,6 +618,26 @@ export function UserDetail() {
           }
         >
           <ChatStream messages={messages} showSystem={showSystemEvents} />
+        </Panel>
+      ) : null}
+
+      {activeTab === "comms" ? (
+        <Panel
+          title="Communications"
+          eyebrow="SMS + email — full timeline"
+          actions={
+            <button type="button" onClick={() => void loadComms()} disabled={commsLoading}>
+              {commsLoading ? "Loading…" : "Refresh"}
+            </button>
+          }
+        >
+          {commsErr ? <div className="notice notice-bad">{commsErr}</div> : null}
+          {commsEmail ? (
+            <p className="muted-copy" style={{ marginTop: 0 }}>
+              Candidate email: <code>{commsEmail}</code>
+            </p>
+          ) : null}
+          <CommsStream rows={comms} loading={commsLoading} loaded={commsLoaded} />
         </Panel>
       ) : null}
 
@@ -772,6 +827,102 @@ function ChatStream({ messages, showSystem }: { messages: M[]; showSystem: boole
                 {m.role || "system"} · {relativeTime(m.createdAt)}
               </div>
               {m.body || <span style={{ color: "#94a3b8", fontStyle: "italic" }}>(empty)</span>}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Unified comms stream — SMS + email together (paAdminCandidateComms)
+// ---------------------------------------------------------------------------
+
+function CommsStream({
+  rows,
+  loading,
+  loaded,
+}: {
+  rows: CommsTimelineRow[] | null
+  loading: boolean
+  loaded: boolean
+}) {
+  if (loading && !loaded) {
+    return <EmptyState title="Loading communications…" body="Merging SMS and email into one timeline." />
+  }
+  if (!rows || rows.length === 0) {
+    return (
+      <EmptyState
+        title={loaded ? "No communications yet" : "Communications not loaded"}
+        body={
+          loaded
+            ? "No SMS or email has been exchanged with this candidate yet."
+            : "Use Refresh to load the merged SMS + email timeline."
+        }
+      />
+    )
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {rows.map((r) => {
+        const isInbound = r.direction === "inbound"
+        const align = isInbound ? "flex-end" : "flex-start"
+        const isEmail = r.channel === "email"
+        // SMS = blue/slate (matches ChatStream); email = amber-tinted to read distinctly.
+        const bg = isInbound ? (isEmail ? "#fef3c7" : "#dbeafe") : isEmail ? "#fff7ed" : "#f1f5f9"
+        const border = isInbound
+          ? isEmail
+            ? "1px solid #fde68a"
+            : "1px solid #93c5fd"
+          : isEmail
+            ? "1px solid #fed7aa"
+            : "1px solid #cbd5e1"
+        return (
+          <div key={`${r.source}:${r.id}`} style={{ display: "flex", justifyContent: align }}>
+            <div
+              style={{
+                maxWidth: "82%",
+                background: bg,
+                border,
+                borderRadius: 10,
+                padding: "0.5rem 0.75rem",
+                fontSize: "0.9em",
+                color: "#0f172a",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "0.7em",
+                  color: "#64748b",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  marginBottom: 2,
+                  display: "flex",
+                  gap: 6,
+                  alignItems: "center",
+                }}
+              >
+                <span
+                  style={{
+                    background: isEmail ? "#f59e0b" : "#3b82f6",
+                    color: "#fff",
+                    borderRadius: 4,
+                    padding: "0 5px",
+                    fontSize: "0.9em",
+                  }}
+                >
+                  {isEmail ? "✉ email" : "sms"}
+                </span>
+                <span>{r.direction}</span>
+                <span>· {relativeTime(r.ts)}</span>
+                {r.status ? <span>· {r.status}</span> : null}
+              </div>
+              {isEmail && r.subject ? (
+                <div style={{ fontWeight: 600, marginBottom: 2 }}>{r.subject}</div>
+              ) : null}
+              {r.text || <span style={{ color: "#94a3b8", fontStyle: "italic" }}>(empty)</span>}
             </div>
           </div>
         )

@@ -42,7 +42,11 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     icon: "trending_up",
     mode: "ops",
     defaultOpen: true,
-    items: [{ to: "/admin/operations", label: "Operations overview" }],
+    items: [
+      { to: "/admin/setup", label: "Setup" },
+      { to: "/admin/operations", label: "Operations overview" },
+      { to: "/admin/funnel", label: "Funnel" },
+    ],
   },
   {
     id: "prescreen",
@@ -55,6 +59,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       // pending-review count, so flagging both would double the section total.
       { to: "/admin/prescreen-ops", label: "Jobs board", hitl: true },
       { to: "/admin/prescreen-sessions", label: "All sessions" },
+      { to: "/admin/interviews", label: "Interviews" },
     ],
   },
   {
@@ -119,6 +124,8 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     defaultOpen: true,
     items: [
       { to: "/admin/layoff-employers", label: "Layoff signups", hitl: true },
+      { to: "/admin/connect-requests", label: "Connect requests", hitl: true },
+      { to: "/admin/ops-inbox", label: "Team invites & email log" },
     ],
   },
   {
@@ -129,6 +136,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     items: [
       { to: "/admin/outreach-ops", label: "Outreach ops" },
       { to: "/admin/pending-outbound", label: "Pending outbound", hitl: true },
+      { to: "/admin/email-review", label: "Email review", hitl: true },
       { to: "/admin/external-supply", label: "External supply", end: true },
       { to: "/admin/external-supply/outreach", label: "Outreach campaigns" },
       { to: "/admin/external-supply/sync", label: "Instantly sync" },

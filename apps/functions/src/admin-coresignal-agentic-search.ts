@@ -24,7 +24,7 @@ import { randomUUID } from "node:crypto"
 import { onCall, HttpsError } from "firebase-functions/v2/https"
 import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
-import { getFirestore } from "firebase-admin/firestore"
+import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { z } from "zod"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 
@@ -61,28 +61,23 @@ export interface CoresignalAgenticResult {
   runId: string
 }
 
-export const paAdminCoresignalAgenticSearch = onCall<CoresignalAgenticInput>(
-  {
-    region: "us-central1",
-    memory: "256MiB",
-    timeoutSeconds: 180,
-    secrets: [PA_ADMIN_TOKEN, CORESIGNAL_API_KEY],
-  },
-  async (req): Promise<CoresignalAgenticResult> => {
-    const { uid } = authorizeAdminCallable(
-      req as { auth?: { token?: { admin?: unknown } }; data?: unknown },
-    )
-    const parsed = CoresignalAgenticInputSchema.safeParse(req.data)
-    if (!parsed.success) {
-      throw new HttpsError("invalid-argument", parsed.error.message)
-    }
-    const input = parsed.data
-    const sessionId = input.sessionId ?? randomUUID()
-    const apiKey = CORESIGNAL_API_KEY.value()
-    if (!apiKey) {
-      throw new HttpsError("failed-precondition", "CORESIGNAL_API_KEY missing")
-    }
+/**
+ * Reusable core: forward an agentic-search prompt to Coresignal, persist the run
+ * for audit, return the raw response. Shared by the admin callable AND the
+ * headhunter MCP `search_external_candidates` tool. Caller supplies the resolved
+ * apiKey + actor uid; this function does NO auth (the caller gates).
+ */
+export async function runCoresignalAgenticSearch(
+  input: CoresignalAgenticInput,
+  deps: { db: Firestore; apiKey: string; actorUid: string },
+): Promise<CoresignalAgenticResult> {
+  const { db, apiKey, actorUid: uid } = deps
+  const sessionId = input.sessionId ?? randomUUID()
+  if (!apiKey) {
+    throw new HttpsError("failed-precondition", "CORESIGNAL_API_KEY missing")
+  }
 
+  {
     const payload = {
       prompt: input.prompt,
       return_data: input.returnData,
@@ -135,7 +130,6 @@ export const paAdminCoresignalAgenticSearch = onCall<CoresignalAgenticInput>(
       )
     }
 
-    const db = getFirestore()
     const runRef = db.collection(RUNS_COLLECTION).doc()
     const runDoc = {
       runId: runRef.id,
@@ -184,5 +178,28 @@ export const paAdminCoresignalAgenticSearch = onCall<CoresignalAgenticInput>(
       latencyMs,
       runId: runRef.id,
     }
+  }
+}
+
+export const paAdminCoresignalAgenticSearch = onCall<CoresignalAgenticInput>(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 180,
+    secrets: [PA_ADMIN_TOKEN, CORESIGNAL_API_KEY],
+  },
+  async (req): Promise<CoresignalAgenticResult> => {
+    const { uid } = authorizeAdminCallable(
+      req as { auth?: { token?: { admin?: unknown } }; data?: unknown },
+    )
+    const parsed = CoresignalAgenticInputSchema.safeParse(req.data)
+    if (!parsed.success) {
+      throw new HttpsError("invalid-argument", parsed.error.message)
+    }
+    return runCoresignalAgenticSearch(parsed.data, {
+      db: getFirestore(),
+      apiKey: CORESIGNAL_API_KEY.value(),
+      actorUid: uid,
+    })
   },
 )

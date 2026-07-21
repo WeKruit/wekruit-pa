@@ -271,6 +271,17 @@ export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
 // optional weight-override sandbox values, and returns full per-job score
 // breakdown + counters for the dashboard's live debugger.
 export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
+// paAdminIntakeJob — admin-only callable wrapping the SAME runIntakeJob runner
+// the Slack-agent intake_job tool uses (enrichJobTags 3-tier router +
+// deriveJobOpportunityDraft). Brings Slack-parity JD enrichment (canonical tags,
+// hard filters, draft prescreen questions, clarifying questions, confidence) to
+// the dashboard create-job / job-edit surface. Advisory + persists nothing.
+export { paAdminIntakeJob } from "./admin-intake-job.js"
+// paAdminRediscoverForJob — admin-only callable wrapping the SAME
+// runRediscoverForJob runner the Slack-agent rediscover_for_job tool uses (V16
+// two-way scorer over the global candidate-tier pool). Surfaces silver-medalist
+// reactivation in the dashboard. Consent-safe projection (ids/scores/tier only).
+export { paAdminRediscoverForJob } from "./admin-rediscover-for-job.js"
 // pa-pending-outbound — admin-only callable backing /admin/pending-outbound
 // (batch human-approve-then-send queue). list/update/approve/skip are
 // functional; `send` is GATED + the live Sendblue dispatch seam is
@@ -292,6 +303,12 @@ export {
 // rollups, and paginated session pages over pa-prescreen-sessions (the
 // client-side limit(75) reads undercounted).
 export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
+// AI-headhunter MCP server (Streamable HTTP). Wraps existing admin run* runners
+// as MCP tools; admin-claim / PA_ADMIN_TOKEN gated; passed-candidate PII redacted
+// server-side for the untrusted LLM client. See headhunter-mcp/.
+export { paHeadhunterMcp } from "./headhunter-mcp/http.js"
+// AI-headhunter Slack receiver (Bolt + @openai/agents loop; tools = paHeadhunterMcp).
+export { paHeadhunterSlack } from "./headhunter-slack/http.js"
 export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats.js"
 
 // Negative-feedback review dashboard — classify candidate↔Claire conversations
@@ -305,12 +322,32 @@ export { paAdminConversationFeedback } from "./admin-conversation-feedback.js"
 // Operations Overview dashboard — daily time-series of new users (by channel),
 // interviews conducted, and candidates moved to client. Admin /admin/operations.
 export { paAdminOpsMetrics } from "./admin-ops-metrics.js"
+// Funnel snapshot — point-in-time group-count over the pa-candidate-job-states
+// ladder (candidate_matched → … → employer_visible) + interview sub-track, and
+// the "passed but not employer-visible" stuck-PASS leak list. Admin /admin/funnel.
+export { paAdminFunnelSnapshot, paAdminPassedNotVisibleList } from "./admin-funnel-snapshot.js"
 // Candidate pool TRUE counts (whole pool, not the 500-row browse sample) for
 // the /admin/candidates header cards + STATE/SOURCE/IDENTITY breakdowns.
 export { paAdminCandidatePoolCounts } from "./admin-candidate-pool-counts.js"
 // Trimmed list of EVERY recruiter submission (not just the recent 500) so the
 // /admin/recruiter-submissions search + state filter see the whole pool.
 export { paAdminRecruiterSubmissionsList } from "./admin-recruiter-submissions-list.js"
+// All interview bookings (pa-interview-bookings) for /admin/interviews +
+// per-row operator outcome-stamp (completed/no_show/cancelled). The list reuses
+// the runSchedulingStatus projection; the outcome action writes the booking
+// status AND emits the parallel candidate×job FSM event (fail-open, idempotent).
+export { paAdminInterviewBookingsList, paAdminInterviewOutcome } from "./admin-interview-bookings.js"
+// Employer-ops admin readers (+ one status action) over three built-but-invisible
+// top-level collections: pa-employer-connect-requests (managed-setup demand +
+// public-board audit; fulfillment status action), pa-employer-team-invites
+// (per-org roster), and pa-headhunter-emails (read-only outbound-email audit log,
+// no body PII). Admin /admin/connect-requests + /admin/ops-inbox.
+export {
+  paAdminConnectRequestsList,
+  paAdminConnectRequestSetStatus,
+  paAdminTeamInvitesList,
+  paAdminHeadhunterEmailsList,
+} from "./admin-employer-ops.js"
 // Algolia search: real-time sync triggers (submissions + candidates) + a
 // one-shot admin backfill. No-op until ALGOLIA_APP_ID + ALGOLIA_ADMIN_KEY are set.
 export { paAlgoliaSyncRecruiterSubmission, paAlgoliaSyncCandidate } from "./algolia/algolia-sync.js"
@@ -319,6 +356,13 @@ export { paAlgoliaBackfill } from "./algolia/algolia-backfill.js"
 // Tier is stamped at rejection (prescreen + recruiter) via applyGlobalCandidateTier.
 export { paAdminRejectedCandidatesSnapshot } from "./admin-rejected-candidates.js"
 export { paAdminReevaluateCandidateTier } from "./admin-candidate-tier-actions.js"
+// Per-candidate scheduling ramp — operator enables/disables REAL interview
+// scheduling for ONE candidate by mutating ONLY the paSchedulingEnabled flag
+// allowlist (never the global value).
+export {
+  paAdminSetCandidateScheduling,
+  paAdminGetCandidateScheduling,
+} from "./admin-set-candidate-scheduling.js"
 // Identity-conflict resolve/dismiss + true counts — client Firestore writes
 // to pa-candidate-identity-conflicts are rules-denied, so the dashboard
 // /admin/identity-conflicts page goes through this callable.
@@ -377,6 +421,29 @@ export { paExperienceExtractorOnParsedResume } from "./experience-extractor-trig
 // Handshake fully implemented; GH/Lever/LinkedIn return 501 stubs.
 export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"
 
+// TWO-WAY email — Mailgun inbound route catches candidate REPLIES at
+// `reply+<convToken>@<inbound-domain>`; resolves the thread via
+// pa-email-threads/{convToken}. By DEFAULT the LLM reply is recorded as a
+// DRAFT (pa-inbound-email-drafts, pending_review) — no unsupervised send;
+// PA_INBOUND_EMAIL_AUTOSEND=1 opts into legacy auto-send.
+export { paInboundEmailWebhook } from "./inbound-email-webhook.js"
+
+// Unified SMS + email comms timeline for one candidate (pa-messages +
+// pa-headhunter-emails + pa-email-inbound, keyed by userId/candidateEmail).
+// Backs the /admin/users/:id "Communications" panel so operator decisions see
+// the FULL conversation, not just SMS. Read-only, admin-gated.
+export { paAdminCandidateComms } from "./admin-candidate-comms.js"
+
+// HITL email-review surfaces: list pending auto-reply DRAFTS, approve+send (or
+// edit-then-send) / dismiss a draft, and list the pa-inbound-emails-unmatched
+// dead-letter queue (comp/visa/STOP replies that missed the thread token).
+// Backs /admin/email-review. All admin-gated.
+export {
+  paAdminInboundEmailDrafts,
+  paAdminSendInboundEmailDraft,
+  paAdminInboundUnmatchedList,
+} from "./admin-inbound-email-review.js"
+
 // v2.1 S3 — outbound voice prescreen dispatch + status callback reconciliation.
 // `paVoiceDialOutbound`: Firestore trigger on `outbound-bookings/{id}` writes;
 //   reacts to `→ dialing` and creates a LiveKit Cloud SIP participant routed
@@ -403,6 +470,9 @@ export {
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
+// Public GET "book this time" link from an interview-offer email. Token-gated
+// (offerToken) + slot-gated + confirm-on-click → bookInterviewSlotCore.
+export { paBookInterviewViaLink } from "./book-interview-via-link.js"
 // iMessage-first QR onboarding — public GET /start?c=<campaign> picks a
 // capacity-aware Sendblue number, reserves it for a minted scanToken, and 302s
 // to sms:<number>?body=Hi, WeKruit, my verification code is <scanToken>. See qr-onboarding/.
@@ -3334,6 +3404,21 @@ export {
   openRegisterEmployer,
 } from "./openLayoff.js"
 export { paEmployerClaimVerification } from "./identity/employer-claim-verification.js"
+export { paEmployerIntakeJob } from "./employer-intake-job.js"
+export { paEmployerCreatePilotReq } from "./employer-create-pilot-req.js"
+export { paEmployerMatchPilotReq } from "./employer-match-pilot-req.js"
+// Employer home (Phase 4) — list the employer's own reqs + server-persist the
+// onboarding wizard state, keyed by the (self-asserted) onboarding work email.
+export { paEmployerMyReqs, paEmployerOnboardingState } from "./employer-home.js"
+// Employer LIVE passed inbox (Phase 4) — consent-gated, PII-redacted, scoped to
+// the employer's own reqs; intro decision emits employer_intro_* FSM events.
+export {
+  paEmployerPassedCandidates,
+  paEmployerPassedCandidateIntroDecision,
+} from "./employer-passed-candidates.js"
+export { paEmployerInviteTeam } from "./employer-invite-team.js"
+export { paEmployerConnectRequest } from "./employer-connect-request.js"
+export { paEmployerAtsImportReqs } from "./employer-ats-import-reqs.js"
 
 // ============================================================
 // Candidate referral program (2026-05-27)

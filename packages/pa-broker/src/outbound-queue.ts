@@ -39,6 +39,10 @@ const APPROVED_RUNTIME_SOURCES = new Set([
   "pa_identity_notice",
   "pa_operator_review",
   "pa_voice_post_call",
+  // Operator-driven outbound from the AI headhunter Slack agent (confirm-first,
+  // dev-phone-gated, suppression + prior-inbound + cooldown checked at the tool
+  // layer before enqueue; the delivery worker re-applies the same gates).
+  "headhunter_mcp",
   "test_runtime",
 ])
 
