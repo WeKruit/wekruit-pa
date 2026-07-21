@@ -201,7 +201,10 @@ async function ensureScenarioTestUser(db, scenario) {
  *
  * Scenarios MUST also have `testMode: true`. Refuses to run otherwise.
  */
-const ALLOWED_USER_PATCH_FIELDS = new Set(["mem0UserId", "onboardingStatus", "onboardingStep", "onboardingState"])
+// `source` (2026-07-20): entry-posture probes patch the throwaway test user's
+// signup source (e.g. yc_startup_school) so mode-selector's posture overlay
+// fires. testMode-gated like every userPatch write — never a real user.
+const ALLOWED_USER_PATCH_FIELDS = new Set(["mem0UserId", "onboardingStatus", "onboardingStep", "onboardingState", "source"])
 
 async function applyUserPatch(db, userId, patchSpec, label) {
   if (!patchSpec || typeof patchSpec !== "object") return

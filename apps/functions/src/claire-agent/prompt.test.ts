@@ -186,12 +186,22 @@ test("ENTRY POSTURE — yc_startup_school renders the founder-scene no-push dire
   assert.match(withPosture, /do NOT run any structured intake/)
   assert.match(withPosture, /text them RIGHT HERE and email them/)
   assert.match(withPosture, /their pull, never your push/)
-  // Grounded event context so an "is this the YC thing?" question gets facts, not guesses.
-  assert.match(withPosture, /EVENT CONTEXT \(only if they bring it up\)/)
+  // Grounded event + YC context so "is this the YC thing? / what is Y Combinator?"
+  // gets facts, not guesses — and never insider claims about YC admissions.
+  assert.match(withPosture, /EVENT \+ YC CONTEXT \(only if they bring it up\)/)
   assert.match(withPosture, /July 25–26, 2026/)
+  assert.match(withPosture, /Y Combinator itself is the startup accelerator/)
   assert.match(withPosture, /NOT affiliated with Y Combinator/)
+  assert.match(withPosture, /NOT a YC insider/)
   assert.match(withPosture, /events\.ycombinator\.com/)
-  assert.match(withPosture, /NEVER guess event details/)
+  assert.match(withPosture, /ycombinator\.com/)
+  assert.match(withPosture, /NEVER guess details/)
   const without = buildClaireTurnContext({ mode: "triage", lang: "en" })
   assert.doesNotMatch(without, /ENTRY POSTURE/)
+})
+
+test("warm greeting example names are fenced — live probe caught 'hey Adam' bleeding onto a no-name user", () => {
+  const warm = buildClaireTurnContext({ mode: "triage", lang: "en", warmReturningGreeting: true })
+  assert.match(warm, /THE NAMES IN THESE EXAMPLES ARE FAKE/)
+  assert.match(warm, /greet WITHOUT any name/)
 })
