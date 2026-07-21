@@ -487,6 +487,14 @@ export {
 // read-only: never mutates the AI verdict, never messages a candidate.
 export { paExportEvaluationLabels } from "./export-evaluation-labels.js"
 export { paCandidateProfileCorrection } from "./flywheel-candidate-correction.js"
+// Flywheel HITL -> regression replay — closes the write-only correction loop:
+// reads pa-eval-artifacts and replays each correction through its production
+// seam (tag merge / matching / verdict), asserting the corrected expectation
+// still holds. Admin callable (on-demand) + weekly scheduled regression.
+export {
+  paFlywheelRegressionReplay,
+  paFlywheelRegressionReplayWeekly,
+} from "./flywheel-regression-replay.js"
 // v2.0 S9 — production hardening and launch readiness controls.
 export {
   paAdminLaunchReadinessSnapshot,

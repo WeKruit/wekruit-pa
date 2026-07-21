@@ -1,0 +1,21 @@
+{
+  "name": "@pa/ranking-eval",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Offline both-direction ranking eval (precision@k / recall@k / NDCG@k) for candidate->jobs (queryMatchingJobsV16) and job->candidates (rankCandidatesForJob). Deterministic, $0 (no LLM / no network), versioned golden dataset.",
+  "scripts": {
+    "ensure:node": "node ../../../scripts/ensure-node24.mjs",
+    "pretest": "npm run ensure:node",
+    "test": "node --test metrics.test.mjs",
+    "eval:ranking": "node run-ranking-eval.mjs",
+    "eval:ranking:strict": "node run-ranking-eval.mjs --strict",
+    "eval:ranking:json": "node run-ranking-eval.mjs --json"
+  },
+  "dependencies": {
+    "@pa/job-rec": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}

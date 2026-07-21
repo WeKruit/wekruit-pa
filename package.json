@@ -36,6 +36,8 @@
     "pretest": "npm run ensure:node",
     "test": "node --test tests/scenarios/runner.test.mjs && node scripts/run-scenarios-if-env.mjs && npm run test -ws --if-present",
     "eval": "PA_RUN_EVAL=1 node tests/scenarios/runner.mjs tests/scenarios/scenarios/",
+    "eval:ranking": "npm run build --workspace=@pa/job-rec && node apps/eval/ranking/run-ranking-eval.mjs --strict",
+    "eval:ranking:report": "npm run build --workspace=@pa/job-rec && node apps/eval/ranking/run-ranking-eval.mjs",
     "probe:model": "node scripts/probe-pa-model.mjs",
     "seed:agents": "npm run build --workspace=@pa/agent-registry && node scripts/pa-push-seed-agents.mjs",
     "seed:agents:apply": "npm run build --workspace=@pa/agent-registry && node scripts/pa-push-seed-agents.mjs --apply",

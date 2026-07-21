@@ -117,6 +117,16 @@ importers:
         specifier: ^5.3.0
         version: 5.9.3
 
+  apps/eval/ranking:
+    dependencies:
+      '@pa/job-rec':
+        specifier: 0.0.1
+        version: link:../../job-rec
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.39
+
   apps/functions:
     dependencies:
       '@anthropic-ai/sdk':
