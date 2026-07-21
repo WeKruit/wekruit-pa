@@ -97,6 +97,10 @@ export default function YcStartupSchool() {
     retry: false,
   })
   const founders = foundersQuery.data ?? []
+  // Partner chip only differentiates when the list is MIXED — when every live
+  // role is a WeKruit partner (the common case today) 33 identical chips are
+  // pure noise, so the section copy carries the fact instead.
+  const partnerChipMeaningful = founders.some((f) => !f.collaborated)
 
   useEffect(() => {
     function scrollToHash() {
@@ -222,8 +226,8 @@ export default function YcStartupSchool() {
           <p className="ycs-slug">/FOUNDERS</p>
           <h3>Startups you can match with right now</h3>
           <p>
-            Live public roles on WeKruit. Open one to see the brief — Claire starts the conversation with the
-            founder&rsquo;s team from there.
+            Live public roles from WeKruit partner startups. Open one to see the brief — Claire starts the
+            conversation with the founder&rsquo;s team from there.
           </p>
           {foundersQuery.isPending ? (
             <p className="ycs-muted">Loading live startups…</p>
@@ -249,7 +253,9 @@ export default function YcStartupSchool() {
                 <Link key={f.id} to={`/j/${f.id}?source=${YC_SOURCE}`} className="ycs-founder">
                   <span className="ycs-founder-company">
                     {f.company}
-                    {f.collaborated ? <span className="ycs-founder-chip">WeKruit partner</span> : null}
+                    {f.collaborated && partnerChipMeaningful ? (
+                      <span className="ycs-founder-chip">WeKruit partner</span>
+                    ) : null}
                   </span>
                   <span className="ycs-founder-role">{f.title}</span>
                   {f.founder ? (

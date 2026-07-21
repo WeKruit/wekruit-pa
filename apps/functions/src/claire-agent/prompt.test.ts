@@ -186,6 +186,12 @@ test("ENTRY POSTURE — yc_startup_school renders the founder-scene no-push dire
   assert.match(withPosture, /do NOT run any structured intake/)
   assert.match(withPosture, /text them RIGHT HERE and email them/)
   assert.match(withPosture, /their pull, never your push/)
+  // Grounded event context so an "is this the YC thing?" question gets facts, not guesses.
+  assert.match(withPosture, /EVENT CONTEXT \(only if they bring it up\)/)
+  assert.match(withPosture, /July 25–26, 2026/)
+  assert.match(withPosture, /NOT affiliated with Y Combinator/)
+  assert.match(withPosture, /events\.ycombinator\.com/)
+  assert.match(withPosture, /NEVER guess event details/)
   const without = buildClaireTurnContext({ mode: "triage", lang: "en" })
   assert.doesNotMatch(without, /ENTRY POSTURE/)
 })
