@@ -650,12 +650,21 @@ test("YC EVENT INTAKE: opener first-contact turn carries kickoff:true; later tur
     inboundText: "i'm building an eval harness for agents",
   })
   assert.equal(answerTurn.ycEventIntake?.kickoff, undefined, "real answer → model turn, no kickoff")
-  // First non-kickoff turn, LinkedIn unconnected → the ONE mandatory consequence nudge + stamp.
+  // First non-kickoff turn, LinkedIn unconnected → the ONE mandatory consequence nudge.
   assert.equal(answerTurn.ycEventIntake?.nudgeLinkedin, true, "first model turn carries the nudge")
+  // selectMode must NOT stamp — cutover stamps AFTER delivery. A selection-time stamp
+  // let the defer/preview pass consume the one-shot before the owner pass replied
+  // (live probe 2026-07-22): a same-turn SECOND selection still carries the nudge.
   const stamped = answerFake.writes().find(
     (w) => typeof (w.ycIntake as Record<string, unknown> | undefined)?.linkedinNudgedAt === "string",
   )
-  assert.ok(stamped, "linkedinNudgedAt stamped so the nudge can never repeat")
+  assert.equal(stamped, undefined, "no selection-time stamp (delivery-time only, in cutover)")
+  const secondPass = await selectClaireMode({
+    ...{ db: answerFake.db },
+    userId: NONCANARY_UID,
+    inboundText: "i'm building an eval harness for agents",
+  })
+  assert.equal(secondPass.ycEventIntake?.nudgeLinkedin, true, "same-turn re-selection still nudges")
 
   // Already stamped → never again.
   const nudged = await selectClaireMode({
