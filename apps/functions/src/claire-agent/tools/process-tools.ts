@@ -29,6 +29,7 @@ import {
 } from "@wekruit/shared-tags"
 import {
   applyPartialUserTags,
+  isSharedOnboardingGreetingOrKickoff,
   validateOnboardingCanonicalTags,
   mergeUserPrescreenSharedAnswers,
   isRegisteredSharedKey,
@@ -589,6 +590,16 @@ export function buildProcessTools(
     async execute({ field, answer }) {
       const text = answer.trim().slice(0, 1200)
       if (!text) return { ok: false, error: "empty_answer" }
+      // Live probe 2026-07-22: the model recorded the QR OPENER as the 'building'
+      // answer. Deterministic reject — greetings/openers are never answers.
+      if (isSharedOnboardingGreetingOrKickoff(text)) {
+        return {
+          ok: false,
+          error: "greeting_not_an_answer",
+          nextAction:
+            "That text is their greeting/opener, not an answer. Ask the question conversationally and record what they actually say.",
+        }
+      }
       if (!ctx.db || !ctx.userId) return { ok: false, error: "no_user_context" }
       const nowIso = new Date().toISOString()
       try {

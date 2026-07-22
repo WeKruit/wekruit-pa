@@ -805,8 +805,9 @@ export interface RunClaireTurnDeps {
    *  Persona-level (NOT a deterministic pattern) — survives the anti-silence fallback strip. */
   entryPosture?: "yc_startup_school"
   /** YC EVENT INTAKE (Adam 2026-07-21): event-QR guided mini-intake — next free-text slot to
-   *  ask + whether the LinkedIn one-tap offer should lead this turn. Turn-context directive. */
-  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
+   *  ask + whether the LinkedIn one-tap offer should lead this turn. `kickoff` = first-contact
+   *  turn → the deterministic event opener below owns the send (no model). */
+  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean; kickoff?: boolean }
   /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention context
    *  (buildCandidateContext.prescreenContextText) — prior screens + terminals + real reasons + borderline
    *  gaps + capture/offer-other-roles directive. Set by cutover for a post-terminal/retention turn that
@@ -992,6 +993,29 @@ export async function runClaireTurn(
       hasConnect: true,
       bubbles: 1,
     })
+    return { finalText: message, toolCalls: [], deliveredViaTool: true }
+  }
+
+  // YC EVENT KICKOFF (Adam 2026-07-21; deterministic per the 2026-07-22 live probe: the model turn
+  // dropped the LinkedIn offer, mis-recorded the opener as the 'building' answer, and tapback-swallowed
+  // a decline). First contact from the event QR → ONE atomic deterministic message: event greeting +
+  // LinkedIn one-tap link + the first intake question + STOP disclosure. Mirrors offerFirstKickoff.
+  if (deps.ycEventIntake?.kickoff && deps.isSuppressionFallback !== true) {
+    let connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
+    if (!connectUrl) connectUrl = CONNECT_LINKEDIN_LINK_BASE
+    const parts: string[] = [
+      "hey!! welcome 🎉 i'm claire — i match startup school folks with founders who are building + hiring.",
+      ...(deps.ycEventIntake.offerLinkedin
+        ? [
+            `quick unlock so founders see your real background: log in with LinkedIn (one tap) 👉 ${connectUrl}`,
+          ]
+        : []),
+      "while that's cooking — what are you building right now?",
+      "reply STOP anytime to opt out.",
+    ]
+    const message = parts.join("\n\n")
+    await deps.transport.sendText(message).catch((e) => log("yc_event_kickoff.send_failed", { err: String(e) }))
+    log("yc_event_kickoff_sent", { offerLinkedin: deps.ycEventIntake.offerLinkedin })
     return { finalText: message, toolCalls: [], deliveredViaTool: true }
   }
 

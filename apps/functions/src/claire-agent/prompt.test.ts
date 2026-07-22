@@ -215,7 +215,7 @@ test("YC EVENT INTAKE directive renders slots + one-nudge consequence + 7pm clos
   })
   assert.match(linkedinLead, /YC EVENT INTAKE/)
   assert.match(linkedinLead, /LINKEDIN FIRST/)
-  assert.match(linkedinLead, /exactly ONE honest nudge/)
+  assert.match(linkedinLead, /exactly ONE honest TEXT nudge/)
   assert.match(linkedinLead, /founders see a much thinner profile/)
   assert.match(linkedinLead, /what are they building/)
   assert.match(linkedinLead, /record_yc_intake\(field='building'\)/)

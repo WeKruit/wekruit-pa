@@ -561,7 +561,7 @@ test("YC EVENT INTAKE: incomplete ycIntake → ycEventIntake slot progression ri
     inboundText: "Hey! I'm at YC Startup School — my code is 3f9c2a10-8b4e-4d6f-9a12-77cc01ab34de",
   })
   assert.equal(cold.entryPosture, "yc_startup_school")
-  assert.deepEqual(cold.ycEventIntake, { next: "building", offerLinkedin: true })
+  assert.deepEqual(cold.ycEventIntake, { next: "building", offerLinkedin: true, kickoff: true })
 
   // Building recorded → next is wants_to_meet; background landed → no LinkedIn offer.
   const mid = await selectClaireMode({
@@ -591,4 +591,28 @@ test("YC EVENT INTAKE: incomplete ycIntake → ycEventIntake slot progression ri
   })
   assert.equal(done.entryPosture, "yc_startup_school")
   assert.equal(done.ycEventIntake, undefined)
+})
+
+test("YC EVENT INTAKE: opener first-contact turn carries kickoff:true; later turns do not", async () => {
+  const opener = "Hey! I'm at YC Startup School — my code is 3f9c2a10-8b4e-4d6f-9a12-77cc01ab34de"
+  const first = await selectClaireMode({
+    ...{ db: makeDb({ source: "yc_startup_school" }).db },
+    userId: NONCANARY_UID,
+    inboundText: opener,
+  })
+  assert.equal(first.ycEventIntake?.kickoff, true, "opener turn → deterministic kickoff")
+
+  const answerTurn = await selectClaireMode({
+    ...{ db: makeDb({ source: "yc_startup_school" }).db },
+    userId: NONCANARY_UID,
+    inboundText: "i'm building an eval harness for agents",
+  })
+  assert.equal(answerTurn.ycEventIntake?.kickoff, undefined, "real answer → model turn, no kickoff")
+
+  const afterRecord = await selectClaireMode({
+    ...{ db: makeDb({ source: "yc_startup_school", ycIntake: { building: "x" } }).db },
+    userId: NONCANARY_UID,
+    inboundText: "hey",
+  })
+  assert.equal(afterRecord.ycEventIntake?.kickoff, undefined, "recorded progress → never re-kickoff")
 })

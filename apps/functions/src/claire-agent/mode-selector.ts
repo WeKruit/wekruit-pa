@@ -34,6 +34,7 @@ import {
   buildSharedOnboardingPrompt,
   SHARED_ONBOARDING_WORK_SESSION_KIND,
   parseLinkedinDoneOpener,
+  isSharedOnboardingGreetingOrKickoff,
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
 import type { ClaireMode } from "./types.js"
@@ -169,7 +170,15 @@ export interface ModeDecision {
    *  one-tap offer should lead (no ingested background yet). Cleared (undefined) once
    *  ycIntake.completedAt is stamped by the record_yc_intake tool — the plain yc
    *  retention posture then owns the tone. */
-  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
+  ycEventIntake?: {
+    next: "building" | "wants_to_meet"
+    offerLinkedin: boolean
+    /** True on the FIRST-CONTACT turn (greeting/opener text, nothing recorded yet) —
+     *  agent.ts sends the DETERMINISTIC event kickoff (greeting + LinkedIn link + the
+     *  building question) and skips the model, so the opener can never be mis-recorded
+     *  as an answer and the LinkedIn offer can never be dropped (live probe 2026-07-22). */
+    kickoff?: boolean
+  }
 }
 
 export interface SelectModeArgs {
@@ -634,15 +643,20 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     wantsToMeet?: unknown
     completedAt?: unknown
   } | null
-  const ycEventIntake:
-    | { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
-    | undefined =
+  const ycEventIntake: ModeDecision["ycEventIntake"] =
     user.source === "yc_startup_school" && !ycIntakeState?.completedAt
       ? {
           next: !ycIntakeState?.building ? "building" : "wants_to_meet",
           // LinkedIn one-tap leads the intake until real background lands (the
           // Coresignal enrich flips hasIngestedBackground on re-entry).
           offerLinkedin: !hasIngestedBackground(user),
+          // FIRST CONTACT: opener/greeting text + nothing recorded yet → the
+          // deterministic event kickoff owns the turn (agent.ts short-circuit).
+          ...(!ycIntakeState?.building &&
+          !ycIntakeState?.wantsToMeet &&
+          isSharedOnboardingGreetingOrKickoff(args.inboundText ?? "")
+            ? { kickoff: true }
+            : {}),
         }
       : undefined
   const posture: {

@@ -1010,11 +1010,11 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
       ? [
           "YC EVENT INTAKE (they scanned the QR at YC Startup School — run this light intake, warm and fast, ONE question per message, never a form):",
           opts.ycEventIntake.offerLinkedin
-            ? "- LINKEDIN FIRST: greet them like they just walked up at the event, then offer the LinkedIn one-tap connect link from CONTEXT (paste the exact link) — it imports their background in one tap. If they decline or ignore it ONCE, give exactly ONE honest nudge: without LinkedIn the matching is noticeably weaker and founders see a much thinner profile of them — connect it and their real background does the talking. After that one nudge, DROP it and move on to the questions; never a wall."
+            ? "- LINKEDIN FIRST: greet them like they just walked up at the event, then offer the LinkedIn one-tap connect link from CONTEXT (paste the exact link) — it imports their background in one tap. If they decline or ignore it ONCE, reply with exactly ONE honest TEXT nudge (a real message — never only a tapback/reaction): without LinkedIn the matching is noticeably weaker and founders see a much thinner profile of them — connect it and their real background does the talking. After that one nudge, DROP it and move on to the questions; never a wall."
             : "- Their background is already imported — do NOT re-offer LinkedIn.",
           opts.ycEventIntake.next === "building"
-            ? "- NEXT QUESTION to ask (when the LinkedIn beat is done or skipped): what are they building / working on right now? When they answer, record it with record_yc_intake(field='building') and follow the tool's nextAction."
-            : "- NEXT QUESTION to ask: who would they like to talk to — what kind of founders/startups/people? When they answer, record it with record_yc_intake(field='wants_to_meet') and follow the tool's nextAction.",
+            ? "- NEXT QUESTION to ask (when the LinkedIn beat is done or skipped): what are they building / working on right now? When they give a GENUINE answer to that question (never their greeting/opener, never a LinkedIn aside), record it with record_yc_intake(field='building') and follow the tool's nextAction."
+            : "- NEXT QUESTION to ask: who would they like to talk to — what kind of founders/startups/people? When they give a GENUINE answer to that question, record it with record_yc_intake(field='wants_to_meet') and follow the tool's nextAction.",
           "- When the tool says the intake is COMPLETE: close warmly — you've got what you need, you'll text their founder matches TONIGHT AROUND 7PM, nothing else for them to do. ONE message, no more questions.",
           "- Stay conversational: react to what they share before asking the next thing; never stack questions.",
         ].join("\n")
