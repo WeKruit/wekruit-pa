@@ -207,19 +207,29 @@ test("warm greeting example names are fenced — live probe caught 'hey Adam' bl
 })
 
 test("YC EVENT INTAKE directive renders slots + one-nudge consequence + 7pm close", () => {
-  const linkedinLead = buildClaireTurnContext({
+  // nudgeLinkedin turn (the ONE mode-selector-flagged turn) → mandatory consequence heads-up.
+  const nudgeTurn = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "building", offerLinkedin: true, nudgeLinkedin: true },
+  })
+  assert.match(nudgeTurn, /YC EVENT INTAKE/)
+  assert.match(nudgeTurn, /LINKEDIN NUDGE — MANDATORY THIS TURN/)
+  assert.match(nudgeTurn, /founders see a much thinner profile/)
+  assert.match(nudgeTurn, /what are they building/)
+  assert.match(nudgeTurn, /record_yc_intake\(field='building'\)/)
+  assert.match(nudgeTurn, /TONIGHT AROUND 7PM/)
+
+  // Already nudged (flag absent, LinkedIn still unconnected) → hard "never again".
+  const afterNudge = buildClaireTurnContext({
     mode: "triage",
     lang: "en",
     entryPosture: "yc_startup_school",
     ycEventIntake: { next: "building", offerLinkedin: true },
   })
-  assert.match(linkedinLead, /YC EVENT INTAKE/)
-  assert.match(linkedinLead, /LINKEDIN FIRST/)
-  assert.match(linkedinLead, /exactly ONE honest TEXT nudge/)
-  assert.match(linkedinLead, /founders see a much thinner profile/)
-  assert.match(linkedinLead, /what are they building/)
-  assert.match(linkedinLead, /record_yc_intake\(field='building'\)/)
-  assert.match(linkedinLead, /TONIGHT AROUND 7PM/)
+  assert.match(afterNudge, /NEVER bring it up again unless THEY ask/)
+  assert.doesNotMatch(afterNudge, /MANDATORY THIS TURN/)
 
   const second = buildClaireTurnContext({
     mode: "triage",

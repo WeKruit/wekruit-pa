@@ -602,12 +602,32 @@ test("YC EVENT INTAKE: opener first-contact turn carries kickoff:true; later tur
   })
   assert.equal(first.ycEventIntake?.kickoff, true, "opener turn → deterministic kickoff")
 
+  const answerFake = makeDb({ source: "yc_startup_school" })
   const answerTurn = await selectClaireMode({
-    ...{ db: makeDb({ source: "yc_startup_school" }).db },
+    ...{ db: answerFake.db },
     userId: NONCANARY_UID,
     inboundText: "i'm building an eval harness for agents",
   })
   assert.equal(answerTurn.ycEventIntake?.kickoff, undefined, "real answer → model turn, no kickoff")
+  // First non-kickoff turn, LinkedIn unconnected → the ONE mandatory consequence nudge + stamp.
+  assert.equal(answerTurn.ycEventIntake?.nudgeLinkedin, true, "first model turn carries the nudge")
+  const stamped = answerFake.writes().find(
+    (w) => typeof (w.ycIntake as Record<string, unknown> | undefined)?.linkedinNudgedAt === "string",
+  )
+  assert.ok(stamped, "linkedinNudgedAt stamped so the nudge can never repeat")
+
+  // Already stamped → never again.
+  const nudged = await selectClaireMode({
+    ...{
+      db: makeDb({
+        source: "yc_startup_school",
+        ycIntake: { linkedinNudgedAt: "2026-07-22T05:00:00.000Z" },
+      }).db,
+    },
+    userId: NONCANARY_UID,
+    inboundText: "still thinking about the linkedin thing",
+  })
+  assert.equal(nudged.ycEventIntake?.nudgeLinkedin, undefined, "stamped → nudge never repeats")
 
   const afterRecord = await selectClaireMode({
     ...{ db: makeDb({ source: "yc_startup_school", ycIntake: { building: "x" } }).db },

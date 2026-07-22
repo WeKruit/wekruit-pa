@@ -70,7 +70,7 @@ export interface ClairePromptOptions {
   /** YC EVENT INTAKE (Adam 2026-07-21): the event-QR guided mini-intake — LinkedIn one-tap offer
    *  (one consequence-framed nudge max), then "what are you building?" and "who do you want to
    *  meet?" recorded via record_yc_intake, then the tonight-around-7pm close. */
-  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
+  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean; nudgeLinkedin?: boolean }
   /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block
    *  built by buildCandidateContext — prior job screens (terminal + real reason + borderline gap),
    *  pending-review note, and the capture/offer-other-roles directive. Unlike `prescreenContext` (gated on
@@ -1010,7 +1010,9 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
       ? [
           "YC EVENT INTAKE (they scanned the QR at YC Startup School — run this light intake, warm and fast, ONE question per message, never a form):",
           opts.ycEventIntake.offerLinkedin
-            ? "- LINKEDIN FIRST: greet them like they just walked up at the event, then offer the LinkedIn one-tap connect link from CONTEXT (paste the exact link) — it imports their background in one tap. If they decline or ignore it ONCE, reply with exactly ONE honest TEXT nudge (a real message — never only a tapback/reaction): without LinkedIn the matching is noticeably weaker and founders see a much thinner profile of them — connect it and their real background does the talking. After that one nudge, DROP it and move on to the questions; never a wall."
+            ? opts.ycEventIntake.nudgeLinkedin
+              ? "- LINKEDIN NUDGE — MANDATORY THIS TURN (a real TEXT message, never only a tapback/reaction): they haven't connected LinkedIn yet. Weave ONE honest heads-up into your reply, then continue the conversation normally: without LinkedIn the matching is noticeably weaker and founders see a much thinner profile of them — one tap on the connect link from CONTEXT (paste the exact link) and their real background does the talking. This is the ONLY nudge they ever get — after this turn NEVER bring LinkedIn up again unless THEY ask."
+              : "- LinkedIn already offered + nudged once: NEVER bring it up again unless THEY ask (if they ask, paste the connect link from CONTEXT)."
             : "- Their background is already imported — do NOT re-offer LinkedIn.",
           opts.ycEventIntake.next === "building"
             ? "- NEXT QUESTION to ask (when the LinkedIn beat is done or skipped): what are they building / working on right now? When they give a GENUINE answer to that question (never their greeting/opener, never a LinkedIn aside), record it with record_yc_intake(field='building') and follow the tool's nextAction."

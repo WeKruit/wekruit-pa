@@ -58,7 +58,9 @@ export function buildQrStartRedirectLocation(number: string, scanToken: string, 
 export const paQrStartRedirect = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    // 512MiB: the bundled functions codebase now peaks ~273MiB at runtime
+    // (observed OOM crash-loop on 256MiB, 2026-07-22).
+    memory: "512MiB",
     timeoutSeconds: 15,
     cors: false,
     invoker: "public",

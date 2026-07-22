@@ -178,6 +178,11 @@ export interface ModeDecision {
      *  building question) and skips the model, so the opener can never be mis-recorded
      *  as an answer and the LinkedIn offer can never be dropped (live probe 2026-07-22). */
     kickoff?: boolean
+    /** True on exactly ONE turn: the first non-kickoff turn where LinkedIn is still
+     *  unconnected — the prompt makes the honest consequence heads-up (weaker matching,
+     *  thinner profile) MANDATORY that turn. Stamped via ycIntake.linkedinNudgedAt so it
+     *  can never repeat (prompt-only "nudge once" under-fired on the 2026-07-22 live probe). */
+    nudgeLinkedin?: boolean
   }
 }
 
@@ -642,26 +647,47 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     building?: unknown
     wantsToMeet?: unknown
     completedAt?: unknown
+    linkedinNudgedAt?: unknown
   } | null
-  const ycEventIntake: ModeDecision["ycEventIntake"] =
-    user.source === "yc_startup_school" && !ycIntakeState?.completedAt
-      ? {
-          next: !ycIntakeState?.building ? "building" : "wants_to_meet",
-          // LinkedIn one-tap leads the intake until real background lands (the
-          // Coresignal enrich flips hasIngestedBackground on re-entry).
-          offerLinkedin: !hasIngestedBackground(user),
-          // FIRST CONTACT: opener/greeting text + nothing recorded yet → the
-          // deterministic event kickoff owns the turn (agent.ts short-circuit).
-          ...(!ycIntakeState?.building &&
-          !ycIntakeState?.wantsToMeet &&
-          isSharedOnboardingGreetingOrKickoff(args.inboundText ?? "")
-            ? { kickoff: true }
-            : {}),
-        }
-      : undefined
+  let ycEventIntake: ModeDecision["ycEventIntake"]
+  if (user.source === "yc_startup_school" && !ycIntakeState?.completedAt) {
+    // FIRST CONTACT: opener/greeting text + nothing recorded yet → the
+    // deterministic event kickoff owns the turn (agent.ts short-circuit).
+    const kickoff =
+      !ycIntakeState?.building &&
+      !ycIntakeState?.wantsToMeet &&
+      isSharedOnboardingGreetingOrKickoff(args.inboundText ?? "")
+    // LinkedIn one-tap leads the intake until real background lands (the
+    // Coresignal enrich flips hasIngestedBackground on re-entry).
+    const offerLinkedin = !hasIngestedBackground(user)
+    // ONE deterministic consequence nudge (Adam 2026-07-21: "tell them it will be bad
+    // for matching and their image"): the offer went out on the kickoff; the FIRST
+    // non-kickoff turn with LinkedIn still unconnected carries the mandatory heads-up.
+    // Stamped immediately so it can never fire twice — under-nudge beats nagging.
+    const nudgeLinkedin = offerLinkedin && !kickoff && !ycIntakeState?.linkedinNudgedAt
+    ycEventIntake = {
+      next: !ycIntakeState?.building ? "building" : "wants_to_meet",
+      offerLinkedin,
+      ...(kickoff ? { kickoff: true } : {}),
+      ...(nudgeLinkedin ? { nudgeLinkedin: true } : {}),
+    }
+    if (nudgeLinkedin) {
+      try {
+        await args.db
+          .collection(USERS)
+          .doc(args.userId)
+          .set(
+            { ycIntake: { ...(user.ycIntake ?? {}), linkedinNudgedAt: new Date().toISOString() } },
+            { merge: true },
+          )
+      } catch {
+        // Stamp failure → worst case a repeat nudge next turn; never block the reply.
+      }
+    }
+  }
   const posture: {
     entryPosture?: "yc_startup_school"
-    ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
+    ycEventIntake?: ModeDecision["ycEventIntake"]
   } =
     user.source === "yc_startup_school"
       ? { entryPosture: "yc_startup_school", ...(ycEventIntake ? { ycEventIntake } : {}) }
