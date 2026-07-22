@@ -1533,6 +1533,23 @@ export async function maybeRunThinClaire(
       .doc(eventId)
       .set({ status: "completed", handledBy: "thin_claire" }, { merge: true })
 
+    // ONE-SHOT LINKEDIN NUDGE STAMP — written HERE (after the turn actually delivered),
+    // never in selectMode: selection runs more than once per inbound (defer pass + owner
+    // pass) and a selection-time stamp let the preview pass consume the one-shot before
+    // the reply (live probe 2026-07-22). Fail-open: a stamp miss risks one repeat nudge,
+    // never a lost turn.
+    if (decision.ycEventIntake?.nudgeLinkedin) {
+      try {
+        await db
+          .collection(PA_COLLECTIONS.users)
+          .doc(userId)
+          .set({ ycIntake: { linkedinNudgedAt: new Date().toISOString() } }, { merge: true })
+        log("thin_claire.yc_linkedin_nudge_stamped", { eventId, userId })
+      } catch (err) {
+        log("thin_claire.yc_linkedin_nudge_stamp_failed", { eventId, userId, error: String(err) })
+      }
+    }
+
     // PER-TURN DECISION TRACE keyed on the inbound event: ONE read of pa-turns/{eventId} answers
     // "why did Claire do X this turn" — the user message in, the deterministic mode/pattern that won,
     // the ordered tool calls (name → arguments → output, now de-blackboxed by the observability work),

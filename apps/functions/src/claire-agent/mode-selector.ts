@@ -686,26 +686,16 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     // ONE deterministic consequence nudge (Adam 2026-07-21: "tell them it will be bad
     // for matching and their image"): the offer went out on the kickoff; the FIRST
     // non-kickoff turn with LinkedIn still unconnected carries the mandatory heads-up.
-    // Stamped immediately so it can never fire twice — under-nudge beats nagging.
+    // The linkedinNudgedAt stamp is written by CUTOVER after the turn DELIVERS — never
+    // here: selectMode runs more than once per inbound (defer pass + owner pass), and a
+    // selection-time stamp let the preview pass consume the one-shot before the reply
+    // (live probe 2026-07-22: stamp 21:52:02, soft-skip reply 21:52:05).
     const nudgeLinkedin = offerLinkedin && !kickoff && !ycIntakeState?.linkedinNudgedAt
     ycEventIntake = {
       next: !ycIntakeState?.building ? "building" : "wants_to_meet",
       offerLinkedin,
       ...(kickoff ? { kickoff: true } : {}),
       ...(nudgeLinkedin ? { nudgeLinkedin: true } : {}),
-    }
-    if (nudgeLinkedin) {
-      try {
-        await args.db
-          .collection(USERS)
-          .doc(args.userId)
-          .set(
-            { ycIntake: { ...(user.ycIntake ?? {}), linkedinNudgedAt: new Date().toISOString() } },
-            { merge: true },
-          )
-      } catch {
-        // Stamp failure → worst case a repeat nudge next turn; never block the reply.
-      }
     }
   }
   const posture: {
