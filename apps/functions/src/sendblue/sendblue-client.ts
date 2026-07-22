@@ -184,9 +184,14 @@ export async function sendImessage(
     }
   }
 
+  // SMS fallback for Android/green-bubble recipients (Adam 2026-07-21,
+  // fleet-wide): request Sendblue's iMessage→SMS downgrade on EVERY send.
+  // Kill-switch PA_SENDBLUE_ALLOW_SMS=0 for rollback only.
+  const allowSms = (process.env.PA_SENDBLUE_ALLOW_SMS ?? "1").trim() !== "0"
   const body: SendblueSendRequest = {
     number: input.to,
     content: input.content,
+    ...(allowSms ? { allowSMS: true } : {}),
     ...(input.mediaUrl ? { media_url: input.mediaUrl } : {}),
     ...(resolvedFromNumber ? { from_number: resolvedFromNumber } : {}),
     ...(input.statusCallback ? { status_callback: input.statusCallback } : {}),

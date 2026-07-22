@@ -804,6 +804,9 @@ export interface RunClaireTurnDeps {
    *  mode-selector). yc_startup_school = founder-scene chat, no pushing, notify-on-match promise.
    *  Persona-level (NOT a deterministic pattern) — survives the anti-silence fallback strip. */
   entryPosture?: "yc_startup_school"
+  /** YC EVENT INTAKE (Adam 2026-07-21): event-QR guided mini-intake — next free-text slot to
+   *  ask + whether the LinkedIn one-tap offer should lead this turn. Turn-context directive. */
+  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
   /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention context
    *  (buildCandidateContext.prescreenContextText) — prior screens + terminals + real reasons + borderline
    *  gaps + capture/offer-other-roles directive. Set by cutover for a post-terminal/retention turn that
@@ -1060,6 +1063,8 @@ export async function runClaireTurn(
     // ENTRY POSTURE — persona tone, NOT a deterministic pattern: survives the fallback strip so the
     // fresh reply still speaks in the entry page's voice (yc: no pushing, notify-on-match).
     entryPosture: deps.entryPosture,
+    // YC EVENT INTAKE — a deterministic guided pattern: stripped on the anti-silence fallback.
+    ycEventIntake: fallback ? undefined : deps.ycEventIntake,
     // PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block.
     // Per-turn, trailing only, rendered in ANY mode. Stripped on the anti-silence fallback re-entry.
     candidateContext: fallback ? undefined : deps.candidateContext,

@@ -108,6 +108,11 @@ export type SendblueSendRequest = {
   status_callback?: string
   send_style?: string
   media_url?: string
+  /** SMS fallback for non-iMessage (Android/green-bubble) recipients (Adam
+   *  2026-07-21 fleet-wide). Probe 2026-04-27 shows the account echoing
+   *  `allowSMS:true`; we now REQUEST it on every send. Webhooks report the
+   *  downgrade via `service:"SMS"` / `was_downgraded`. */
+  allowSMS?: boolean
 }
 
 /**

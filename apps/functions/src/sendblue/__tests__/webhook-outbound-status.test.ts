@@ -61,6 +61,15 @@ function makeFakeDb(initialOutbound: Record<string, DocData> = {}) {
         if (options?.merge) outbound.set(id, { ...(outbound.get(id) ?? {}), ...data })
         else outbound.set(id, { ...data })
       },
+      // sms-fallback re-enqueue path (enqueueOutbound) uses ref.create().
+      async create(data: DocData) {
+        if (outbound.has(id)) {
+          const err: Error & { code?: number } = new Error("ALREADY_EXISTS")
+          err.code = 6
+          throw err
+        }
+        outbound.set(id, { ...data })
+      },
     }
   }
 
@@ -275,5 +284,121 @@ describe("Stream H9 TD3 — webhook updates pa-outbound on delivery confirmation
     assert.equal(res.statusCode, 200, "200 even when no row matches — Sendblue must NOT retry")
     assert.equal(outbound.size, 0, "no row created")
     assert.ok(audit.some((a) => a.type === "outbound_mirror"), "audit still recorded")
+  })
+})
+
+// ── 2026-07-21 SMS fallback (Android/green-bubble): one-shot re-enqueue on delivery ERROR ──
+
+describe("sms fallback on delivery ERROR", () => {
+  beforeEach(() => {
+    process.env.SENDBLUE_WEBHOOK_SECRET = SECRET
+    _clearFeatureFlagCache()
+  })
+  afterEach(() => {
+    delete process.env.SENDBLUE_WEBHOOK_SECRET
+  })
+
+  function errorBody(handle: string) {
+    return JSON.stringify({
+      is_outbound: true,
+      message_handle: handle,
+      status: "ERROR",
+      service: "iMessage",
+      was_downgraded: false,
+      from_number: "+15557654321",
+      number: "+15551234567",
+    })
+  }
+
+  it("ERROR on a normal row → exactly one fallback row enqueued + smsFallbackAt stamped", async () => {
+    const HANDLE = "msg-sms-fb-1"
+    const { db, outbound } = makeFakeDb({
+      "out-doc-1": {
+        status: "sent",
+        userId: "u-1",
+        toE164: "+15551234567",
+        body: "hey it's claire",
+        idempotencyKey: "orig-key-1",
+        messageHandle: HANDLE,
+      },
+    })
+    const body = errorBody(HANDLE)
+    const req = makeReq(body, sign(body))
+    const res = makeRes()
+    await handleSendblueWebhook(req, res, { db, secret: SECRET })
+    assert.equal(res.statusCode, 200)
+
+    const orig = outbound.get("out-doc-1")!
+    assert.equal(orig.sendblueStatus, "ERROR")
+    assert.equal(typeof orig.smsFallbackAt, "string", "one-shot stamp recorded")
+    assert.equal(orig.sendblueService, "iMessage", "service telemetry recorded")
+
+    const fallbackRows = [...outbound.entries()].filter(
+      ([, d]) => d.runtimeSource === "sendblue_sms_fallback",
+    )
+    assert.equal(fallbackRows.length, 1, "exactly one fallback row")
+    const [, fb] = fallbackRows[0]!
+    assert.equal(fb.body, "hey it's claire")
+    assert.equal(fb.userId, "u-1")
+    assert.equal(fb.idempotencyKey, "orig-key-1:sms-fallback")
+    assert.equal(fb.status, "pending")
+
+    // Redelivered ERROR webhook → NO second fallback (smsFallbackAt guard).
+    const res2 = makeRes()
+    await handleSendblueWebhook(makeReq(body, sign(body)), res2, { db, secret: SECRET })
+    const fallbackRows2 = [...outbound.entries()].filter(
+      ([, d]) => d.runtimeSource === "sendblue_sms_fallback",
+    )
+    assert.equal(fallbackRows2.length, 1, "still exactly one fallback row")
+  })
+
+  it("ERROR on a row that IS a fallback → never chains a second fallback", async () => {
+    const HANDLE = "msg-sms-fb-2"
+    const { db, outbound } = makeFakeDb({
+      "out-doc-fb": {
+        status: "sent",
+        userId: "u-1",
+        toE164: "+15551234567",
+        body: "hey it's claire",
+        idempotencyKey: "orig-key-1:sms-fallback",
+        runtimeSource: "sendblue_sms_fallback",
+        messageHandle: HANDLE,
+      },
+    })
+    const body = errorBody(HANDLE)
+    const res = makeRes()
+    await handleSendblueWebhook(makeReq(body, sign(body)), res, { db, secret: SECRET })
+    assert.equal(res.statusCode, 200)
+    assert.equal(outbound.size, 1, "no new rows — fallback of a fallback is forbidden")
+  })
+
+  it("DELIVERED with was_downgraded → green-bubble telemetry persisted, no fallback", async () => {
+    const HANDLE = "msg-sms-fb-3"
+    const { db, outbound } = makeFakeDb({
+      "out-doc-1": {
+        status: "sent",
+        userId: "u-1",
+        toE164: "+15551234567",
+        body: "hi",
+        idempotencyKey: "k1",
+        messageHandle: HANDLE,
+      },
+    })
+    const body = JSON.stringify({
+      is_outbound: true,
+      message_handle: HANDLE,
+      status: "DELIVERED",
+      service: "SMS",
+      was_downgraded: true,
+      from_number: "+15557654321",
+      number: "+15551234567",
+    })
+    const res = makeRes()
+    await handleSendblueWebhook(makeReq(body, sign(body)), res, { db, secret: SECRET })
+    const r = outbound.get("out-doc-1")!
+    assert.equal(r.sendblueService, "SMS")
+    assert.equal(r.sendblueWasDowngraded, true)
+    assert.equal(r.smsFallbackAt, undefined, "delivered → no fallback")
+    assert.equal(outbound.size, 1)
   })
 })

@@ -552,3 +552,43 @@ test("non-YC sources carry NO entryPosture (byte-unchanged decisions)", async ()
   const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
   assert.equal(decision.entryPosture, undefined)
 })
+
+test("YC EVENT INTAKE: incomplete ycIntake → ycEventIntake slot progression rides the posture", async () => {
+  // Cold event-QR user: no background, no intake → LinkedIn leads + ask building.
+  const cold = await selectClaireMode({
+    ...{ db: makeDb({ source: "yc_startup_school" }).db },
+    userId: NONCANARY_UID,
+    inboundText: "Hey! I'm at YC Startup School — my code is 3f9c2a10-8b4e-4d6f-9a12-77cc01ab34de",
+  })
+  assert.equal(cold.entryPosture, "yc_startup_school")
+  assert.deepEqual(cold.ycEventIntake, { next: "building", offerLinkedin: true })
+
+  // Building recorded → next is wants_to_meet; background landed → no LinkedIn offer.
+  const mid = await selectClaireMode({
+    ...{
+      db: makeDb({
+        source: "yc_startup_school",
+        latestResumeArtifactId: "coresignal_x",
+        ycIntake: { building: "an eval harness" },
+      }).db,
+    },
+    userId: NONCANARY_UID,
+    inboundText: "it's an eval harness for agents",
+  })
+  assert.deepEqual(mid.ycEventIntake, { next: "wants_to_meet", offerLinkedin: false })
+
+  // Intake complete → NO ycEventIntake; plain yc posture remains.
+  const done = await selectClaireMode({
+    ...{
+      db: makeDb({
+        source: "yc_startup_school",
+        onboardingState: "complete",
+        ycIntake: { building: "x", wantsToMeet: "y", completedAt: "2026-07-21T19:00:00.000Z" },
+      }).db,
+    },
+    userId: NONCANARY_UID,
+    inboundText: "cool thanks",
+  })
+  assert.equal(done.entryPosture, "yc_startup_school")
+  assert.equal(done.ycEventIntake, undefined)
+})

@@ -568,11 +568,73 @@ export function buildProcessTools(
     },
   })
 
+  // YC Startup School event intake (Adam 2026-07-21): two free-text slots the
+  // event QR conversation captures — "what are you building" and "who do you
+  // want to meet". Free text has NO canonical vocab, so it lives on
+  // pa-users.ycIntake (plain fields), never tags/statedPreferences. When the
+  // second slot lands, completedAt is stamped and the tool result tells the
+  // agent to close with the tonight-around-7pm promise.
+  const recordYcIntake = tool({
+    name: "record_yc_intake",
+    description:
+      "YC STARTUP SCHOOL EVENT INTAKE ONLY (the turn directive says when). Record the attendee's answer to one " +
+      "of the two event questions: field 'building' = what they're building/working on; field 'wants_to_meet' = " +
+      "who they want to talk to (kind of founders/startups/people). Pass their answer essence verbatim-ish (their " +
+      "words, lightly trimmed). The result tells you whether to ask the other question next or to CLOSE with the " +
+      "match promise (matches tonight around 7pm).",
+    parameters: z.object({
+      field: z.enum(["building", "wants_to_meet"]),
+      answer: z.string(),
+    }),
+    async execute({ field, answer }) {
+      const text = answer.trim().slice(0, 1200)
+      if (!text) return { ok: false, error: "empty_answer" }
+      if (!ctx.db || !ctx.userId) return { ok: false, error: "no_user_context" }
+      const nowIso = new Date().toISOString()
+      try {
+        const userRef = ctx.db.collection("pa-users").doc(ctx.userId)
+        const snap = await userRef.get()
+        const cur = (snap.data()?.ycIntake ?? {}) as { building?: string; wantsToMeet?: string }
+        const next = {
+          ...cur,
+          ...(field === "building" ? { building: text } : { wantsToMeet: text }),
+        }
+        const complete = Boolean(next.building && next.wantsToMeet)
+        await userRef.set(
+          {
+            ycIntake: { ...next, updatedAt: nowIso, ...(complete ? { completedAt: nowIso } : {}) },
+            updatedAt: nowIso,
+          },
+          { merge: true },
+        )
+        ctx.log("yc_intake.recorded", { userId: ctx.userId, field, complete })
+        return {
+          ok: true,
+          recorded: field,
+          intakeComplete: complete,
+          nextAction: complete
+            ? "CLOSE the intake now: tell them you've got what you need and you'll text their founder matches tonight around 7pm — warm, one message, no further questions."
+            : field === "building"
+              ? "Ask who they'd like to talk to (kind of founders/startups/people) — one short question."
+              : "Ask what they're building / working on — one short question.",
+        }
+      } catch (err) {
+        ctx.log("yc_intake.write_error", {
+          userId: ctx.userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return { ok: false, error: "write_failed" }
+      }
+    },
+  })
+
   return [
     askNextOnboarding,
     recordOnboarding,
     askNextPrescreen,
     scorePrescreen,
     explainOutcome,
+    // Appended LAST: process-tools tests address tools by index.
+    recordYcIntake,
   ]
 }

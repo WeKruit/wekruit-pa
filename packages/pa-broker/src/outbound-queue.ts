@@ -43,6 +43,11 @@ const APPROVED_RUNTIME_SOURCES = new Set([
   // dev-phone-gated, suppression + prior-inbound + cooldown checked at the tool
   // layer before enqueue; the delivery worker re-applies the same gates).
   "headhunter_mcp",
+  // One-shot re-send after an iMessage delivery ERROR so Sendblue can take its
+  // SMS downgrade path for Android/green-bubble recipients (2026-07-21). The
+  // webhook enqueues at most ONE fallback per original row (smsFallbackAt
+  // stamp); the outbox re-applies every send gate on delivery.
+  "sendblue_sms_fallback",
   "test_runtime",
 ])
 

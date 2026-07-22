@@ -9,6 +9,7 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import {
   normalizeCampaignCode,
   isCanaryCampaign,
+  qrCampaignSource,
   isQrReonboardDevUid,
   writeQrScanPending,
   readQrScanPending,
@@ -415,4 +416,13 @@ describe("sweepAbandonedQrScans", () => {
     assert.equal(coll.get("fresh-pending")?.status, "pending")
     assert.equal(coll.get("old-claimed")?.status, "claimed")
   })
+})
+
+// ── YC Startup School event campaign (2026-07-21) ──────────────────────────
+it("yc-startup-school campaign is auto-provision + maps to yc_startup_school source", () => {
+  assert.equal(isCanaryCampaign("yc-startup-school"), true)
+  assert.equal(qrCampaignSource("yc-startup-school"), "yc_startup_school")
+  assert.equal(qrCampaignSource("YC-Startup-School"), "yc_startup_school")
+  assert.equal(qrCampaignSource("dev-card"), "qr_imessage")
+  assert.equal(qrCampaignSource(null), "qr_imessage")
 })

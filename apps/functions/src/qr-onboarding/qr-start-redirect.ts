@@ -23,7 +23,8 @@ import { randomUUID } from "node:crypto"
 import { onRequest } from "firebase-functions/v2/https"
 import { getFirestore } from "firebase-admin/firestore"
 import * as logger from "firebase-functions/logger"
-import { buildHelloWekruitOpenerBody } from "@pa/pa-orchestrator"
+import { buildHelloWekruitOpenerBody, buildYcEventOpenerBody } from "@pa/pa-orchestrator"
+import { YC_EVENT_CAMPAIGN } from "./scan.js"
 import {
   loadSendbluePoolWithCounters,
   pickScanNumber,
@@ -42,9 +43,16 @@ export function buildSmsDeepLink(number: string, body: string): string {
   return `sms:${number}?&body=${encodeURIComponent(body)}`
 }
 
-/** Build the 302 location for a picked number + scanToken (the prefilled opener). */
-export function buildQrStartRedirectLocation(number: string, scanToken: string): string {
-  return buildSmsDeepLink(number, buildHelloWekruitOpenerBody(scanToken))
+/** Build the 302 location for a picked number + scanToken (the prefilled opener).
+ *  Campaign→opener copy map (Adam 2026-07-21): the YC Startup School event QR
+ *  prefills "Hey! I'm at YC Startup School — my code is <token>"; every other
+ *  campaign keeps the standard "Hi, WeKruit! <token>". Same scanToken plumbing. */
+export function buildQrStartRedirectLocation(number: string, scanToken: string, campaign?: string): string {
+  const body =
+    campaign === YC_EVENT_CAMPAIGN
+      ? buildYcEventOpenerBody(scanToken)
+      : buildHelloWekruitOpenerBody(scanToken)
+  return buildSmsDeepLink(number, body)
 }
 
 export const paQrStartRedirect = onRequest(
@@ -128,7 +136,7 @@ export const paQrStartRedirect = onRequest(
       })
     }
 
-    const location = buildQrStartRedirectLocation(number, scanToken)
+    const location = buildQrStartRedirectLocation(number, scanToken, campaign)
     // 302 (not 301) — the sms: target is per-scan, never cacheable.
     res.set("Cache-Control", "no-store")
     res.redirect(302, location)

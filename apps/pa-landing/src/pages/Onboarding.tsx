@@ -27,7 +27,7 @@ import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
 import { CandidateVerifyError, readStoredCandidateId, shouldSignOutOnVerifyError, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 import { startCandidatePhoneLink, verifyCandidatePhoneLink } from "../lib/candidate-phone-link.js"
 import { buildHelloWekruitOpenerBody, buildBindCodeOpenerBody, buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
-import { canOpenImessageDeepLink } from "../lib/imessage-platform.js"
+import { buildTextingDeepLink, canOpenImessageDeepLink, canOpenTextingDeepLink } from "../lib/imessage-platform.js"
 import { CompanyCombobox } from "../components/CompanyCombobox.js"
 import { CANDIDATE_STYLES, Icon, IMessageThread } from "./CandidateLogin.js"
 import { canonicalPublicJobId } from "../lib/public-job-slugs.js"
@@ -1411,11 +1411,19 @@ function Done({
   const isJobInterview = Boolean(returnJobId)
   const continuingClaireConversation = claireConversationStarted || isJobInterview
   const imessageAvailable = canOpenImessageDeepLink()
+  // Android (2026-07-21): sms: links open the default SMS app and Sendblue now
+  // falls back to SMS server-side (allowSMS) — Android is a first-class texting
+  // path, no longer told "can't". Windows/desktop-other stays the honest no-link copy.
+  const textingAvailable = canOpenTextingDeepLink()
   const smsHref =
-    imessageAvailable && profile.senderNumber
-      ? `sms:${profile.senderNumber}?&body=${encodeURIComponent(openerBody)}`
+    textingAvailable && profile.senderNumber
+      ? buildTextingDeepLink(profile.senderNumber, openerBody)
       : null
-  const primaryActionLabel = continuingClaireConversation ? "Continue with Claire" : "Open Claire in iMessage"
+  const primaryActionLabel = continuingClaireConversation
+    ? "Continue with Claire"
+    : imessageAvailable
+      ? "Open Claire in iMessage"
+      : "Text Claire"
   return (
     <div className="claire-handoff">
       <style>{CANDIDATE_STYLES}</style>
@@ -1442,10 +1450,16 @@ function Done({
             margin: 0,
           }}
         >
-          {continuingClaireConversation ? "Continue with Claire in iMessage." : "Open Claire in iMessage."}
+          {continuingClaireConversation
+            ? "Continue with Claire in iMessage."
+            : imessageAvailable
+              ? "Open Claire in iMessage."
+              : textingAvailable
+                ? "Text Claire to get started."
+                : "Open Claire in iMessage."}
         </h1>
         <p className="lead claire-handoff__copy">
-          {imessageAvailable ? (
+          {textingAvailable ? (
             <>
               {isJobInterview
                 ? "Your profile and this role are connected. Send the pre-filled code exactly as shown; Claire will continue the role interview from there."
@@ -1457,7 +1471,7 @@ function Done({
             </>
           ) : (
             <>
-              iMessage deep links work on iPhone, iPad, and Mac. Open this page on an Apple device to start your chat with Claire.
+              Texting deep links work on iPhone, iPad, Mac, and Android. Open this page on your phone to start your chat with Claire.
             </>
           )}
         </p>
@@ -1467,9 +1481,9 @@ function Done({
             <a className="btn btn--primary btn--lg" href={smsHref}>
               {primaryActionLabel}
             </a>
-          ) : !imessageAvailable ? (
+          ) : !textingAvailable ? (
             <p className="caption claire-handoff__fallback">
-              Android and Windows can't open iMessage deep links. Use Safari on your iPhone or Mac, or email hello@wekruit.com for help.
+              This device can't open texting links. Open this page on your phone (iPhone or Android), or email hello@wekruit.com for help.
             </p>
           ) : (
             <span className="caption claire-handoff__fallback">

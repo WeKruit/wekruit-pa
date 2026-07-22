@@ -163,6 +163,13 @@ export interface ModeDecision {
    *  email when a founder match pops. Per-user-stable (source is frozen at registration). Add future
    *  entry pages here as new literals. */
   entryPosture?: "yc_startup_school"
+  /** YC EVENT INTAKE (Adam 2026-07-21): the event-QR guided mini-intake. Present while
+   *  pa-users.ycIntake is incomplete for a yc_startup_school user — carries the next
+   *  free-text slot to ask ("building" → "wants_to_meet") and whether the LinkedIn
+   *  one-tap offer should lead (no ingested background yet). Cleared (undefined) once
+   *  ycIntake.completedAt is stamped by the record_yc_intake tool — the plain yc
+   *  retention posture then owns the tone. */
+  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
 }
 
 export interface SelectModeArgs {
@@ -622,8 +629,29 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // Those candidates get a tone overlay on every agent turn (light founder-scene chat, no pushing,
   // "I'll text here + email when a founder match pops") instead of the standard progression posture.
   // Pure structured read off the SAME snapshot — zero extra reads, NO LLM.
-  const posture: { entryPosture?: "yc_startup_school" } =
-    user.source === "yc_startup_school" ? { entryPosture: "yc_startup_school" } : {}
+  const ycIntakeState = (user.ycIntake ?? null) as {
+    building?: unknown
+    wantsToMeet?: unknown
+    completedAt?: unknown
+  } | null
+  const ycEventIntake:
+    | { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
+    | undefined =
+    user.source === "yc_startup_school" && !ycIntakeState?.completedAt
+      ? {
+          next: !ycIntakeState?.building ? "building" : "wants_to_meet",
+          // LinkedIn one-tap leads the intake until real background lands (the
+          // Coresignal enrich flips hasIngestedBackground on re-entry).
+          offerLinkedin: !hasIngestedBackground(user),
+        }
+      : undefined
+  const posture: {
+    entryPosture?: "yc_startup_school"
+    ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
+  } =
+    user.source === "yc_startup_school"
+      ? { entryPosture: "yc_startup_school", ...(ycEventIntake ? { ycEventIntake } : {}) }
+      : {}
 
   // 2026-06-04 (#1 re-ask fix): the canonical user tags + the legacy statedPreferences mirror from the
   // SAME pa-users snapshot (zero extra read). The onboarding slot picker consults these so it NEVER

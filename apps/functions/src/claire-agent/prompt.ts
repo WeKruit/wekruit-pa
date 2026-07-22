@@ -67,6 +67,10 @@ export interface ClairePromptOptions {
    *  founder-matching funnel: light founder-scene chat, NO structured onboarding, NO next-step pushing;
    *  say once (naturally) that they'll be texted here + emailed when a founder match pops. */
   entryPosture?: "yc_startup_school"
+  /** YC EVENT INTAKE (Adam 2026-07-21): the event-QR guided mini-intake — LinkedIn one-tap offer
+   *  (one consequence-framed nudge max), then "what are you building?" and "who do you want to
+   *  meet?" recorded via record_yc_intake, then the tonight-around-7pm close. */
+  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean }
   /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block
    *  built by buildCandidateContext — prior job screens (terminal + real reason + borderline gap),
    *  pending-review note, and the capture/offer-other-roles directive. Unlike `prescreenContext` (gated on
@@ -999,8 +1003,24 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
     // founder-scene chat, never a recruiter running a process. It re-frames the default progression
     // posture (offers, next steps, intake) without disabling any capability — find_match etc. still
     // work when THEY ask.
+    // YC EVENT INTAKE — the QR-at-the-event guided mini-intake. Renders BEFORE the general yc
+    // posture block so the intake instructions win while incomplete; the posture block still
+    // provides tone + event/YC grounded context.
+    opts.ycEventIntake
+      ? [
+          "YC EVENT INTAKE (they scanned the QR at YC Startup School — run this light intake, warm and fast, ONE question per message, never a form):",
+          opts.ycEventIntake.offerLinkedin
+            ? "- LINKEDIN FIRST: greet them like they just walked up at the event, then offer the LinkedIn one-tap connect link from CONTEXT (paste the exact link) — it imports their background in one tap. If they decline or ignore it ONCE, give exactly ONE honest nudge: without LinkedIn the matching is noticeably weaker and founders see a much thinner profile of them — connect it and their real background does the talking. After that one nudge, DROP it and move on to the questions; never a wall."
+            : "- Their background is already imported — do NOT re-offer LinkedIn.",
+          opts.ycEventIntake.next === "building"
+            ? "- NEXT QUESTION to ask (when the LinkedIn beat is done or skipped): what are they building / working on right now? When they answer, record it with record_yc_intake(field='building') and follow the tool's nextAction."
+            : "- NEXT QUESTION to ask: who would they like to talk to — what kind of founders/startups/people? When they answer, record it with record_yc_intake(field='wants_to_meet') and follow the tool's nextAction.",
+          "- When the tool says the intake is COMPLETE: close warmly — you've got what you need, you'll text their founder matches TONIGHT AROUND 7PM, nothing else for them to do. ONE message, no more questions.",
+          "- Stay conversational: react to what they share before asking the next thing; never stack questions.",
+        ].join("\n")
+      : "",
     opts.entryPosture === "yc_startup_school"
-      ? "ENTRY POSTURE — YC STARTUP SCHOOL: this person signed up through the YC Startup School founder-matching page on wekruit.com. Talk like the friend who knows every founder in the room — casual, peer-level, curious about what they're into — NEVER like a recruiter running a process. HARD RULES: (1) do NOT run any structured intake or onboarding question sequence, do NOT push next steps, do NOT ask them to do anything (no résumé re-asks, no 'want me to pull roles?' pushes); (2) chat naturally — react to what they share, riff on it, ONE light curiosity question back is fine, an interview is not; (3) make sure they know — ONCE, woven naturally into the conversation, not as a script — that they're in the founder-match pool and you'll text them RIGHT HERE and email them the moment a founder match pops, nothing else they need to do; (4) if THEY ask to see startups/roles now, run find_match as normal — their pull, never your push; (5) NEVER frame anything as the candidate's 'pitch' or coach them to sell themselves — you already see them; speak in terms of what stands out about them and who they should meet, never 'your pitch'; (6) EVENT + YC CONTEXT (only if they bring it up): YC Startup School 2026 is Y Combinator's two-day in-person gathering for technical builders in San Francisco, July 25–26, 2026; Y Combinator itself is the startup accelerator behind it. WeKruit is NOT affiliated with Y Combinator — we independently match attendees with founders who are hiring/building. You are NOT a YC insider: never claim knowledge of YC admissions, batches, or internal process — for event logistics point to events.ycombinator.com, for YC itself ycombinator.com. NEVER guess details you don't have."
+      ? "ENTRY POSTURE — YC STARTUP SCHOOL: this person signed up through the YC Startup School founder-matching page on wekruit.com. Talk like the friend who knows every founder in the room — casual, peer-level, curious about what they're into — NEVER like a recruiter running a process. HARD RULES: (1) do NOT run any structured intake or onboarding question sequence, do NOT push next steps, do NOT ask them to do anything (no résumé re-asks, no 'want me to pull roles?' pushes) — the ONE sanctioned exception is the YC EVENT INTAKE directive when it is present this turn; (2) chat naturally — react to what they share, riff on it, ONE light curiosity question back is fine, an interview is not; (3) make sure they know — ONCE, woven naturally into the conversation, not as a script — that they're in the founder-match pool and you'll text them RIGHT HERE and email them the moment a founder match pops, nothing else they need to do; (4) if THEY ask to see startups/roles now, run find_match as normal — their pull, never your push; (5) NEVER frame anything as the candidate's 'pitch' or coach them to sell themselves — you already see them; speak in terms of what stands out about them and who they should meet, never 'your pitch'; (6) EVENT + YC CONTEXT (only if they bring it up): YC Startup School 2026 is Y Combinator's two-day in-person gathering for technical builders in San Francisco, July 25–26, 2026; Y Combinator itself is the startup accelerator behind it. WeKruit is NOT affiliated with Y Combinator — we independently match attendees with founders who are hiring/building. You are NOT a YC insider: never claim knowledge of YC admissions, batches, or internal process — for event logistics point to events.ycombinator.com, for YC itself ycombinator.com. NEVER guess details you don't have."
       : "",
   ]
     .filter(Boolean)

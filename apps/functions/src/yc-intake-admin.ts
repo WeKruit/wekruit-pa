@@ -1,0 +1,188 @@
+/**
+ * yc-intake-admin.ts — operator queue for the YC Startup School event flow
+ * (Adam 2026-07-21, "Claire says 7pm, the team sends").
+ *
+ * Two admin callables:
+ *   - `paAdminYcIntakeToday`: list yc_startup_school users whose event intake
+ *     (pa-users.ycIntake) is complete — the "tonight's sends" queue — plus the
+ *     incomplete stragglers for visibility. Whole-source scan, in-memory shape
+ *     (the yc cohort is event-sized, not fleet-sized).
+ *   - `paAdminYcSendMatches`: one-click "send matches now" for one user — fires
+ *     the existing `@pa/job-rec` sendImessage runtime handoff (STOP gate, dedup,
+ *     sticky number all inherited; Claire composes + delivers with her yc
+ *     posture) and stamps `ycEveningMatchSentAt` so nobody is double-sent.
+ *
+ * Auth mirrors admin-candidate-pool-counts.ts: authorizeAdminCallable (Firebase
+ * `admin` claim OR PA_ADMIN_TOKEN secret for scripted callers).
+ */
+import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { defineSecret } from "firebase-functions/params"
+import { HttpsError, onCall } from "firebase-functions/v2/https"
+import { logger } from "firebase-functions/v2"
+import { z } from "zod"
+import { PA_COLLECTIONS } from "@pa/core-types"
+import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
+
+const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
+
+const YC_SOURCE = "yc_startup_school"
+// Event cohorts are hundreds at most; cap defends against a runaway scan.
+const SCAN_CAP = 5_000
+
+export interface YcIntakeRow {
+  userId: string
+  displayName: string | null
+  phoneTail: string | null
+  building: string | null
+  wantsToMeet: string | null
+  completedAt: string | null
+  linkedinEnriched: boolean
+  createdAt: string | null
+  ycEveningMatchSentAt: string | null
+}
+
+export interface YcIntakeTodayResult {
+  ok: true
+  ready: YcIntakeRow[]
+  incomplete: YcIntakeRow[]
+  scanned: number
+  truncated: boolean
+}
+
+function rowFromDoc(id: string, d: Record<string, unknown>): YcIntakeRow {
+  const intake = (d.ycIntake ?? {}) as Record<string, unknown>
+  const phone = typeof d.phoneE164 === "string" ? d.phoneE164 : null
+  return {
+    userId: id,
+    displayName: typeof d.displayName === "string" ? d.displayName : null,
+    phoneTail: phone ? phone.slice(-4) : null,
+    building: typeof intake.building === "string" ? intake.building : null,
+    wantsToMeet: typeof intake.wantsToMeet === "string" ? intake.wantsToMeet : null,
+    completedAt: typeof intake.completedAt === "string" ? intake.completedAt : null,
+    linkedinEnriched: Boolean(
+      d.latestResumeArtifactId ||
+        (Array.isArray(d.experienceHighlights) && d.experienceHighlights.length > 0),
+    ),
+    createdAt: typeof d.createdAt === "string" ? d.createdAt : null,
+    ycEveningMatchSentAt:
+      typeof d.ycEveningMatchSentAt === "string" ? d.ycEveningMatchSentAt : null,
+  }
+}
+
+export async function runYcIntakeToday(deps: { db: Firestore }): Promise<YcIntakeTodayResult> {
+  const snap = await deps.db
+    .collection(PA_COLLECTIONS.users)
+    .where("source", "==", YC_SOURCE)
+    .limit(SCAN_CAP)
+    .get()
+  const ready: YcIntakeRow[] = []
+  const incomplete: YcIntakeRow[] = []
+  for (const doc of snap.docs) {
+    const d = (doc.data() ?? {}) as Record<string, unknown>
+    if (d.testMode === true || d.isDemo === true) continue
+    const row = rowFromDoc(doc.id, d)
+    if (!row.phoneTail) continue // never surface unreachable rows in a send queue
+    if (row.completedAt) ready.push(row)
+    else incomplete.push(row)
+  }
+  ready.sort((a, b) => (a.completedAt ?? "").localeCompare(b.completedAt ?? ""))
+  incomplete.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
+  return { ok: true, ready, incomplete, scanned: snap.size, truncated: snap.size >= SCAN_CAP }
+}
+
+const SendMatchesInputSchema = z.object({
+  userId: z.string().min(1),
+  adminToken: z.string().nullish(),
+})
+
+export async function runYcSendMatches(
+  deps: {
+    db: Firestore
+    /** The SAME V16 matcher tool Claire's find_match uses (makeV16FindMatch). */
+    findMatch: (args: { userId: string; requestedCount?: number | null }) => Promise<{
+      ok: boolean
+      recCount: number
+      jobs: string[]
+      reason: string | null
+    }>
+    /** @pa/job-rec sendImessage — runtime handoff; trustedOutboundBody delivers verbatim. */
+    sendImessage: (
+      args: { userId: string; context: Record<string, unknown>; idempotencyKey?: string },
+      sendDeps: { db: Firestore; log?: (...args: unknown[]) => void },
+    ) => Promise<{ ok: boolean }>
+    nowIso?: () => string
+  },
+  userId: string,
+): Promise<{ ok: boolean; reason?: string; recCount?: number }> {
+  const nowIso = deps.nowIso ?? (() => new Date().toISOString())
+  const userRef = deps.db.collection(PA_COLLECTIONS.users).doc(userId)
+  const snap = await userRef.get()
+  if (!snap.exists) return { ok: false, reason: "user_not_found" }
+  const d = (snap.data() ?? {}) as Record<string, unknown>
+  if (d.source !== YC_SOURCE) return { ok: false, reason: "not_yc_user" }
+  const intake = (d.ycIntake ?? {}) as Record<string, unknown>
+  if (typeof intake.completedAt !== "string") return { ok: false, reason: "intake_incomplete" }
+  const day = nowIso().slice(0, 10)
+  const sentAt = typeof d.ycEveningMatchSentAt === "string" ? d.ycEveningMatchSentAt : ""
+  if (sentAt.slice(0, 10) === day) return { ok: false, reason: "already_sent_today" }
+
+  // REAL matches via the exact matcher Claire's find_match tool uses (V16 —
+  // url guard, collab start tokens, recommendation-state dedup all inside).
+  const match = await deps.findMatch({ userId, requestedCount: 3 })
+  if (!match.ok || match.recCount === 0 || match.jobs.length === 0) {
+    // NO invented matches, NO auto-excuse text — surface to the operator instead.
+    return { ok: false, reason: "no_matches", recCount: 0 }
+  }
+
+  // Deterministic founder-framed delivery — verbatim via the runtime
+  // trusted-body path (kind-agnostic; STOP gates + dedup enforced downstream).
+  const body = [
+    "tonight's founder matches, as promised 🤝",
+    ...match.jobs,
+    "want me to make an intro to any of these? just say which one.",
+  ]
+    .join("\n\n")
+    .slice(0, 3900)
+
+  const result = await deps.sendImessage(
+    {
+      userId,
+      context: {
+        eventKind: "yc_evening_founder_matches",
+        source: "yc_intake_admin",
+        trustedOutboundBody: body,
+      },
+      idempotencyKey: `yc-evening-match:${userId}:${day}`,
+    },
+    { db: deps.db, log: (...args: unknown[]) => logger.info("[yc-send-matches]", ...args) },
+  )
+  if (result.ok) {
+    await userRef.set({ ycEveningMatchSentAt: nowIso(), updatedAt: nowIso() }, { merge: true })
+  }
+  return result.ok
+    ? { ok: true, recCount: match.recCount }
+    : { ok: false, reason: "runtime_handoff_failed" }
+}
+
+export const paAdminYcIntakeToday = onCall(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
+  async (req) => {
+    authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
+    return runYcIntakeToday({ db: getFirestore() })
+  },
+)
+
+export const paAdminYcSendMatches = onCall(
+  { region: "us-central1", memory: "1GiB", timeoutSeconds: 300, secrets: [PA_ADMIN_TOKEN] },
+  async (req) => {
+    authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
+    const input = SendMatchesInputSchema.safeParse(req.data ?? {})
+    if (!input.success) throw new HttpsError("invalid-argument", "userId required")
+    const db = getFirestore()
+    const { sendImessage } = await import("@pa/job-rec")
+    const { makeV16FindMatch } = await import("./claire-agent/tools/matching-tools.js")
+    const findMatch = makeV16FindMatch(db)
+    if (!findMatch) throw new HttpsError("internal", "matcher_unavailable")
+    return runYcSendMatches({ db, findMatch, sendImessage }, input.data.userId)
+  },
+)

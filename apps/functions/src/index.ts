@@ -433,6 +433,8 @@ export { paInboundEmailWebhook } from "./inbound-email-webhook.js"
 // Backs the /admin/users/:id "Communications" panel so operator decisions see
 // the FULL conversation, not just SMS. Read-only, admin-gated.
 export { paAdminCandidateComms } from "./admin-candidate-comms.js"
+// v2026-07-21 — YC Startup School event intake operator queue (list + one-click evening send).
+export { paAdminYcIntakeToday, paAdminYcSendMatches } from "./yc-intake-admin.js"
 
 // HITL email-review surfaces: list pending auto-reply DRAFTS, approve+send (or
 // edit-then-send) / dismiss a draft, and list the pa-inbound-emails-unmatched
@@ -1156,11 +1158,14 @@ async function processBrokerImessageEvent(
       return 1
     }
     if (qrProvision.shouldProvision && qrProvision.scan) {
-      // QR opener — stamp source='qr_imessage' + the campaign, and reconcile the
-      // scan-time sticky number onto the new profile (override-first, doc §3.4).
+      // QR opener — stamp the campaign-mapped source (yc-startup-school event QR
+      // → yc_startup_school so Claire's yc event intake fires; default
+      // qr_imessage) + the campaign, and reconcile the scan-time sticky number
+      // onto the new profile (override-first, doc §3.4).
       const scan = qrProvision.scan
+      const { qrCampaignSource } = await import("./qr-onboarding/scan.js")
       user = await createProvisionalUser(db, payload.participant, {
-        source: "qr_imessage",
+        source: qrCampaignSource(scan.campaign),
         firstTouchCampaign: scan.campaign,
         senderNumber: scan.number,
         senderGroupId: scan.groupId,

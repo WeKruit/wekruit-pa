@@ -91,6 +91,7 @@ import PartnerStats from "./pages/PartnerStats.js"
 import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
+import YcIntake from "./pages/YcIntake.js"
 // Recruiter board (wekruit-recruiters.web.app/recruiters) — admin review surface.
 import EmailReview from "./pages/EmailReview.js"
 import RecruiterSubmissions from "./pages/RecruiterSubmissions.js"
@@ -286,6 +287,7 @@ export default function App() {
           <Route path="/admin/qr-campaigns" element={<QrCampaigns />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
+          <Route path="/admin/yc-intake" element={<YcIntake />} />
           {/* Interview bookings (pa-interview-bookings) + operator outcome-stamp. */}
           <Route path="/admin/interviews" element={<Interviews />} />
           {/* HITL inbound-email review — approve auto-reply drafts before send +
