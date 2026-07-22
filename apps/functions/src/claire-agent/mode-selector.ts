@@ -35,6 +35,7 @@ import {
   SHARED_ONBOARDING_WORK_SESSION_KIND,
   parseLinkedinDoneOpener,
   isSharedOnboardingGreetingOrKickoff,
+  isYcEventOpenerText,
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
 import type { ClaireMode } from "./types.js"
@@ -649,8 +650,30 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     completedAt?: unknown
     linkedinNudgedAt?: unknown
   } | null
+  // EXISTING-USER EVENT ENTRY (Noah live test 2026-07-22): an already-registered user
+  // who scans the event QR sends the YC opener but keeps their sticky non-yc source →
+  // they got the standard "want me to pull you roles?" posture instead of the event
+  // flow. The opener text itself flips them in: stamp durable ycEventEntryAt once and
+  // treat (source==yc OR ycEventEntryAt OR opener-this-turn) as the yc event user.
+  const ycOpenerTurn =
+    user.source !== "yc_startup_school" &&
+    !user.ycEventEntryAt &&
+    isYcEventOpenerText(args.inboundText ?? "")
+  const isYcEventUser =
+    user.source === "yc_startup_school" || !!user.ycEventEntryAt || ycOpenerTurn
+  if (ycOpenerTurn) {
+    try {
+      await args.db
+        .collection(USERS)
+        .doc(args.userId)
+        .set({ ycEventEntryAt: new Date().toISOString() }, { merge: true })
+    } catch {
+      // Stamp failure → posture still applies this turn; next opener-less turn falls
+      // back to standard posture until a retry lands. Never block the reply.
+    }
+  }
   let ycEventIntake: ModeDecision["ycEventIntake"]
-  if (user.source === "yc_startup_school" && !ycIntakeState?.completedAt) {
+  if (isYcEventUser && !ycIntakeState?.completedAt) {
     // FIRST CONTACT: opener/greeting text + nothing recorded yet → the
     // deterministic event kickoff owns the turn (agent.ts short-circuit).
     const kickoff =
@@ -688,10 +711,9 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   const posture: {
     entryPosture?: "yc_startup_school"
     ycEventIntake?: ModeDecision["ycEventIntake"]
-  } =
-    user.source === "yc_startup_school"
-      ? { entryPosture: "yc_startup_school", ...(ycEventIntake ? { ycEventIntake } : {}) }
-      : {}
+  } = isYcEventUser
+    ? { entryPosture: "yc_startup_school", ...(ycEventIntake ? { ycEventIntake } : {}) }
+    : {}
 
   // 2026-06-04 (#1 re-ask fix): the canonical user tags + the legacy statedPreferences mirror from the
   // SAME pa-users snapshot (zero extra read). The onboarding slot picker consults these so it NEVER

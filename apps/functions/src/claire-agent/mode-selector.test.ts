@@ -593,6 +593,47 @@ test("YC EVENT INTAKE: incomplete ycIntake → ycEventIntake slot progression ri
   assert.equal(done.ycEventIntake, undefined)
 })
 
+test("YC EVENT ENTRY: existing non-yc user sending the YC opener flips into the event posture (Noah 2026-07-22)", async () => {
+  const opener = "Hey! I'm at YC Startup School — my code is 3f9c2a10-8b4e-4d6f-9a12-77cc01ab34de"
+  // Existing candidate: sticky source, résumé on file, onboarding complete — pre-fix
+  // they kept the standard "pull you roles?" posture.
+  const fake = makeDb({
+    source: "qr_imessage",
+    onboardingState: "complete",
+    latestResumeArtifactId: "candidate_upload_noah",
+    pitchedAt: "2026-06-01T00:00:00.000Z",
+  })
+  const flip = await selectClaireMode({ db: fake.db, userId: NONCANARY_UID, inboundText: opener })
+  assert.equal(flip.entryPosture, "yc_startup_school", "opener turn → yc posture despite sticky source")
+  assert.equal(flip.ycEventIntake?.kickoff, true, "opener → deterministic event kickoff")
+  assert.equal(flip.ycEventIntake?.offerLinkedin, false, "résumé on file → no LinkedIn offer")
+  const stamped = fake.writes().find((w) => typeof w.ycEventEntryAt === "string")
+  assert.ok(stamped, "ycEventEntryAt stamped for durable posture on later turns")
+
+  // Later turn: stamp present, plain answer text → posture + intake persist, no re-kickoff.
+  const later = await selectClaireMode({
+    ...{
+      db: makeDb({
+        source: "qr_imessage",
+        onboardingState: "complete",
+        latestResumeArtifactId: "candidate_upload_noah",
+        ycEventEntryAt: "2026-07-22T19:00:00.000Z",
+      }).db,
+    },
+    userId: NONCANARY_UID,
+    inboundText: "i want to meet infra founders",
+  })
+  assert.equal(later.entryPosture, "yc_startup_school")
+  assert.equal(later.ycEventIntake?.kickoff, undefined)
+  assert.equal(later.ycEventIntake?.nudgeLinkedin, undefined, "background ingested → never a LinkedIn nudge")
+
+  // Plain text from a non-yc user WITHOUT the opener/stamp → byte-unchanged standard posture.
+  const plainFake = makeDb({ source: "qr_imessage", onboardingState: "complete" })
+  const plain = await selectClaireMode({ db: plainFake.db, userId: NONCANARY_UID, inboundText: "hey" })
+  assert.equal(plain.entryPosture, undefined)
+  assert.equal(plainFake.writes().some((w) => "ycEventEntryAt" in w), false, "no stray stamp")
+})
+
 test("YC EVENT INTAKE: opener first-contact turn carries kickoff:true; later turns do not", async () => {
   const opener = "Hey! I'm at YC Startup School — my code is 3f9c2a10-8b4e-4d6f-9a12-77cc01ab34de"
   const first = await selectClaireMode({
