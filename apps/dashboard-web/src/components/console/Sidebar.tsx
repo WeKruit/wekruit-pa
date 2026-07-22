@@ -173,6 +173,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/conversation-feedback", label: "Conversation feedback" },
       { to: "/admin/qa-evaluator", label: "QA evaluator" },
       { to: "/admin/prescreen-feedback", label: "Prescreen feedback" },
+      { to: "/admin/yc-intake", label: "YC intake" },
       { to: "/admin/external-supply/review", label: "Review queue" },
       { to: "/admin/external-supply/evaluations", label: "Evaluations" },
     ],

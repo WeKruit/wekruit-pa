@@ -543,16 +543,66 @@ export async function handleSendblueWebhook(
           .get()
         if (!snap.empty) {
           const docRef = snap.docs[0]!.ref
+          const row = (snap.docs[0]!.data() ?? {}) as Record<string, unknown>
           const nowIso = new Date().toISOString()
           const patch: Record<string, unknown> = {
             sendblueStatus: sbStatus,
             updatedAt: nowIso,
             expiresAtTs: outboundExpiresAtTs(),
           }
+          // Green-bubble telemetry (2026-07-21): persist the delivery service +
+          // downgrade flag so we can see how much of the fleet is SMS-only.
+          if (typeof payload.service === "string") patch.sendblueService = payload.service
+          if (typeof payload.was_downgraded === "boolean")
+            patch.sendblueWasDowngraded = payload.was_downgraded
           if (sbStatus === "DELIVERED") patch.sendblueDeliveredAt = nowIso
           if (sbStatus === "FAILED" || sbStatus === "ERROR")
             patch.sendblueFailedAt = nowIso
           await docRef.set(patch, { merge: true })
+          // ONE-SHOT SMS FALLBACK (Adam 2026-07-21): an iMessage that failed
+          // DELIVERY (POST was 2xx, recipient likely Android/green-bubble or
+          // flaky) gets exactly one re-send — with allowSMS on every send,
+          // the retry is Sendblue's chance to downgrade to SMS. Guards:
+          // smsFallbackAt stamp (never twice), body+user present, and never
+          // for rows that ARE a fallback already. Outbox re-applies every send
+          // gate (STOP suppression, prior-inbound, caps) on delivery.
+          if (
+            (sbStatus === "FAILED" || sbStatus === "ERROR") &&
+            !row.smsFallbackAt &&
+            row.runtimeSource !== "sendblue_sms_fallback" &&
+            typeof row.body === "string" &&
+            row.body.length > 0 &&
+            typeof row.userId === "string" &&
+            typeof row.toE164 === "string" &&
+            typeof row.idempotencyKey === "string"
+          ) {
+            try {
+              await enqueueOutbound(deps.db, {
+                userId: row.userId,
+                toE164: row.toE164,
+                ...(typeof row.fromNumber === "string" ? { fromNumber: row.fromNumber } : {}),
+                ...(typeof row.imessageChatId === "string"
+                  ? { imessageChatId: row.imessageChatId }
+                  : {}),
+                body: row.body,
+                allowRepeat: true,
+                idempotencyKey: `${row.idempotencyKey}:sms-fallback`,
+                runtimeApproved: true,
+                runtimeSource: "sendblue_sms_fallback",
+              })
+              await docRef.set({ smsFallbackAt: nowIso }, { merge: true })
+              log("[sendblue][webhook] sms_fallback_enqueued", {
+                handle,
+                docId: snap.docs[0]!.id,
+                userId: row.userId,
+              })
+            } catch (fbErr) {
+              log(
+                "[sendblue][webhook] sms_fallback_enqueue_failed (non-fatal)",
+                fbErr instanceof Error ? fbErr.message : String(fbErr),
+              )
+            }
+          }
           log("[sendblue][webhook] outbound_status_tracked", {
             handle,
             sendblueStatus: sbStatus,

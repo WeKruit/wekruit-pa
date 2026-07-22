@@ -205,3 +205,42 @@ test("warm greeting example names are fenced — live probe caught 'hey Adam' bl
   assert.match(warm, /THE NAMES IN THESE EXAMPLES ARE FAKE/)
   assert.match(warm, /greet WITHOUT any name/)
 })
+
+test("YC EVENT INTAKE directive renders slots + one-nudge consequence + 7pm close", () => {
+  // nudgeLinkedin turn (the ONE mode-selector-flagged turn) → mandatory consequence heads-up.
+  const nudgeTurn = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "building", offerLinkedin: true, nudgeLinkedin: true },
+  })
+  assert.match(nudgeTurn, /YC EVENT INTAKE/)
+  assert.match(nudgeTurn, /LINKEDIN NUDGE — MANDATORY THIS TURN/)
+  assert.match(nudgeTurn, /founders see a much thinner profile/)
+  assert.match(nudgeTurn, /what are they building/)
+  assert.match(nudgeTurn, /record_yc_intake\(field='building'\)/)
+  assert.match(nudgeTurn, /TONIGHT AROUND 7PM/)
+
+  // Already nudged (flag absent, LinkedIn still unconnected) → hard "never again".
+  const afterNudge = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "building", offerLinkedin: true },
+  })
+  assert.match(afterNudge, /NEVER bring it up again unless THEY ask/)
+  assert.doesNotMatch(afterNudge, /MANDATORY THIS TURN/)
+
+  const second = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "wants_to_meet", offerLinkedin: false },
+  })
+  assert.match(second, /do NOT re-offer LinkedIn/)
+  assert.match(second, /record_yc_intake\(field='wants_to_meet'\)/)
+
+  // Intake absent → no intake block (plain posture only).
+  const plain = buildClaireTurnContext({ mode: "triage", lang: "en", entryPosture: "yc_startup_school" })
+  assert.doesNotMatch(plain, /YC EVENT INTAKE \(they scanned/)
+})

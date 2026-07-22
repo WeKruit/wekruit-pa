@@ -123,6 +123,8 @@ export {
   isSharedOnboardingActiveUser,
   buildHelloWekruitOpenerBody,
   buildBindCodeOpenerBody,
+  buildYcEventOpenerBody,
+  YC_EVENT_OPENER_PREFIX,
   parseHelloWekruitOpener,
   looksLikeGarbledStartToken,
   BIND_CODE_ALPHABET,

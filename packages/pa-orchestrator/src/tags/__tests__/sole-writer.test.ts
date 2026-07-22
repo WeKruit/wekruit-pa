@@ -43,6 +43,11 @@ const SOLE_WRITER_ALLOWLIST: ReadonlyArray<string> = [
   // tests). The audit's intent — "no FREE-FORM tag writes" — is satisfied
   // because cv-ingest's path is constrained to the mergeUserTags output.
   "apps/functions/src/cv-ingest/cv-ingest.ts",
+  // flywheel-regression-replay (#276, 2026-07-21) — seeds the `before` tags
+  // baseline onto a synthetic `__regression_replay__*` SCRATCH doc, then runs
+  // the actual replay THROUGH applyPartialUserTags (the sole writer). Never a
+  // real user, never a free-form production tags write.
+  "apps/functions/src/flywheel-regression-replay.ts",
   // candidate-reinit (321e9b18) — the global-profile RESET path. After a full
   // memory/profile wipe it writes the RE-ENRICHED tags computed by mergeUserTags
   // (the canonical pure merger) from the preserved parsed résumé. Same rationale

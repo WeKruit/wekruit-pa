@@ -19,10 +19,21 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { parseHelloWekruitOpener } from "@pa/pa-orchestrator"
 
+/** YC Startup School event campaign (Adam 2026-07-21). The printed QR encodes
+ *  wekruit.com/start?c=yc-startup-school; scanners get the YC opener copy, and
+ *  provision stamps source=yc_startup_school (→ Claire's yc event intake). */
+export const YC_EVENT_CAMPAIGN = "yc-startup-school"
+
 /** Designated canary campaign codes (besides the `dev-` prefix). Widen HERE to ramp. */
 export const CANARY_CAMPAIGNS: ReadonlySet<string> = new Set<string>([
   "dev-card", // canonical dev/test card
+  YC_EVENT_CAMPAIGN, // YC Startup School event QR — live cold-start (Adam 2026-07-21)
 ])
+
+/** Campaign→pa-users.source map for QR auto-provision. Default stays qr_imessage. */
+export function qrCampaignSource(campaign: string | null | undefined): "qr_imessage" | "yc_startup_school" {
+  return normalizeCampaignCode(campaign) === YC_EVENT_CAMPAIGN ? "yc_startup_school" : "qr_imessage"
+}
 
 /**
  * Dev re-onboard bypass (Adam decision 2026-06-01): these known DEV uids can test

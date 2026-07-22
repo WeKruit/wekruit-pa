@@ -30,7 +30,7 @@ test("done handoff continues an existing Claire conversation when verification p
   assert.match(source, /claireConversationStarted: boolean/)
   assert.match(source, /const continuingClaireConversation = claireConversationStarted \|\| isJobInterview/)
   assert.match(source, /Claire already has your thread/)
-  assert.match(source, /continuingClaireConversation \? "Continue with Claire" : "Open Claire in iMessage"/)
+  assert.match(source, /continuingClaireConversation\s*\n?\s*\? "Continue with Claire"/)
   assert.match(source, /I’ll pick up from our existing thread\./)
   assert.match(source, /Claire thread found/)
 })

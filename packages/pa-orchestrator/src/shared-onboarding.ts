@@ -255,6 +255,15 @@ const VERIFICATION_CODE_OPENER_RE =
 /** Legacy form: "Hello, WeKruit! <token>". Back-compat — in-flight QR links still emit this. */
 const HELLO_WEKRUIT_OPENER_RE =
   /^hello,?\s*wekruit!?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+/** YC Startup School event QR opener (Adam 2026-07-21): the printed QR routes to
+ *  sms: with "Hey! I'm at YC Startup School — my code is <scanToken>". Tolerant of
+ *  autocorrect drift: optional "Hey", straight/curly apostrophes, "this is code" /
+ *  "this is my code" / "my code is" / bare "code", any dash/punctuation run before
+ *  the code clause. Token = the QR scanToken (UUID) → parses as candidateId like
+ *  every other QR opener. */
+export const YC_EVENT_OPENER_PREFIX = "Hey! I'm at YC Startup School — my code is"
+const YC_EVENT_OPENER_RE =
+  /^(?:hey|hi|hello)?[!,.\s]*i['’]?m at yc startup school[\s,!.…—–-]*(?:this is\s+(?:my\s+)?code(?:\s+is)?|my\s+code\s+is|code(?:\s+is)?)?\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
 // Prescreen job opener. Accepts BOTH forms (2026-06-13):
 //   - JOB-ONLY (NEW): "WeKruit_<jobId>_Job" — no uid (phone-is-auth identity).
 //   - JOB+UID (LEGACY, back-compat for in-flight tokens): "WeKruit_<jobId>_<uid>_Job".
@@ -359,6 +368,15 @@ export function buildBindCodeOpenerBody(code: string): string {
   return `${VERIFICATION_CODE_OPENER_PREFIX} ${c}`
 }
 
+/** Build the YC Startup School event QR opener body ("Hey! I'm at YC Startup
+ *  School — my code is <scanToken>"). Same scanToken plumbing as the standard
+ *  QR opener — only the printed copy differs (Adam 2026-07-21). */
+export function buildYcEventOpenerBody(scanToken: string): string {
+  const t = scanToken.trim()
+  if (!t) return YC_EVENT_OPENER_PREFIX
+  return `${YC_EVENT_OPENER_PREFIX} ${t}`
+}
+
 /**
  * Parse inbound opener; returns candidateId when the suffix is present. Accepts the
  * new verification-code phrasing AND the legacy "Hello, WeKruit!" phrasing (back-compat
@@ -401,7 +419,8 @@ export function parseHelloWekruitOpener(
   const match =
     trimmed.match(HI_WEKRUIT_OPENER_RE) ??
     trimmed.match(VERIFICATION_CODE_OPENER_RE) ??
-    trimmed.match(HELLO_WEKRUIT_OPENER_RE)
+    trimmed.match(HELLO_WEKRUIT_OPENER_RE) ??
+    trimmed.match(YC_EVENT_OPENER_RE)
   if (!match) return null
   const token = match[1]?.trim()
   if (!token) return null
@@ -462,6 +481,8 @@ export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {
   if (/^hello wekruit(?: [a-z0-9_-]+)?$/.test(normalized)) return true
   // New verification-code opener phrasing, normalized: "hi wekruit my verification code is <token>".
   if (/^hi wekruit my verification code is(?: [a-z0-9_-]+)?$/.test(normalized)) return true
+  // YC Startup School event QR opener, normalized (covers the tokenless send too).
+  if (/^(?:hey |hi |hello )?i ?m at yc startup school/.test(normalized)) return true
   return /^(?:hello|hi|hey|yo|sup|\u4f60\u597d|\u60a8\u597d|\u54c8\u55bd|\u5728\u5417)(?:\s+(?:wekruit|claire))?$/.test(normalized)
 }
 

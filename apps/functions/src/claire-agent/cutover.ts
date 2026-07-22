@@ -1506,6 +1506,10 @@ export async function maybeRunThinClaire(
         // ENTRY POSTURE (Adam 2026-07-20): entry-page tone overlay (yc_startup_school = founder-scene
         // chat, no pushing, notify-on-match promise). Set by mode-selector from pa-users.source.
         ...(decision.entryPosture ? { entryPosture: decision.entryPosture } : {}),
+        // YC EVENT INTAKE (Adam 2026-07-21): event-QR guided mini-intake directive (LinkedIn offer +
+        // building/wants-to-meet questions + the tonight-around-7pm close). Present until
+        // pa-users.ycIntake.completedAt is stamped by record_yc_intake.
+        ...(decision.ycEventIntake ? { ycEventIntake: decision.ycEventIntake } : {}),
         // COLD OFFER-FIRST (Adam 2026-06-03): brand-new candidate → deterministic LinkedIn-recommended /
         // résumé offer + NO onboarding question (pitch fires after they connect/drop). Canary by construction.
         ...(decision.offerFirstKickoff ? { offerFirstKickoff: true } : {}),

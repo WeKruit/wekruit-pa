@@ -34,6 +34,7 @@ import {
   buildSharedOnboardingPrompt,
   SHARED_ONBOARDING_WORK_SESSION_KIND,
   parseLinkedinDoneOpener,
+  isSharedOnboardingGreetingOrKickoff,
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
 import type { ClaireMode } from "./types.js"
@@ -163,6 +164,26 @@ export interface ModeDecision {
    *  email when a founder match pops. Per-user-stable (source is frozen at registration). Add future
    *  entry pages here as new literals. */
   entryPosture?: "yc_startup_school"
+  /** YC EVENT INTAKE (Adam 2026-07-21): the event-QR guided mini-intake. Present while
+   *  pa-users.ycIntake is incomplete for a yc_startup_school user — carries the next
+   *  free-text slot to ask ("building" → "wants_to_meet") and whether the LinkedIn
+   *  one-tap offer should lead (no ingested background yet). Cleared (undefined) once
+   *  ycIntake.completedAt is stamped by the record_yc_intake tool — the plain yc
+   *  retention posture then owns the tone. */
+  ycEventIntake?: {
+    next: "building" | "wants_to_meet"
+    offerLinkedin: boolean
+    /** True on the FIRST-CONTACT turn (greeting/opener text, nothing recorded yet) —
+     *  agent.ts sends the DETERMINISTIC event kickoff (greeting + LinkedIn link + the
+     *  building question) and skips the model, so the opener can never be mis-recorded
+     *  as an answer and the LinkedIn offer can never be dropped (live probe 2026-07-22). */
+    kickoff?: boolean
+    /** True on exactly ONE turn: the first non-kickoff turn where LinkedIn is still
+     *  unconnected — the prompt makes the honest consequence heads-up (weaker matching,
+     *  thinner profile) MANDATORY that turn. Stamped via ycIntake.linkedinNudgedAt so it
+     *  can never repeat (prompt-only "nudge once" under-fired on the 2026-07-22 live probe). */
+    nudgeLinkedin?: boolean
+  }
 }
 
 export interface SelectModeArgs {
@@ -622,8 +643,55 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // Those candidates get a tone overlay on every agent turn (light founder-scene chat, no pushing,
   // "I'll text here + email when a founder match pops") instead of the standard progression posture.
   // Pure structured read off the SAME snapshot — zero extra reads, NO LLM.
-  const posture: { entryPosture?: "yc_startup_school" } =
-    user.source === "yc_startup_school" ? { entryPosture: "yc_startup_school" } : {}
+  const ycIntakeState = (user.ycIntake ?? null) as {
+    building?: unknown
+    wantsToMeet?: unknown
+    completedAt?: unknown
+    linkedinNudgedAt?: unknown
+  } | null
+  let ycEventIntake: ModeDecision["ycEventIntake"]
+  if (user.source === "yc_startup_school" && !ycIntakeState?.completedAt) {
+    // FIRST CONTACT: opener/greeting text + nothing recorded yet → the
+    // deterministic event kickoff owns the turn (agent.ts short-circuit).
+    const kickoff =
+      !ycIntakeState?.building &&
+      !ycIntakeState?.wantsToMeet &&
+      isSharedOnboardingGreetingOrKickoff(args.inboundText ?? "")
+    // LinkedIn one-tap leads the intake until real background lands (the
+    // Coresignal enrich flips hasIngestedBackground on re-entry).
+    const offerLinkedin = !hasIngestedBackground(user)
+    // ONE deterministic consequence nudge (Adam 2026-07-21: "tell them it will be bad
+    // for matching and their image"): the offer went out on the kickoff; the FIRST
+    // non-kickoff turn with LinkedIn still unconnected carries the mandatory heads-up.
+    // Stamped immediately so it can never fire twice — under-nudge beats nagging.
+    const nudgeLinkedin = offerLinkedin && !kickoff && !ycIntakeState?.linkedinNudgedAt
+    ycEventIntake = {
+      next: !ycIntakeState?.building ? "building" : "wants_to_meet",
+      offerLinkedin,
+      ...(kickoff ? { kickoff: true } : {}),
+      ...(nudgeLinkedin ? { nudgeLinkedin: true } : {}),
+    }
+    if (nudgeLinkedin) {
+      try {
+        await args.db
+          .collection(USERS)
+          .doc(args.userId)
+          .set(
+            { ycIntake: { ...(user.ycIntake ?? {}), linkedinNudgedAt: new Date().toISOString() } },
+            { merge: true },
+          )
+      } catch {
+        // Stamp failure → worst case a repeat nudge next turn; never block the reply.
+      }
+    }
+  }
+  const posture: {
+    entryPosture?: "yc_startup_school"
+    ycEventIntake?: ModeDecision["ycEventIntake"]
+  } =
+    user.source === "yc_startup_school"
+      ? { entryPosture: "yc_startup_school", ...(ycEventIntake ? { ycEventIntake } : {}) }
+      : {}
 
   // 2026-06-04 (#1 re-ask fix): the canonical user tags + the legacy statedPreferences mirror from the
   // SAME pa-users snapshot (zero extra read). The onboarding slot picker consults these so it NEVER
