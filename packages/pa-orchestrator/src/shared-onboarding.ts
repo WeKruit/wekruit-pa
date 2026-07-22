@@ -264,6 +264,14 @@ const HELLO_WEKRUIT_OPENER_RE =
 export const YC_EVENT_OPENER_PREFIX = "Hey! I'm at YC Startup School — my code is"
 const YC_EVENT_OPENER_RE =
   /^(?:hey|hi|hello)?[!,.\s]*i['’]?m at yc startup school[\s,!.…—–-]*(?:this is\s+(?:my\s+)?code(?:\s+is)?|my\s+code\s+is|code(?:\s+is)?)?\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+/** True when the text is the YC event QR opener. Used by the mode selector to flip an
+ *  EXISTING (non-yc-source) user into the YC event posture when they scan the event QR
+ *  (Noah live test 2026-07-22: existing account + YC opener got "want me to pull you
+ *  roles?" instead of the event intake — source is first-write-sticky, so the opener
+ *  text itself must carry the event entry). */
+export function isYcEventOpenerText(text: string): boolean {
+  return YC_EVENT_OPENER_RE.test(text.trim())
+}
 // Prescreen job opener. Accepts BOTH forms (2026-06-13):
 //   - JOB-ONLY (NEW): "WeKruit_<jobId>_Job" — no uid (phone-is-auth identity).
 //   - JOB+UID (LEGACY, back-compat for in-flight tokens): "WeKruit_<jobId>_<uid>_Job".
