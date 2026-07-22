@@ -1013,9 +1013,9 @@ export async function runClaireTurn(
       ...(deps.ycEventIntake.offerLinkedin
         ? [
             `quick unlock so founders see your real background: log in with LinkedIn (one tap) 👉 ${connectUrl}`,
+            "while that's cooking — what are you building right now?",
           ]
-        : []),
-      "while that's cooking — what are you building right now?",
+        : ["so — what are you building right now?"]),
       "reply STOP anytime to opt out.",
     ]
     const message = parts.join("\n\n")
