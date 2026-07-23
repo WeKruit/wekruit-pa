@@ -52,6 +52,7 @@ import { isCanaryUser } from "../claire-agent/canary.js"
 import { buildSmsDeepLink } from "../qr-onboarding/qr-start-redirect.js"
 import { assignCandidateSenderNumber } from "../identity/candidate-sender-number.js"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
+import { enqueueOutbound } from "@pa/pa-broker"
 import {
   runCoresignalExperiencesMirror,
   makeFirestoreMirrorDeps,
@@ -159,6 +160,11 @@ export interface LinkedinConnectSubmitDeps {
   /** WS-1(b): set the durable enrichment-in-flight marker so a mid-enrich inbound holds.
    *  Optional so existing tests don't have to stub it. */
   markEnrichmentInFlight?: (userId: string, nowIso: string) => Promise<void>
+  /** FIRST-TOUCH ACK (Adam 2026-07-22): text an instant "pulling your background 👀" the
+   *  moment the submit lands — BEFORE the synchronous CoreSignal enrich — so the connect
+   *  never feels like dead air (live test: pitch bubbles landed 10-40s after connect).
+   *  Optional + fail-open so existing tests don't have to stub it. */
+  sendConnectAck?: (userId: string, token: string, nowIso: string) => Promise<void>
   /** Mark the token single-use after a successful submit. */
   markUsed: (token: string, nowIso: string) => Promise<void>
   /** Resolve the sms: reroute RECIPIENT = the user's WeKruit Sendblue number (NOT their own phone). */
@@ -227,6 +233,15 @@ export async function handleLinkedinConnectSubmit(
     // "still pulling your info, one sec" directive. CLEARED by the resume_parse_completed re-entry
     // this CF emits (cutover clears on that turn). Best-effort; marker self-heals via TTL.
     await deps.markEnrichmentInFlight?.(userId, nowIso)
+    // FIRST-TOUCH ACK — before the synchronous enrich, so the tap gets instant feedback.
+    try {
+      await deps.sendConnectAck?.(userId, token, nowIso)
+    } catch (err) {
+      logger.warn("linkedin_connect.ack_failed_fail_open", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
     const apiKey = deps.coresignalApiKey()
     if (apiKey) {
       try {
@@ -653,6 +668,22 @@ function makeProdDeps(db: Firestore): LinkedinConnectSubmitDeps {
     },
     persistUrl: (userId, canonicalUrl, nowIso) => persistLinkedinUrlIfEmpty(db, userId, canonicalUrl, nowIso),
     isCanary: (userId) => isCanaryUser(userId),
+    sendConnectAck: async (userId, token, nowIso) => {
+      const phone = await resolvePhone(db, userId)
+      if (!phone) return
+      // paced:true → outbox posts immediately (no length dwell); idempotency on the
+      // single-use connect token → exactly one ack per connect flow, retries dedup.
+      await enqueueOutbound(db, {
+        userId,
+        toE164: phone,
+        body: "linkedin's in ✅ pulling your background now — give me a sec",
+        paced: true,
+        idempotencyKey: `linkedin-connect-ack:${userId}:${token}`,
+        runtimeApproved: true,
+        runtimeSource: "pa_orchestrator",
+      })
+      logger.info("linkedin_connect.ack_sent", { userId, at: nowIso })
+    },
     coresignalApiKey: () => CORESIGNAL_API_KEY.value().trim(),
     enrich: ({ userId, canonicalUrl, apiKey, nowIso }) =>
       enrichFromCoresignal({ db, userId, canonicalUrl, apiKey, nowIso }),
