@@ -26,3 +26,8 @@ test("legacy open route resolves to the canonical candidate market", () => {
   assert.doesNotMatch(source, /import OpenJobs from "\.\/pages\/OpenJobs\.js"/)
   assert.doesNotMatch(source, /<Route path="\/open" element=\{<OpenJobs \/>\} \/>/)
 })
+
+test("YC Startup route renders the dedicated attendee page", () => {
+  assert.match(source, /import YcStartup from "\.\/pages\/YcStartup\.js"/)
+  assert.match(source, /<Route path="\/yc-startup" element=\{<YcStartup \/>\} \/>/)
+})

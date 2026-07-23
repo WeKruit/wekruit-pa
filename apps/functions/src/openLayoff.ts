@@ -202,6 +202,24 @@ function hasNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0
 }
 
+function hasNonEmptyRecord(value: unknown): boolean {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0)
+}
+
+function hasExistingProfilePath(value: Record<string, unknown>): boolean {
+  return Boolean(
+    value.linkedinOauthLinked === true ||
+      hasNonEmptyString(value.linkedinUrl) ||
+      hasNonEmptyString(value.latestResumeArtifactId) ||
+      hasNonEmptyString(value.resumeArtifactId) ||
+      hasNonEmptyString(value.latestResumeId) ||
+      hasNonEmptyString(value.resumeFileName) ||
+      hasNonEmptyRecord(value.candidateContext) ||
+      hasNonEmptyRecord(value.layoffContext) ||
+      hasNonEmptyRecord(value.tags),
+  )
+}
+
 function isApprovedEmployerScreeningPacket(value: unknown): boolean {
   if (!value || typeof value !== "object") return false
   const packet = value as Record<string, unknown>
@@ -231,17 +249,15 @@ export async function runRegisterLayoffCandidate(
     throw new HttpsError("invalid-argument", "Missing required fields")
   }
 
-  let oauthLinkedinSatisfied = false
+  let existingProfilePathSatisfied = false
   const explicitIdEarly = cleanString(v.candidateId, 128)
   if (explicitIdEarly) {
     const earlySnap = await deps.db.collection(PA_COLLECTIONS.users).doc(explicitIdEarly).get()
     const early = earlySnap.data() ?? {}
-    oauthLinkedinSatisfied =
-      early.linkedinOauthLinked === true ||
-      (typeof early.linkedinUrl === "string" && early.linkedinUrl.includes("/oauth-linked/"))
+    existingProfilePathSatisfied = hasExistingProfilePath(early)
   }
   const hasProfilePath =
-    oauthLinkedinSatisfied ||
+    existingProfilePathSatisfied ||
     Boolean(cleanString(v.resumeFileName)) ||
     Boolean(cleanString(v.linkedin, 500)) ||
     Boolean(cleanString(v.personalWebsite, 500))

@@ -1,7 +1,7 @@
 // Source resolver for unified layoff + candidate funnel.
 //
 // Priority (first hit wins):
-//   1. URL ?source=layoff | ?source=candidate
+//   1. URL ?source=layoff | ?source=candidate | ?source=yc_startup_school
 //   2. hostname starts with "layoff." (or layoff-wekruit.web.app)
 //   3. cookie wko_source (set on a previous visit)
 //   4. default "candidate"
@@ -13,7 +13,7 @@
 
 import { cookieDomainForHost } from "./browser-identity"
 
-export type SignupSource = "WeKruit_Laid_Off" | "candidate" | "layoffhedge"
+export type SignupSource = "WeKruit_Laid_Off" | "candidate" | "layoffhedge" | "yc_startup_school"
 
 /**
  * Build marker — minifiers rename exported function names, so the deploy
@@ -36,6 +36,7 @@ function sourceFromQueryValue(v: string | null): SignupSource | null {
   if (v === "layoff" || v === "WeKruit_Laid_Off") return "WeKruit_Laid_Off"
   if (v === "candidate") return "candidate"
   if (v === "layoffhedge") return "layoffhedge"
+  if (v === "yc_startup_school") return "yc_startup_school"
   return null
 }
 
@@ -51,7 +52,7 @@ function cookieSource(): SignupSource | null {
   const match = document.cookie.match(new RegExp("(?:^|; )" + COOKIE_NAME + "=([^;]+)"))
   if (!match) return null
   const v = decodeURIComponent(match[1])
-  if (v === "WeKruit_Laid_Off" || v === "candidate" || v === "layoffhedge") return v
+  if (v === "WeKruit_Laid_Off" || v === "candidate" || v === "layoffhedge" || v === "yc_startup_school") return v
   return null
 }
 

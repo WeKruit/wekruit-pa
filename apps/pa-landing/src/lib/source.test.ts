@@ -39,6 +39,13 @@ test("resolveSource honors a previously-written layoffhedge cookie", async () =>
   )
 })
 
+test("resolveSource returns yc_startup_school for the YC Startup School flow", async () => {
+  const mod = await import("./source.js?case=urlYcStartupSchool")
+  withBrowser("https://wekruit.com/onboarding?source=yc_startup_school", "", () => {
+    assert.equal(mod.resolveSource(), "yc_startup_school")
+  })
+})
+
 test("resolveSource priority: URL beats cookie", async () => {
   const mod = await import("./source.js?case=priorityUrlOverCookie")
   withBrowser(
@@ -70,6 +77,22 @@ test("stickSourceFromLoginNext writes layoffhedge cookie when next carries it", 
     })
     mod.stickSourceFromLoginNext("/onboarding?source=layoffhedge")
     assert.match(cookieWritten, /^wko_source=layoffhedge;/)
+  })
+})
+
+test("stickSourceFromLoginNext writes YC Startup School cookie when next carries it", async () => {
+  const mod = await import("./source.js?case=stickyNextYcStartupSchool")
+  let cookieWritten = ""
+  withBrowser("https://wekruit.com/login", "", () => {
+    Object.defineProperty((globalThis as any).document, "cookie", {
+      configurable: true,
+      get: () => cookieWritten,
+      set: (v: string) => {
+        cookieWritten = v
+      },
+    })
+    mod.stickSourceFromLoginNext("/onboarding?source=yc_startup_school")
+    assert.match(cookieWritten, /^wko_source=yc_startup_school;/)
   })
 })
 

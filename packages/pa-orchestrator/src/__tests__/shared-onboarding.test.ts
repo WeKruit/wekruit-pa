@@ -33,7 +33,7 @@ import {
   shouldSharedOnboardingAdvanceDespiteJudge,
   sharedOnboardingSignupSource,
 } from "../shared-onboarding.js"
-import { WEKRUIT_CANDIDATE_SOURCE, WEKRUIT_LAYOFF_SOURCE } from "../onboarding.js"
+import { WEKRUIT_CANDIDATE_SOURCE, WEKRUIT_LAYOFF_SOURCE, WEKRUIT_YC_STARTUP_SOURCE } from "../onboarding.js"
 
 test("start-greeting opener (2026-06-02 #2) includes candidate id for phone binding", () => {
   assert.equal(buildHelloWekruitOpenerBody("abc_user_99"), "Hi, WeKruit! abc_user_99")
@@ -686,6 +686,10 @@ test("sharedOnboardingSignupSource: explicit WeKruit_Laid_Off opts into layoff",
 
 test("sharedOnboardingSignupSource: explicit candidate stays candidate", () => {
   assert.equal(sharedOnboardingSignupSource(WEKRUIT_CANDIDATE_SOURCE), WEKRUIT_CANDIDATE_SOURCE)
+})
+
+test("sharedOnboardingSignupSource: explicit YC Startup School stays attributed", () => {
+  assert.equal(sharedOnboardingSignupSource(WEKRUIT_YC_STARTUP_SOURCE), WEKRUIT_YC_STARTUP_SOURCE)
 })
 
 test("sharedOnboardingSignupSource: layoffhedge defaults to candidate", () => {

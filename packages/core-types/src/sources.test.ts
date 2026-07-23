@@ -4,13 +4,18 @@ import test from "node:test"
 import { PA_USER_SOURCES, PaUserSourceSchema, isPaUserSource } from "./sources.js"
 
 test("PA_USER_SOURCES contains the closed referral-partner enum", () => {
-  assert.equal(PA_USER_SOURCES.length, 9, "expected 9 sources including layoffhedge + qr_imessage")
+  assert.equal(PA_USER_SOURCES.length, 10, "expected 10 sources including layoffhedge + qr_imessage + yc_startup_school")
   assert.ok(PA_USER_SOURCES.includes("layoffhedge"))
   assert.ok(PA_USER_SOURCES.includes("qr_imessage"))
+  assert.ok(PA_USER_SOURCES.includes("yc_startup_school"))
 })
 
 test("PaUserSourceSchema accepts layoffhedge", () => {
   assert.equal(PaUserSourceSchema.parse("layoffhedge"), "layoffhedge")
+})
+
+test("PaUserSourceSchema accepts yc_startup_school", () => {
+  assert.equal(PaUserSourceSchema.parse("yc_startup_school"), "yc_startup_school")
 })
 
 test("PaUserSourceSchema rejects unknown values", () => {
@@ -22,6 +27,7 @@ test("isPaUserSource recognizes every literal in the tuple", () => {
     assert.equal(isPaUserSource(v), true, `expected ${v} to be a PaUserSource`)
   }
   assert.equal(isPaUserSource("layoffhedge"), true)
+  assert.equal(isPaUserSource("yc_startup_school"), true)
   assert.equal(isPaUserSource(""), false)
   assert.equal(isPaUserSource(undefined), false)
 })

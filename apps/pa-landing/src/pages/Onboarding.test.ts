@@ -35,6 +35,20 @@ test("done handoff continues an existing Claire conversation when verification p
   assert.match(source, /Claire thread found/)
 })
 
+test("YC Startup School onboarding keeps source, reuses profile context, and opens people-matching handoff", () => {
+  assert.match(source, /source === "yc_startup_school"/)
+  assert.match(source, /YC Startup School · SF people matching/)
+  assert.match(source, /Step 1 · Startup School context/)
+  assert.match(source, /profilePathAlreadyKnown/)
+  assert.match(source, /knownProfileSummary/)
+  assert.match(source, /Boolean\(verified\.hasExistingProfileInfo\)/)
+  assert.match(source, /Boolean\(verified\.linkedinUrl\)/)
+  assert.match(source, /Claire already has some of your background/)
+  assert.match(source, /No need to paste LinkedIn again/)
+  assert.match(source, /Startup School people-matching flow/)
+  assert.match(source, /yc_startup_school_signup/)
+})
+
 test("signed-in onboarding offers existing Claire phone-thread linking before intake", () => {
   assert.match(source, /startCandidatePhoneLink/)
   assert.match(source, /verifyCandidatePhoneLink/)

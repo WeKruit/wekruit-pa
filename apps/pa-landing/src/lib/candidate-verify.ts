@@ -52,6 +52,8 @@ export async function verifyCandidateMagicLinkSession(options?: {
   senderGroupId?: string | null
   linkedinUrl?: string | null
   linkedinLinkedViaOauth?: boolean
+  hasExistingProfileInfo?: boolean
+  profileSummary?: string | null
 }> {
   const user = auth().currentUser
   if (!user) throw new CandidateVerifyError("not_signed_in", 401)
@@ -89,6 +91,8 @@ export async function verifyCandidateMagicLinkSession(options?: {
     senderGroupId?: string | null
     linkedinUrl?: string | null
     linkedinLinkedViaOauth?: boolean
+    hasExistingProfileInfo?: boolean
+    profileSummary?: string | null
     reason?: string
   }
   if (!res.ok || !data.ok || !data.candidateId) {
@@ -115,6 +119,8 @@ export async function verifyCandidateMagicLinkSession(options?: {
     senderGroupId: typeof data.senderGroupId === "string" ? data.senderGroupId : null,
     linkedinUrl: data.linkedinUrl ?? null,
     linkedinLinkedViaOauth: Boolean(data.linkedinLinkedViaOauth),
+    hasExistingProfileInfo: Boolean(data.hasExistingProfileInfo),
+    profileSummary: typeof data.profileSummary === "string" ? data.profileSummary : null,
   }
 }
 

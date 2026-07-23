@@ -212,6 +212,10 @@ test("onboardingDestination routes layoffhedge to the standard candidate path", 
   assert.equal(onboardingDestination("layoffhedge"), "/onboarding")
 })
 
+test("onboardingDestination preserves YC Startup School source", () => {
+  assert.equal(onboardingDestination("yc_startup_school"), "/onboarding?source=yc_startup_school")
+})
+
 test("onboardingDestination routes candidate to the standard path", () => {
   assert.equal(onboardingDestination("candidate"), "/onboarding")
 })

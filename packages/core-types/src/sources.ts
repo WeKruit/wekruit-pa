@@ -11,6 +11,7 @@
  *   - `candidate`         pa-landing public flow (web → SMS bridge, ats inbound)
  *   - `WeKruit_Laid_Off`  layoff.wekruit.com registration (openRegisterLayoffCandidate)
  *   - `layoffhedge`       external referral partner (layoffhedge.com); standard candidate UX
+ *   - `yc_startup_school` YC Startup School attendees; people-matching onboarding
  *   - `admin`             real WeKruit operator account created via dashboard
  *   - `dev_test`          local/manual dev script (one-off probes, seed-*)
  *   - `e2e_run`           e2e simulation scripts (e2e-*.mjs)
@@ -28,6 +29,7 @@ export const PA_USER_SOURCES = [
   "candidate",
   "WeKruit_Laid_Off",
   "layoffhedge",
+  "yc_startup_school",
   "admin",
   "dev_test",
   "e2e_run",

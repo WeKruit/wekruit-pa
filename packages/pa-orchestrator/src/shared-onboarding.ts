@@ -9,6 +9,7 @@ import { GuidedOpenJudge, type LlmCallFn } from "./onboarding/judges/guided-open
 import {
   WEKRUIT_CANDIDATE_SOURCE,
   WEKRUIT_LAYOFF_SOURCE,
+  WEKRUIT_YC_STARTUP_SOURCE,
   type WekruitSignupSource,
 } from "./onboarding.js"
 
@@ -1211,6 +1212,7 @@ export function buildSharedOnboardingStartedState(
 }
 
 function normalizedSource(value: unknown): WekruitSignupSource {
+  if (value === WEKRUIT_YC_STARTUP_SOURCE) return WEKRUIT_YC_STARTUP_SOURCE
   return value === WEKRUIT_LAYOFF_SOURCE ? WEKRUIT_LAYOFF_SOURCE : WEKRUIT_CANDIDATE_SOURCE
 }
 

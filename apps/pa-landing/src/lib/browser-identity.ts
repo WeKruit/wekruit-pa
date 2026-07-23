@@ -366,6 +366,8 @@ export function onboardingDestination(source: SignupSource = peekSource()): stri
     case "candidate":
     case "layoffhedge":
       return "/onboarding"
+    case "yc_startup_school":
+      return "/onboarding?source=yc_startup_school"
   }
 }
 

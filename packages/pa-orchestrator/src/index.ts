@@ -7600,6 +7600,7 @@ export {
 export {
   WEKRUIT_LAYOFF_SOURCE,
   WEKRUIT_CANDIDATE_SOURCE,
+  WEKRUIT_YC_STARTUP_SOURCE,
   isWekruitSignupSource,
   type WekruitSignupSource,
 } from "./onboarding.js"
