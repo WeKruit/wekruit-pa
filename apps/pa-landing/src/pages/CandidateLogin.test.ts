@@ -7,11 +7,15 @@ import test from "node:test"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(resolve(here, "CandidateLogin.tsx"), "utf8")
+const logoPng = readFileSync(resolve(here, "../../public/wekruit-logo.png"))
 
 test("WekruitLogo renders the shared transparent logo asset", () => {
   assert.match(source, /export function WekruitLogo\(\{ size = 22 \}: \{ size\?: number \}\)/)
   assert.match(source, /<img src="\/wekruit-logo\.png" alt="" aria-hidden="true" \/>/)
-  assert.match(source, /\.wk-logo img \{[\s\S]*object-fit: contain;/)
+  assert.match(source, /\.wk-logo \{[\s\S]*width: calc\(var\(--wk-logo-size, 22px\) \* 0\.72\);[\s\S]*height: var\(--wk-logo-size, 22px\);/)
+  assert.match(source, /\.wk-logo img \{[\s\S]*width: auto;[\s\S]*height: 100%;[\s\S]*object-fit: contain;/)
+  assert.equal(logoPng[25], 6)
+  assert.ok(logoPng.readUInt32BE(20) > logoPng.readUInt32BE(16))
   assert.doesNotMatch(source, /We<em>kruit<\/em>/)
 })
 
@@ -279,6 +283,9 @@ test("CandidateShell mobile header keeps the primary candidate start action visi
 })
 
 test("CandidateShell auth-aware marketing header exposes only one My WeKruit entry", () => {
+  assert.match(source, /<WekruitLogo size=\{30\} \/>/)
+  assert.match(source, /<Link to="\/yc-startup" className="wk-nav__link wk-nav__link--yc">YC Startup School<\/Link>/)
+  assert.match(source, /\.wk-nav__link--yc \{ color: var\(--wk-live\); \}/)
   assert.match(source, /\{!isAuthed \? <Link to="\/me" className="wk-nav__link">My WeKruit<\/Link> : null\}/)
   assert.match(source, /isAuthed \? \([\s\S]*<Link to="\/me" className="wk-btn wk-btn--ink wk-btn--sm">My WeKruit<\/Link>/)
   assert.doesNotMatch(source, /<Link to="\/me" className="wk-nav__link">My WeKruit<\/Link>\s*<\/nav>[\s\S]*isAuthed \? \(/)

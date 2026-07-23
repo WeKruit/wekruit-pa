@@ -175,14 +175,14 @@ const YCS_STYLES = `
 .ycs .ycs-mark {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 40px;
   color: var(--ink, #2D1A0A);
 }
 .ycs .ycs-mark img {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 28px;
+  height: 40px;
   object-fit: contain;
 }
 .ycs-event-chip {

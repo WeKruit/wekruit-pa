@@ -58,7 +58,8 @@ test("YC Startup solid CTA keeps readable text color over generic link color", (
 
 test("YC Startup nav uses the shared WeKruit logo asset", () => {
   assert.match(pageSource, /<Link to="\/" className="ycs-mark" aria-label="WeKruit home">[\s\S]*<img src="\/wekruit-logo\.png" alt="" aria-hidden="true" \/>/)
-  assert.match(pageSource, /\.ycs \.ycs-mark img \{[\s\S]*object-fit: contain;/)
+  assert.match(pageSource, /\.ycs \.ycs-mark \{[\s\S]*width: 28px;[\s\S]*height: 40px;/)
+  assert.match(pageSource, /\.ycs \.ycs-mark img \{[\s\S]*width: 28px;[\s\S]*height: 40px;[\s\S]*object-fit: contain;/)
   assert.doesNotMatch(pageSource, /className="ycs-mark" aria-label="WeKruit home">W<\/Link>/)
   assert.doesNotMatch(pageSource, /className="ycs-nav-pills"/)
   assert.doesNotMatch(pageSource, /className="ycs-pill"/)

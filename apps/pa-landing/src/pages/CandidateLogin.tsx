@@ -524,7 +524,7 @@ export function CandidateShell({
             </svg>
           </button>
           <Link to="/me" className="wk-apptopbar__brand" aria-label="WeKruit home">
-            <WekruitLogo size={18} />
+            <WekruitLogo size={24} />
           </Link>
           {claireHref ? (
             <a href={claireHref} className="wk-apptopbar__claire" aria-label="Message Claire">
@@ -557,10 +557,11 @@ export function CandidateShell({
       <header className="wk-header">
         <div className="wk-header__inner">
           <Link to="/" className="wk-header__brand" aria-label="WeKruit home">
-            <WekruitLogo size={22} />
+            <WekruitLogo size={30} />
           </Link>
           <AudienceToggle />
           <nav className="wk-nav" aria-label="Candidate navigation">
+            <Link to="/yc-startup" className="wk-nav__link wk-nav__link--yc">YC Startup School</Link>
             <Link to="/market" className="wk-nav__link">Browse roles</Link>
             <HowItWorksLink />
             <Link to="/refer" className="wk-nav__link">Earn $4k</Link>
@@ -585,7 +586,7 @@ export function CandidateShell({
       <footer className="wk-footer">
         <div className="wk-footer__inner">
           <div className="wk-footer__brand">
-            <WekruitLogo size={20} />
+            <WekruitLogo size={24} />
             <span className="wk-footer__tag">The agentic talent marketplace.</span>
           </div>
           <nav className="wk-footer__nav">
@@ -687,7 +688,7 @@ function CandidateAppNav({
           onClick={(e) => { e.preventDefault(); onNavigate("/me") }}
           aria-label="WeKruit home"
         >
-          <WekruitLogo size={20} />
+          <WekruitLogo size={26} />
         </Link>
         <button type="button" className="wk-sidenav__close" onClick={onClose} aria-label="Close menu">
           <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden="true">
@@ -1954,14 +1955,15 @@ export const CANDIDATE_STYLES = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(var(--wk-logo-size, 22px) * 1.12);
+  width: calc(var(--wk-logo-size, 22px) * 0.72);
   height: var(--wk-logo-size, 22px);
   line-height: 1;
   flex: 0 0 auto;
+  overflow: visible;
 }
 .wk-logo img {
   display: block;
-  width: 100%;
+  width: auto;
   height: 100%;
   object-fit: contain;
 }
@@ -1985,7 +1987,7 @@ export const CANDIDATE_STYLES = `
 }
 .wk-header__inner > .wk-nav { margin-left: auto; }
 .wk-header__inner > .wk-header__cta { flex: none; }
-.wk-header__brand { text-decoration: none; display: inline-flex; align-items: baseline; gap: 10px; }
+.wk-header__brand { text-decoration: none; display: inline-flex; align-items: center; gap: 10px; }
 .wk-header__brand-meta {
   display: inline-flex; align-items: baseline; gap: 10px;
   font-family: 'Instrument Serif', 'Newsreader', 'Tiempos Headline', Georgia, serif;
@@ -2011,6 +2013,8 @@ export const CANDIDATE_STYLES = `
 .wk-nav__link[aria-current="page"], .wk-nav__link.is-active {
   color: var(--wk-ink); font-weight: 600; background: transparent;
 }
+.wk-nav__link--yc { color: var(--wk-live); }
+.wk-nav__link--yc:hover { color: var(--wk-ink); }
 .wk-header__cta { justify-self: end; display: inline-flex; align-items: center; gap: 18px; }
 .wk-header__signin {
   color: var(--wk-ink-2); text-decoration: none;
@@ -2031,7 +2035,7 @@ export const CANDIDATE_STYLES = `
   display: flex; flex-wrap: wrap; gap: 16px 32px;
   align-items: center; justify-content: space-between;
 }
-.wk-footer__brand { display: inline-flex; align-items: baseline; gap: 12px; }
+.wk-footer__brand { display: inline-flex; align-items: center; gap: 12px; }
 .wk-footer__tag { color: var(--wk-ink-3); font-size: 13.5px; }
 .wk-footer__nav { display: inline-flex; gap: 20px; flex-wrap: wrap; }
 .wk-footer__nav a { color: var(--wk-ink-3); text-decoration: none; font-size: 13.5px; transition: color 200ms var(--wk-ease); }
