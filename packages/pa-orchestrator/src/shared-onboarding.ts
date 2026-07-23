@@ -274,9 +274,9 @@ export function isYcEventOpenerText(text: string): boolean {
 }
 
 /** YC Startup School attendee contact list (Adam 2026-07-23) — shared once with an
- *  event attendee immediately after they answer the "what are you building" intake
- *  question (record_yc_intake field='building'), per the promise made on the
- *  wekruit.com/yc-startup landing page. Single canonical spot so the kickoff/landing
+ *  event attendee right after Claire asks "who do you want to meet" and they answer
+ *  it (record_yc_intake field='wantsToMeet', intake complete), per the promise made
+ *  on the wekruit.com/yc-startup landing page. Single canonical spot so the landing
  *  copy and the intake tool's share instruction never drift apart. */
 export const YC_ATTENDEE_CONTACT_SHEET_URL =
   "https://docs.google.com/spreadsheets/d/16e0Dw5BiHLk_BZvqNiV7rUJcuwNnF5vEJGQCF-0VX4I/edit?usp=sharing"
