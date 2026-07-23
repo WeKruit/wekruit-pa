@@ -73,6 +73,17 @@ test("provision: ineligible users are not provisioned (no role / no phone / DNC 
   assert.equal((await mfs.collection("pa-job-profiles").limit(0).get()).size, 0)
 })
 
+test("provision: yc_startup_school users are NEVER auto-provisioned (founder-match promise, not a rec cadence)", async () => {
+  const mfs = new MockFirestore()
+  // Fully rec-eligible otherwise (role tags from a LinkedIn enrich, phone bound).
+  await mfs.collection("pa-users").doc("yc1").set(eligibleUser({ source: "yc_startup_school" }))
+
+  const out = await provisionCadenceAudience({ db: asFirestore(mfs), nowMs: NOW_MS })
+  assert.equal(out.eligible, 0)
+  assert.equal(out.provisioned, 0)
+  assert.equal((await mfs.collection("pa-job-profiles").limit(0).get()).size, 0)
+})
+
 test("provision: STALE (>48h) prescreen work session does not block provisioning", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-users").doc("stale-screen").set(
