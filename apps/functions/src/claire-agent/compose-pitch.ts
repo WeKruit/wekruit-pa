@@ -673,7 +673,11 @@ export async function composePitchTurn(
   // YC FOUNDER-MATCH ENTRY (Adam 2026-07-20 "换个口吻…不用推进"): a /yc-startup arrival keeps the
   // we-know-you confirmation + pitch, but the CLOSER never pushes ("want me to pull roles?") — it
   // states the notify promise instead: in the founder pool, text here + email when a match pops.
-  const ycPosture = (userDoc as { source?: unknown }).source === "yc_startup_school"
+  // source==yc (website OR fresh QR user) OR ycEventEntryAt (EXISTING user who scanned the
+  // event QR — source stays sticky, the opener stamped the entry; 2026-07-22).
+  const ycPosture =
+    (userDoc as { source?: unknown }).source === "yc_startup_school" ||
+    Boolean((userDoc as { ycEventEntryAt?: unknown }).ycEventEntryAt)
 
   // R2 (Adam 2026-06-04): compose through the injected PitchComposer (default = gpt-5.4-mini). Swapping
   // the composer changes HOW the pitch is processed without touching this orchestration or any caller.
@@ -739,8 +743,29 @@ export async function composePitchTurn(
   // YC closer — replaces every offer shape above AND skips the framing composer's closer below
   // (the framed closer is validated as a single-clear-PULL-ask, exactly the push yc must not make).
   if (ycPosture) {
-    offer =
-      "you're in the founder-match pool now — nothing else you need to do 🤝 i'll text you right here (and drop you an email) the moment a founder match pops. and if you want a peek at who's building right now, just say the word"
+    // EVENT (QR) entrants (Adam live test 2026-07-22): matches drop TONIGHT AROUND 7PM
+    // (manual operator send) — never offer an instant peek. And the pitch re-entry must
+    // CONTINUE the intake, not close it: Adam tapped LinkedIn straight off the kickoff, so
+    // "what are you building" was still unanswered when this closer said "nothing else you
+    // need to do".
+    const u = userDoc as {
+      ycEventEntryAt?: unknown
+      firstTouchCampaign?: unknown
+      ycIntake?: { building?: unknown; wantsToMeet?: unknown } | null
+    }
+    const ycEvent = Boolean(u.ycEventEntryAt) || u.firstTouchCampaign === "yc-startup-school"
+    if (ycEvent) {
+      const pool =
+        "you're in the founder-match pool 🤝 your founder matches drop tonight around 7pm — i'll text you right here (and email you)."
+      offer = !u.ycIntake?.building
+        ? `${pool} while that's brewing — what are you building right now?`
+        : !u.ycIntake?.wantsToMeet
+          ? `${pool} while that's brewing — who do you want to meet: what kind of founders or startups?`
+          : `${pool} nothing else you need to do.`
+    } else {
+      offer =
+        "you're in the founder-match pool now — nothing else you need to do 🤝 i'll text you right here (and drop you an email) the moment a founder match pops. and if you want a peek at who's building right now, just say the word"
+    }
   }
   // MODEL-COMPOSED FRAMING (Adam 2026-06-07: "the main thing is to avoid the agent generating same texts
   // again and again"). Replace the deterministic confirmation + closer with a VARIED pair on the same

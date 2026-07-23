@@ -1374,6 +1374,31 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     }),
     async execute({ requestedCount }) {
       const snapshotTags = await readSnapshotTags(ctx.db, ctx.userId, ctx.log)
+      // YC EVENT 7PM HOLD (Adam 2026-07-22 "match is not enabled until time reaches"):
+      // event-QR entrants are promised founder matches TONIGHT AROUND 7PM via the manual
+      // operator send (paAdminYcSendMatches, which stamps ycEveningMatchSentAt). Until that
+      // stamp exists, find_match must not run for them — no early peeks. Fail-open: a read
+      // error never blocks matching fleet-wide. Website /yc-startup users (no event
+      // campaign) keep on-request matching.
+      try {
+        const u = (await ctx.db.collection("pa-users").doc(ctx.userId).get()).data() ?? {}
+        const ycEvent =
+          Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt) ||
+          (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
+        if (ycEvent && !(u as { ycEveningMatchSentAt?: unknown }).ycEveningMatchSentAt) {
+          ctx.log("pa.claire.find_match.yc_event_hold", { userId: ctx.userId })
+          return {
+            ok: false,
+            recCount: 0,
+            jobs: [] as string[],
+            reason:
+              "yc_event_hold: their founder matches drop tonight around 7pm (team send). Tell them warmly their matches land right here tonight around 7pm — never list roles now, never call this tool again this turn.",
+            snapshotTags,
+          }
+        }
+      } catch {
+        // fail-open
+      }
       if (!ctx.findMatch) {
         return {
           ok: false,
