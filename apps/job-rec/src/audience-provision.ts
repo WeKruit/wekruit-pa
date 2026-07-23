@@ -84,8 +84,14 @@ function cleanStringArray(value: unknown): string[] {
 
 function isEligibleUser(data: Record<string, unknown>, nowMs: number): {
   eligible: boolean
-  reason?: "no_target_role" | "no_phone" | "do_not_contact" | "open_prescreen"
+  reason?: "no_target_role" | "no_phone" | "do_not_contact" | "open_prescreen" | "yc_event_posture"
 } {
+  // YC Startup School entrants (Adam 2026-07-20 "不用推进" / Noah 2026-07-22 "就针对yc"):
+  // they were promised founder matches tonight, not a daily job-rec cadence — once their
+  // LinkedIn enrich mints targetRoleFunction they'd otherwise auto-provision here and start
+  // getting proactive rec texts. AUTO-provision only: an operator can still create a
+  // pa-job-profiles row by hand, and users already in the cadence are never touched.
+  if (data.source === "yc_startup_school") return { eligible: false, reason: "yc_event_posture" }
   const tags =
     data.tags && typeof data.tags === "object" ? (data.tags as Record<string, unknown>) : null
   const targetRoleFunction = cleanStringArray(tags?.targetRoleFunction)
