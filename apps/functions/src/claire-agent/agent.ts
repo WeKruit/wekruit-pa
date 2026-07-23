@@ -1019,7 +1019,13 @@ export async function runClaireTurn(
       "reply STOP anytime to opt out.",
     ]
     const message = parts.join("\n\n")
-    await deps.transport.sendText(message).catch((e) => log("yc_event_kickoff.send_failed", { err: String(e) }))
+    // paced:true → the outbox posts immediately after the typing indicator (skips its
+    // length-scaled dwell). First contact at the event booth must feel instant — the long
+    // kickoff body was drawing the full dwell (~12s outbox-side, Adam live test 2026-07-22).
+    // Single bubble → none of the multi-bubble reorder risk that bans paced on the pitch.
+    await deps.transport
+      .sendText(message, { paced: true })
+      .catch((e) => log("yc_event_kickoff.send_failed", { err: String(e) }))
     log("yc_event_kickoff_sent", { offerLinkedin: deps.ycEventIntake.offerLinkedin })
     return { finalText: message, toolCalls: [], deliveredViaTool: true }
   }

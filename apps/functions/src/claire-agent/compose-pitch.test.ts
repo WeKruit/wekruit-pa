@@ -645,3 +645,51 @@ test("YC entry: closer is the notify promise — never a pull-ask, never the evi
     "no evidence-ask stamp for a yc entry",
   )
 })
+
+test("YC EVENT entry (QR): closer promises 7PM (never a peek) and CONTINUES the intake (Adam live test 2026-07-22)", async () => {
+  const base = {
+    displayName: "Adam Yang",
+    source: "yc_startup_school",
+    firstTouchCampaign: "yc-startup-school",
+    tags: { recentRoleTitle: "SWE", recentCompany: "Tesla", targetRoleFunction: ["software_engineering"] },
+    experienceHighlights: [{ title: "SWE", company: "Tesla" }],
+  }
+  const mock: PitchComposer = { async compose() { return "PITCH" } }
+
+  // building unanswered (Adam tapped LinkedIn straight off the kickoff) → closer asks it.
+  const a = await composePitchTurn(makeStubDb({ ...base }).db, "u1", "2026-07-22T00:00:00Z", mock)
+  assert.match(a![2]!, /tonight around 7pm/)
+  assert.match(a![2]!, /what are you building/)
+  assert.doesNotMatch(a![2]!, /say the word/, "never the instant-peek offer for an event entrant")
+
+  // building answered, wants_to_meet missing → closer asks who they want to meet.
+  const b = await composePitchTurn(
+    makeStubDb({ ...base, ycIntake: { building: "an eval harness" } }).db,
+    "u1",
+    "2026-07-22T00:00:00Z",
+    mock,
+  )
+  assert.match(b![2]!, /tonight around 7pm/)
+  assert.match(b![2]!, /who do you want to meet/)
+
+  // intake complete → plain 7pm close, nothing else to do.
+  const c = await composePitchTurn(
+    makeStubDb({ ...base, ycIntake: { building: "x", wantsToMeet: "y", completedAt: "2026-07-22T00:00:00Z" } }).db,
+    "u1",
+    "2026-07-22T00:00:00Z",
+    mock,
+  )
+  assert.match(c![2]!, /tonight around 7pm/)
+  assert.match(c![2]!, /nothing else you need to do/)
+
+  // existing-user event entrant (ycEventEntryAt, sticky non-yc source is NOT this path —
+  // ycPosture keys off source; covered by the website branch below staying unchanged).
+  // Website /yc-startup (no campaign) keeps the original notify-promise + peek closer.
+  const site = await composePitchTurn(
+    makeStubDb({ ...base, firstTouchCampaign: undefined }).db,
+    "u1",
+    "2026-07-22T00:00:00Z",
+    mock,
+  )
+  assert.match(site![2]!, /say the word/, "website yc closer unchanged")
+})
