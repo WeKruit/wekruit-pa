@@ -219,6 +219,15 @@ export default function Landing() {
       <section className="wk-hero">
         <div className="wk-container wk-hero__grid">
           <div className="wk-hero__copy">
+            <Link
+              to="/yc-startup"
+              className="wk-yc-announcement"
+              onClick={() => void trackEvent("landing_yc_startup_entry_click", { surface: "hero_announcement" })}
+            >
+              <span>YC Startup School</span>
+              <strong>Join SF people matching</strong>
+              <Icon name="arrow-right" size={14} stroke={2} />
+            </Link>
             <AllianceBackedBadge />
             <p className="wk-eyebrow">
               <PulseDot size={7} /> Skip the application. Interview.
@@ -585,6 +594,48 @@ const LANDING_STYLES = `
 }
 .wk-hero__proof strong { color: var(--wk-ink-2); font-weight: 600; }
 .wk-hero__proof > .wk-avatar { margin-right: -10px; box-shadow: inset 0 0 0 1px rgba(45,26,10,.08), 0 0 0 2px var(--wk-cream-3); }
+.wk-yc-announcement {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 12px;
+  padding: 7px 11px;
+  border-radius: var(--wk-r-pill);
+  border: 1px solid rgba(217, 84, 31, 0.24);
+  background: rgba(255, 248, 240, 0.66);
+  color: var(--wk-live);
+  text-decoration: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.60),
+    0 10px 24px -22px rgba(217, 84, 31, 0.42);
+  transition:
+    border-color 180ms var(--wk-ease),
+    background 180ms var(--wk-ease),
+    transform 180ms var(--wk-ease);
+}
+.wk-yc-announcement:hover,
+.wk-yc-announcement:focus-visible {
+  border-color: rgba(217, 84, 31, 0.42);
+  background: rgba(255, 248, 240, 0.86);
+  transform: translateY(-1px);
+  outline: none;
+}
+.wk-yc-announcement span {
+  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--wk-ink-3);
+  white-space: nowrap;
+}
+.wk-yc-announcement strong {
+  color: var(--wk-ink);
+  font-size: 13.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
 .wk-alliance-badge {
   display: flex;
   align-items: center;
@@ -954,6 +1005,8 @@ const LANDING_STYLES = `
   .wk-hero__h1 { font-size: clamp(35px, 9vw, 44px); }
   .wk-hero__cta { gap: 12px; }
   .wk-hero__browse { flex-basis: 100%; }
+  .wk-yc-announcement { align-items: flex-start; flex-direction: column; gap: 3px; border-radius: var(--wk-r-md); }
+  .wk-yc-announcement strong { white-space: normal; }
 }
 @media (max-width: 360px) {
   .wk-hero__h1 { font-size: 32px; }

@@ -102,6 +102,15 @@ test("Landing exposes the market source layer without becoming an apply queue", 
   assert.doesNotMatch(landingSource, /we pitch you anyway/i)
 })
 
+test("Landing surfaces the YC Startup School people-matching entry", () => {
+  assert.match(landingSource, /to="\/yc-startup"[\s\S]*className="wk-yc-announcement"/)
+  assert.match(landingSource, /YC Startup School/)
+  assert.match(landingSource, /Join SF people matching/)
+  assert.match(landingSource, /landing_yc_startup_entry_click/)
+  assert.match(landingSource, /\.wk-yc-announcement \{[\s\S]*border: 1px solid rgba\(217, 84, 31, 0\.24\);/)
+  assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-yc-announcement \{ align-items: flex-start; flex-direction: column;/)
+})
+
 test("Landing hero passed-profile evidence card stays removed (Adam 2026-06-11)", () => {
   assert.doesNotMatch(landingSource, /HeroEvidencePacket/)
   assert.doesNotMatch(landingSource, /Passed profile draft/)
