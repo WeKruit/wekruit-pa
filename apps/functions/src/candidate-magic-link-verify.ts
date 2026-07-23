@@ -52,6 +52,8 @@ export interface CandidateMagicLinkVerifySuccess {
   senderGroupId?: string | null
   linkedinUrl?: string | null
   linkedinLinkedViaOauth?: boolean
+  hasExistingProfileInfo?: boolean
+  profileSummary?: string | null
 }
 
 export interface CandidateMagicLinkVerifyFailure {
@@ -103,6 +105,57 @@ function cleanPublicJobPath(value: unknown): string | undefined {
   const pathname = raw.split("?")[0] ?? ""
   if (!/^\/j\/[^/?#]+(?:\/cv)?$/.test(pathname)) return undefined
   return raw
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function cleanProfilePart(value: unknown): string | undefined {
+  return cleanString(value, 90)
+}
+
+function profileSummaryFromUserData(userData: Record<string, unknown>): string | null {
+  const candidateContext = objectRecord(userData.candidateContext)
+  const layoffContext = objectRecord(userData.layoffContext)
+  const tags = objectRecord(userData.tags)
+  const highlight = Array.isArray(userData.experienceHighlights)
+    ? objectRecord(userData.experienceHighlights[0])
+    : {}
+  const title =
+    cleanProfilePart(candidateContext.jobTitle) ??
+    cleanProfilePart(layoffContext.jobTitle) ??
+    cleanProfilePart(tags.recentRoleTitle) ??
+    cleanProfilePart(tags.currentTitle) ??
+    cleanProfilePart(highlight.title)
+  const company =
+    cleanProfilePart(candidateContext.lastCompany) ??
+    cleanProfilePart(layoffContext.lastCompany) ??
+    cleanProfilePart(tags.recentCompany) ??
+    cleanProfilePart(tags.currentCompany) ??
+    cleanProfilePart(highlight.company)
+  if (title && company) return `${title} at ${company}`
+  if (title) return title
+  if (company) return `your work around ${company}`
+  const summary = cleanString(userData.profileSummary, 140)
+  return summary ?? null
+}
+
+function hasExistingProfileInfo(userData: Record<string, unknown>, profileSummary: string | null): boolean {
+  return Boolean(
+    profileSummary ||
+      cleanLinkedinProfileUrl(userData.linkedinUrl) ||
+      userData.linkedinOauthLinked === true ||
+      cleanString(userData.latestResumeArtifactId, 240) ||
+      cleanString(userData.resumeArtifactId, 240) ||
+      cleanString(userData.latestResumeId, 240) ||
+      cleanString(userData.resumeFileName, 240) ||
+      Object.keys(objectRecord(userData.candidateContext)).length > 0 ||
+      Object.keys(objectRecord(userData.layoffContext)).length > 0 ||
+      Object.keys(objectRecord(userData.tags)).length > 0,
+  )
 }
 
 function jobIdFromPublicJobPath(path: string): string | undefined {
@@ -410,6 +463,8 @@ export async function runCandidateMagicLinkVerify(
 
     const userSnap = await userRef.get()
     const userData = userSnap.data() ?? {}
+    const profileSummary = profileSummaryFromUserData(userData)
+    const existingProfileInfo = hasExistingProfileInfo(userData, profileSummary)
     const intakeCompletedAt = userData.intakeCompletedAt
     const intakeComplete =
       typeof intakeCompletedAt === "string"
@@ -490,6 +545,8 @@ export async function runCandidateMagicLinkVerify(
         senderGroupId: sender.senderGroupId ?? null,
         linkedinUrl: storedLinkedin,
         linkedinLinkedViaOauth: storedOauthLinked,
+        hasExistingProfileInfo: existingProfileInfo,
+        profileSummary,
       },
       status: 200,
     }

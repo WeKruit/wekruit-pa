@@ -839,6 +839,64 @@ test("runCandidateMagicLinkVerify stamps layoffhedge on first-time pa-users crea
   assert.equal((snap.data() as { source?: string } | undefined)?.source, "layoffhedge")
 })
 
+test("runCandidateMagicLinkVerify stamps YC Startup School and returns known profile summary", async () => {
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-yc-1", {
+    candidateContext: { jobTitle: "Founder", lastCompany: "Tiny AI" },
+    linkedinUrl: "https://linkedin.com/in/founder",
+  })
+
+  const { status, result } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-yc", source: "yc_startup_school" },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-yc",
+        email: "founder@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-yc-1",
+        authMapping: {
+          firebaseUid: "fb-yc",
+          candidateId: "cand-yc-1",
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-yc-1",
+          kind: "email" as const,
+          handleHash: "h",
+          source: "candidate" as const,
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: false,
+        selfProfile: {
+          candidateId: "cand-yc-1",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.profileSummary, "Founder at Tiny AI")
+    assert.equal(result.hasExistingProfileInfo, true)
+    assert.equal(result.linkedinUrl, "https://linkedin.com/in/founder")
+  }
+  const snap = await db.collection(PA_COLLECTIONS.users).doc("cand-yc-1").get()
+  assert.equal((snap.data() as { source?: string } | undefined)?.source, "yc_startup_school")
+})
+
 test("runCandidateMagicLinkVerify does NOT overwrite an existing pa-users.source", async () => {
   const db = fakeDb()
   ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-lh-2", {

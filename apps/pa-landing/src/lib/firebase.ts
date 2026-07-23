@@ -14,9 +14,13 @@ const cfg = {
 
 let app: FirebaseApp | null = null
 
+export function hasFirebaseConfig(): boolean {
+  return Boolean(cfg.apiKey && cfg.projectId)
+}
+
 export function getFirebaseApp(): FirebaseApp {
   if (app) return app
-  if (!cfg.apiKey || !cfg.projectId) {
+  if (!hasFirebaseConfig()) {
     throw new Error("Set VITE_FIREBASE_* env keys")
   }
   app = initializeApp(cfg)
