@@ -625,11 +625,11 @@ export function buildProcessTools(
           recorded: field,
           intakeComplete: complete,
           nextAction: complete
-            ? "CLOSE the intake now: tell them you've got what you need and you'll text their founder matches tonight around 7pm — warm, one message, no further questions."
+            ? "CLOSE the intake now: share the YC Startup School attendee contact list you promised — paste " +
+              `this exact link once: ${YC_ATTENDEE_CONTACT_SHEET_URL} — then tell them you've got what you ` +
+              "need and you'll text their founder matches tonight around 7pm. Warm, one message, no further questions."
             : field === "building"
-              ? "Share the YC Startup School attendee contact list you promised — paste this exact link once " +
-                `(never repeat it later in the conversation): ${YC_ATTENDEE_CONTACT_SHEET_URL} — then, in the ` +
-                "SAME short message, ask who they'd like to talk to (kind of founders/startups/people)."
+              ? "Ask who they'd like to talk to (kind of founders/startups/people) — one short question."
               : "Ask what they're building / working on — one short question.",
         }
       } catch (err) {
