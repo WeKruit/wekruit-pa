@@ -665,13 +665,25 @@ export async function maybeRunThinClaire(
         // pitch" bug). Instead send each with an explicit typing indicator + sleep between, so createdAt
         // order holds AND the pitch gets a real ~10s "thinking" beat (Adam: "make it at least 10 seconds";
         // 3s felt like no reasoning).
+        // YC EVENT FIRST-TOUCH (Adam 2026-07-22 "if this is slow this is really bad"): the
+        // LinkedIn-connect pitch is the event user's first real exchange — cut the beats
+        // (10s→2.5s, 2.5s→1.2s). Order still holds (beats + per-bubble dwell keep sequence).
+        let ycEventFastPitch = false
+        try {
+          const u = (await db.collection(PA_COLLECTIONS.users).doc(userId).get()).data() ?? {}
+          ycEventFastPitch =
+            (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school" ||
+            Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt)
+        } catch { /* fail-open → standard beats */ }
+        const pitchBeatMs = ycEventFastPitch ? 2500 : 10000
+        const offerBeatMs = ycEventFastPitch ? 1200 : 2500
         await transport.sendText(bubbles[0]!, { seq: 0 }) // confirmation — immediate
         try { await transport.typing() } catch { /* typing is pure UX */ }
-        if (!deps.dryRun) await new Promise((r) => setTimeout(r, 10000)) // 10s reasoning beat before the pitch
+        if (!deps.dryRun) await new Promise((r) => setTimeout(r, pitchBeatMs)) // reasoning beat before the pitch
         await transport.sendText(bubbles[1]!, { seq: 1 }) // the PITCH
         if (bubbles[2]) {
           try { await transport.typing() } catch { /* typing is pure UX */ }
-          if (!deps.dryRun) await new Promise((r) => setTimeout(r, 2500)) // short beat, THEN the offer
+          if (!deps.dryRun) await new Promise((r) => setTimeout(r, offerBeatMs)) // short beat, THEN the offer
           await transport.sendText(bubbles[2]!, { seq: 2 }) // the OFFER — always after the pitch
         }
         await db
