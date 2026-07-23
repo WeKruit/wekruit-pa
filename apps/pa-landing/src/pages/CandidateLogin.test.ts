@@ -8,6 +8,13 @@ import test from "node:test"
 const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(resolve(here, "CandidateLogin.tsx"), "utf8")
 
+test("WekruitLogo renders the shared transparent logo asset", () => {
+  assert.match(source, /export function WekruitLogo\(\{ size = 22 \}: \{ size\?: number \}\)/)
+  assert.match(source, /<img src="\/wekruit-logo\.png" alt="" aria-hidden="true" \/>/)
+  assert.match(source, /\.wk-logo img \{[\s\S]*object-fit: contain;/)
+  assert.doesNotMatch(source, /We<em>kruit<\/em>/)
+})
+
 test("CandidateShell does not hardcode a fake Claire SMS handoff", () => {
   assert.doesNotMatch(source, /\+18004448888/)
   assert.doesNotMatch(source, /CLAIRE_IMESSAGE_HREF/)
@@ -66,11 +73,11 @@ test("CandidateLogin preserves role context when onboarding carries a public job
 
 test("CandidateLogin frames onboarding login as a first-time Claire start", () => {
   assert.match(source, /onboardingNext\s*=\s*nextDest\.isOnboarding && !roleInterviewNext/)
-  // yc entry keeps its own eyebrow; every other onboarding entry stays "Start with Claire".
-  assert.match(source, /onboardingNext[\s\S]*: "Start with Claire"/)
-  assert.match(source, /ycEntry[\s\S]*\? "YC Startup School × WeKruit"/)
-  assert.match(source, /onboardingNext[\s\S]*<>Start with <em className="wk-accent">Claire\.<\/em><\/>/)
+  assert.match(source, /onboardingNext[\s\S]*ycEntry[\s\S]*\? "Startup School people matching"[\s\S]*: "Start with Claire"/)
+  assert.match(source, /onboardingNext[\s\S]*ycEntry[\s\S]*\? <>Start <em className="wk-accent">yapping\.<\/em><\/>[\s\S]*: <>Start with <em className="wk-accent">Claire\.<\/em><\/>/)
   assert.match(source, /Claire starts a guided profile chat: resume or LinkedIn first, then target roles, constraints, and nearest-work evidence/)
+  assert.match(source, /Sign in once and Claire keeps your Startup School context attached/)
+  assert.match(source, /SF people-matching flow in iMessage/)
   assert.match(source, /onboardingNext \? "Start with Google" : "Continue with Google"/)
   assert.match(source, /onboardingNext \? "Start with LinkedIn" : "Continue with LinkedIn"/)
   assert.match(source, /\{!onboardingNext \? \([\s\S]*<p className="wk-login__fine">/)
@@ -107,13 +114,16 @@ test("CandidateLogin phone-link preauth keeps sign-in controls inside the Claire
 })
 
 test("CandidateLogin keeps onboarding auth controls before the explanatory preview", () => {
-  assert.match(source, /function LoginOnboardingPreview\(\)/)
+  assert.match(source, /function LoginOnboardingPreview\(\{ isYcStartup = false \}: \{ isYcStartup\?: boolean \}\)/)
   assert.match(source, /function LoginContextStrip\(\{ kind \}: \{ kind: LoginContextKind \}\)/)
   assert.match(source, /aria-label="What Claire keeps through sign-in"/)
   assert.match(source, /After sign-in, Claire keeps/)
   assert.match(source, /onboarding: \[[\s\S]*\{ title: "Profile chat", body: "Claire asks before anything is shared\." \}/)
   assert.match(source, /\{ title: "Resume \+ LinkedIn", body: "Background turns into reusable evidence\." \}/)
   assert.match(source, /\{ title: "Nearest proof", body: "Fit comes from closest-overlap work\." \}/)
+  assert.match(source, /yc_onboarding: \[[\s\S]*\{ title: "Startup School context", body: "What you are building stays attached\." \}/)
+  assert.match(source, /\{ title: "SF people graph", body: "Founders, investors, and operators stay in scope\." \}/)
+  assert.match(source, /\{ title: "iMessage handoff", body: "Claire continues the flow after sign-in\." \}/)
   assert.match(source, /className="wk-login-context__dot"/)
   assert.match(source, /What Claire starts after sign-in/)
   assert.match(source, /One durable Claire profile/)
@@ -122,10 +132,16 @@ test("CandidateLogin keeps onboarding auth controls before the explanatory previ
   assert.match(source, /Target roles and constraints/)
   assert.match(source, /Nearest-work evidence/)
   assert.match(source, /Profile corrections stay editable/)
+  assert.match(source, /const loginSignupSource = signupSourceForLoginNext\(nextDest\)/)
+  assert.match(source, /fromQuery === "yc" \|\| fromQuery === "yc_startup_school"/)
+  assert.match(source, /Existing background reused/)
+  assert.match(source, /If WeKruit already has your LinkedIn or profile, you will not paste it again\./)
+  assert.match(source, /People-matching handoff/)
+  assert.match(source, /After sign-in, open iMessage and Claire continues with founders, investors, operators, and builders\./)
   assert.match(source, /const showOnboardingPreview = !showCompletingLink && onboardingNext/)
   const mainAuthIndex = source.indexOf("{showMainAuthControls ? renderAuthControls() : null}")
   const contextStripIndex = source.indexOf("<LoginContextStrip kind={loginContextKind} />")
-  const onboardingPreviewIndex = source.indexOf("{showOnboardingPreview ? <LoginOnboardingPreview /> : null}")
+  const onboardingPreviewIndex = source.indexOf("{showOnboardingPreview ? <LoginOnboardingPreview isYcStartup={ycEntry} /> : null}")
   assert.ok(mainAuthIndex > 0)
   assert.ok(contextStripIndex > 0)
   assert.ok(onboardingPreviewIndex > mainAuthIndex)
@@ -172,7 +188,7 @@ test("CandidateLogin /me signing-in status opens the pipeline, not onboarding", 
 
 test("CandidateLogin frames referral dashboard auth around rewards and invite tracking", () => {
   assert.match(source, /const referralNext = nextDest\.pathname === "\/me\/refer"/)
-  assert.match(source, /referralNext \? "referral" : "pipeline"/)
+  assert.match(source, /referralNext[\s\S]*\? "referral"[\s\S]*: "pipeline"/)
   assert.match(source, /referralNext[\s\S]*\? "Referral dashboard"/)
   assert.match(source, /Open referral <em className="wk-accent">dashboard\.<\/em>/)
   assert.match(source, /Sign in once to track referral invites, verified interview rewards, and offer\/start payouts\./)

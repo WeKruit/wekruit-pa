@@ -222,12 +222,13 @@ export default function Onboarding() {
     return match?.[1] ? canonicalPublicJobId(match[1]) : null
   }, [returnPath])
   const isJobInterview = Boolean(returnJobId)
+  const isYcStartup = source === "yc_startup_school"
   const sourceEyebrow = isJobInterview
     ? "Claire keeps the role context attached"
     : source === "WeKruit_Laid_Off"
       ? "WeKruit Open · for people between things"
-      : source === "yc_startup_school"
-        ? "WeKruit · founder matching for Startup School attendees"
+      : isYcStartup
+        ? "YC Startup School · SF people matching"
         : "WeKruit · meet your AI recruiter"
 
   useEffect(() => {
@@ -256,7 +257,8 @@ export default function Onboarding() {
   const [intakeChecked, setIntakeChecked] = useState(false)
   const [claireConversationStarted, setClaireConversationStarted] = useState(false)
   const [portalReady, setPortalReady] = useState(false)
-  const [linkedinLinkedViaOauth, setLinkedinLinkedViaOauth] = useState(false)
+  const [profilePathAlreadyKnown, setProfilePathAlreadyKnown] = useState(false)
+  const [knownProfileSummary, setKnownProfileSummary] = useState<string | null>(null)
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth(), (nextUser) => {
@@ -274,9 +276,14 @@ export default function Onboarding() {
         const verified = await verifyCandidateMagicLinkSession({ source })
         if (!cancelled) {
           setVerifyError(null)
-          setLinkedinLinkedViaOauth(
-            Boolean(verified.linkedinLinkedViaOauth) || isLinkedInSignIn(authUser)
+          setProfilePathAlreadyKnown(
+            Boolean(verified.linkedinLinkedViaOauth) ||
+              Boolean(verified.linkedinUrl) ||
+              Boolean(verified.hasResumeOnFile) ||
+              Boolean(verified.hasExistingProfileInfo) ||
+              isLinkedInSignIn(authUser)
           )
+          setKnownProfileSummary(verified.profileSummary ?? null)
           setClaireConversationStarted(verified.claireConversationStarted)
           setPortalReady(verified.portalReady)
           setProfile((p) => ({
@@ -569,7 +576,8 @@ export default function Onboarding() {
                 isBusy={Boolean(busyText)}
                 source={source}
                 authUser={authUser}
-                linkedinLinkedViaOauth={linkedinLinkedViaOauth}
+                profilePathAlreadyKnown={profilePathAlreadyKnown}
+                knownProfileSummary={knownProfileSummary}
                 isJobInterview={isJobInterview}
               />
             </>
@@ -606,7 +614,9 @@ export default function Onboarding() {
 }
 
 function sourceToUploadTag(source: SignupSource): string {
-  return source === "WeKruit_Laid_Off" ? "layoff_signup" : "candidate_signup"
+  if (source === "WeKruit_Laid_Off") return "layoff_signup"
+  if (source === "yc_startup_school") return "yc_startup_school_signup"
+  return "candidate_signup"
 }
 
 async function uploadResumeForCandidate(candidateId: string, formData: Profile, source: string) {
@@ -1027,18 +1037,21 @@ function FormIntake({
   isBusy,
   source,
   authUser,
-  linkedinLinkedViaOauth,
+  profilePathAlreadyKnown,
+  knownProfileSummary,
   isJobInterview,
 }: {
   onDone: (p: Profile) => void | Promise<void>
   isBusy: boolean
   source: SignupSource
   authUser: User
-  linkedinLinkedViaOauth: boolean
+  profilePathAlreadyKnown: boolean
+  knownProfileSummary: string | null
   isJobInterview: boolean
 }) {
   const isLayoff = source === "WeKruit_Laid_Off"
-  const skipLinkedinField = !isLayoff && linkedinLinkedViaOauth
+  const isYcStartup = source === "yc_startup_school"
+  const skipLinkedinField = !isLayoff && profilePathAlreadyKnown
   const ssoNames = splitDisplayName(authUser.displayName)
   const [v, setV] = useState<Profile>({
     firstName: ssoNames.first,
@@ -1121,7 +1134,7 @@ function FormIntake({
     <div className="card card--feature" style={{ background: "var(--cream-3)", borderRadius: "var(--r-lg)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 16, marginBottom: 6, flexWrap: "wrap" }}>
         <span className="eyebrow" style={{ whiteSpace: "nowrap" }}>
-          {isJobInterview ? "Step 1 · Role context" : "Step 1 · Claire profile"}
+          {isJobInterview ? "Step 1 · Role context" : isYcStartup ? "Step 1 · Startup School context" : "Step 1 · Claire profile"}
         </span>
         <span className="caption" style={{ color: "var(--ink-3)", whiteSpace: "nowrap" }}>{filled} of {total} · ~60 sec</span>
       </div>
@@ -1130,14 +1143,14 @@ function FormIntake({
           ? "Tell us the basics. After you submit, you'll open iMessage to say hello to Claire — that's when we link your phone."
           : isJobInterview
             ? skipLinkedinField
-              ? "Claire already has the role path; add the evidence she needs while the role context stays attached. LinkedIn is linked from sign-in, so a resume or site is enough to continue the same role interview in iMessage."
+              ? "Claire already has the role path and your profile context. Add anything new while the role stays attached, then continue the same interview in iMessage."
               : "Claire already has the role path; add the evidence she needs while the role context stays attached. Share a resume, LinkedIn, or site, then continue the same role interview in iMessage."
-            : source === "yc_startup_school"
+            : isYcStartup
               ? skipLinkedinField
-                ? "Tell us who you are and drop your résumé (LinkedIn is already linked from sign-in) — that's what Claire matches with founders. Next you'll open iMessage to say hi."
-                : "Tell us who you are and drop your résumé — that's what Claire matches with founders. Next you'll open iMessage to say hi."
+                ? `Claire already has some of your background${knownProfileSummary ? `: ${knownProfileSummary}` : ""}. Add anything new about what you are building or who you want to meet, then open iMessage to continue the Startup School flow.`
+                : "Tell Claire what you are building and share a resume, LinkedIn, or site so she can route you into the Startup School people-matching flow in iMessage."
             : skipLinkedinField
-              ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to talk to Claire."
+              ? "Tell us who you are and share a resume or site. Claire already has your profile context, so you do not need to paste LinkedIn again."
               : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to talk to Claire."}
       </p>
 
@@ -1165,7 +1178,9 @@ function FormIntake({
         )}
         {skipLinkedinField && (
           <p style={{ gridColumn: "1 / -1", margin: 0, fontSize: 13, color: "var(--ink-3)" }}>
-            LinkedIn is linked from your sign-in — no need to paste your profile URL again.
+            {knownProfileSummary
+              ? `Claire already has your background: ${knownProfileSummary}. No need to paste LinkedIn again.`
+              : "Claire already has your profile context. No need to paste LinkedIn again."}
           </p>
         )}
         <Field span={2} label="Personal website" value={v.personalWebsite!} onChange={(x) => set("personalWebsite", x)} placeholder="https://yoursite.com" optional />
@@ -1466,7 +1481,7 @@ function Done({
                 : claireConversationStarted
                   ? "Claire already has your thread. Send the pre-filled code exactly as shown if this page asks for it; she will pick up from the existing conversation."
                 : signupSource === "yc_startup_school"
-                  ? "You're in the founder-match pool. Open iMessage and send the pre-filled code to say hi to Claire — she'll text you here (and email you) the moment a founder match pops. Nothing else to do."
+                  ? "Your Startup School context is saved. Open iMessage and send the pre-filled code exactly as shown; Claire will continue the SF people-matching flow there."
                 : "Your resume and profile are saved. Open iMessage and send the pre-filled code exactly as shown."}
             </>
           ) : (
@@ -1512,8 +1527,8 @@ function Done({
             header="WeKruit Claire"
             messages={[
               { from: "user", text: openerBody },
-              { from: "claire", text: isJobInterview ? "Got it — I found your profile and this role." : "Got it — I found your profile." },
-              { from: "claire", text: isJobInterview ? "I’ll continue the role interview from here." : claireConversationStarted ? "I’ll pick up from our existing thread." : "First question: what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?" },
+              { from: "claire", text: isJobInterview ? "Got it — I found your profile and this role." : signupSource === "yc_startup_school" ? "Got it — I found your Startup School context." : "Got it — I found your profile." },
+              { from: "claire", text: isJobInterview ? "I’ll continue the role interview from here." : claireConversationStarted ? "I’ll pick up from our existing thread." : signupSource === "yc_startup_school" ? "First question: who would make your Startup School week more useful: founders, investors, operators, or other builders?" : "First question: what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?" },
             ]}
           />
         </div>

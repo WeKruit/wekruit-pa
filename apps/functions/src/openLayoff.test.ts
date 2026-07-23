@@ -499,6 +499,32 @@ test("runRegisterLayoffCandidate accepts candidate intake with LinkedIn OAuth on
   assert.equal(result.isReregistration, true)
 })
 
+test("runRegisterLayoffCandidate accepts candidate intake with existing profile context only", async () => {
+  const fake = new FakeFirestore()
+  const candidateId = "cand_profile_known"
+  fake.seed(`${PA_COLLECTIONS.users}/${candidateId}`, {
+    id: candidateId,
+    linkedinUrl: "https://linkedin.com/in/ada",
+    candidateContext: { jobTitle: "Founder", lastCompany: "Tiny AI" },
+  })
+  const result = await runRegisterLayoffCandidate(
+    registration({
+      source: "candidate",
+      candidateId,
+      phone: undefined,
+      jobTitle: undefined,
+      location: undefined,
+      linkedin: undefined,
+      resumeFileName: undefined,
+      personalWebsite: undefined,
+    }),
+    deps(fake),
+  )
+
+  assert.equal(result.candidateId, candidateId)
+  assert.equal(result.isReregistration, true)
+})
+
 test("runRegisterLayoffCandidate writes candidate source for candidate-host signups", async () => {
   const fake = new FakeFirestore()
   const result = await runRegisterLayoffCandidate(

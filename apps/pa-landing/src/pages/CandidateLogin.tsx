@@ -230,8 +230,8 @@ type PhoneLinkState =
 
 export function WekruitLogo({ size = 22 }: { size?: number }) {
   return (
-    <span className="wk-logo" style={{ fontSize: size }}>
-      We<em>kruit</em>
+    <span className="wk-logo" style={{ "--wk-logo-size": `${size}px` } as CSSProperties}>
+      <img src="/wekruit-logo.png" alt="" aria-hidden="true" />
     </span>
   )
 }
@@ -828,8 +828,10 @@ function signupSourceForLoginNext(next: ReturnType<typeof parseLoginNextPath>): 
   const fromQuery = params.get("source")
   if (fromQuery === "layoff" || fromQuery === "WeKruit_Laid_Off") return "WeKruit_Laid_Off"
   if (fromQuery === "candidate") return "candidate"
+  if (fromQuery === "layoffhedge") return "layoffhedge"
+  if (fromQuery === "yc" || fromQuery === "yc_startup_school") return "yc_startup_school"
   const fromCookie = peekSource()
-  return fromCookie === "WeKruit_Laid_Off" ? "WeKruit_Laid_Off" : undefined
+  return fromCookie === "WeKruit_Laid_Off" || fromCookie === "yc_startup_school" ? fromCookie : undefined
 }
 
 function onboardingRoleReturnPath(next: ReturnType<typeof parseLoginNextPath>): string | null {
@@ -999,7 +1001,7 @@ function LoginRoleSignalPreview({ title, company }: { title: string; company: st
   )
 }
 
-type LoginContextKind = "role" | "signal" | "onboarding" | "referral" | "pipeline"
+type LoginContextKind = "role" | "signal" | "onboarding" | "yc_onboarding" | "referral" | "pipeline"
 
 function LoginContextStrip({ kind }: { kind: LoginContextKind }) {
   const items: Record<LoginContextKind, { title: string; body: string }[]> = {
@@ -1017,6 +1019,11 @@ function LoginContextStrip({ kind }: { kind: LoginContextKind }) {
       { title: "Profile chat", body: "Claire asks before anything is shared." },
       { title: "Resume + LinkedIn", body: "Background turns into reusable evidence." },
       { title: "Nearest proof", body: "Fit comes from closest-overlap work." },
+    ],
+    yc_onboarding: [
+      { title: "Startup School context", body: "What you are building stays attached." },
+      { title: "SF people graph", body: "Founders, investors, and operators stay in scope." },
+      { title: "iMessage handoff", body: "Claire continues the flow after sign-in." },
     ],
     referral: [
       { title: "Invite ledger", body: "Your friend and milestone status stay attached." },
@@ -1050,29 +1057,52 @@ function LoginContextStrip({ kind }: { kind: LoginContextKind }) {
   )
 }
 
-function LoginOnboardingPreview() {
-  const items = [
-    {
-      title: "One durable Claire profile",
-      body: "Sign-in opens the same WeKruit profile Claire uses across role interviews, evidence, and corrections.",
-    },
-    {
-      title: "Resume and LinkedIn uptake",
-      body: "Claire starts by turning your background into a durable WeKruit profile.",
-    },
-    {
-      title: "Target roles and constraints",
-      body: "Capture the roles, locations, salary range, timing, visa, and company shapes that matter.",
-    },
-    {
-      title: "Nearest-work evidence",
-      body: "Claire asks for closest-overlap proof before a role becomes a fit decision.",
-    },
-    {
-      title: "Profile corrections stay editable",
-      body: "You can correct facts and preferences before Claire pursues or rules out a role.",
-    },
-  ]
+function LoginOnboardingPreview({ isYcStartup = false }: { isYcStartup?: boolean }) {
+  const items = isYcStartup
+    ? [
+        {
+          title: "Startup School context",
+          body: "Claire keeps what you are building, who you want to meet, and what would make SF more useful.",
+        },
+        {
+          title: "Existing background reused",
+          body: "If WeKruit already has your LinkedIn or profile, you will not paste it again.",
+        },
+        {
+          title: "People-matching handoff",
+          body: "After sign-in, open iMessage and Claire continues with founders, investors, operators, and builders.",
+        },
+        {
+          title: "Less random networking",
+          body: "Matches start from interests, stage, market, and experience overlap.",
+        },
+        {
+          title: "You control updates",
+          body: "Add new context before Claire uses it for the Startup School flow.",
+        },
+      ]
+    : [
+        {
+          title: "One durable Claire profile",
+          body: "Sign-in opens the same WeKruit profile Claire uses across role interviews, evidence, and corrections.",
+        },
+        {
+          title: "Resume and LinkedIn uptake",
+          body: "Claire starts by turning your background into a durable WeKruit profile.",
+        },
+        {
+          title: "Target roles and constraints",
+          body: "Capture the roles, locations, salary range, timing, visa, and company shapes that matter.",
+        },
+        {
+          title: "Nearest-work evidence",
+          body: "Claire asks for closest-overlap proof before a role becomes a fit decision.",
+        },
+        {
+          title: "Profile corrections stay editable",
+          body: "You can correct facts and preferences before Claire pursues or rules out a role.",
+        },
+      ]
 
   return (
     <section className="wk-login-preview" aria-label="What Claire starts after sign-in">
@@ -1525,8 +1555,19 @@ export default function CandidateLogin() {
   const showRoleSignalPreview = !showCompletingLink && roleSignalNext
   const showOnboardingPreview = !showCompletingLink && onboardingNext
   const showReferralPreview = !showCompletingLink && referralNext
+  const loginSignupSource = signupSourceForLoginNext(nextDest)
   const loginContextKind: LoginContextKind =
-    roleInterviewNext ? "role" : roleSignalNext ? "signal" : onboardingNext ? "onboarding" : referralNext ? "referral" : "pipeline"
+    roleInterviewNext
+      ? "role"
+      : roleSignalNext
+        ? "signal"
+        : onboardingNext
+          ? loginSignupSource === "yc_startup_school" || peekSource() === "yc_startup_school"
+            ? "yc_onboarding"
+            : "onboarding"
+          : referralNext
+            ? "referral"
+            : "pipeline"
   const roleFirstTimeHref = roleInterviewFirstTimeHref(nextDest)
   const roleSignalFirstTimeHref = roleSignalNext ? onboardingDestinationWithReturnPath(nextDest.to, peekSource()) : null
   const firstTimeHref = roleInterviewNext
@@ -1538,7 +1579,7 @@ export default function CandidateLogin() {
         : onboardingDestination(peekSource())
   // YC Startup School funnel (wekruit.com/yc-startup) — the sticky wko_source
   // cookie survives the OAuth round-trip, so the gate can speak to the entry.
-  const ycEntry = peekSource() === "yc_startup_school"
+  const ycEntry = loginSignupSource === "yc_startup_school" || peekSource() === "yc_startup_school"
   const loginEyebrow = showCompletingLink
     ? "Finishing sign-in"
     : roleInterviewNext
@@ -1547,7 +1588,7 @@ export default function CandidateLogin() {
         ? "Role signal"
       : onboardingNext
         ? ycEntry
-          ? "YC Startup School × WeKruit"
+          ? "Startup School people matching"
           : "Start with Claire"
       : referralNext
         ? "Referral dashboard"
@@ -1562,7 +1603,9 @@ export default function CandidateLogin() {
         : roleSignalNext
         ? "One sec — confirming your sign-in and saving this role as durable profile signal."
         : onboardingNext
-          ? "One sec — confirming your sign-in and opening Claire's profile flow."
+          ? ycEntry
+            ? "One sec — confirming your sign-in and opening the Startup School people flow."
+            : "One sec — confirming your sign-in and opening Claire's profile flow."
         : referralNext
           ? "One sec — confirming your sign-in and opening the referral ledger."
           : "One sec — confirming your sign-in and pulling up your active pipeline."
@@ -1574,7 +1617,7 @@ export default function CandidateLogin() {
           ? "Sign in and Claire will add this role to your durable profile signals."
         : onboardingNext
           ? ycEntry
-            ? "Sign in once and drop your résumé — Claire matches your interests and experience with founders building right now, and pings you here + email when one lines up."
+            ? "Sign in once and Claire keeps your Startup School context attached. After login, she will continue the SF people-matching flow in iMessage."
             : "Sign in once and Claire starts a guided profile chat: resume or LinkedIn first, then target roles, constraints, and nearest-work evidence."
         : referralNext
           ? "Sign in once to track referral invites, verified interview rewards, and offer/start payouts."
@@ -1662,7 +1705,9 @@ export default function CandidateLogin() {
                 : roleSignalNext
                   ? <>Save this <em className="wk-accent">role signal.</em></>
                 : onboardingNext
-                  ? <>Start with <em className="wk-accent">Claire.</em></>
+                  ? ycEntry
+                    ? <>Start <em className="wk-accent">yapping.</em></>
+                    : <>Start with <em className="wk-accent">Claire.</em></>
                 : referralNext
                   ? <>Open referral <em className="wk-accent">dashboard.</em></>
                 : <>Already talked to <em className="wk-accent">Claire?</em></>}
@@ -1807,7 +1852,7 @@ export default function CandidateLogin() {
             ) : null}
 
             {showPipelinePreview ? <LoginPipelinePreview /> : null}
-            {showOnboardingPreview ? <LoginOnboardingPreview /> : null}
+            {showOnboardingPreview ? <LoginOnboardingPreview isYcStartup={ycEntry} /> : null}
             {showReferralPreview ? <LoginReferralPreview /> : null}
 
             {!onboardingNext ? (
@@ -1896,15 +1941,20 @@ export const CANDIDATE_STYLES = `
 
 /* Logo ------------------------------------------------------------------ */
 .wk-logo {
-  font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
-  letter-spacing: -0.02em;
-  color: var(--wk-ink);
-  font-weight: 500;
-  line-height: 1;
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--wk-logo-size, 22px) * 1.12);
+  height: var(--wk-logo-size, 22px);
+  line-height: 1;
+  flex: 0 0 auto;
 }
-.wk-logo em { font-style: italic; font-weight: 400; }
+.wk-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 
 /* Header / footer ------------------------------------------------------- */
 .wk-header {
