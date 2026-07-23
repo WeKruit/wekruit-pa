@@ -822,16 +822,26 @@ function HowItWorksLink() {
 // /login page
 // ────────────────────────────────────────────────────────────────────────────
 
-function signupSourceForLoginNext(next: ReturnType<typeof parseLoginNextPath>): SignupSource | undefined {
-  if (!next.isOnboarding) return undefined
-  const params = new URLSearchParams(next.search.replace(/^\?/, ""))
-  const fromQuery = params.get("source")
-  if (fromQuery === "layoff" || fromQuery === "WeKruit_Laid_Off") return "WeKruit_Laid_Off"
-  if (fromQuery === "candidate") return "candidate"
-  if (fromQuery === "layoffhedge") return "layoffhedge"
-  if (fromQuery === "yc" || fromQuery === "yc_startup_school") return "yc_startup_school"
+export function signupSourceForLoginNext(next: ReturnType<typeof parseLoginNextPath>): SignupSource | undefined {
+  // 1. Explicit ?source= on the onboarding next-path always wins.
+  if (next.isOnboarding) {
+    const params = new URLSearchParams(next.search.replace(/^\?/, ""))
+    const fromQuery = params.get("source")
+    if (fromQuery === "layoff" || fromQuery === "WeKruit_Laid_Off") return "WeKruit_Laid_Off"
+    if (fromQuery === "yc" || fromQuery === "yc_startup_school") return "yc_startup_school"
+    if (fromQuery === "layoffhedge") return "layoffhedge"
+    if (fromQuery === "candidate") return "candidate"
+  }
+  // 2. Sticky attribution cookie (set by stickExplicitSource on /yc-startup arrival,
+  //    or a layoff entry). This must carry even for a BARE /login sign-in — Adam
+  //    2026-07-23: logging in FROM the yc-startup page must keep the YC entry source,
+  //    not fall back to generic `candidate` (live: founder@tryada.app got `candidate`
+  //    → the job-search greeting instead of the YC founder posture). Only the
+  //    non-default sticky sources carry; a plain `candidate` cookie stays undefined so
+  //    the backend applies its own default.
   const fromCookie = peekSource()
-  return fromCookie === "WeKruit_Laid_Off" || fromCookie === "yc_startup_school" ? fromCookie : undefined
+  if (fromCookie === "yc_startup_school" || fromCookie === "WeKruit_Laid_Off") return fromCookie
+  return undefined
 }
 
 function onboardingRoleReturnPath(next: ReturnType<typeof parseLoginNextPath>): string | null {

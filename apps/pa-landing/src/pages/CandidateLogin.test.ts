@@ -22,6 +22,16 @@ test("CandidateShell does not hardcode a fake Claire SMS handoff", () => {
   assert.match(source, /claireHref/)
 })
 
+test("signupSourceForLoginNext carries the YC source (Adam 2026-07-23: yc-startup login must keep YC entry)", () => {
+  // yc / yc_startup_school recognized from the onboarding ?source= query...
+  assert.match(source, /fromQuery === "yc" \|\| fromQuery === "yc_startup_school"\) return "yc_startup_school"/)
+  // ...AND from the sticky attribution cookie for a bare /login sign-in.
+  assert.match(
+    source,
+    /fromCookie === "yc_startup_school" \|\| fromCookie === "WeKruit_Laid_Off"\) return fromCookie/,
+  )
+})
+
 test("CandidateLogin sends first-time candidates into onboarding", () => {
   assert.doesNotMatch(source, /First time\?\s*<Link to="\/"/)
   assert.doesNotMatch(source, /firstTimeOnboardingHref/)
