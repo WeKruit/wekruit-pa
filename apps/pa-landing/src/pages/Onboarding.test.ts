@@ -49,6 +49,13 @@ test("YC Startup School onboarding keeps source, reuses profile context, and ope
   assert.match(source, /yc_startup_school_signup/)
 })
 
+test("YC Startup School website signup sends the YC opener, not the generic verification-code opener", () => {
+  assert.match(source, /buildYcEventOpenerBody/)
+  assert.match(source, /const isYcOpener = signupSource === "yc_startup_school" && !returnJobId/)
+  assert.match(source, /isYcOpener\s*\n\s*\? buildYcEventOpenerBody\(profile\.bindCode\)/)
+  assert.match(source, /isYcOpener\s*\n\s*\? buildYcEventOpenerBody\(profile\.candidateId\)/)
+})
+
 test("signed-in onboarding offers existing Claire phone-thread linking before intake", () => {
   assert.match(source, /startCandidatePhoneLink/)
   assert.match(source, /verifyCandidatePhoneLink/)

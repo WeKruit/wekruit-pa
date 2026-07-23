@@ -758,7 +758,7 @@ export async function composePitchTurn(
       const pool =
         "you're in the founder-match pool 🤝 your founder matches drop tonight around 7pm — i'll text you right here (and email you)."
       offer = !u.ycIntake?.building
-        ? `${pool} while that's brewing — what are you building right now?`
+        ? `${pool} while that's brewing — what are you building right now? (tell me and i'll send you the attendee contact list)`
         : !u.ycIntake?.wantsToMeet
           ? `${pool} while that's brewing — who do you want to meet: what kind of founders or startups?`
           : `${pool} nothing else you need to do.`

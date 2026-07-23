@@ -272,6 +272,14 @@ const YC_EVENT_OPENER_RE =
 export function isYcEventOpenerText(text: string): boolean {
   return YC_EVENT_OPENER_RE.test(text.trim())
 }
+
+/** YC Startup School attendee contact list (Adam 2026-07-23) — shared once with an
+ *  event attendee immediately after they answer the "what are you building" intake
+ *  question (record_yc_intake field='building'), per the promise made on the
+ *  wekruit.com/yc-startup landing page. Single canonical spot so the kickoff/landing
+ *  copy and the intake tool's share instruction never drift apart. */
+export const YC_ATTENDEE_CONTACT_SHEET_URL =
+  "https://docs.google.com/spreadsheets/d/16e0Dw5BiHLk_BZvqNiV7rUJcuwNnF5vEJGQCF-0VX4I/edit?usp=sharing"
 // Prescreen job opener. Accepts BOTH forms (2026-06-13):
 //   - JOB-ONLY (NEW): "WeKruit_<jobId>_Job" — no uid (phone-is-auth identity).
 //   - JOB+UID (LEGACY, back-compat for in-flight tokens): "WeKruit_<jobId>_<uid>_Job".

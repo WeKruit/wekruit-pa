@@ -50,6 +50,13 @@ test("YC Startup page frames the offer as SF people matching, not job search", (
   assert.doesNotMatch(pageSource, /matching tonight/i)
 })
 
+test("YC Startup page promises the attendee contact list upfront, tied to signing in + a quick intro", () => {
+  assert.match(pageSource, /Plus: the attendee contact list/)
+  assert.match(pageSource, /Sign in and give Claire a quick intro of what you are building/)
+  assert.match(pageSource, /share the full Startup School attendee contact list/)
+  assert.match(pageSource, /Right after that, Claire sends you the full attendee contact list/)
+})
+
 test("YC Startup solid CTA keeps readable text color over generic link color", () => {
   assert.match(pageSource, /\.ycs a \{ color: inherit; text-decoration: none; \}/)
   assert.match(pageSource, /\.ycs \.ycs-btn--solid \{[\s\S]*color: var\(--cream, #F5EDE3\);/)
