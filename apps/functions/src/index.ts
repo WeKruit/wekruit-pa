@@ -2658,6 +2658,12 @@ export const paSendblueOutbox = onDocumentCreated(
     memory: "512MiB",
     timeoutSeconds: 120,
     concurrency: 1,
+    // minInstances 0→1 (Adam 2026-07-23, first-touch latency): the inbound chain
+    // (paSendblueWebhook + onPaInbound) is already warm, but the SEND path cold-started
+    // ~5s on the first reply after idle (measured 2026-07-23: row created 01:39:44 →
+    // container ready 01:39:50 → sent 01:39:56). Every reply routes through here, so one
+    // warm instance removes the cold start from EVERY first-touch send, not just yc.
+    minInstances: 1,
   },
   async (event) => {
     // Bind secrets into env so sendblue-client reads them without prop-drilling.
