@@ -575,9 +575,19 @@ test("YC EVENT INTAKE: incomplete ycIntake → ycEventIntake slot progression ri
     userId: NONCANARY_UID,
     inboundText: "it's an eval harness for agents",
   })
-  assert.deepEqual(mid.ycEventIntake, { next: "wants_to_meet", offerLinkedin: false })
+  // `recorded` carries what is ALREADY on file so the prompt can name it back and forbid re-asking
+  // (2026-07-24 live: "what are you building right now?" asked three times in one thread).
+  assert.deepEqual(mid.ycEventIntake, {
+    next: "wants_to_meet",
+    offerLinkedin: false,
+    recorded: { building: "an eval harness" },
+  })
 
-  // Intake complete → NO ycEventIntake; plain yc posture remains.
+  // Intake complete → ycEventIntake is STILL emitted, carrying intakeComplete + both recorded
+  // answers. It used to be cleared to `undefined` here, which left the model with no directive at
+  // all once intake finished — the live re-ask loop (2026-07-24: "what are you building right now?"
+  // at 04:41, again 04:46, then "what are you hoping to connect with most" 04:50). The prompt now
+  // names both answers back and forbids re-asking.
   const done = await selectClaireMode({
     ...{
       db: makeDb({
@@ -590,7 +600,12 @@ test("YC EVENT INTAKE: incomplete ycIntake → ycEventIntake slot progression ri
     inboundText: "cool thanks",
   })
   assert.equal(done.entryPosture, "yc_startup_school")
-  assert.equal(done.ycEventIntake, undefined)
+  assert.deepEqual(done.ycEventIntake, {
+    next: "wants_to_meet",
+    offerLinkedin: false,
+    intakeComplete: true,
+    recorded: { building: "x", wantsToMeet: "y" },
+  })
 })
 
 test("YC EVENT ENTRY: existing non-yc user sending the YC opener flips into the event posture (Noah 2026-07-22)", async () => {

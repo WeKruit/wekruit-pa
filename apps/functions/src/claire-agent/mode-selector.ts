@@ -175,6 +175,15 @@ export interface ModeDecision {
   ycEventIntake?: {
     next: "building" | "wants_to_meet"
     offerLinkedin: boolean
+    /** What is ALREADY recorded (Adam 2026-07-24, live re-ask bug). Threaded on EVERY yc turn —
+     *  including after `completedAt` — so the prompt can name the recorded answer back and FORBID
+     *  re-asking it. Previously ycEventIntake was cleared once intake completed, which left the
+     *  model with no directive at all: live, one user was asked "what are you building right now?"
+     *  at 04:41, AGAIN at 04:46, then "what are you hoping to connect with most" at 04:50. */
+    recorded?: { building?: string; wantsToMeet?: string }
+    /** True once ycIntake.completedAt is stamped — both people questions are done, so the turn is
+     *  pure conversation: never re-ask, never interrogate, just react and keep the thread warm. */
+    intakeComplete?: boolean
     /** True on the FIRST-CONTACT turn (greeting/opener text, nothing recorded yet) —
      *  agent.ts sends the DETERMINISTIC event kickoff (greeting + LinkedIn link + the
      *  building question) and skips the model, so the opener can never be mis-recorded
@@ -677,7 +686,24 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     }
   }
   let ycEventIntake: ModeDecision["ycEventIntake"]
-  if (isYcEventUser && !ycIntakeState?.completedAt) {
+  // What's already on file — threaded on EVERY yc turn so the prompt can reference it instead of
+  // re-asking. `str` keeps only real non-empty strings so a blank never reads as "recorded".
+  const str = (v: unknown) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined)
+  const ycRecorded = {
+    ...(str(ycIntakeState?.building) ? { building: str(ycIntakeState?.building)! } : {}),
+    ...(str(ycIntakeState?.wantsToMeet) ? { wantsToMeet: str(ycIntakeState?.wantsToMeet)! } : {}),
+  }
+  if (isYcEventUser && ycIntakeState?.completedAt) {
+    // INTAKE DONE — still emit a directive (this used to be `undefined`, leaving the model with no
+    // guidance and producing the live re-ask loop). Both answers are named back to it, re-asking is
+    // forbidden, and the turn becomes pure warm conversation.
+    ycEventIntake = {
+      next: "wants_to_meet",
+      offerLinkedin: false,
+      intakeComplete: true,
+      ...(Object.keys(ycRecorded).length > 0 ? { recorded: ycRecorded } : {}),
+    }
+  } else if (isYcEventUser && !ycIntakeState?.completedAt) {
     // FIRST CONTACT: opener/greeting text + nothing recorded yet → the
     // deterministic event kickoff owns the turn (agent.ts short-circuit).
     const kickoff =
@@ -698,6 +724,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     ycEventIntake = {
       next: !ycIntakeState?.building ? "building" : "wants_to_meet",
       offerLinkedin,
+      ...(Object.keys(ycRecorded).length > 0 ? { recorded: ycRecorded } : {}),
       ...(kickoff ? { kickoff: true } : {}),
       ...(nudgeLinkedin ? { nudgeLinkedin: true } : {}),
     }

@@ -70,7 +70,16 @@ export interface ClairePromptOptions {
   /** YC EVENT INTAKE (Adam 2026-07-21): the event-QR guided mini-intake — LinkedIn one-tap offer
    *  (one consequence-framed nudge max), then "what are you building?" and "who do you want to
    *  meet?" recorded via record_yc_intake, then the no-timing match close. */
-  ycEventIntake?: { next: "building" | "wants_to_meet"; offerLinkedin: boolean; nudgeLinkedin?: boolean }
+  ycEventIntake?: {
+    next: "building" | "wants_to_meet"
+    offerLinkedin: boolean
+    nudgeLinkedin?: boolean
+    /** Already-recorded answers — named back in the directive so the model cannot re-ask them
+     *  (live 2026-07-24: "what are you building right now?" asked three times in one thread). */
+    recorded?: { building?: string; wantsToMeet?: string }
+    /** Both people questions done → ask NOTHING further; pure warm conversation. */
+    intakeComplete?: boolean
+  }
   /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block
    *  built by buildCandidateContext — prior job screens (terminal + real reason + borderline gap),
    *  pending-review note, and the capture/offer-other-roles directive. Unlike `prescreenContext` (gated on
@@ -1080,11 +1089,29 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
               ? "- LINKEDIN NUDGE — MANDATORY THIS TURN (a real TEXT message, never only a tapback/reaction): they haven't connected LinkedIn yet. Weave ONE honest heads-up into your reply, then continue the conversation normally: without LinkedIn the matching is noticeably weaker and founders see a much thinner profile of them — one tap on the connect link from CONTEXT (paste the exact link) and their real background does the talking. This is the ONLY nudge they ever get — after this turn NEVER bring LinkedIn up again unless THEY ask."
               : "- LinkedIn already offered + nudged once: NEVER bring it up again unless THEY ask (if they ask, paste the connect link from CONTEXT)."
             : "- Their background is already imported — do NOT re-offer LinkedIn.",
-          opts.ycEventIntake.next === "building"
-            ? "- NEXT QUESTION to ask (when the LinkedIn beat is done or skipped): what are they building / working on right now? When they give a GENUINE answer to that question (never their greeting/opener, never a LinkedIn aside), record it with record_yc_intake(field='building') and follow the tool's nextAction."
-            : "- NEXT QUESTION to ask: who would they like to talk to — what kind of founders/startups/people? When they give a GENUINE answer to that question, record it with record_yc_intake(field='wants_to_meet') and follow the tool's nextAction.",
+          // ALREADY ON FILE — named back so the model cannot re-ask. Live 2026-07-24: one user was
+          // asked "what are you building right now?" at 04:41, AGAIN at 04:46, then "what are you
+          // hoping to connect with most" at 04:50. Re-asking reads like you never listened.
+          opts.ycEventIntake.recorded?.building
+            ? `- ALREADY ON FILE — what they're building: "${opts.ycEventIntake.recorded.building}". NEVER ask what they're building/working on again, not in any wording, not 'just to confirm'. Reference it instead.`
+            : "",
+          opts.ycEventIntake.recorded?.wantsToMeet
+            ? `- ALREADY ON FILE — who they want to meet: "${opts.ycEventIntake.recorded.wantsToMeet}". NEVER ask who they want to meet again, in any wording. Reference it instead.`
+            : "",
+          opts.ycEventIntake.intakeComplete
+            ? "- INTAKE IS COMPLETE — ask NOTHING further. Both answers are on file (above). This turn is pure conversation: react warmly to whatever they say, reference what you already know about them, and if it fits say once that they're in the match pool and you'll text right here when you find a good person match. NEVER re-open the intake, NEVER ask another question about them."
+            : opts.ycEventIntake.next === "building"
+              ? "- NEXT QUESTION to ask (when the LinkedIn beat is done or skipped): what are they building / working on right now? When they give a GENUINE answer to that question (never their greeting/opener, never a LinkedIn aside), record it with record_yc_intake(field='building') and follow the tool's nextAction."
+              : "- NEXT QUESTION to ask: who would they like to talk to — what kind of founders/startups/people? When they give a GENUINE answer to that question, record it with record_yc_intake(field='wants_to_meet') and follow the tool's nextAction.",
           "- When the tool says the intake is COMPLETE: close warmly — you've got what you need, you'll text them once you find a good match, nothing else for them to do. ONE message, no timing promise, no more questions.",
           "- Stay conversational: react to what they share before asking the next thing; never stack questions.",
+          // ATTENDEE-LIST ASK (Adam 2026-07-24: "when user ask about list, telling them we will
+          // directly match them"). Live, a request for "the list" produced FIVE clarifying questions
+          // back (which list? founders-only or everyone? your email? attachment or body? which event
+          // page?) and a promise to email an attachment. There is no list to share and no email tool.
+          "- IF THEY ASK FOR THE ATTENDEE / CONTACT LIST (or 'the list', 'contacts', 'who's coming', a spreadsheet): do NOT offer it, do NOT ask which version they want, do NOT ask for their email, do NOT promise to send anything. There is NO list to share. Say it plainly and warmly in ONE message: we'll match you directly with the right people and text you right here when we've got someone worth meeting. Then stop — no follow-up question.",
+          "- NEVER INVENT A CAPABILITY: you canNOT send email, files, attachments, or spreadsheets — you have no tool for it. NEVER say you'll email something, NEVER ask for their email address in order to send something, NEVER say 'i'll send that over'. The ONLY thing you can do is text them right here. Live failure: Claire promised 'i'll send everything as a single email attachment', asked for the address, and the user replied 'I didn't received the email'.",
+          "- ANSWER, DON'T INTERROGATE: at most ONE question per message, and never a clarifying question about something you cannot deliver anyway. If they ask for something you can't give, say so once, say what you WILL do, and stop.",
         ].join("\n")
       : "",
     opts.entryPosture === "yc_startup_school"
