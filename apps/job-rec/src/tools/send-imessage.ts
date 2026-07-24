@@ -15,7 +15,29 @@
 import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { createRequire } from "node:module"
-import { PA_COLLECTIONS, type Channel, type InboundEvent, type User } from "@pa/core-types"
+import {
+  PA_COLLECTIONS,
+  isYcPeopleUser,
+  type Channel,
+  type InboundEvent,
+  type User,
+} from "@pa/core-types"
+
+/**
+ * Keys that mark a runtime context as carrying JOB-RECOMMENDATION content. The daily batch builds
+ * `{ eventKind: "daily_job_recommendations", jobs: [{ id, title, companyName, ... }] }` and the
+ * reverse-match notify passes `{ jobTitle, companyName }`. The YC people send carries none of
+ * these (only `trustedOutboundBody`), which is what keeps it deliverable.
+ */
+const JOB_CONTEXT_KEYS = ["jobs", "jobTitle", "companyName", "jobId", "atsApplyUrl"] as const
+
+function hasJobShapedContext(context: Record<string, unknown>): boolean {
+  if (JOB_CONTEXT_KEYS.some((k) => context[k] !== undefined && context[k] !== null)) return true
+  // eventKind is the batch's own label for the job push; catch it even if the payload shape drifts.
+  return (
+    typeof context.eventKind === "string" && context.eventKind === "daily_job_recommendations"
+  )
+}
 import { SendImessageInputSchema, type SendImessageOutput } from "../types.js"
 
 const require = createRequire(import.meta.url)
@@ -143,6 +165,33 @@ export async function sendImessage(
   if (!user || !user.phoneE164) {
     log("[sendImessage] user_not_found_or_no_phone", { userId: parsed.userId })
     return { ok: false }
+  }
+
+  // YC PEOPLE LANE — DELIVERY-TIME backstop (Adam-LOCKED 2026-07-24). This is a fully generic
+  // "deliver this context to this userId" handoff (paJobRecSendTask posts straight into it), and
+  // until now the ONLY YC protection was at enqueue time in daily-batch. Nothing re-checked here.
+  //
+  // Scoped to JOB-SHAPED contexts on purpose: yc-intake-admin's legitimate 7pm PEOPLE send goes
+  // through this same function with { eventKind: "yc_evening_people_matches", trustedOutboundBody }
+  // and MUST keep working, so a blanket user-level block would break the YC lane it protects.
+  // getUser is injectable and deliberately narrow (id/phoneE164/channels), so read the doc directly
+  // — and only when the context actually carries job content, keeping the people path read-free.
+  if (hasJobShapedContext(parsed.context)) {
+    try {
+      const snap = await deps.db.collection(PA_COLLECTIONS.users).doc(parsed.userId).get()
+      if (isYcPeopleUser(snap.data() ?? {})) {
+        log("[sendImessage] yc_people_job_content_blocked", { userId: parsed.userId })
+        return { ok: false }
+      }
+    } catch (err) {
+      // Fail CLOSED for job content: unable to prove the user is NOT a YC person, and sending a
+      // founder/investor a job rec is precisely the violation being prevented.
+      log("[sendImessage] yc_people_check_failed_blocking_job_content", {
+        userId: parsed.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return { ok: false }
+    }
   }
 
   const idempotencyKey = args.idempotencyKey ?? deriveIdempotencyKey(parsed.userId, parsed.context)

@@ -9,6 +9,7 @@ export * from "./prescreen-ops-types.js"
 export * from "./conversation-sentiment.js"
 export * from "./job-description.js"
 export * from "./job-logistics.js"
+export * from "./yc-people.js"
 
 export type { Channel }
 export { ChannelSchema }

@@ -38,6 +38,7 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
+import { isYcPeopleUser } from "@pa/core-types"
 import { hasOpenPrescreenWorkSession } from "./prescreen-guard.js"
 import { JOB_PROFILES_COLLECTION, type JobProfileDoc } from "./types.js"
 
@@ -91,7 +92,13 @@ function isEligibleUser(data: Record<string, unknown>, nowMs: number): {
   // LinkedIn enrich mints targetRoleFunction they'd otherwise auto-provision here and start
   // getting proactive rec texts. AUTO-provision only: an operator can still create a
   // pa-job-profiles row by hand, and users already in the cadence are never touched.
-  if (data.source === "yc_startup_school") return { eligible: false, reason: "yc_event_posture" }
+  //
+  // 2026-07-24 — was `data.source === "yc_startup_school"`, which MISSED event-QR entrants whose
+  // source is `qr_imessage`/`candidate` but who carry `ycEventEntryAt`. Live consequence: real YC
+  // users (xoIzGJpT06GvrmIQwHlt, f3f16f3f-0056-4418-a206-6781c71f423c) were admitted here and
+  // ended up with active pa-job-profiles rows in the job-rec audience. Now uses the shared
+  // canonical predicate from @pa/core-types so this can never drift narrow again.
+  if (isYcPeopleUser(data)) return { eligible: false, reason: "yc_event_posture" }
   const tags =
     data.tags && typeof data.tags === "object" ? (data.tags as Record<string, unknown>) : null
   const targetRoleFunction = cleanStringArray(tags?.targetRoleFunction)
