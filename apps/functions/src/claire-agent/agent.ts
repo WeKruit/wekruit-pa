@@ -1014,14 +1014,25 @@ export async function runClaireTurn(
   if (deps.ycEventIntake?.kickoff && deps.isSuppressionFallback !== true) {
     let connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
     if (!connectUrl) connectUrl = CONNECT_LINKEDIN_LINK_BASE
+    // WHAT WE PROMISE HERE MUST BE WHAT WE DELIVER (Adam 2026-07-24). This line used to read
+    // "...then will share the list you should go connect and help you match after that!" — but #622
+    // removed the attendee list. So the very first message promised a list we no longer have, users
+    // duly asked for it ("Share the list with me"), and Claire had nothing: live, that produced FIVE
+    // clarifying questions and an invented promise to email an attachment. Promise DIRECT matching
+    // instead, which is what actually happens.
+    const framing =
+      "i'll get a quick idea of what you're building and who you want to meet, then match you directly with the right Startup School people — i'll text you right here."
     const parts: string[] = [
       "hey!! welcome 🎉 i'm claire — i match startup school folks with founders who are building + hiring.",
       ...(deps.ycEventIntake.offerLinkedin
         ? [
             `quick unlock so founders see your real background: log in with LinkedIn (one tap) 👉 ${connectUrl}`,
-            "Also will get some idea about you then will share the list you should go connect and help you match after that!",
+            framing,
           ]
-        : ["so — what are you building right now?"]),
+        : // Background already imported → no LinkedIn beat. Still carry the framing so this branch
+          // isn't a thin "so — what are you building?" (live: 3d1TYXwutJuP, b6ag31sPyxKR got exactly
+          // that and it read abrupt next to the LinkedIn version).
+          [framing, "so — what are you building right now?"]),
       "reply STOP anytime to opt out.",
     ]
     const message = parts.join("\n\n")
