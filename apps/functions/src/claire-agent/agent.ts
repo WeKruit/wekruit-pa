@@ -27,6 +27,7 @@ import { type ProcessSessionStore, type ProcessToolContext } from "./tools/proce
 import { buildClairePrompt, buildClaireTurnContext } from "./prompt.js"
 import { buildClaireGuardrails } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverBubblesEx } from "./delivery.js"
+import { scrubYcJobOffers } from "./yc-people-guard.js"
 import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
@@ -1302,6 +1303,21 @@ export async function runClaireTurn(
   })
 
   const deliveredViaTool = tracked.handledViaTool()
+
+  // YC PEOPLE-LANE JOB-OFFER SCRUB (Adam-LOCKED 2026-07-24). #611 omits every job TOOL for a
+  // yc user, so a job listing can never be DELIVERED — but an OFFER is just prose and needs no
+  // tool. The ban was prompt-only (prompt.ts: "NEVER offer 'want me to pull roles'") and the
+  // model emitted that exact phrase to a real YC user 14.5h AFTER the guards were live
+  // (2026-07-24T15:46Z). This is the deterministic backstop. Refusals are preserved (they also
+  // contain job words); only affirmative, non-negated offers are dropped. Non-YC paths never run.
+  if (deps.entryPosture === "yc_startup_school") {
+    const scrub = scrubYcJobOffers(bubbles)
+    if (scrub.scrubbed > 0) {
+      log("yc.job_offer_scrubbed", { userId: input.userId, bubblesScrubbed: scrub.scrubbed })
+      bubbles = scrub.bubbles
+    }
+  }
+
   // deliverBubblesEx normalizes each bubble (markdown/length) + caps count; one Sendblue send each.
   // It also reports `suppressedAll` — ≥1 real bubble existed but the cross-turn near-dup dedup dropped
   // EVERY one — which drives the anti-silence fallback below (instead of going silent).
