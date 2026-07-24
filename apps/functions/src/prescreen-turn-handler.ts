@@ -50,7 +50,7 @@ import {
   buildStalePrescreenSweepTurn,
 } from "./prescreen-staleness.js"
 import { classifyInboundReplyNeed } from "./sendblue/ack-classifier.js"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import {
@@ -847,6 +847,14 @@ async function startSharedOnboardingAfterPrescreen(args: {
   const userRef = args.db.collection(PA_COLLECTIONS.users).doc(args.userId)
   const userSnap = await userRef.get()
   const user = (userSnap.data() ?? {}) as Record<string, unknown>
+  // YC PEOPLE LANE — never start the post-prescreen onboarding rail (Adam-LOCKED 2026-07-24). Its
+  // first missing slot is typically the US location/remote question, and this path sends
+  // buildSharedOnboardingPrompt straight out through sendSms, bypassing the delivery scrub. Send
+  // NOTHING job-related; the people lane owns this user's thread.
+  if (isYcPeopleUser(user)) {
+    args.log("shared_onboarding.suppressed_yc_people_lane", { userId: args.userId })
+    return ""
+  }
   if (user.onboardingState === "complete" || user.onboardingStatus === "complete") {
     const doneText = "Great — I already have your basic profile context, so there’s nothing else you need to answer right now. I’ll reach out when there’s a strong next match."
     await args.sendSms({
@@ -1163,6 +1171,23 @@ export async function runPrescreenTurnIfActive(
   const log = args.log ?? (() => {})
   const sendSms = args.sendSms ?? sendRuntimeApprovedIMessage
   const terminalAction = args.runTerminalAction ?? runPrescreenTerminalAction
+  // YC PEOPLE LANE — YIELD the turn (Adam-LOCKED 2026-07-24: a YC user is asked nothing about jobs).
+  // runPreScreenForUser now refuses to START a screen for a YC person, but a user who was ALREADY
+  // mid-screen when they entered the YC lane still had an open session, and this handler runs BEFORE
+  // thin-Claire in both the coalescer and onPaInbound — so every reply was being scored as a job
+  // interview answer and the next job question asked back. Yielding hands the turn to the people
+  // lane; we write NOTHING to the session (same shape as the layoff/voice yields below), so nothing
+  // is scored, no terminal is forced, and the record stays intact for an operator.
+  // Fail-OPEN: a read error must not break prescreen for the ordinary candidate fleet.
+  try {
+    const ycSnap = await args.db.collection("pa-users").doc(args.userId).get()
+    if (isYcPeopleUser(ycSnap.data() ?? {})) {
+      log("prescreen.turn.yielded_to_yc_people_lane", { userId: args.userId })
+      return { handled: false }
+    }
+  } catch {
+    /* fail-open → normal prescreen handling */
+  }
   const intakeActive = await isLayoffIntakeActiveForUser(args.db, args.userId)
   const wantsOutcomeExplanation = isPrescreenOutcomeExplanationRequest(args.replyText)
   if (intakeActive && !wantsOutcomeExplanation) {

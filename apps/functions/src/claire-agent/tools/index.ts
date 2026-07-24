@@ -31,6 +31,22 @@ export interface BuildClaireToolsOptions {
 /** From buildMatchingTools, the tools that are NOT job-recommendation — safe for the YC lane. */
 const YC_ALLOWED_MATCHING_TOOLS = new Set(["remember_fact", "privacy", "cv_parse"])
 
+/**
+ * From buildProcessTools, the ONLY process tools the YC lane keeps (Adam-LOCKED 2026-07-24: a YC
+ * user is asked nothing about jobs).
+ *
+ * Dropped: `ask_next_onboarding_question` + `record_onboarding_answer` — the onboarding rail whose
+ * questions ARE job-search questions ("What kind of roles are you going for next", the US
+ * location/remote question). The tool returns that prompt text for the model to read out, and the
+ * delivery scrub cannot catch a question. Also dropped: `ask_next_prescreen_question`,
+ * `score_prescreen_answer`, `explain_prescreen_outcome` — the job-interview machinery, which a YC
+ * person never enters (runPreScreenForUser also refuses them).
+ *
+ * Kept: `record_yc_intake` — the two PEOPLE questions (what are you building / who do you want to
+ * meet). That is the whole point of the lane.
+ */
+const YC_ALLOWED_PROCESS_TOOLS = new Set(["record_yc_intake"])
+
 /** All tools the thin Claire agent can call, in description-routed order. */
 export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsOptions = {}) {
   const matching = buildMatchingTools(ctx)
@@ -40,9 +56,17 @@ export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsO
     ...(opts.ycPeopleMode
       ? matching.filter((t) => YC_ALLOWED_MATCHING_TOOLS.has((t as { name?: string }).name ?? ""))
       : matching),
-    ...buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {}),
+    // YC lane: keep only record_yc_intake from the process tools — the onboarding rail's questions
+    // ARE job-search questions, and the prescreen FSM tools are job-interview machinery.
+    ...(opts.ycPeopleMode
+      ? buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {}).filter((t) =>
+          YC_ALLOWED_PROCESS_TOOLS.has((t as { name?: string }).name ?? ""),
+        )
+      : buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {})),
     ...buildDeliveryTools(ctx, { forbidSuppressingDelivery: opts.forbidSuppressingDelivery }),
-    ...buildSchedulingTools(ctx),
+    // YC lane: NO scheduling tools — offer_interview_slots / book_interview_slot book JOB
+    // interviews. People intros are operator-curated, not self-booked from this chat.
+    ...(opts.ycPeopleMode ? [] : buildSchedulingTools(ctx)),
     ...buildVoiceCallTools(ctx),
   ]
 }
