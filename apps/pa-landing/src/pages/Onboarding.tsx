@@ -1193,6 +1193,11 @@ function FormIntake({
           </p>
         )}
         <Field span={2} label="Personal website" value={v.personalWebsite!} onChange={(x) => set("personalWebsite", x)} placeholder="https://yoursite.com" optional />
+        {isYcStartup && (
+          <p style={{ gridColumn: "1 / -1", margin: 0, fontSize: 13, color: "var(--ink-3)" }}>
+            All optional for Startup School — you can skip these and just talk to Claire. She'll ask for your LinkedIn in iMessage.
+          </p>
+        )}
         {err.profilePath && (
           <p style={{ gridColumn: "1 / -1", margin: 0, fontSize: 13, color: "var(--danger)" }}>{err.profilePath}</p>
         )}
@@ -1201,7 +1206,11 @@ function FormIntake({
       <div style={{ marginTop: 20 }}>
         <span style={{ fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 500, color: "var(--ink-2)", display: "flex", justifyContent: "space-between" }}>
           <span>Resume <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>· PDF, DOC, DOCX</span></span>
-          {err.resume && <span style={{ color: "var(--danger)" }}>Required</span>}
+          {isYcStartup ? (
+            <span style={{ color: "var(--ink-3)", fontWeight: 400 }}>it's optional</span>
+          ) : (
+            err.resume && <span style={{ color: "var(--danger)" }}>Required</span>
+          )}
         </span>
         <input
           ref={fileInputRef}
