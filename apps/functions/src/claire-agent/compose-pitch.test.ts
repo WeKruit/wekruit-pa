@@ -656,10 +656,10 @@ test("YC EVENT entry (QR): closer promises 7PM (never a peek) and CONTINUES the 
   }
   const mock: PitchComposer = { async compose() { return "PITCH" } }
 
-  // building unanswered → closer gives pool promise only (agent asks the question next turn).
+  // building unanswered → closer asks it inline (pitch turn is deterministic, agent never gets a follow-up turn).
   const a = await composePitchTurn(makeStubDb({ ...base }).db, "u1", "2026-07-22T00:00:00Z", mock)
   assert.match(a![2]!, /on July 25 at 7pm PT/)
-  assert.doesNotMatch(a![2]!, /what are you building/, "intake question lives in agent directive, not pitch closer")
+  assert.match(a![2]!, /what are you building/, "intake question lives inline in the deterministic pitch closer")
   assert.doesNotMatch(a![2]!, /say the word/, "never the instant-peek offer for an event entrant")
 
   // building answered, wants_to_meet missing → same: pool promise only.
@@ -670,7 +670,7 @@ test("YC EVENT entry (QR): closer promises 7PM (never a peek) and CONTINUES the 
     mock,
   )
   assert.match(b![2]!, /on July 25 at 7pm PT/)
-  assert.doesNotMatch(b![2]!, /who do you want to meet/, "intake question lives in agent directive, not pitch closer")
+  assert.match(b![2]!, /who do you want to meet/, "intake question lives inline in the deterministic pitch closer")
 
   // intake complete → plain 7pm close, nothing else to do.
   const c = await composePitchTurn(
