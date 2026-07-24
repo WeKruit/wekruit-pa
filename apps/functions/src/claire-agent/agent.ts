@@ -309,6 +309,9 @@ export interface BuildClaireAgentOptions {
   /** Provider-fallback retry: override the conversation model (default CLAIRE_MODEL). Set to
    *  CLAIRE_FALLBACK_MODEL for the one-shot retry after the primary model throws. */
   modelOverride?: string
+  /** DEDICATED YC LANE (Adam-LOCKED 2026-07-23): entryPosture==yc_startup_school → the agent is
+   *  built WITHOUT any job-recommendation tools. Set from deps.entryPosture. */
+  ycPeopleMode?: boolean
 }
 
 // The agent's terminal output when a tool already delivered the candidate-facing text: an EMPTY bubble array
@@ -430,6 +433,8 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
       // BLOCKER 3: on the post-parse pitch turn the pitch MUST be text bubbles — drop the tapback /
       // no_reply / status tools so a deliveredViaTool short-circuit can't swallow the pitch.
       forbidSuppressingDelivery: opts.postParsePitch === true,
+      // DEDICATED YC LANE: omit all job-recommendation tools for YC people-matching users.
+      ycPeopleMode: opts.ycPeopleMode === true,
     }),
     // Multi-bubble reply contract — finalOutput is { messages: string[] }, delivered one send each.
     outputType: ClaireReplySchema,
@@ -1039,6 +1044,10 @@ export async function runClaireTurn(
   const buildOpts: BuildClaireAgentOptions = {
     mode: fallback ? "triage" : (deps.mode ?? "triage"),
     lang,
+    // DEDICATED YC LANE — build the agent WITHOUT any job-recommendation tools for YC
+    // people-matching users. Survives the fallback strip: a YC person must NEVER be handed job
+    // tools, even on the anti-silence retry (that's why it's NOT gated on `fallback`).
+    ycPeopleMode: deps.entryPosture === "yc_startup_school",
     pendingStep: fallback ? undefined : deps.pendingStep,
     currentStep: fallback ? undefined : deps.currentStep,
     globalContext,

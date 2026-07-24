@@ -20,6 +20,7 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { YC_ATTENDEE_CONTACT_SHEET_URL } from "@pa/pa-orchestrator"
 import { isThinClaireEnabled } from "./flags.js"
 import { isCanaryUser, isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
@@ -644,6 +645,41 @@ export async function maybeRunThinClaire(
   // paraphrase). FAIL-OPEN: composePitchTurn returns null on any miss (no key / no signal / empty
   // completion) → fall through to the legacy agent pitch path below. Canary-only (the cv-parsed pitch
   // cohort). The composer also stamps onboarding complete so the NEXT turn is normal triage, not a re-pitch.
+  // DEDICATED YC LANE (Adam-LOCKED 2026-07-23): a YC Startup School person is NEVER job-pitched
+  // (they may be an investor). The résumé/LinkedIn re-entry sends a deterministic PEOPLE
+  // confirmation + the attendee contact list — the job-pitch engine (composePitchTurn) is skipped
+  // entirely, so no role-fit line can ever be composed. Read the yc flags off the user doc (the
+  // same read the pitch path would do); fail-open to the normal pitch on a read error.
+  if (cvParsedReentry && toE164) {
+    let ycPerson = false
+    try {
+      const u = (await db.collection(PA_COLLECTIONS.users).doc(userId).get()).data() ?? {}
+      ycPerson =
+        (u as { source?: unknown }).source === "yc_startup_school" ||
+        Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt) ||
+        (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
+    } catch { /* fail-open → normal pitch path below */ }
+    if (ycPerson) {
+      const ycTransport = createSendblueTransport({
+        db, toE164: String(toE164), inboundMessageHandle, userId, sessionId,
+        inboundEventId: pitchTurnScope, log, ...(deps.dryRun ? { dryRun: true } : {}),
+      })
+      const ycBody =
+        "got your background 👀 you're in the founder-match pool 🤝 your matches — founders, investors, and operators worth meeting — drop tonight around 7pm, and i'll text you right here (and email you).\n\nhere's the Startup School attendee list so you can start meeting people: " +
+        YC_ATTENDEE_CONTACT_SHEET_URL
+      await ycTransport.sendText(ycBody, { paced: true }).catch((e) => log("thin_claire.yc_people_confirm.send_failed", { eventId, err: String(e) }))
+      try {
+        await db.collection(PA_COLLECTIONS.users).doc(userId).set(
+          { onboardingState: "complete", onboardingStatus: "complete", updatedAt: new Date().toISOString() },
+          { merge: true },
+        )
+      } catch { /* next-turn triage self-heals */ }
+      await db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId)
+        .set({ status: "completed", handledBy: "thin_claire_yc_people_confirm" }, { merge: true }).catch(() => {})
+      log("thin_claire.yc_people_confirm_sent", { eventId, userId })
+      return true
+    }
+  }
   if (cvParsedReentry && toE164 && isCanaryUser(userId)) {
     try {
       const { composePitchTurn } = await import("./compose-pitch.js")

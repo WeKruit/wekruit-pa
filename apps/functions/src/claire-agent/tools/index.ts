@@ -19,12 +19,27 @@ export interface BuildClaireToolsOptions {
   /** BLOCKER 3: post-parse pitch turn → withhold react_to_user / no_reply / send_status_then_continue
    *  so a tapback-only can't suppress the mandated text pitch (the live "👍 tapback no response"). */
   forbidSuppressingDelivery?: boolean
+  /** DEDICATED YC LANE (Adam-LOCKED 2026-07-23): YC Startup School is PEOPLE matching — investors
+   *  sign up too, not just candidates. When set, ALL job-recommendation tools are OMITTED from the
+   *  agent (find_match, match_collab, save_job_profile, set_daily_subscription, find_my_role,
+   *  begin_collab_prescreen, get_public_role_start, set_matching_preferences, capture_match_feedback,
+   *  check_prescreen_progress). The model physically cannot deliver job content — leak-proof by
+   *  construction, no scattered per-tool guards. Only the non-job matching tools survive. */
+  ycPeopleMode?: boolean
 }
+
+/** From buildMatchingTools, the tools that are NOT job-recommendation — safe for the YC lane. */
+const YC_ALLOWED_MATCHING_TOOLS = new Set(["remember_fact", "privacy", "cv_parse"])
 
 /** All tools the thin Claire agent can call, in description-routed order. */
 export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsOptions = {}) {
+  const matching = buildMatchingTools(ctx)
   return [
-    ...buildMatchingTools(ctx),
+    // YC lane: keep only the non-job matching tools (memory, STOP/privacy, cv_parse). Every job
+    // tool is dropped so it is never even in the model's tool set.
+    ...(opts.ycPeopleMode
+      ? matching.filter((t) => YC_ALLOWED_MATCHING_TOOLS.has((t as { name?: string }).name ?? ""))
+      : matching),
     ...buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {}),
     ...buildDeliveryTools(ctx, { forbidSuppressingDelivery: opts.forbidSuppressingDelivery }),
     ...buildSchedulingTools(ctx),

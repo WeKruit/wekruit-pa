@@ -22,6 +22,14 @@ const USERS = PA_COLLECTIONS.users
 const PITCH_MODEL = "gpt-5.4-mini" // Adam-picked: stronger than nano for the product centerpiece.
 
 /** The composer's system prompt — the candidate-facing distillation of .planning/PITCH-GUIDE.md. */
+// Line 4 of the pitch — the JOB-track framing (default hiring pitch). For YC people-matching
+// users this exact line is REPLACED (not contradicted) by PITCH_LINE_4_YC below: appending an
+// override left this concrete instruction in place and the model kept emitting "also fits X
+// roles" (live 2026-07-23). Swapping the line out is the clean prompt fix.
+const PITCH_LINE_4_HIRING =
+  "4) INDUSTRY & TRACK — their industry + current career track, then the ADJACENT tracks/titles you'd take them to. Keep it TIGHT. e.g. 'AI infra · backend/platform eng — also fits ML-platform, DevEx, or staff backend roles'."
+const PITCH_LINE_4_YC =
+  "4) WHAT THEY'RE INTO + WHO THEY'D CLICK WITH — their space/what they're building, then the KIND OF PEOPLE they'd want to meet at Startup School. This person may be an INVESTOR, operator, or founder — NOT a job candidate. ABSOLUTELY NO job roles, job titles, openings, or 'also fits X roles' language anywhere in the pitch — you are NOT a recruiter and there is NO market to take them to. e.g. 'building agentic dev-tools — worth meeting infra founders + ML-platform people'."
 const PITCH_SYSTEM = [
   "You are Claire, a sharp recruiter at WeKruit texting a candidate over iMessage right after pulling their LinkedIn/résumé.",
   "Write a SHORT, structured PITCH of the candidate, addressed to THEM ('you'), as EXACTLY FOUR lines, each on its OWN line (newline-separated). This is the trust vehicle before you take them to market: it shows you SEE them. Concise + straight to the point — NO paragraphs, NO preamble, NO sign-off, NO emojis, NO labels like 'Achievement:'. Just the four content lines.",
@@ -38,7 +46,7 @@ const PITCH_SYSTEM = [
   "   FORBIDDEN line 1 shapes: 'Senior <role> at <company>', 'Staff <role> at <company>', or anything that just rephrases recentRoleTitle + recentCompany. If your draft line 1 looks like that, THROW IT OUT and re-scan for a founder / honor / quantified-impact / 0→1 signal.",
   "2) YEARS OF EXPERIENCE — state ONLY total full-time (non-internship) professional experience, as ONE rounded number. e.g. '~3 yrs experience' or '~5 yrs experience'. Do NOT compute, split out, or even mention internship years — internships do not get their own number. To get the total: read each role's TITLE + duration, treat a role as an INTERNSHIP (and EXCLUDE it from the count) if its title contains intern / internship / co-op / trainee / apprentice (or it's a clearly short student summer stint), sum the durations of the remaining full-time roles (de-duplicate overlapping concurrent roles at the same employer — don't double-count the same months), and round sensibly. If ALL real experience is internships/school: just say 'new grad' (no internship-year number). If durations are missing, estimate conservatively from what's there — never invent a number. NEVER let this line contradict line 1.",
   "3) SENIORITY — infer from titles + durations: one of intern/new-grad, junior, mid-level, senior, staff/principal, lead/manager, founder. One short phrase.",
-  "4) INDUSTRY & TRACK — their industry + current career track, then the ADJACENT tracks/titles you'd take them to. Keep it TIGHT. e.g. 'AI infra · backend/platform eng — also fits ML-platform, DevEx, or staff backend roles'.",
+  PITCH_LINE_4_HIRING,
   "",
   "PRE-COMPUTED EMPLOYER SIGNALS (when present): the profile may carry an `employerSignals` object derived ahead of time from the candidate's employer history (founderRole, selectivitySignals, scopeOfOwnership {teamSize/revenue/users}, hasBigTechBackground, employerGrowthTier, employerTags like big_tech / mag_7 / yc_alumni / unicorn). When it is present, TRUST it to pick the line-1 priority instead of guessing from raw text: founderRole=true → lead P1; selectivitySignals non-empty → those ARE the P2 honors (cite one near-verbatim); scopeOfOwnership numbers → real P3/P5 scope; hasBigTechBackground or a growth-tier/employerTags environment → the P4 brand/selectivity line. The signals choose WHICH proof leads — the cited facts themselves must still come from the profile; signals never justify inventing a metric, title, or employer.",
   "",
@@ -358,13 +366,15 @@ class LlmPitchComposer implements PitchComposer {
       // replaces it with a different one.
       const { improved: _priorPitch, ycPeopleMode: _ycPeople, ...profileData } = profile
       void _priorPitch
-      // YC PEOPLE-MATCHING override (Adam-LOCKED 2026-07-23): strip the hiring-pitch framing.
-      // A YC Startup School person may be an investor or founder, NOT a job candidate — never
-      // pitch them for roles. This replaces line 4's "industry & track — also fits X roles"
-      // (the exact leak Adam saw live) with what they're into + who they'd click with.
-      const ycOverride = _ycPeople
-        ? "\n\nYC PEOPLE-MATCHING MODE — OVERRIDES the framing above: this person is at YC Startup School for PEOPLE matching (they may be an INVESTOR, operator, or founder — NOT a job candidate). You are NOT a recruiter here and there is NO 'market' to take them to. Keep lines 1-3 as an honest read of what stands out about them. For line 4: DO NOT name job tracks/titles or say 'also fits X roles' — instead state what they're building or into + the kind of PEOPLE they'd want to meet (e.g. 'building agentic dev-tools — worth meeting infra founders + ML-platform folks'). NEVER any job role, opening, or 'fits X roles' language anywhere."
-        : ""
+      // YC PEOPLE-MATCHING (Adam-LOCKED 2026-07-23): REPLACE line 4's job-track instruction
+      // (not append an override — appending left the concrete "also fits X roles" line in place
+      // and the model followed it, live 2026-07-23). Swap the whole system prompt's line 4 for
+      // the people-framed one, and prepend a hard mode banner so the model never job-frames a
+      // person who may be an investor.
+      const systemPrompt = _ycPeople
+        ? "YC STARTUP SCHOOL PEOPLE-MATCHING MODE — this person may be an INVESTOR, operator, or founder, NOT a job candidate; you are NOT a recruiter and there is NO market to take them to. NEVER mention job roles, titles, openings, or 'fits X roles' anywhere.\n\n" +
+          PITCH_SYSTEM.replace(PITCH_LINE_4_HIRING, PITCH_LINE_4_YC)
+        : PITCH_SYSTEM
       const hasTechDetail = profileData.experienceHighlights.some(
         (h) => typeof h.description === "string" && h.description.trim().length >= 40,
       )
@@ -375,7 +385,7 @@ class LlmPitchComposer implements PitchComposer {
         const resp = await client.responses.create({
           model: PITCH_MODEL,
           input: [
-            { role: "system", content: PITCH_SYSTEM + ycOverride },
+            { role: "system", content: systemPrompt },
             {
               role: "user",
               content:
