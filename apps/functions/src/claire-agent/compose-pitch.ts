@@ -793,11 +793,9 @@ export async function composePitchTurn(
     // people matching, not job roles.
     const pool =
       "you're in the founder-match pool 🤝 your matches — founders, investors, operators worth meeting — drop on July 25 at 7pm PT, and i'll text you right here (and email you)."
-    offer = !u.ycIntake?.building
-      ? `${pool} while that's brewing — what are you building right now?`
-      : !u.ycIntake?.wantsToMeet
-        ? `${pool} while that's brewing — who do you want to meet: what kind of founders or people?`
-        : `${pool} nothing else you need to do. also — here's the Startup School attendee contact list: ${YC_ATTENDEE_CONTACT_SHEET_URL}`
+    offer = (u.ycIntake?.building && u.ycIntake?.wantsToMeet)
+      ? `${pool} nothing else you need to do. also — here's the Startup School attendee contact list: ${YC_ATTENDEE_CONTACT_SHEET_URL}`
+      : pool
   }
   // MODEL-COMPOSED FRAMING (Adam 2026-06-07: "the main thing is to avoid the agent generating same texts
   // again and again"). Replace the deterministic confirmation + closer with a VARIED pair on the same
