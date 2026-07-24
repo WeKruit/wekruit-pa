@@ -777,7 +777,7 @@ export async function composePitchTurn(
   // YC closer — replaces every offer shape above AND skips the framing composer's closer below
   // (the framed closer is validated as a single-clear-PULL-ask, exactly the push yc must not make).
   if (ycPosture) {
-    // EVENT (QR) entrants (Adam live test 2026-07-22): matches drop TONIGHT AROUND 7PM
+    // EVENT (QR) entrants (Adam live test 2026-07-22): matches drop ON JULY 25 AT 7PM PT
     // (manual operator send) — never offer an instant peek. And the pitch re-entry must
     // CONTINUE the intake, not close it: Adam tapped LinkedIn straight off the kickoff, so
     // "what are you building" was still unanswered when this closer said "nothing else you
@@ -792,7 +792,7 @@ export async function composePitchTurn(
     // find_match job pull, and a founder got pitched SWE openings (Adam 2026-07-23). YC is
     // people matching, not job roles.
     const pool =
-      "you're in the founder-match pool 🤝 your matches — founders, investors, operators worth meeting — drop tonight around 7pm, and i'll text you right here (and email you)."
+      "you're in the founder-match pool 🤝 your matches — founders, investors, operators worth meeting — drop on July 25 at 7pm PT, and i'll text you right here (and email you)."
     offer = !u.ycIntake?.building
       ? `${pool} while that's brewing — what are you building right now?`
       : !u.ycIntake?.wantsToMeet

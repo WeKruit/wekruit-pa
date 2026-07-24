@@ -658,7 +658,7 @@ test("YC EVENT entry (QR): closer promises 7PM (never a peek) and CONTINUES the 
 
   // building unanswered (Adam tapped LinkedIn straight off the kickoff) → closer asks it.
   const a = await composePitchTurn(makeStubDb({ ...base }).db, "u1", "2026-07-22T00:00:00Z", mock)
-  assert.match(a![2]!, /tonight around 7pm/)
+  assert.match(a![2]!, /on July 25 at 7pm PT/)
   assert.match(a![2]!, /what are you building/)
   assert.doesNotMatch(a![2]!, /say the word/, "never the instant-peek offer for an event entrant")
 
@@ -669,7 +669,7 @@ test("YC EVENT entry (QR): closer promises 7PM (never a peek) and CONTINUES the 
     "2026-07-22T00:00:00Z",
     mock,
   )
-  assert.match(b![2]!, /tonight around 7pm/)
+  assert.match(b![2]!, /on July 25 at 7pm PT/)
   assert.match(b![2]!, /who do you want to meet/)
 
   // intake complete → plain 7pm close, nothing else to do.
@@ -679,7 +679,7 @@ test("YC EVENT entry (QR): closer promises 7PM (never a peek) and CONTINUES the 
     "2026-07-22T00:00:00Z",
     mock,
   )
-  assert.match(c![2]!, /tonight around 7pm/)
+  assert.match(c![2]!, /on July 25 at 7pm PT/)
   assert.match(c![2]!, /nothing else you need to do/)
 
   // Website /yc-startup (source=yc, no event campaign) gets the SAME people closer now —
@@ -691,6 +691,6 @@ test("YC EVENT entry (QR): closer promises 7PM (never a peek) and CONTINUES the 
     "2026-07-22T00:00:00Z",
     mock,
   )
-  assert.match(site![2]!, /tonight around 7pm/, "website yc gets the 7pm people promise")
+  assert.match(site![2]!, /on July 25 at 7pm PT/, "website yc gets the 7pm people promise")
   assert.doesNotMatch(site![2]!, /say the word|peek at who/i, "no job-peek for website yc either")
 })

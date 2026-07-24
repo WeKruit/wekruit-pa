@@ -225,7 +225,7 @@ test("YC EVENT INTAKE directive renders slots + one-nudge consequence + 7pm clos
   assert.match(nudgeTurn, /founders see a much thinner profile/)
   assert.match(nudgeTurn, /what are they building/)
   assert.match(nudgeTurn, /record_yc_intake\(field='building'\)/)
-  assert.match(nudgeTurn, /TONIGHT AROUND 7PM/)
+  assert.match(nudgeTurn, /ON JULY 25 AT 7PM PT/)
 
   // Already nudged (flag absent, LinkedIn still unconnected) → hard "never again".
   const afterNudge = buildClaireTurnContext({

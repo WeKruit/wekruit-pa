@@ -583,7 +583,7 @@ export function buildProcessTools(
       "of the two event questions: field 'building' = what they're building/working on; field 'wants_to_meet' = " +
       "who they want to talk to (kind of founders/startups/people). Pass their answer essence verbatim-ish (their " +
       "words, lightly trimmed). The result tells you whether to ask the other question next or to CLOSE with the " +
-      "match promise (matches tonight around 7pm).",
+      "match promise (matches on July 25 at 7pm PT).",
     parameters: z.object({
       field: z.enum(["building", "wants_to_meet"]),
       answer: z.string(),
@@ -627,7 +627,7 @@ export function buildProcessTools(
           nextAction: complete
             ? "CLOSE the intake now: share the YC Startup School attendee contact list you promised — paste " +
               `this exact link once: ${YC_ATTENDEE_CONTACT_SHEET_URL} — then tell them you've got what you ` +
-              "need and you'll text their founder matches tonight around 7pm. Warm, one message, no further questions."
+              "need and you'll text their founder matches on July 25 at 7pm PT. Warm, one message, no further questions."
             : field === "building"
               ? "Ask who they'd like to talk to (kind of founders/startups/people) — one short question."
               : "Ask what they're building / working on — one short question.",
