@@ -330,18 +330,20 @@ test("YC event entrant BEFORE the 7pm operator send: find_match holds (no matche
   assert.equal(sent.length, 0, "no role bubbles delivered")
 })
 
-test("YC event entrant AFTER the 7pm send (ycEveningMatchSentAt stamped): find_match runs normally", async () => {
+test("YC entrant STAYS held even AFTER the 7pm send (unconditional — the 7pm send delivers people/contact-list, never jobs; Adam-LOCKED 2026-07-23)", async () => {
   let matcherCalled = false
-  const { ctx } = recordingCtx(async () => {
+  const { ctx, sent } = recordingCtx(async () => {
     matcherCalled = true
-    return { ok: false, recCount: 0, jobs: [], reason: "no matches" }
+    return { ok: true, recCount: 1, jobs: [OPEN_LINE], reason: null }
   })
   ;(ctx as { db: unknown }).db = ycUserDbStub({
-    firstTouchCampaign: "yc-startup-school",
+    source: "yc_startup_school",
     ycEveningMatchSentAt: "2026-07-23T02:00:00.000Z",
   })
-  await run(ctx)
-  assert.equal(matcherCalled, true, "post-send: matching unlocked")
+  const out = await run(ctx)
+  assert.equal(out.ok, false)
+  assert.equal(matcherCalled, false, "ycEveningMatchSentAt no longer lifts the hold — YC never job-matches")
+  assert.equal(sent.length, 0, "no job roles delivered post-7pm either")
 })
 
 test("existing-user event entrant (ycEventEntryAt, sticky source) is ALSO held pre-7pm", async () => {
@@ -356,13 +358,16 @@ test("existing-user event entrant (ycEventEntryAt, sticky source) is ALSO held p
   assert.equal(matcherCalled, false)
 })
 
-test("website /yc-startup user (no event campaign) keeps on-request matching", async () => {
+test("website /yc-startup user (source==yc, no event flag) is ALSO held — YC never job-matches (Adam 2026-07-23)", async () => {
   let matcherCalled = false
-  const { ctx } = recordingCtx(async () => {
+  const { ctx, sent } = recordingCtx(async () => {
     matcherCalled = true
-    return { ok: false, recCount: 0, jobs: [], reason: "no matches" }
+    return { ok: true, recCount: 1, jobs: [OPEN_LINE], reason: null }
   })
   ;(ctx as { db: unknown }).db = ycUserDbStub({ source: "yc_startup_school" })
-  await run(ctx)
-  assert.equal(matcherCalled, true, "website yc users are not event-held")
+  const out = await run(ctx)
+  assert.equal(out.ok, false)
+  assert.match(String(out.reason), /7pm|people/i)
+  assert.equal(matcherCalled, false, "source==yc must NOT run the job matcher — investors sign up too")
+  assert.equal(sent.length, 0, "no job roles delivered to a yc user")
 })

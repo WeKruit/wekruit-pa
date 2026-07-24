@@ -371,6 +371,32 @@ test("doNotContact: opted-out user is NEVER sent — skipped, not stamped, zero 
   assert.equal(prof?.lastJobBatchSentAt, null)
 })
 
+test("yc people: a YC Startup School user with an active profile is NEVER sent job recs (Adam-LOCKED 2026-07-23)", async () => {
+  const mfs = new MockFirestore()
+  // Flag-on, cadence-due, deliverable — but source==yc_startup_school (e.g. an existing
+  // candidate who later entered YC and kept a pre-existing active pa-job-profiles row).
+  await seedDeliverableUser(mfs, "ycperson", "+15551110040", null)
+  await mfs.collection("pa-users").doc("ycperson").set({ source: "yc_startup_school" }, { merge: true })
+  let scheduled = 0
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key, _ctx, defaultValue) => (key === "paJobRecEnabled" ? true : defaultValue),
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    scheduleSend: async () => {
+      scheduled += 1
+      return { ok: true }
+    },
+  })
+  assert.equal(out.skippedYcPeople, 1)
+  assert.equal(out.delivered, 0)
+  assert.equal(scheduled, 0, "no job-rec send scheduled for a YC person")
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0)
+  const prof = (await mfs.collection("pa-job-profiles").doc("ycperson").get()).data()
+  assert.equal(prof?.lastJobBatchSentAt, null, "cadence stamp untouched — a yc skip is not a send")
+})
+
 test("doNotContact: user who opted back in (doNotContact=false) still delivers", async () => {
   const mfs = new MockFirestore()
   await seedDeliverableUser(mfs, "optedin", "+15551110031", null)
