@@ -100,6 +100,15 @@ export type PitchProfile = {
    * (it's a directive, surfaced as a prompt line, not profile data).
    */
   improved?: boolean
+  /**
+   * YC PEOPLE-MATCHING mode (Adam-LOCKED 2026-07-23): the person came through YC Startup
+   * School (people matching — they may be an INVESTOR or founder, NOT a job candidate). The
+   * composer drops the hiring-pitch framing — no "recruiter", no "take to market", and NO
+   * line-4 "industry & track — also fits X roles" (the exact job leak in Adam's live
+   * screenshot). Reframed as what stands out + what they're into. Directive, not data —
+   * stripped from the JSON sent to the model. Optional; default hiring pitch when absent.
+   */
+  ycPeopleMode?: boolean
 }
 
 /**
@@ -347,8 +356,15 @@ class LlmPitchComposer implements PitchComposer {
       // descriptions — so a résumé-FIRST candidate (no prior pitch) gets the layer too: every source
       // always ADDS value. The instruction is explicit that this AUGMENTS the existing pitch, never
       // replaces it with a different one.
-      const { improved: _priorPitch, ...profileData } = profile
+      const { improved: _priorPitch, ycPeopleMode: _ycPeople, ...profileData } = profile
       void _priorPitch
+      // YC PEOPLE-MATCHING override (Adam-LOCKED 2026-07-23): strip the hiring-pitch framing.
+      // A YC Startup School person may be an investor or founder, NOT a job candidate — never
+      // pitch them for roles. This replaces line 4's "industry & track — also fits X roles"
+      // (the exact leak Adam saw live) with what they're into + who they'd click with.
+      const ycOverride = _ycPeople
+        ? "\n\nYC PEOPLE-MATCHING MODE — OVERRIDES the framing above: this person is at YC Startup School for PEOPLE matching (they may be an INVESTOR, operator, or founder — NOT a job candidate). You are NOT a recruiter here and there is NO 'market' to take them to. Keep lines 1-3 as an honest read of what stands out about them. For line 4: DO NOT name job tracks/titles or say 'also fits X roles' — instead state what they're building or into + the kind of PEOPLE they'd want to meet (e.g. 'building agentic dev-tools — worth meeting infra founders + ML-platform folks'). NEVER any job role, opening, or 'fits X roles' language anywhere."
+        : ""
       const hasTechDetail = profileData.experienceHighlights.some(
         (h) => typeof h.description === "string" && h.description.trim().length >= 40,
       )
@@ -359,7 +375,7 @@ class LlmPitchComposer implements PitchComposer {
         const resp = await client.responses.create({
           model: PITCH_MODEL,
           input: [
-            { role: "system", content: PITCH_SYSTEM },
+            { role: "system", content: PITCH_SYSTEM + ycOverride },
             {
               role: "user",
               content:
@@ -676,16 +692,23 @@ export async function composePitchTurn(
   // states the notify promise instead: in the founder pool, text here + email when a match pops.
   // source==yc (website OR fresh QR user) OR ycEventEntryAt (EXISTING user who scanned the
   // event QR — source stays sticky, the opener stamped the entry; 2026-07-22).
+  // All three canonical YC flags (Adam-LOCKED 2026-07-23): source==yc (website OR fresh QR),
+  // ycEventEntryAt (existing user who scanned the event QR), OR firstTouchCampaign (QR
+  // reonboard hardcodes source=qr_imessage while stamping firstTouchCampaign=yc-startup-school
+  // — omitting it leaked the generic role-pull closer + role-fit pitch to that class).
   const ycPosture =
     (userDoc as { source?: unknown }).source === "yc_startup_school" ||
-    Boolean((userDoc as { ycEventEntryAt?: unknown }).ycEventEntryAt)
+    Boolean((userDoc as { ycEventEntryAt?: unknown }).ycEventEntryAt) ||
+    (userDoc as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
 
   // R2 (Adam 2026-06-04): compose through the injected PitchComposer (default = gpt-5.4-mini). Swapping
   // the composer changes HOW the pitch is processed without touching this orchestration or any caller.
   // On the improved re-entry with a rich résumé, ask the composer for the sharpened version so it is
   // TEXTUALLY DISTINCT from the original (a genuine improvement, not a near-dup of the first pitch).
   const pitch = await composer.compose(
-    alreadyPitched && resumeIsRich ? { ...profile, improved: true } : profile,
+    alreadyPitched && resumeIsRich
+      ? { ...profile, improved: true, ycPeopleMode: ycPosture }
+      : { ...profile, ycPeopleMode: ycPosture },
   )
   if (!pitch) return null
 
@@ -754,19 +777,17 @@ export async function composePitchTurn(
       firstTouchCampaign?: unknown
       ycIntake?: { building?: unknown; wantsToMeet?: unknown } | null
     }
-    const ycEvent = Boolean(u.ycEventEntryAt) || u.firstTouchCampaign === "yc-startup-school"
-    if (ycEvent) {
-      const pool =
-        "you're in the founder-match pool 🤝 your founder matches drop tonight around 7pm — i'll text you right here (and email you)."
-      offer = !u.ycIntake?.building
-        ? `${pool} while that's brewing — what are you building right now?`
-        : !u.ycIntake?.wantsToMeet
-          ? `${pool} while that's brewing — who do you want to meet: what kind of founders or startups?`
-          : `${pool} nothing else you need to do. also — here's the Startup School attendee contact list: ${YC_ATTENDEE_CONTACT_SHEET_URL}`
-    } else {
-      offer =
-        "you're in the founder-match pool now — nothing else you need to do 🤝 i'll text you right here (and drop you an email) the moment a founder match pops. and if you want a peek at who's building right now, just say the word"
-    }
+    // ALL yc users (website OR event QR) get the PEOPLE-match promise — matches drop at the
+    // 7pm operator send. NEVER "peek at who's building, say the word": that invited a
+    // find_match job pull, and a founder got pitched SWE openings (Adam 2026-07-23). YC is
+    // people matching, not job roles.
+    const pool =
+      "you're in the founder-match pool 🤝 your matches — founders, investors, operators worth meeting — drop tonight around 7pm, and i'll text you right here (and email you)."
+    offer = !u.ycIntake?.building
+      ? `${pool} while that's brewing — what are you building right now?`
+      : !u.ycIntake?.wantsToMeet
+        ? `${pool} while that's brewing — who do you want to meet: what kind of founders or people?`
+        : `${pool} nothing else you need to do. also — here's the Startup School attendee contact list: ${YC_ATTENDEE_CONTACT_SHEET_URL}`
   }
   // MODEL-COMPOSED FRAMING (Adam 2026-06-07: "the main thing is to avoid the agent generating same texts
   // again and again"). Replace the deterministic confirmation + closer with a VARIED pair on the same

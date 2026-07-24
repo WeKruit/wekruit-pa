@@ -88,17 +88,7 @@ test("runYcSendMatches: guards (not yc / incomplete / already sent today) + happ
     sends.push({ userId: args.userId, context: args.context, idempotencyKey: args.idempotencyKey ?? "" })
     return { ok: true }
   }
-  const matchCalls: string[] = []
-  const findMatch = async ({ userId }: { userId: string; requestedCount?: number | null }) => {
-    matchCalls.push(userId)
-    return {
-      ok: true,
-      recCount: 2,
-      jobs: ["Founding Engineer @ VoiceCursor\nhttps://wekruit.com/j/vc-1", "ML Engineer @ Sekai\nhttps://wekruit.com/j/sk-1"],
-      reason: null,
-    }
-  }
-  const deps = { db, findMatch, sendImessage, nowIso: () => NOW }
+  const deps = { db, sendImessage, nowIso: () => NOW }
 
   assert.deepEqual(await runYcSendMatches(deps, "missing"), { ok: false, reason: "user_not_found" })
   assert.deepEqual(await runYcSendMatches(deps, "notYc"), { ok: false, reason: "not_yc_user" })
@@ -106,20 +96,23 @@ test("runYcSendMatches: guards (not yc / incomplete / already sent today) + happ
   assert.deepEqual(await runYcSendMatches(deps, "sentAlready"), { ok: false, reason: "already_sent_today" })
   assert.equal(sends.length, 0, "no send fired for any guard")
 
+  // People send — the attendee contact list + a people-intro promise. NEVER job roles
+  // (Adam-LOCKED 2026-07-23: YC users get zero job-recommendation, investors sign up too).
   const ok = await runYcSendMatches(deps, "ok1")
-  assert.deepEqual(ok, { ok: true, recCount: 2 })
-  assert.deepEqual(matchCalls, ["ok1"], "guards never reach the matcher")
+  assert.deepEqual(ok, { ok: true })
   assert.equal(sends.length, 1)
   assert.equal(sends[0]!.userId, "ok1")
   assert.equal(sends[0]!.idempotencyKey, "yc-evening-match:ok1:2026-07-21")
+  assert.equal(sends[0]!.context.eventKind, "yc_evening_people_matches")
   const body = String(sends[0]!.context.trustedOutboundBody)
-  assert.match(body, /tonight's founder matches, as promised/)
-  assert.match(body, /Founding Engineer @ VoiceCursor/)
-  assert.match(body, /make an intro/)
+  assert.match(body, /attendee list/i)
+  assert.match(body, /docs\.google\.com\/spreadsheets/, "shares the YC attendee contact sheet")
+  assert.match(body, /meeting/i)
+  assert.doesNotMatch(body, /founder matches|pull|roles?|@ \w/i, "NO job roles in the yc send")
   assert.equal(store.get("ok1")!.ycEveningMatchSentAt, NOW, "sent stamp recorded")
 })
 
-test("runYcSendMatches: zero matches → honest no_matches, NOTHING sent, no stamp", async () => {
+test("runYcSendMatches: always shares the contact list (no job matcher, no no_matches path)", async () => {
   const NOW = "2026-07-21T19:00:00.000Z"
   const { db, store } = makeDb({
     ok1: { ...YC_BASE, ycIntake: { building: "x", wantsToMeet: "y", completedAt: NOW } },
@@ -127,7 +120,6 @@ test("runYcSendMatches: zero matches → honest no_matches, NOTHING sent, no sta
   const sends: unknown[] = []
   const deps = {
     db,
-    findMatch: async () => ({ ok: true, recCount: 0, jobs: [], reason: "no matches" }),
     sendImessage: async (args: unknown) => {
       sends.push(args)
       return { ok: true }
@@ -135,7 +127,7 @@ test("runYcSendMatches: zero matches → honest no_matches, NOTHING sent, no sta
     nowIso: () => NOW,
   }
   const res = await runYcSendMatches(deps, "ok1")
-  assert.deepEqual(res, { ok: false, reason: "no_matches", recCount: 0 })
-  assert.equal(sends.length, 0)
-  assert.equal(store.get("ok1")!.ycEveningMatchSentAt, undefined)
+  assert.deepEqual(res, { ok: true })
+  assert.equal(sends.length, 1, "the contact-list people-send always fires for a completed yc user")
+  assert.equal(store.get("ok1")!.ycEveningMatchSentAt, NOW)
 })

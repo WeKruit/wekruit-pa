@@ -710,11 +710,21 @@ export async function maybeRunThinClaire(
           log,
           ...(deps.dryRun ? { dryRun: true } : {}),
         })
+        // YC people-matching users NEVER get "pull roles" (Adam-LOCKED 2026-07-23 — investors
+        // sign up too). Read the yc flags (fail-open) and pick people-promise copy instead.
+        let ycFallback = false
+        try {
+          const u = (await db.collection(PA_COLLECTIONS.users).doc(userId).get()).data() ?? {}
+          ycFallback =
+            (u as { source?: unknown }).source === "yc_startup_school" ||
+            Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt) ||
+            (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
+        } catch { /* fail-open → standard copy */ }
+        const fbBody = ycFallback
+          ? "got it — you're in the founder-match pool 🤝 your matches (people worth meeting) come tonight around 7pm, and i'll text you right here. anything you want me to know before then?"
+          : "got your résumé — your profile's updated 🙌 want me to pull roles that fit now, or tweak/add anything first?"
         await fbTransport
-          .sendText(
-            "got your résumé — your profile's updated 🙌 want me to pull roles that fit now, or tweak/add anything first?",
-            { seq: 0 },
-          )
+          .sendText(fbBody, { seq: 0 })
           .catch((e) => log("thin_claire.pitch_engine.fallback_send_failed", { eventId, err: String(e) }))
         await db
           .collection(PA_COLLECTIONS.inboundEvents)

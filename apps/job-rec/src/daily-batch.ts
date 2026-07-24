@@ -243,6 +243,8 @@ export type BatchOutcome = {
    * inbound stop-gate, so this per-user gate is the rec path's suppression.
    */
   skippedDoNotContact?: number
+  /** Adam-LOCKED 2026-07-23 — users skipped because they are YC Startup School people (zero job recs). */
+  skippedYcPeople?: number
   /** 2026-06-10 trust audit — jobs dropped because the same jobId was recommended within 14d. */
   repeatJobsExcluded?: number
   /** Resolved cadence (days) used this run — surfaced for observability. */
@@ -1282,6 +1284,11 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
   let skippedNotDue = 0
   let skippedCooldown = 0
   let skippedDoNotContact = 0
+  // Adam-LOCKED 2026-07-23: YC Startup School users get ZERO job recs (investors sign up too).
+  // audience-provision excludes them from NEW auto-provision, but a pre-existing active
+  // pa-job-profiles row (an existing candidate who later entered YC) would still be picked
+  // up here — this batch-level skip closes that.
+  let skippedYcPeople = 0
 
   // Resolve per-user eligibility (feature flag → cross-system cooldown →
   // cadence due-gate → STOP suppression) up front.
@@ -1349,6 +1356,16 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         log("[job-rec-daily] skipped_do_not_contact", { userId })
         continue
       }
+      // YC people-matching users never receive job recs (Adam-LOCKED 2026-07-23).
+      if (
+        userData?.source === "yc_startup_school" ||
+        Boolean(userData?.ycEventEntryAt) ||
+        userData?.firstTouchCampaign === "yc-startup-school"
+      ) {
+        skippedYcPeople += 1
+        log("[job-rec-daily] skipped_yc_people", { userId })
+        continue
+      }
       userDocByUser.set(userId, userData)
     } catch (err) {
       errors += 1
@@ -1387,6 +1404,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     skippedNotDue,
     skippedCooldown,
     skippedDoNotContact,
+    skippedYcPeople,
   })
 
   // Build a userId → doc map so the loop pulls profiles for scheduled users.
@@ -2459,6 +2477,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     skippedNotDue,
     skippedCooldown,
     skippedDoNotContact,
+    skippedYcPeople,
     cappedOut,
     skippedActivePrescreen,
     repeatJobsExcluded,

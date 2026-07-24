@@ -185,7 +185,13 @@ test("ENTRY POSTURE — yc_startup_school renders the founder-scene no-push dire
   assert.match(withPosture, /ENTRY POSTURE — YC STARTUP SCHOOL/)
   assert.match(withPosture, /do NOT run any structured intake/)
   assert.match(withPosture, /text them RIGHT HERE and email them/)
-  assert.match(withPosture, /their pull, never your push/)
+  // Adam-LOCKED 2026-07-23: people matching, NEVER job recommendations (investors sign up too).
+  assert.match(withPosture, /PEOPLE-matching/)
+  assert.match(withPosture, /may be an investor or a founder, NOT a candidate/)
+  assert.match(withPosture, /ABSOLUTELY NO JOB RECOMMENDATIONS/)
+  assert.match(withPosture, /NEVER call find_match/)
+  assert.doesNotMatch(withPosture, /their pull, never your push/, "the find_match allowance is removed")
+  assert.doesNotMatch(withPosture, /run find_match as normal/, "no find_match invite for yc")
   // Grounded event + YC context so "is this the YC thing? / what is Y Combinator?"
   // gets facts, not guesses — and never insider claims about YC admissions.
   assert.match(withPosture, /EVENT \+ YC CONTEXT \(only if they bring it up\)/)

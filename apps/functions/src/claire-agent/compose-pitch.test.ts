@@ -682,14 +682,15 @@ test("YC EVENT entry (QR): closer promises 7PM (never a peek) and CONTINUES the 
   assert.match(c![2]!, /tonight around 7pm/)
   assert.match(c![2]!, /nothing else you need to do/)
 
-  // existing-user event entrant (ycEventEntryAt, sticky non-yc source is NOT this path —
-  // ycPosture keys off source; covered by the website branch below staying unchanged).
-  // Website /yc-startup (no campaign) keeps the original notify-promise + peek closer.
+  // Website /yc-startup (source=yc, no event campaign) gets the SAME people closer now —
+  // NO "peek at who's building / say the word" (that invited a find_match job pull; a
+  // founder got pitched SWE roles, Adam-LOCKED 2026-07-23). YC never job-matches.
   const site = await composePitchTurn(
     makeStubDb({ ...base, firstTouchCampaign: undefined }).db,
     "u1",
     "2026-07-22T00:00:00Z",
     mock,
   )
-  assert.match(site![2]!, /say the word/, "website yc closer unchanged")
+  assert.match(site![2]!, /tonight around 7pm/, "website yc gets the 7pm people promise")
+  assert.doesNotMatch(site![2]!, /say the word|peek at who/i, "no job-peek for website yc either")
 })

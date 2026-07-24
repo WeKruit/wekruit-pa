@@ -132,6 +132,37 @@ async function readMatchingSlice(
 }
 
 /** Read the post-reducer tags snapshot returned alongside find_match. */
+/**
+ * True when a pa-users doc is a YC Startup School person (any of the three canonical
+ * flags). Pure predicate — no I/O.
+ */
+export function isYcPeopleUser(u: Record<string, unknown>): boolean {
+  return (
+    (u as { source?: unknown }).source === "yc_startup_school" ||
+    Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt) ||
+    (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
+  )
+}
+
+/**
+ * YC job-recommendation hold (Adam-LOCKED 2026-07-23): a YC Startup School user gets ZERO
+ * job-recommendation on ANY tool — investors sign up too, not just candidates. Every job
+ * tool (find_match, match_collab, save_job_profile, set_daily_subscription, find_my_role,
+ * get_public_role_start, begin_collab_prescreen) calls this first. UNCONDITIONAL: the hold
+ * does NOT lift on ycEveningMatchSentAt — the 7pm send delivers only the attendee contact
+ * list (people, never jobs) and no people-matcher exists, so find_match must NEVER run for
+ * a yc user (dropping the old escape hatch that re-opened job roles post-7pm). Fail-open: a
+ * read error never blocks tools fleet-wide.
+ */
+async function isYcJobRecHeld(db: Firestore, userId: string): Promise<boolean> {
+  try {
+    const u = (await db.collection("pa-users").doc(userId).get()).data() ?? {}
+    return isYcPeopleUser(u)
+  } catch {
+    return false
+  }
+}
+
 async function readSnapshotTags(
   db: Firestore,
   userId: string,
@@ -1374,30 +1405,26 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     }),
     async execute({ requestedCount }) {
       const snapshotTags = await readSnapshotTags(ctx.db, ctx.userId, ctx.log)
-      // YC EVENT 7PM HOLD (Adam 2026-07-22 "match is not enabled until time reaches"):
-      // event-QR entrants are promised founder matches TONIGHT AROUND 7PM via the manual
-      // operator send (paAdminYcSendMatches, which stamps ycEveningMatchSentAt). Until that
-      // stamp exists, find_match must not run for them — no early peeks. Fail-open: a read
-      // error never blocks matching fleet-wide. Website /yc-startup users (no event
-      // campaign) keep on-request matching.
-      try {
-        const u = (await ctx.db.collection("pa-users").doc(ctx.userId).get()).data() ?? {}
-        const ycEvent =
-          Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt) ||
-          (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
-        if (ycEvent && !(u as { ycEveningMatchSentAt?: unknown }).ycEveningMatchSentAt) {
-          ctx.log("pa.claire.find_match.yc_event_hold", { userId: ctx.userId })
-          return {
-            ok: false,
-            recCount: 0,
-            jobs: [] as string[],
-            reason:
-              "yc_event_hold: their founder matches drop tonight around 7pm (team send). Tell them warmly their matches land right here tonight around 7pm — never list roles now, never call this tool again this turn.",
-            snapshotTags,
-          }
+      // YC PEOPLE-MATCH HOLD (Adam 2026-07-23 "why is it still talking about finding jobs?
+      // where is the matching?"): YC Startup School is PEOPLE matching (meet founders /
+      // investors / operators), NOT job-role matching. find_match runs the JOB matcher
+      // (matching-jobs / V16) — pushing SWE openings to a founder building their own startup
+      // is exactly wrong. So find_match is HELD for ANY yc_startup_school user (website OR
+      // event QR — the prior guard only caught event flags and leaked website signups like
+      // atharvar.mahajan, a founder who got pitched MetaVoice + Martini roles). Their founder
+      // matches are delivered by the manual 7pm operator send (paAdminYcSendMatches, stamps
+      // ycEveningMatchSentAt). Until that lands, never list job roles. Fail-open: a read error
+      // never blocks matching fleet-wide.
+      if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
+        ctx.log("pa.claire.find_match.yc_people_hold", { userId: ctx.userId })
+        return {
+          ok: false,
+          recCount: 0,
+          jobs: [] as string[],
+          reason:
+            "yc_people_hold: this is a YC Startup School PEOPLE-matching user — we match them with founders/investors/operators, NEVER job roles. Their people matches land right here tonight around 7pm (team send). Tell them warmly their matches come tonight around 7pm — NEVER list job roles, NEVER pitch openings, NEVER call this tool again this turn.",
+          snapshotTags,
         }
-      } catch {
-        // fail-open
       }
       if (!ctx.findMatch) {
         return {
@@ -1629,6 +1656,10 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       salaryMin: z.number().int().nonnegative().nullable(),
     }),
     async execute(input) {
+      if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
+        ctx.log("pa.claire.save_job_profile.yc_people_hold", { userId: ctx.userId })
+        return { ok: false, reason: "yc_people_hold: YC users are never job-profiled — people matching only, no job cadence." }
+      }
       try {
         const ts = ctx.nowIso()
         const ref = ctx.db.collection(JOB_PROFILES_COLLECTION).doc(ctx.userId)
@@ -1688,6 +1719,10 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "returns the current jobProfileStatus and recorded opt-in.",
     parameters: z.object({ optedIn: z.boolean() }),
     async execute({ optedIn }) {
+      if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
+        ctx.log("pa.claire.set_daily_subscription.yc_people_hold", { userId: ctx.userId })
+        return { ok: false, reason: "yc_people_hold: YC users have no job-recommendation subscription — people matching only." }
+      }
       try {
         const ts = ctx.nowIso()
         const ref = ctx.db.collection(JOB_PROFILES_COLLECTION).doc(ctx.userId)
@@ -1736,6 +1771,15 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       requestedCount: z.number().int().min(1).max(5).nullable(),
     }),
     async execute({ requestedCount }) {
+      if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
+        ctx.log("pa.claire.match_collab.yc_people_hold", { userId: ctx.userId })
+        return {
+          ok: false,
+          recCount: 0,
+          jobs: [] as string[],
+          reason: "yc_people_hold: YC is people matching — NEVER list job/partner roles. Their people matches come tonight around 7pm.",
+        }
+      }
       try {
         const limit =
           typeof requestedCount === "number" && requestedCount > 0
@@ -1802,6 +1846,10 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       query: z.string().nullable(),
     }),
     async execute({ roleFunction, company, industrySector, query }) {
+      if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
+        ctx.log("pa.claire.find_my_role.yc_people_hold", { userId: ctx.userId })
+        return { ok: true, kind: "no_match" as const, roles: [] }
+      }
       const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
       const q: RoleQuery = {
         roleFunction: roleFunction ?? undefined,
@@ -1846,6 +1894,10 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "Use ONLY when they clearly want to begin a role's screen.",
     parameters: z.object({ jobId: z.string() }),
     async execute({ jobId }) {
+      if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
+        ctx.log("pa.claire.begin_collab_prescreen.yc_people_hold", { userId: ctx.userId })
+        return { ok: false, reason: "yc_people_hold: YC is people matching — do NOT start a job/collab screen. Their people matches come tonight ~7pm." }
+      }
       const cleanJobId = (jobId ?? "").trim()
       const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
       const role = roles.find((r) => r.jobId === cleanJobId)
@@ -2008,6 +2060,10 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       jobId: z.string().nullable(),
     }),
     async execute({ company, title, jobId }) {
+      if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
+        ctx.log("pa.claire.get_public_role_start.yc_people_hold", { userId: ctx.userId })
+        return { ok: true, kind: "none" as const, reason: "yc_people_hold: YC is people matching — never surface a job-role start. Their people matches come tonight ~7pm." }
+      }
       const wantJobId = (jobId ?? "").trim().toLowerCase()
       const wantCompany = (company ?? "").trim().toLowerCase()
       const wantTitle = (title ?? "").trim().toLowerCase()

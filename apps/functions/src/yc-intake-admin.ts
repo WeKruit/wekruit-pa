@@ -21,6 +21,7 @@ import { HttpsError, onCall } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { z } from "zod"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { YC_ATTENDEE_CONTACT_SHEET_URL } from "@pa/pa-orchestrator"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
@@ -98,13 +99,6 @@ const SendMatchesInputSchema = z.object({
 export async function runYcSendMatches(
   deps: {
     db: Firestore
-    /** The SAME V16 matcher tool Claire's find_match uses (makeV16FindMatch). */
-    findMatch: (args: { userId: string; requestedCount?: number | null }) => Promise<{
-      ok: boolean
-      recCount: number
-      jobs: string[]
-      reason: string | null
-    }>
     /** @pa/job-rec sendImessage — runtime handoff; trustedOutboundBody delivers verbatim. */
     sendImessage: (
       args: { userId: string; context: Record<string, unknown>; idempotencyKey?: string },
@@ -126,20 +120,16 @@ export async function runYcSendMatches(
   const sentAt = typeof d.ycEveningMatchSentAt === "string" ? d.ycEveningMatchSentAt : ""
   if (sentAt.slice(0, 10) === day) return { ok: false, reason: "already_sent_today" }
 
-  // REAL matches via the exact matcher Claire's find_match tool uses (V16 —
-  // url guard, collab start tokens, recommendation-state dedup all inside).
-  const match = await deps.findMatch({ userId, requestedCount: 3 })
-  if (!match.ok || match.recCount === 0 || match.jobs.length === 0) {
-    // NO invented matches, NO auto-excuse text — surface to the operator instead.
-    return { ok: false, reason: "no_matches", recCount: 0 }
-  }
-
-  // Deterministic founder-framed delivery — verbatim via the runtime
-  // trusted-body path (kind-agnostic; STOP gates + dedup enforced downstream).
+  // PEOPLE matching, NEVER job roles (Adam-LOCKED 2026-07-23: YC users get zero
+  // job-recommendation — investors sign up too). The prior V16 job-matcher call
+  // texted job openings labeled "founder matches"; removed. Until a real
+  // attendee-to-attendee people matcher exists, the 7pm send delivers the YC
+  // Startup School attendee contact list + a human-curated people-intro promise.
+  const contactSheet = YC_ATTENDEE_CONTACT_SHEET_URL
   const body = [
-    "tonight's founder matches, as promised 🤝",
-    ...match.jobs,
-    "want me to make an intro to any of these? just say which one.",
+    "as promised — here's the YC Startup School attendee list so you can start meeting people 🤝",
+    contactSheet,
+    "we're also lining up folks worth meeting based on what you shared — i'll text you right here the moment we've got intros. reply with anyone you'd especially like to meet.",
   ]
     .join("\n\n")
     .slice(0, 3900)
@@ -148,7 +138,7 @@ export async function runYcSendMatches(
     {
       userId,
       context: {
-        eventKind: "yc_evening_founder_matches",
+        eventKind: "yc_evening_people_matches",
         source: "yc_intake_admin",
         trustedOutboundBody: body,
       },
@@ -159,9 +149,7 @@ export async function runYcSendMatches(
   if (result.ok) {
     await userRef.set({ ycEveningMatchSentAt: nowIso(), updatedAt: nowIso() }, { merge: true })
   }
-  return result.ok
-    ? { ok: true, recCount: match.recCount }
-    : { ok: false, reason: "runtime_handoff_failed" }
+  return result.ok ? { ok: true } : { ok: false, reason: "runtime_handoff_failed" }
 }
 
 export const paAdminYcIntakeToday = onCall(
@@ -180,9 +168,6 @@ export const paAdminYcSendMatches = onCall(
     if (!input.success) throw new HttpsError("invalid-argument", "userId required")
     const db = getFirestore()
     const { sendImessage } = await import("@pa/job-rec")
-    const { makeV16FindMatch } = await import("./claire-agent/tools/matching-tools.js")
-    const findMatch = makeV16FindMatch(db)
-    if (!findMatch) throw new HttpsError("internal", "matcher_unavailable")
-    return runYcSendMatches({ db, findMatch, sendImessage }, input.data.userId)
+    return runYcSendMatches({ db, sendImessage }, input.data.userId)
   },
 )
