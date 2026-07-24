@@ -300,6 +300,41 @@ test("runRegisterLayoffCandidate writes fresh layoff profiles only to pa-users p
   assert.equal(index.candidateId, "auto_1")
 })
 
+test("runRegisterLayoffCandidate: YC source registers with NO résumé/LinkedIn/site (people matching, Adam-LOCKED 2026-07-24)", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterLayoffCandidate(
+    registration({
+      source: "yc_startup_school",
+      resumeFileName: undefined,
+      linkedin: undefined,
+      personalWebsite: undefined,
+      lastCompany: undefined,
+    }),
+    deps(fake),
+  )
+  // Did NOT throw intake_profile_required — évidence is optional for YC.
+  assert.ok(result.candidateId)
+  assert.equal(fake.read(`${PA_COLLECTIONS.users}/${result.candidateId}`)!.source, "yc_startup_school")
+})
+
+test("runRegisterLayoffCandidate: non-YC with no résumé/LinkedIn/site STILL requires a profile path", async () => {
+  const fake = new FakeFirestore()
+  await assert.rejects(
+    () =>
+      runRegisterLayoffCandidate(
+        registration({
+          source: "candidate",
+          resumeFileName: undefined,
+          linkedin: undefined,
+          personalWebsite: undefined,
+          lastCompany: undefined,
+        }),
+        deps(fake),
+      ),
+    /intake_profile_required/,
+  )
+})
+
 test("runRegisterLayoffCandidate duplicate auto mode returns existing profile without writes", async () => {
   const fake = new FakeFirestore()
   fake.seed(`layoff_phone_index/${phoneIndexId("+14243201960")}`, { candidateId: "cand_existing" })

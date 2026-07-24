@@ -245,6 +245,10 @@ export async function runRegisterLayoffCandidate(
   // isLayoff below. Legacy no-source calls keep the layoff default.
   const source: PaUserSource = isPaUserSource(v.source) ? v.source : WEKRUIT_LAYOFF_SOURCE
   const isLayoff = source === WEKRUIT_LAYOFF_SOURCE
+  // YC Startup School is PEOPLE matching — a person may be an investor/founder, not a job
+  // candidate — so résumé/LinkedIn/site is OPTIONAL (Adam-LOCKED 2026-07-24). Matches the
+  // client-side gate; Claire still asks for LinkedIn in iMessage.
+  const isYc = source === "yc_startup_school"
   const lastCompany = cleanString(v.lastCompany, 200)
   if (!v.firstName || !v.lastName || !v.email || !v.consent || (isLayoff && !lastCompany)) {
     throw new HttpsError("invalid-argument", "Missing required fields")
@@ -262,7 +266,7 @@ export async function runRegisterLayoffCandidate(
     Boolean(cleanString(v.resumeFileName)) ||
     Boolean(cleanString(v.linkedin, 500)) ||
     Boolean(cleanString(v.personalWebsite, 500))
-  if (!hasProfilePath) {
+  if (!isYc && !hasProfilePath) {
     throw new HttpsError("invalid-argument", "intake_profile_required")
   }
 
