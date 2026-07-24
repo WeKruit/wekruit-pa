@@ -16,7 +16,6 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { YC_ATTENDEE_CONTACT_SHEET_URL } from "@pa/pa-orchestrator"
 
 const USERS = PA_COLLECTIONS.users
 const PITCH_MODEL = "gpt-5.4-mini" // Adam-picked: stronger than nano for the product centerpiece.
@@ -777,8 +776,8 @@ export async function composePitchTurn(
   // YC closer — replaces every offer shape above AND skips the framing composer's closer below
   // (the framed closer is validated as a single-clear-PULL-ask, exactly the push yc must not make).
   if (ycPosture) {
-    // EVENT (QR) entrants (Adam live test 2026-07-22): matches drop ON JULY 25 AT 7PM PT
-    // (manual operator send) — never offer an instant peek. And the pitch re-entry must
+    // EVENT (QR) entrants: matches are team-curated before outreach, so never offer an
+    // instant peek. And the pitch re-entry must
     // CONTINUE the intake, not close it: Adam tapped LinkedIn straight off the kickoff, so
     // "what are you building" was still unanswered when this closer said "nothing else you
     // need to do".
@@ -787,17 +786,17 @@ export async function composePitchTurn(
       firstTouchCampaign?: unknown
       ycIntake?: { building?: unknown; wantsToMeet?: unknown } | null
     }
-    // ALL yc users (website OR event QR) get the PEOPLE-match promise — matches drop at the
-    // 7pm operator send. NEVER "peek at who's building, say the word": that invited a
+    // ALL yc users (website OR event QR) get the PEOPLE-match promise. NEVER
+    // "peek at who's building, say the word": that invited a
     // find_match job pull, and a founder got pitched SWE openings (Adam 2026-07-23). YC is
     // people matching, not job roles.
     const pool =
-      "you're in the founder-match pool 🤝 your matches — founders, investors, operators worth meeting — drop on July 25 at 7pm PT, and i'll text you right here (and email you)."
+      "you're in the founder-match pool 🤝 i'll text you right here (and email you) once we find you a good match — founders, investors, operators worth meeting."
     offer = !u.ycIntake?.building
       ? `${pool} while that's brewing — what are you building right now?`
       : !u.ycIntake?.wantsToMeet
         ? `${pool} while that's brewing — who do you want to meet: what kind of founders or people?`
-        : `${pool} nothing else you need to do. also — here's the Startup School attendee contact list: ${YC_ATTENDEE_CONTACT_SHEET_URL}`
+        : `${pool} nothing else you need to do — we'll use what you shared to match you with the right Startup School people.`
   }
   // MODEL-COMPOSED FRAMING (Adam 2026-06-07: "the main thing is to avoid the agent generating same texts
   // again and again"). Replace the deterministic confirmation + closer with a VARIED pair on the same

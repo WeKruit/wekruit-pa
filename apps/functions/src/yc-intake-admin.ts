@@ -21,7 +21,6 @@ import { HttpsError, onCall } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { z } from "zod"
 import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
-import { YC_ATTENDEE_CONTACT_SHEET_URL } from "@pa/pa-orchestrator"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
@@ -125,14 +124,13 @@ export async function runYcSendMatches(
 
   // PEOPLE matching, NEVER job roles (Adam-LOCKED 2026-07-23: YC users get zero
   // job-recommendation — investors sign up too). The prior V16 job-matcher call
-  // texted job openings labeled "founder matches"; removed. Until a real
-  // attendee-to-attendee people matcher exists, the 7pm send delivers the YC
-  // Startup School attendee contact list + a human-curated people-intro promise.
-  const contactSheet = YC_ATTENDEE_CONTACT_SHEET_URL
+  // texted job openings labeled "founder matches"; removed. This operator send
+  // keeps the user in the people-match pool without sharing an attendee list or
+  // making a delivery-time promise.
   const body = [
-    "as promised — here's the YC Startup School attendee list so you can start meeting people 🤝",
-    contactSheet,
-    "we're also lining up folks worth meeting based on what you shared — i'll text you right here the moment we've got intros. reply with anyone you'd especially like to meet.",
+    "got it — you're in the YC Startup School people-match pool 🤝",
+    "we're lining up folks worth meeting based on what you shared. i'll text you right here once we find you a good match.",
+    "reply with anyone you'd especially like to meet, or any context that would make an intro more useful.",
   ]
     .join("\n\n")
     .slice(0, 3900)

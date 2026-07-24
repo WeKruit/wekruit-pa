@@ -1415,10 +1415,8 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       // (matching-jobs / V16) — pushing SWE openings to a founder building their own startup
       // is exactly wrong. So find_match is HELD for ANY yc_startup_school user (website OR
       // event QR — the prior guard only caught event flags and leaked website signups like
-      // atharvar.mahajan, a founder who got pitched MetaVoice + Martini roles). Their founder
-      // matches are delivered by the manual 7pm operator send (paAdminYcSendMatches, stamps
-      // ycEveningMatchSentAt). Until that lands, never list job roles. Fail-open: a read error
-      // never blocks matching fleet-wide.
+      // atharvar.mahajan, a founder who got pitched MetaVoice + Martini roles). Never list job
+      // roles. Fail-open: a read error never blocks matching fleet-wide.
       if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
         ctx.log("pa.claire.find_match.yc_people_hold", { userId: ctx.userId })
         return {
@@ -1426,7 +1424,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           recCount: 0,
           jobs: [] as string[],
           reason:
-            "yc_people_hold: this is a YC Startup School PEOPLE-matching user — we match them with founders/investors/operators, NEVER job roles. Their people matches land right here on July 25 at 7pm PT (team send). Tell them warmly their matches come on July 25 at 7pm PT — NEVER list job roles, NEVER pitch openings, NEVER call this tool again this turn.",
+            "yc_people_hold: this is a YC Startup School PEOPLE-matching user — we match them with founders/investors/operators, NEVER job roles. Tell them warmly you'll text right here once there is a good match — NEVER list job roles, NEVER pitch openings, NEVER call this tool again this turn.",
           snapshotTags,
         }
       }
@@ -1781,7 +1779,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           ok: false,
           recCount: 0,
           jobs: [] as string[],
-          reason: "yc_people_hold: YC is people matching — NEVER list job/partner roles. Their people matches come on July 25 at 7pm PT.",
+          reason: "yc_people_hold: YC is people matching — NEVER list job/partner roles. We'll text them once there is a good people match.",
         }
       }
       try {
@@ -1900,7 +1898,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     async execute({ jobId }) {
       if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
         ctx.log("pa.claire.begin_collab_prescreen.yc_people_hold", { userId: ctx.userId })
-        return { ok: false, reason: "yc_people_hold: YC is people matching — do NOT start a job/collab screen. Their people matches come on July 25 at 7pm PT." }
+        return { ok: false, reason: "yc_people_hold: YC is people matching — do NOT start a job/collab screen. We'll text them once there is a good people match." }
       }
       const cleanJobId = (jobId ?? "").trim()
       const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
@@ -2066,7 +2064,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     async execute({ company, title, jobId }) {
       if (await isYcJobRecHeld(ctx.db, ctx.userId)) {
         ctx.log("pa.claire.get_public_role_start.yc_people_hold", { userId: ctx.userId })
-        return { ok: true, kind: "none" as const, reason: "yc_people_hold: YC is people matching — never surface a job-role start. Their people matches come on July 25 at 7pm PT." }
+        return { ok: true, kind: "none" as const, reason: "yc_people_hold: YC is people matching — never surface a job-role start. We'll text them once there is a good people match." }
       }
       const wantJobId = (jobId ?? "").trim().toLowerCase()
       const wantCompany = (company ?? "").trim().toLowerCase()

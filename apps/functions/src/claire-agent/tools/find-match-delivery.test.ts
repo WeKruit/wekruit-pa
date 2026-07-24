@@ -304,7 +304,7 @@ test("toolUseBehavior: no tool results this turn → NOT final", () => {
   assert.equal(claireToolUseBehavior({}, []).isFinalOutput, false)
 })
 
-// ─── YC EVENT 7PM HOLD (Adam 2026-07-22 "match is not enabled until time reaches") ───
+// ─── YC EVENT HOLD ───
 
 function ycUserDbStub(userDoc: Record<string, unknown>): unknown {
   return {
@@ -316,7 +316,7 @@ function ycUserDbStub(userDoc: Record<string, unknown>): unknown {
   }
 }
 
-test("YC event entrant BEFORE the 7pm operator send: find_match holds (no matcher call, 7pm reason)", async () => {
+test("YC event entrant BEFORE the operator send: find_match holds (no matcher call, no timestamp reason)", async () => {
   let matcherCalled = false
   const { ctx, sent } = recordingCtx(async () => {
     matcherCalled = true
@@ -325,12 +325,13 @@ test("YC event entrant BEFORE the 7pm operator send: find_match holds (no matche
   ;(ctx as { db: unknown }).db = ycUserDbStub({ firstTouchCampaign: "yc-startup-school", source: "yc_startup_school" })
   const out = await run(ctx)
   assert.equal(out.ok, false)
-  assert.match(String(out.reason), /7pm/i)
-  assert.equal(matcherCalled, false, "matcher must NOT run before the 7pm send")
+  assert.match(String(out.reason), /once there is a good match/i)
+  assert.doesNotMatch(String(out.reason), /7pm|July 25|tonight/i)
+  assert.equal(matcherCalled, false, "matcher must NOT run before the operator send")
   assert.equal(sent.length, 0, "no role bubbles delivered")
 })
 
-test("YC entrant STAYS held even AFTER the 7pm send (unconditional — the 7pm send delivers people/contact-list, never jobs; Adam-LOCKED 2026-07-23)", async () => {
+test("YC entrant STAYS held even AFTER the operator send (unconditional — YC people matching, never jobs)", async () => {
   let matcherCalled = false
   const { ctx, sent } = recordingCtx(async () => {
     matcherCalled = true
@@ -343,10 +344,10 @@ test("YC entrant STAYS held even AFTER the 7pm send (unconditional — the 7pm s
   const out = await run(ctx)
   assert.equal(out.ok, false)
   assert.equal(matcherCalled, false, "ycEveningMatchSentAt no longer lifts the hold — YC never job-matches")
-  assert.equal(sent.length, 0, "no job roles delivered post-7pm either")
+  assert.equal(sent.length, 0, "no job roles delivered post-send either")
 })
 
-test("existing-user event entrant (ycEventEntryAt, sticky source) is ALSO held pre-7pm", async () => {
+test("existing-user event entrant (ycEventEntryAt, sticky source) is ALSO held pre-send", async () => {
   let matcherCalled = false
   const { ctx } = recordingCtx(async () => {
     matcherCalled = true
@@ -367,7 +368,8 @@ test("website /yc-startup user (source==yc, no event flag) is ALSO held — YC n
   ;(ctx as { db: unknown }).db = ycUserDbStub({ source: "yc_startup_school" })
   const out = await run(ctx)
   assert.equal(out.ok, false)
-  assert.match(String(out.reason), /7pm|people/i)
+  assert.match(String(out.reason), /once there is a good match|people/i)
+  assert.doesNotMatch(String(out.reason), /7pm|July 25|tonight/i)
   assert.equal(matcherCalled, false, "source==yc must NOT run the job matcher — investors sign up too")
   assert.equal(sent.length, 0, "no job roles delivered to a yc user")
 })

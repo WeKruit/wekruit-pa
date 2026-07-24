@@ -212,7 +212,7 @@ test("warm greeting example names are fenced — live probe caught 'hey Adam' bl
   assert.match(warm, /greet WITHOUT any name/)
 })
 
-test("YC EVENT INTAKE directive renders slots + one-nudge consequence + 7pm close", () => {
+test("YC EVENT INTAKE directive renders slots + one-nudge consequence + no-timing match close", () => {
   // nudgeLinkedin turn (the ONE mode-selector-flagged turn) → mandatory consequence heads-up.
   const nudgeTurn = buildClaireTurnContext({
     mode: "triage",
@@ -225,7 +225,9 @@ test("YC EVENT INTAKE directive renders slots + one-nudge consequence + 7pm clos
   assert.match(nudgeTurn, /founders see a much thinner profile/)
   assert.match(nudgeTurn, /what are they building/)
   assert.match(nudgeTurn, /record_yc_intake\(field='building'\)/)
-  assert.match(nudgeTurn, /ON JULY 25 AT 7PM PT/)
+  assert.match(nudgeTurn, /once you find a good match/)
+  assert.match(nudgeTurn, /no timing promise/)
+  assert.doesNotMatch(nudgeTurn, /TONIGHT AROUND 7PM|7pm|7 pm|tonight/i)
 
   // Already nudged (flag absent, LinkedIn still unconnected) → hard "never again".
   const afterNudge = buildClaireTurnContext({
