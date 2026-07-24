@@ -101,11 +101,15 @@ test("CandidateLogin offers existing Claire phone-thread linking before onboardi
   assert.match(source, /PHONE_LINK_INTENT_KEY\s*=\s*"pa_phone_link_intent"/)
   assert.match(source, /function readPhoneLinkIntentParam\(searchParams: URLSearchParams\): boolean/)
   assert.match(source, /const phoneLinkIntentFromUrl = useMemo\(\(\) => readPhoneLinkIntentParam\(searchParams\), \[searchParams\]\)/)
-  assert.match(source, /const \[phoneLinkMode, setPhoneLinkMode\] = useState\(\(\) => phoneLinkIntentFromUrl \|\| readPhoneLinkIntent\(\)\)/)
+  // A STORED phone-link intent must NOT hijack a fresh /onboarding login (Adam 2026-07-24) — it
+  // trapped YC sign-ins on the phone-verify form; an explicit ?phoneLink=1 URL param still works.
+  assert.match(source, /const \[phoneLinkMode, setPhoneLinkMode\] = useState\(\s*\(\) => phoneLinkIntentFromUrl \|\| \(readPhoneLinkIntent\(\) && !nextDest\.isOnboarding\),\s*\)/)
   assert.match(source, /if \(!phoneLinkIntentFromUrl\) return[\s\S]*rememberPhoneLinkIntent\(\)[\s\S]*setPhoneLinkMode\(true\)/)
   assert.match(source, /startCandidatePhoneLink/)
   assert.match(source, /verifyCandidatePhoneLink/)
-  assert.match(source, /if \(readPhoneLinkIntent\(\)\) \{[\s\S]*setPhoneLinkMode\(true\)[\s\S]*return/)
+  assert.match(source, /if \(readPhoneLinkIntent\(\) && !nextDest\.isOnboarding\) \{[\s\S]*setPhoneLinkMode\(true\)[\s\S]*return/)
+  // "Use normal onboarding" must ROUTE a signed-in user, not just hide the panel.
+  assert.match(source, /if \(signedInUser\) void finishSignedIn\(\)/)
   assert.match(source, /I've texted Claire/)
   assert.match(source, /Already talked with Claire by phone\? Verify that number and open the WeKruit profile Claire already knows\./)
   assert.match(source, /Signed in as \{signedInUser\.email \?\? "this account"\}/)

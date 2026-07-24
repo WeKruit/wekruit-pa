@@ -1214,7 +1214,13 @@ export default function CandidateLogin() {
   })
   const [error, setError] = useState<string | null>(null)
   const [signedInUser, setSignedInUser] = useState<User | null>(() => auth().currentUser)
-  const [phoneLinkMode, setPhoneLinkMode] = useState(() => phoneLinkIntentFromUrl || readPhoneLinkIntent())
+  // A STORED phone-link intent (sessionStorage, left over from an earlier "I've texted Claire"
+  // tap) must NOT hijack a fresh /onboarding login — that trapped YC sign-ins on the phone-verify
+  // form and never routed to onboarding/SMS (Adam 2026-07-24). An EXPLICIT ?phoneLink=1 URL param
+  // still activates it, and the "I've texted Claire" button still works on deliberate click.
+  const [phoneLinkMode, setPhoneLinkMode] = useState(
+    () => phoneLinkIntentFromUrl || (readPhoneLinkIntent() && !nextDest.isOnboarding),
+  )
   const [phoneLinkPhone, setPhoneLinkPhone] = useState("")
   const [phoneLinkCode, setPhoneLinkCode] = useState("")
   const [phoneLink, setPhoneLink] = useState<PhoneLinkState>(() =>
@@ -1248,7 +1254,7 @@ export default function CandidateLogin() {
   useEffect(() => {
     return onAuthStateChanged(auth(), (user) => {
       setSignedInUser(user)
-      if (user && readPhoneLinkIntent()) {
+      if (user && readPhoneLinkIntent() && !nextDest.isOnboarding) {
         setPhoneLinkMode(true)
         setPhoneLink((prev) =>
           prev.status === "needs_auth" || prev.status === "idle"
@@ -1268,7 +1274,9 @@ export default function CandidateLogin() {
     setStatus("signing_in")
     setError(null)
     try {
-      if (readPhoneLinkIntent()) {
+      // A stored intent only diverts to phone-link when this is NOT a fresh onboarding login
+      // — a YC/onboarding sign-in routes straight through to onboarding/SMS (Adam 2026-07-24).
+      if (readPhoneLinkIntent() && !nextDest.isOnboarding) {
         setPhoneLinkMode(true)
         setPhoneLink(
           resumePhoneLinkRequestState() ?? {
@@ -1460,6 +1468,10 @@ export default function CandidateLogin() {
     setPhoneLinkPhone("")
     setPhoneLinkCode("")
     setPhoneLink({ status: "idle", message: null })
+    // "Use normal onboarding" must ROUTE, not just hide the panel (Adam 2026-07-24: clicking it
+    // did nothing because it left an already-signed-in user parked on the login page). The intent
+    // is now cleared, so finishSignedIn falls through to the onboarding/SMS destination.
+    if (signedInUser) void finishSignedIn()
   }
 
   async function onPhoneLinkStart(e: FormEvent) {
