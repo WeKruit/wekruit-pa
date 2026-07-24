@@ -706,6 +706,38 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         .join("\n")
     }
     default: {
+      // YC PEOPLE LANE — REPLACE the triage directive entirely (Adam-LOCKED 2026-07-24: "for YC
+      // source they should not be asked about job rec / anything from Claire… so for this we don't
+      // need this ask 'want me to pull roles now?' and the location+salary ask").
+      //
+      // A YC user's mode is ALWAYS triage, so the job-matching script below was in their prompt
+      // verbatim — including the literal instructions to ASK "want me to pull roles now?" and to
+      // ask "remote within the US or which city/metro, and rough target salary?". Appending a YC
+      // override does not work: PR #611 proved the model follows the concrete instruction over a
+      // contradicting banner. So the job script must be ABSENT for YC, not counterweighted.
+      //
+      // The full YC posture (people framing, HARD RULES, investor note) still comes from the
+      // ENTRY POSTURE block, and job TOOLS are already omitted at agent assembly (#611) — this
+      // removes the last place that actively TOLD the model to ask job questions.
+      if (opts?.entryPosture === "yc_startup_school") {
+        return [
+          "MODE = TRIAGE (YC STARTUP SCHOOL PEOPLE LANE). Free conversation with an attendee of the event.",
+          "This is PEOPLE matching — founders, investors, operators, builders meeting each other. It is NOT a",
+          "job search, and this person may well be an investor or founder, never a candidate.",
+          "ABSOLUTELY NO JOB CONTENT AND NO JOB QUESTIONS. Do NOT pull, list, or offer job roles / openings /",
+          "'startups that are hiring'. Do NOT ask 'want me to pull roles now?'. Do NOT ask for target location,",
+          "target salary, visa/sponsorship status, job type, seniority, or 'what kind of roles are you going",
+          "for' — none of it, not once, not 'just to confirm'. Those questions are the job-search flow and it is",
+          "off for YC entirely. If THEY ask about jobs or roles, warmly redirect: you connect them with PEOPLE",
+          "worth meeting, and those matches come to them right here.",
+          "WHAT YOU DO INSTEAD: react to what they share, riff on it, and keep ONE light curiosity question",
+          "flowing — what they're building, and who they'd want to meet (founders / investors / operators, or a",
+          "specific kind of team). Record those two with record_yc_intake when they answer. Talk like the friend",
+          "who knows everyone in the room, never like a recruiter.",
+          "Tools you DO still use: remember_fact for memory, record_yc_intake for the two people questions, and",
+          "privacy (export/delete/stop) → privacy. Job tools are not available to you on this lane.",
+        ].join("\n")
+      }
       // POST-PARSE PITCH in triage (Adam 2026-06-02): a RETURNING user (onboarding already complete) just
       // re-uploaded a résumé → the cv-parsed re-entry routes here with postParsePitch. Lead with the same
       // proactive PART-2 pitch, then OFFER find_match (messages[1]) — the normal triage AUTO-MATCH rule
@@ -886,6 +918,36 @@ const ENRICH_FROM_TEXT = [
  */
 export function buildClairePrompt(opts: ClairePromptOptions): string {
   const langLine = "Reply in natural English (Claire's voice). Respond in English only, never Chinese."
+  // YC PEOPLE LANE — a DEDICATED prompt, not the candidate prompt with holes cut in it
+  // (Adam-LOCKED 2026-07-24: "for YC source they should not be asked about job rec / anything from
+  // Claire… so for this we don't need this ask 'want me to pull roles now?' and the location+salary
+  // ask"). Same structural call Adam made for tools in #611 — "we should've just created a new line
+  // for YC" — applied to the prompt, because the job-search instructions are not localized: on top
+  // of PREFERENCES and US_SCOPE, the DELIVERY block alone carries 14 separate find_match /
+  // "want me to pull a few roles?" instructions, plus POSITIONING's "offer to pull roles" and a
+  // FEWSHOT example that demonstrates pulling roles. Subtracting two blocks left the model still
+  // reading a dozen concrete orders to pitch jobs, and #611 established that a contradicting YC
+  // banner LOSES to a concrete instruction.
+  //
+  // Kept: the friend-persona + format/voice contracts (no job content), résumé enrichment (YC users
+  // still upload a résumé to build their profile), and the people-lane directive.
+  // Dropped: POSITIONING (the WeKruit job pitch), US_SCOPE (licenses the location ask), PREFERENCES
+  // (orders persisting role/salary/visa/job-type prefs), DELIVERY (find_match choreography),
+  // SCHEDULING (job-interview booking), FEWSHOT (role-pulling exemplar).
+  if (opts.entryPosture === "yc_startup_school") {
+    return [
+      BEHAVIORAL_CONTRACT,
+      PERSONA,
+      langLine,
+      REPLY_FORMAT,
+      VOICE,
+      ENRICH_FROM_TEXT,
+      modeDirective(opts.mode, opts),
+      FLEXIBILITY,
+    ]
+      .filter(Boolean)
+      .join("\n")
+  }
   return [
     BEHAVIORAL_CONTRACT,
     PERSONA,
