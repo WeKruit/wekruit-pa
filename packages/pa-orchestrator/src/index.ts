@@ -126,7 +126,6 @@ export {
   buildYcEventOpenerBody,
   YC_EVENT_OPENER_PREFIX,
   isYcEventOpenerText,
-  YC_ATTENDEE_CONTACT_SHEET_URL,
   parseHelloWekruitOpener,
   looksLikeGarbledStartToken,
   BIND_CODE_ALPHABET,

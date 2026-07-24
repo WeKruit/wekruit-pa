@@ -34,7 +34,6 @@ import {
   mergeUserPrescreenSharedAnswers,
   isRegisteredSharedKey,
   AI_USAGE_SHARED_KEY,
-  YC_ATTENDEE_CONTACT_SHEET_URL,
   type OnboardingCanonicalTagInput,
   type PartialUserTags,
 } from "@pa/pa-orchestrator"
@@ -575,7 +574,7 @@ export function buildProcessTools(
   // want to meet". Free text has NO canonical vocab, so it lives on
   // pa-users.ycIntake (plain fields), never tags/statedPreferences. When the
   // second slot lands, completedAt is stamped and the tool result tells the
-  // agent to close with the tonight-around-7pm promise.
+  // agent to close with the no-timing match promise.
   const recordYcIntake = tool({
     name: "record_yc_intake",
     description:
@@ -583,7 +582,7 @@ export function buildProcessTools(
       "of the two event questions: field 'building' = what they're building/working on; field 'wants_to_meet' = " +
       "who they want to talk to (kind of founders/startups/people). Pass their answer essence verbatim-ish (their " +
       "words, lightly trimmed). The result tells you whether to ask the other question next or to CLOSE with the " +
-      "match promise (matches on July 25 at 7pm PT).",
+      "match promise (we will text them once we find a good match).",
     parameters: z.object({
       field: z.enum(["building", "wants_to_meet"]),
       answer: z.string(),
@@ -625,9 +624,7 @@ export function buildProcessTools(
           recorded: field,
           intakeComplete: complete,
           nextAction: complete
-            ? "CLOSE the intake now: share the YC Startup School attendee contact list you promised — paste " +
-              `this exact link once: ${YC_ATTENDEE_CONTACT_SHEET_URL} — then tell them you've got what you ` +
-              "need and you'll text their founder matches on July 25 at 7pm PT. Warm, one message, no further questions."
+            ? "CLOSE the intake now: tell them you've got what you need and WeKruit will match them with relevant Startup School people from here. Say you'll text them once you find a good match. Warm, one message, no attendee list link, no timing promise, no further questions."
             : field === "building"
               ? "Ask who they'd like to talk to (kind of founders/startups/people) — one short question."
               : "Ask what they're building / working on — one short question.",

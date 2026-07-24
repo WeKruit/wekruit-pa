@@ -96,7 +96,7 @@ test("runYcSendMatches: guards (not yc / incomplete / already sent today) + happ
   assert.deepEqual(await runYcSendMatches(deps, "sentAlready"), { ok: false, reason: "already_sent_today" })
   assert.equal(sends.length, 0, "no send fired for any guard")
 
-  // People send — the attendee contact list + a people-intro promise. NEVER job roles
+  // People send — a people-intro promise. NEVER job roles, attendee lists, or timing.
   // (Adam-LOCKED 2026-07-23: YC users get zero job-recommendation, investors sign up too).
   const ok = await runYcSendMatches(deps, "ok1")
   assert.deepEqual(ok, { ok: true })
@@ -105,14 +105,14 @@ test("runYcSendMatches: guards (not yc / incomplete / already sent today) + happ
   assert.equal(sends[0]!.idempotencyKey, "yc-evening-match:ok1:2026-07-21")
   assert.equal(sends[0]!.context.eventKind, "yc_evening_people_matches")
   const body = String(sends[0]!.context.trustedOutboundBody)
-  assert.match(body, /attendee list/i)
-  assert.match(body, /docs\.google\.com\/spreadsheets/, "shares the YC attendee contact sheet")
-  assert.match(body, /meeting/i)
+  assert.match(body, /people-match pool/i)
+  assert.match(body, /once we find you a good match/i)
+  assert.doesNotMatch(body, /attendee list|docs\.google\.com\/spreadsheets|7pm|July 25|tonight/i)
   assert.doesNotMatch(body, /founder matches|pull|roles?|@ \w/i, "NO job roles in the yc send")
   assert.equal(store.get("ok1")!.ycEveningMatchSentAt, NOW, "sent stamp recorded")
 })
 
-test("runYcSendMatches: always shares the contact list (no job matcher, no no_matches path)", async () => {
+test("runYcSendMatches: sends people-match hold copy (no list, no job matcher, no no_matches path)", async () => {
   const NOW = "2026-07-21T19:00:00.000Z"
   const { db, store } = makeDb({
     ok1: { ...YC_BASE, ycIntake: { building: "x", wantsToMeet: "y", completedAt: NOW } },
@@ -128,6 +128,6 @@ test("runYcSendMatches: always shares the contact list (no job matcher, no no_ma
   }
   const res = await runYcSendMatches(deps, "ok1")
   assert.deepEqual(res, { ok: true })
-  assert.equal(sends.length, 1, "the contact-list people-send always fires for a completed yc user")
+  assert.equal(sends.length, 1, "the people-match send always fires for a completed yc user")
   assert.equal(store.get("ok1")!.ycEveningMatchSentAt, NOW)
 })
