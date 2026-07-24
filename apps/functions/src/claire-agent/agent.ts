@@ -1018,7 +1018,7 @@ export async function runClaireTurn(
       ...(deps.ycEventIntake.offerLinkedin
         ? [
             `quick unlock so founders see your real background: log in with LinkedIn (one tap) 👉 ${connectUrl}`,
-            "while that's cooking — what are you building right now?",
+            "Also will get some idea about you then will share the list you should go connect and help you match after that!",
           ]
         : ["so — what are you building right now?"]),
       "reply STOP anytime to opt out.",
