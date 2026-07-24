@@ -1088,7 +1088,10 @@ function FormIntake({
     const hasResume = Boolean(v.resume)
     const hasLinkedin = skipLinkedinField || Boolean(v.linkedin?.trim())
     const hasSite = Boolean(v.personalWebsite?.trim())
-    if (!hasResume && !hasLinkedin && !hasSite) {
+    // YC Startup School is PEOPLE matching — a person may be an investor/founder, not a job
+    // candidate, so résumé/LinkedIn/site is OPTIONAL for them (Adam 2026-07-24). Everyone else
+    // still needs one piece of evidence.
+    if (!isYcStartup && !hasResume && !hasLinkedin && !hasSite) {
       e.profilePath = skipLinkedinField
         ? "Add a resume or personal site"
         : "Add a resume, LinkedIn, or personal site"
@@ -1114,6 +1117,7 @@ function FormIntake({
 
   const requiredKeys = ["firstName", "lastName", "email"] as const
   const profilePathSatisfied =
+    isYcStartup || // YC: evidence optional (people matching, not job search)
     Boolean(v.resume) ||
     Boolean(v.personalWebsite?.trim()) ||
     (!skipLinkedinField && Boolean(v.linkedin?.trim())) ||
