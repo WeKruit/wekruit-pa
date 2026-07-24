@@ -929,8 +929,12 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
   // reading a dozen concrete orders to pitch jobs, and #611 established that a contradicting YC
   // banner LOSES to a concrete instruction.
   //
-  // Kept: the friend-persona + format/voice contracts (no job content), résumé enrichment (YC users
-  // still upload a résumé to build their profile), and the people-lane directive.
+  // Kept: the friend-persona + format/voice contracts (no job content), the people-lane directive,
+  // and ENRICH_FROM_TEXT. On enrichment (Adam 2026-07-24): LinkedIn connect is the ONLY channel we
+  // ASK for on this lane — we never ask a founder/investor to dig up a résumé. ENRICH_FROM_TEXT is
+  // kept because it is REACTIVE, not an ask: when a founder types real substance about what they've
+  // built, cv_parse turns it into profile signal instead of throwing it away. Nothing in the YC lane
+  // prompts for a résumé upload.
   // Dropped: POSITIONING (the WeKruit job pitch), US_SCOPE (licenses the location ask), PREFERENCES
   // (orders persisting role/salary/visa/job-type prefs), DELIVERY (find_match choreography),
   // SCHEDULING (job-interview booking), FEWSHOT (role-pulling exemplar).

@@ -18,6 +18,7 @@ import {
   type MatchingCandidateRow,
   type MatchingJob,
 } from "@pa/job-rec"
+import { isYcPeopleUser } from "@pa/core-types"
 
 type Db = Firestore
 type Rec = Record<string, unknown>
@@ -113,6 +114,9 @@ export async function runSearchCandidatePool(
       .get()
     for (const doc of snap.docs) {
       const data = doc.data() as Rec
+      // YC people lane — never surface a YC founder/investor as a JOB candidate (Adam-LOCKED
+      // 2026-07-24). Downstream of this list an operator can email them a job interview offer.
+      if (isYcPeopleUser(data)) continue
       const lc = data.candidateLifecycleState
       if (typeof lc === "string" && matchable.has(lc)) rows.set(doc.id, toCandidateRow(doc.id, data))
     }
@@ -123,7 +127,13 @@ export async function runSearchCandidatePool(
         deps.db.collection("pa-users").where("candidateLifecycleState", "==", lifecycle).limit(250).get(),
       ),
     )
-    for (const snap of perState) for (const doc of snap.docs) rows.set(doc.id, toCandidateRow(doc.id, doc.data() as Rec))
+    for (const snap of perState) {
+      for (const doc of snap.docs) {
+        const data = doc.data() as Rec
+        if (isYcPeopleUser(data)) continue // YC people lane — not job candidates
+        rows.set(doc.id, toCandidateRow(doc.id, data))
+      }
+    }
   }
   const candidates = [...rows.values()]
 
@@ -232,6 +242,7 @@ export async function runRediscoverForJob(
   const candidates: MatchingCandidateRow[] = []
   for (const doc of snap.docs) {
     const data = doc.data() as Rec
+    if (isYcPeopleUser(data)) continue // YC people lane — never rediscovered as a job candidate
     candidates.push(toCandidateRow(doc.id, data))
     const t = obj(data.globalCandidateTier)
     tierById.set(doc.id, { tier: str(t.tier), reusable: t.reusable === true })

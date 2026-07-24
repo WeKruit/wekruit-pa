@@ -1405,9 +1405,16 @@ export async function runClaireTurn(
     const connectUrl = m?.[1] ?? ""
     const already = bubbles.some((b) => b.includes("connect-linkedin?token="))
     if (connectUrl && !already) {
+      // YC people lane: LinkedIn is the ONLY enrichment channel we ask for (Adam 2026-07-24) — so
+      // don't frame it as the résumé alternative ("if you'd rather not dig up a résumé"), which
+      // implies a résumé is the default ask. Founders/investors get a straight LinkedIn unlock,
+      // framed as what it buys them: the people we intro see their real background.
       const offer =
-        `oh — and if you'd rather not dig up a résumé, just tap this to connect your LinkedIn and i'll ` +
-        `pull everything automatically (totally optional): ${connectUrl}`
+        deps.entryPosture === "yc_startup_school"
+          ? `oh — and tap this to connect your LinkedIn so the folks we intro you to see your real ` +
+            `background (one tap, totally optional): ${connectUrl}`
+          : `oh — and if you'd rather not dig up a résumé, just tap this to connect your LinkedIn and i'll ` +
+            `pull everything automatically (totally optional): ${connectUrl}`
       await deps.transport
         .sendText(offer)
         .catch((e) => log("onboarding.linkedin_offer_net_failed", { err: String(e) }))
