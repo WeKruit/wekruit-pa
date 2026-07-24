@@ -9,7 +9,7 @@
  *      firstTouchCampaign=yc-startup-school.
  *   3. Walk the intake with the real LLM: skip LinkedIn (expect ONE
  *      consequence-framed nudge), answer building, answer wants_to_meet →
- *      assert pa-users.ycIntake recorded + completedAt + the ~7pm close.
+ *      assert pa-users.ycIntake recorded + completedAt + the no-timing match close.
  * Run: GOOGLE_APPLICATION_CREDENTIALS=... node tests/scenarios/yc-qr-e2e-sim.mjs
  */
 import { randomUUID } from "node:crypto"
@@ -121,7 +121,8 @@ check("ycIntake.building recorded", typeof intake.building === "string" && intak
 check("ycIntake.wantsToMeet recorded", typeof intake.wantsToMeet === "string" && intake.wantsToMeet.length > 0, String(intake.wantsToMeet).slice(0, 60))
 check("ycIntake.completedAt stamped", typeof intake.completedAt === "string", String(intake.completedAt))
 const allReplies = report.transcript.flatMap((t) => t.claire).join("\n")
-check("7pm close present", /7\s?pm|7 o'clock|around 7/i.test(allReplies), "")
+check("no-timing match close present", /once (we|i) find|when (we|i) find|good match/i.test(allReplies), "")
+check("timestamp omitted", !/7\s?pm|7 o'clock|around 7|tonight/i.test(allReplies), "")
 check("consequence nudge fired once (thinner profile / weaker matching)", /(thinner|weaker|stronger match|better match)/i.test(allReplies), "")
 
 console.log(JSON.stringify(report, null, 2))

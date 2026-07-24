@@ -44,7 +44,7 @@ export default function YcStartupSchool() {
         <div className="ycs-event-chip" aria-label="For attendees of YC Startup School 2026">
           <span>For attendees</span>
           <small>OF YC STARTUP SCHOOL 2026</small>
-          <small>MATCHING: JULY 25TH, 7PM PT</small>
+          <small>MATCHING WHEN THERE'S FIT</small>
         </div>
         <div className="ycs-nav-right">
           <Link to={LOGIN_HREF} className="ycs-signin">SIGN IN</Link>
@@ -89,11 +89,11 @@ export default function YcStartupSchool() {
             conversations while you are in SF. Less random networking, more people
             who understand your stage, market, and questions before you meet.
           </p>
-          <p className="ycs-strong">Plus: the attendee contact list</p>
+          <p className="ycs-strong">WeKruit handles the matching</p>
           <p>
             Sign in and give Claire a quick intro of what you are building, and right
-            after that we will share the full Startup School attendee contact list
-            with you too.
+            after that we will use it to match you with relevant Startup School
+            people instead of dropping you into a generic attendee list.
           </p>
           <div className="ycs-cta-row">
             <Link
@@ -111,7 +111,7 @@ export default function YcStartupSchool() {
           <h3>How people matching works</h3>
           <ol className="ycs-steps">
             <li><strong>01 - Sign in.</strong> Email magic link or LinkedIn. Returning WeKruit users keep their existing profile.</li>
-            <li><strong>02 - Share context.</strong> Tell Claire what you are building, who you want to learn from, and what kind of conversations would change the trip. Right after that, Claire sends you the full attendee contact list.</li>
+            <li><strong>02 - Share context.</strong> Tell Claire what you are building, who you want to learn from, and what kind of conversations would change the trip. Claire uses that context to match you with relevant Startup School people.</li>
             <li><strong>03 - Match people.</strong> Claire looks for founders, investors, and operators in SF with overlapping interests or useful context.</li>
             <li><strong>04 - Meet in SF.</strong> When there is a strong reason to talk, Claire helps open the next step with context already attached.</li>
           </ol>

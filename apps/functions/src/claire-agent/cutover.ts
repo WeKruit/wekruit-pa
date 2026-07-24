@@ -649,8 +649,7 @@ export async function maybeRunThinClaire(
   // composer self-detects the yc flags (compose-pitch.ts ycPosture) and produces a PEOPLE-framed
   // turn: a "here's what stands out" reaction (Adam 2026-07-23 "where's the short pitch?"), then
   // the pool promise + the NEXT unanswered intake question ("what are you building?" / "who do you
-  // want to meet?"), and the attendee contact list ONLY once the intake is complete. It must NOT
-  // dump the list on LinkedIn-connect before asking the questions (the live bug Adam flagged).
+  // want to meet?"), and no attendee list or timing promise.
   if (cvParsedReentry && toE164 && isCanaryUser(userId)) {
     try {
       const { composePitchTurn } = await import("./compose-pitch.js")
@@ -728,7 +727,7 @@ export async function maybeRunThinClaire(
             (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
         } catch { /* fail-open → standard copy */ }
         const fbBody = ycFallback
-          ? "got it — you're in the founder-match pool 🤝 your matches (people worth meeting) come on July 25 at 7pm PT, and i'll text you right here. anything you want me to know before then?"
+          ? "got it — you're in the founder-match pool 🤝 i'll text you right here once we find you a good match. anything you want me to know while we work on it?"
           : "got your résumé — your profile's updated 🙌 want me to pull roles that fit now, or tweak/add anything first?"
         await fbTransport
           .sendText(fbBody, { seq: 0 })
@@ -1536,7 +1535,7 @@ export async function maybeRunThinClaire(
         // chat, no pushing, notify-on-match promise). Set by mode-selector from pa-users.source.
         ...(decision.entryPosture ? { entryPosture: decision.entryPosture } : {}),
         // YC EVENT INTAKE (Adam 2026-07-21): event-QR guided mini-intake directive (LinkedIn offer +
-        // building/wants-to-meet questions + the tonight-around-7pm close). Present until
+        // building/wants-to-meet questions + the no-timing match close). Present until
         // pa-users.ycIntake.completedAt is stamped by record_yc_intake.
         ...(decision.ycEventIntake ? { ycEventIntake: decision.ycEventIntake } : {}),
         // COLD OFFER-FIRST (Adam 2026-06-03): brand-new candidate → deterministic LinkedIn-recommended /

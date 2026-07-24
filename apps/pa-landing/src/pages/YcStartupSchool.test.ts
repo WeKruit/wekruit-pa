@@ -40,7 +40,7 @@ test("YC Startup page frames the offer as SF people matching, not job search", (
   assert.match(pageSource, /Less random networking/)
   assert.match(pageSource, /How people matching works/)
   assert.match(pageSource, /Meet in SF/)
-  assert.match(pageSource, /MATCHING: JULY 25TH, 7PM PT/)
+  assert.match(pageSource, /MATCHING WHEN THERE'S FIT/)
 
   assert.doesNotMatch(pageSource, /share your resume/i)
   assert.doesNotMatch(pageSource, /recruiter/i)
@@ -48,13 +48,15 @@ test("YC Startup page frames the offer as SF people matching, not job search", (
   assert.doesNotMatch(pageSource, /job/i)
   assert.doesNotMatch(pageSource, /find a job/i)
   assert.doesNotMatch(pageSource, /matching tonight/i)
+  assert.doesNotMatch(pageSource, /7PM PT/i)
 })
 
-test("YC Startup page promises the attendee contact list upfront, tied to signing in + a quick intro", () => {
-  assert.match(pageSource, /Plus: the attendee contact list/)
+test("YC Startup page promises matching instead of sharing an attendee list", () => {
+  assert.match(pageSource, /WeKruit handles the matching/)
   assert.match(pageSource, /Sign in and give Claire a quick intro of what you are building/)
-  assert.match(pageSource, /share the full Startup School attendee contact list/)
-  assert.match(pageSource, /Right after that, Claire sends you the full attendee contact list/)
+  assert.match(pageSource, /match you with relevant Startup School people/)
+  assert.doesNotMatch(pageSource, /share the full Startup School attendee contact list/i)
+  assert.doesNotMatch(pageSource, /Claire sends you the full attendee contact list/i)
 })
 
 test("YC Startup solid CTA keeps readable text color over generic link color", () => {
