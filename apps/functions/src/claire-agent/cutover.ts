@@ -665,7 +665,7 @@ export async function maybeRunThinClaire(
         inboundEventId: pitchTurnScope, log, ...(deps.dryRun ? { dryRun: true } : {}),
       })
       const ycBody =
-        "got your background 👀 you're in the founder-match pool 🤝 your matches — founders, investors, and operators worth meeting — drop tonight around 7pm, and i'll text you right here (and email you).\n\nhere's the Startup School attendee list so you can start meeting people: " +
+        "got your background 👀 you're in the founder-match pool 🤝 your matches — founders, investors, and operators worth meeting — drop on July 25 at 7pm PT, and i'll text you right here (and email you).\n\nhere's the Startup School attendee list so you can start meeting people: " +
         YC_ATTENDEE_CONTACT_SHEET_URL
       await ycTransport.sendText(ycBody, { paced: true }).catch((e) => log("thin_claire.yc_people_confirm.send_failed", { eventId, err: String(e) }))
       try {
@@ -757,7 +757,7 @@ export async function maybeRunThinClaire(
             (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
         } catch { /* fail-open → standard copy */ }
         const fbBody = ycFallback
-          ? "got it — you're in the founder-match pool 🤝 your matches (people worth meeting) come tonight around 7pm, and i'll text you right here. anything you want me to know before then?"
+          ? "got it — you're in the founder-match pool 🤝 your matches (people worth meeting) come on July 25 at 7pm PT, and i'll text you right here. anything you want me to know before then?"
           : "got your résumé — your profile's updated 🙌 want me to pull roles that fit now, or tweak/add anything first?"
         await fbTransport
           .sendText(fbBody, { seq: 0 })
