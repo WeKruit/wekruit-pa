@@ -22,6 +22,7 @@ import { FieldValue } from "firebase-admin/firestore"
 import type { ClaireToolContext } from "../claire-agent/types.js"
 import { buildInterviewOffer } from "../claire-agent/tools/scheduling-tools.js"
 import { isSchedulingEligible } from "../claire-agent/scheduling-gate.js"
+import { isYcPeopleUser } from "@pa/core-types"
 import { sendMailgun, type MailgunConfig } from "../email/mailgun.js"
 import {
   generateConvToken,
