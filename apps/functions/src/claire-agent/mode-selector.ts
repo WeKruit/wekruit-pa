@@ -38,6 +38,7 @@ import {
   isYcEventOpenerText,
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
+import { isYcPeopleUser } from "@pa/core-types"
 import type { ClaireMode } from "./types.js"
 import { DEFAULT_ONBOARDING_SLOTS } from "./reducers/onboarding-fsm.js"
 import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-tools.js"
@@ -656,11 +657,14 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // flow. The opener text itself flips them in: stamp durable ycEventEntryAt once and
   // treat (source==yc OR ycEventEntryAt OR opener-this-turn) as the yc event user.
   const ycOpenerTurn =
-    user.source !== "yc_startup_school" &&
-    !user.ycEventEntryAt &&
-    isYcEventOpenerText(args.inboundText ?? "")
-  const isYcEventUser =
-    user.source === "yc_startup_school" || !!user.ycEventEntryAt || ycOpenerTurn
+    !isYcPeopleUser(user) && isYcEventOpenerText(args.inboundText ?? "")
+  // 2026-07-24: was an inline `source || ycEventEntryAt` pair that OMITTED
+  // `firstTouchCampaign === "yc-startup-school"` — the third canonical signal. That omission was
+  // not cosmetic: when it missed, `posture` came back empty, which cascaded into ycPeopleMode=false
+  // → EVERY job tool restored → no YC prompt directive → no delivery scrub → and the user could
+  // even land on mode:"onboarding", the job-QUESTION rail. Now uses the one shared predicate from
+  // @pa/core-types so this can never drift narrow again.
+  const isYcEventUser = isYcPeopleUser(user) || ycOpenerTurn
   if (ycOpenerTurn) {
     try {
       await args.db

@@ -27,6 +27,7 @@ import { type ProcessSessionStore, type ProcessToolContext } from "./tools/proce
 import { buildClairePrompt, buildClaireTurnContext } from "./prompt.js"
 import { buildClaireGuardrails } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverBubblesEx } from "./delivery.js"
+import { scrubYcJobOffers } from "./yc-people-guard.js"
 import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
@@ -1302,6 +1303,21 @@ export async function runClaireTurn(
   })
 
   const deliveredViaTool = tracked.handledViaTool()
+
+  // YC PEOPLE-LANE JOB-OFFER SCRUB (Adam-LOCKED 2026-07-24). #611 omits every job TOOL for a
+  // yc user, so a job listing can never be DELIVERED — but an OFFER is just prose and needs no
+  // tool. The ban was prompt-only (prompt.ts: "NEVER offer 'want me to pull roles'") and the
+  // model emitted that exact phrase to a real YC user 14.5h AFTER the guards were live
+  // (2026-07-24T15:46Z). This is the deterministic backstop. Refusals are preserved (they also
+  // contain job words); only affirmative, non-negated offers are dropped. Non-YC paths never run.
+  if (deps.entryPosture === "yc_startup_school") {
+    const scrub = scrubYcJobOffers(bubbles)
+    if (scrub.scrubbed > 0) {
+      log("yc.job_offer_scrubbed", { userId: input.userId, bubblesScrubbed: scrub.scrubbed })
+      bubbles = scrub.bubbles
+    }
+  }
+
   // deliverBubblesEx normalizes each bubble (markdown/length) + caps count; one Sendblue send each.
   // It also reports `suppressedAll` — ≥1 real bubble existed but the cross-turn near-dup dedup dropped
   // EVERY one — which drives the anti-silence fallback below (instead of going silent).
@@ -1340,7 +1356,16 @@ export async function runClaireTurn(
   // Tracks whether ANY net (ask-net / linkedin-offer-net) put a message on the wire after a
   // zero-bubble agent turn — so the anti-silence fallback below only fires when truly nothing went out.
   let netDelivered = false
-  if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked) {
+  // YC PEOPLE LANE — never force an onboarding job question (Adam-LOCKED 2026-07-24). This net
+  // sends buildSharedOnboardingPrompt content VERBATIM through deps.transport.sendText, i.e.
+  // outside the bubble scrub, and that rail includes "What kind of roles are you going for next"
+  // and the US location/remote question. Today mode-selector never returns mode:"onboarding" once
+  // entryPosture is set — but that invariant lives in ANOTHER file, and the narrowed isYcEventUser
+  // predicate (fixed above) is exactly how it used to break. Belt-and-braces, checked locally.
+  const ycPeopleLane = deps.entryPosture === "yc_startup_school"
+  if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked && ycPeopleLane) {
+    log("onboarding.ask_net_suppressed_yc_people", { userId: input.userId, slot: deps.onboardingSlot })
+  } else if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked) {
     const recorded = !!deps.processStore?.onboarding.answers?.[deps.onboardingSlot ?? ""]
     const q = ((recorded ? deps.pendingStep : deps.currentStep) ?? deps.pendingStep ?? "").trim()
     if (q) {
@@ -1548,9 +1573,19 @@ export async function runClaireTurn(
         if (openPrescreen) {
           log("claire.anti_silence_fallback.hard_net_suppressed_prescreen", { userId: input.userId })
         } else {
-          const net = "hey! i'm here 👋 — what are you looking for? i can pull some roles or just chat through your search."
+          // YC people lane gets a PEOPLE-framed net. The default copy offers to "pull some roles",
+          // a job ask a YC founder/investor must never receive (Adam-LOCKED 2026-07-24) — and this
+          // net sends through ctx.transport.sendText DIRECTLY, so it bypasses the bubble scrub
+          // entirely. Swapped rather than suppressed: going silent here is the very bug this net exists to fix.
+          const net =
+            deps.entryPosture === "yc_startup_school"
+              ? "hey! i'm here 👋 — what are you building, and who would you want to meet at Startup School?"
+              : "hey! i'm here 👋 — what are you looking for? i can pull some roles or just chat through your search."
           await ctx.transport.sendText(net).catch(() => {})
-          log("claire.anti_silence_fallback.hard_net_sent", { userId: input.userId })
+          log("claire.anti_silence_fallback.hard_net_sent", {
+            userId: input.userId,
+            ycPeopleLane: deps.entryPosture === "yc_startup_school",
+          })
         }
       }
       // Surface BOTH the original (suppressed) turn's tool calls AND the fallback turn's — the

@@ -20,7 +20,7 @@ import { defineSecret } from "firebase-functions/params"
 import { HttpsError, onCall } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { z } from "zod"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
@@ -112,7 +112,10 @@ export async function runYcSendMatches(
   const snap = await userRef.get()
   if (!snap.exists) return { ok: false, reason: "user_not_found" }
   const d = (snap.data() ?? {}) as Record<string, unknown>
-  if (d.source !== YC_SOURCE) return { ok: false, reason: "not_yc_user" }
+  // Shared predicate, not `source` alone. The narrow check meant an event-QR entrant
+  // (source: qr_imessage/candidate + ycEventEntryAt) returned "not_yc_user" and SILENTLY never got
+  // the 7pm people send they were promised — a bug in the YC lane itself, not a job-leak.
+  if (!isYcPeopleUser(d)) return { ok: false, reason: "not_yc_user" }
   const intake = (d.ycIntake ?? {}) as Record<string, unknown>
   if (typeof intake.completedAt !== "string") return { ok: false, reason: "intake_incomplete" }
   const day = nowIso().slice(0, 10)

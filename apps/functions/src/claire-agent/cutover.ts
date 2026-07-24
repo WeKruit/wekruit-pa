@@ -19,7 +19,7 @@
  * before ANY routing — by the time a turn reaches this function it has already passed it.
  */
 import type { Firestore } from "firebase-admin/firestore"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
 import { isThinClaireEnabled } from "./flags.js"
 import { isCanaryUser, isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
@@ -677,9 +677,9 @@ export async function maybeRunThinClaire(
         let ycEventFastPitch = false
         try {
           const u = (await db.collection(PA_COLLECTIONS.users).doc(userId).get()).data() ?? {}
-          ycEventFastPitch =
-            (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school" ||
-            Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt)
+          // Shared predicate (was a hand-rolled 2-of-3 copy that omitted `source`) — one
+          // definition, so narrowed copies can't get cargo-culted from here.
+          ycEventFastPitch = isYcPeopleUser(u)
         } catch { /* fail-open → standard beats */ }
         const pitchBeatMs = ycEventFastPitch ? 2500 : 10000
         const offerBeatMs = ycEventFastPitch ? 1200 : 2500
@@ -721,10 +721,7 @@ export async function maybeRunThinClaire(
         let ycFallback = false
         try {
           const u = (await db.collection(PA_COLLECTIONS.users).doc(userId).get()).data() ?? {}
-          ycFallback =
-            (u as { source?: unknown }).source === "yc_startup_school" ||
-            Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt) ||
-            (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
+          ycFallback = isYcPeopleUser(u)
         } catch { /* fail-open → standard copy */ }
         const fbBody = ycFallback
           ? "got it — you're in the founder-match pool 🤝 i'll text you right here once we find you a good match. anything you want me to know while we work on it?"

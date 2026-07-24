@@ -30,7 +30,7 @@
  * WS-proactive: implement runProactiveTurn + its L3 side-effect eval.
  */
 import type { Firestore } from "firebase-admin/firestore"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
 import { readOutreachStopControl } from "@pa/pa-persistence"
 import { USER_JOB_RECOMMENDATIONS_COLLECTION, userHasOpenPrescreen } from "@pa/job-rec"
 import type { ClaireTransport } from "./types.js"
@@ -176,6 +176,19 @@ async function isOptedOut(
     if (outreach?.status === "opted_out" || outreach?.status === "paused") {
       log("pa.proactive.gate.outreach_status", { userId, kind, status: outreach.status })
       return true
+    }
+
+    // YC PEOPLE LANE — ZERO job-related proactive contact (Adam-LOCKED 2026-07-24: "we don't
+    // wanna ask anything about the job including daily ask for users from YC"). This gate had NO
+    // YC check at all: it only looked at lifecycle, outreach status and the daily-subscription
+    // toggle, so a YC user reaching this path would get a daily_job_rec push. Blocks the whole
+    // job-rec proactive lane (daily_job_rec AND post_match_retention, both job-grounded);
+    // `follow_up` is content-neutral and stays allowed so the people lane can still be nudged.
+    if (kind === "daily_job_rec" || kind === "post_match_retention") {
+      if (isYcPeopleUser(data)) {
+        log("pa.proactive.gate.yc_people_no_job_content", { userId, kind })
+        return true
+      }
     }
 
     // Daily push respects the explicit daily subscription toggle.

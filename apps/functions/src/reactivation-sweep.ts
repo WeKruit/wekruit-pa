@@ -25,6 +25,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { getFlag } from "@pa/pa-persistence"
+import { isYcPeopleUser } from "@pa/core-types"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { CLAIRE_VOICE_DEV_PHONES } from "./voice/dev-phone-gate.js"
 
@@ -43,6 +44,11 @@ export type ReactivationUser = {
   lastReactivationPingCount?: unknown
   doNotContact?: unknown
   outreach?: { status?: unknown }
+  // YC people-lane signals — REACTIVATION_COPY is a job ask ("are you still job-searching?
+  // reply yes and i'll pull a few fresh matches"), which a YC user must never receive.
+  source?: unknown
+  ycEventEntryAt?: unknown
+  firstTouchCampaign?: unknown
   phoneE164?: unknown
 }
 
@@ -59,6 +65,15 @@ export function isEligibleForReactivation(
   if (u.outreach && (u.outreach as { status?: unknown }).status === "opted_out") {
     return { eligible: false, reason: "opted_out" }
   }
+  // YC PEOPLE LANE — ZERO job asks (Adam-LOCKED 2026-07-24: "we don't wanna ask anything about
+  // the job including daily ask for users from YC"). REACTIVATION_COPY asks "are you still
+  // job-searching? reply yes and i'll pull a few fresh matches for you", and a "yes" routes
+  // straight into find_match. This gate had NO YC condition: the canary audience is looked up by
+  // dev phone with no source filter (those phones carry ycEventEntryAt from the live QR probes),
+  // and the ramp query's `source == "candidate"` misses an already-registered user who later
+  // scanned the YC QR (sticky source, ycEventEntryAt stamped). Checked here, in the PURE
+  // predicate, so both audience paths are covered at once.
+  if (isYcPeopleUser(u)) return { eligible: false, reason: "yc_people_no_job_ask" }
   const phone = typeof u.phoneE164 === "string" ? u.phoneE164.trim() : ""
   if (!phone) return { eligible: false, reason: "no_phone" }
   const lastIn = typeof u.lastInboundAt === "string" ? Date.parse(u.lastInboundAt) : NaN
