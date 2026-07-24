@@ -59,3 +59,29 @@ test("buildClaireTools threads forbidSuppressingDelivery → react_to_user is ab
   // The substantive tools (matching/scheduling/process) are unaffected — only delivery is scoped.
   assert.ok(pitchTurn.includes("find_match"), "find_match still available (only delivery tools were scoped)")
 })
+
+test("DEDICATED YC LANE: ycPeopleMode drops EVERY job tool — the model cannot deliver job content (Adam-LOCKED 2026-07-23)", () => {
+  const normal = names(buildClaireTools(ctx))
+  const yc = names(buildClaireTools(ctx, { ycPeopleMode: true }))
+  const JOB_TOOLS = [
+    "find_match",
+    "match_collab",
+    "save_job_profile",
+    "set_daily_subscription",
+    "find_my_role",
+    "begin_collab_prescreen",
+    "get_public_role_start",
+    "set_matching_preferences",
+    "capture_match_feedback",
+    "check_prescreen_progress",
+  ]
+  // Normal turn exposes the job tools; the YC lane omits every one of them.
+  for (const n of JOB_TOOLS) {
+    assert.ok(normal.includes(n), `normal build exposes ${n}`)
+    assert.equal(yc.includes(n), false, `YC lane must NOT expose ${n}; got ${yc.join(",")}`)
+  }
+  // The non-job survivors (memory, STOP/privacy, cv_parse) + process/delivery/scheduling remain.
+  assert.ok(yc.includes("remember_fact"), "memory survives the YC lane")
+  assert.ok(yc.includes("privacy"), "STOP/privacy survives the YC lane")
+  assert.ok(yc.includes("record_yc_intake"), "the yc intake tool survives")
+})
