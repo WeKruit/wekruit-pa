@@ -26,7 +26,12 @@ import { trackEvent } from "../lib/analytics.js"
 import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
 import { CandidateVerifyError, readStoredCandidateId, shouldSignOutOnVerifyError, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 import { startCandidatePhoneLink, verifyCandidatePhoneLink } from "../lib/candidate-phone-link.js"
-import { buildHelloWekruitOpenerBody, buildBindCodeOpenerBody, buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
+import {
+  buildHelloWekruitOpenerBody,
+  buildBindCodeOpenerBody,
+  buildWekruitJobOpenerBody,
+  buildYcEventOpenerBody,
+} from "../lib/hello-wekruit.js"
 import { buildTextingDeepLink, canOpenImessageDeepLink, canOpenTextingDeepLink } from "../lib/imessage-platform.js"
 import { CompanyCombobox } from "../components/CompanyCombobox.js"
 import { CANDIDATE_STYLES, Icon, IMessageThread } from "./CandidateLogin.js"
@@ -1416,13 +1421,28 @@ function Done({
   // binds. The non-job binding openers likewise prefer the code. Job-only token
   // is only a degraded fallback if no code was minted (phone already bound / mint
   // hiccup — back-compat parser + phone-is-auth resolve it inbound).
+  //
+  // 2026-07-23 fix: a website-first YC Startup School signup (no returnJobId —
+  // this is the people-matching flow, not a job prescreen) was falling through
+  // to the GENERIC bind-code/hello-wekruit opener ("Hi, WeKruit, my verification
+  // code is <CODE>") instead of the YC-flavored one the QR path already sends.
+  // Same token/resolution mechanics either way (parseHelloWekruitOpener resolves
+  // the trailing code/candidateId identically regardless of phrasing) — only the
+  // wording differs, so this only had to change which builder wraps the token.
+  const isYcOpener = signupSource === "yc_startup_school" && !returnJobId
   const openerBody = returnJobId
     ? buildWekruitJobOpenerBody(returnJobId, profile.bindCode ?? undefined)
     : profile.bindCode
-      ? buildBindCodeOpenerBody(profile.bindCode)
+      ? isYcOpener
+        ? buildYcEventOpenerBody(profile.bindCode)
+        : buildBindCodeOpenerBody(profile.bindCode)
       : profile.candidateId
-        ? buildHelloWekruitOpenerBody(profile.candidateId)
-        : buildHelloWekruitOpenerBody("")
+        ? isYcOpener
+          ? buildYcEventOpenerBody(profile.candidateId)
+          : buildHelloWekruitOpenerBody(profile.candidateId)
+        : isYcOpener
+          ? buildYcEventOpenerBody("")
+          : buildHelloWekruitOpenerBody("")
   const isJobInterview = Boolean(returnJobId)
   const continuingClaireConversation = claireConversationStarted || isJobInterview
   const imessageAvailable = canOpenImessageDeepLink()

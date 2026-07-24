@@ -58,3 +58,25 @@ export function buildWekruitJobOpenerBody(jobId: string, bindCode?: string): str
   // resolves identity inbound. Never the preferred mint.
   return code ? `WeKruit_${job}_${code}_Job` : `WeKruit_${job}_Job`
 }
+
+/**
+ * YC Startup School event opener (2026-07-23 — must mirror
+ * packages/pa-orchestrator/src/shared-onboarding.ts YC_EVENT_OPENER_PREFIX /
+ * buildYcEventOpenerBody exactly, including the em dash). The QR-scan path
+ * already builds this via the server-side (functions) copy; the WEBSITE-first
+ * path (Onboarding.tsx Done handoff for a signupSource=yc_startup_school
+ * candidate) builds it here so a candidate who registers on wekruit.com/yc-startup
+ * gets the SAME YC-flavored first text as someone who scanned the printed QR —
+ * not the generic "my verification code is" phrasing, which reads as a bare
+ * login step and does not deliver the promised YC greeting. The token slot
+ * still carries either the transit-safe bind code or the raw candidateId — the
+ * backend parser (parseHelloWekruitOpener) resolves both shapes identically
+ * regardless of which opener phrasing wraps them.
+ */
+export const YC_EVENT_OPENER_PREFIX = "Hey! I'm at YC Startup School — my code is"
+
+export function buildYcEventOpenerBody(token: string): string {
+  const t = token.trim()
+  if (!t) return YC_EVENT_OPENER_PREFIX
+  return `${YC_EVENT_OPENER_PREFIX} ${t}`
+}

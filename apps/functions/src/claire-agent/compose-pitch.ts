@@ -16,6 +16,7 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { YC_ATTENDEE_CONTACT_SHEET_URL } from "@pa/pa-orchestrator"
 
 const USERS = PA_COLLECTIONS.users
 const PITCH_MODEL = "gpt-5.4-mini" // Adam-picked: stronger than nano for the product centerpiece.
@@ -761,7 +762,7 @@ export async function composePitchTurn(
         ? `${pool} while that's brewing — what are you building right now?`
         : !u.ycIntake?.wantsToMeet
           ? `${pool} while that's brewing — who do you want to meet: what kind of founders or startups?`
-          : `${pool} nothing else you need to do.`
+          : `${pool} nothing else you need to do. also — here's the Startup School attendee contact list: ${YC_ATTENDEE_CONTACT_SHEET_URL}`
     } else {
       offer =
         "you're in the founder-match pool now — nothing else you need to do 🤝 i'll text you right here (and drop you an email) the moment a founder match pops. and if you want a peek at who's building right now, just say the word"

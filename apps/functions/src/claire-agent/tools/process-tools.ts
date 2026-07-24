@@ -34,6 +34,7 @@ import {
   mergeUserPrescreenSharedAnswers,
   isRegisteredSharedKey,
   AI_USAGE_SHARED_KEY,
+  YC_ATTENDEE_CONTACT_SHEET_URL,
   type OnboardingCanonicalTagInput,
   type PartialUserTags,
 } from "@pa/pa-orchestrator"
@@ -624,7 +625,9 @@ export function buildProcessTools(
           recorded: field,
           intakeComplete: complete,
           nextAction: complete
-            ? "CLOSE the intake now: tell them you've got what you need and you'll text their founder matches tonight around 7pm — warm, one message, no further questions."
+            ? "CLOSE the intake now: share the YC Startup School attendee contact list you promised — paste " +
+              `this exact link once: ${YC_ATTENDEE_CONTACT_SHEET_URL} — then tell them you've got what you ` +
+              "need and you'll text their founder matches tonight around 7pm. Warm, one message, no further questions."
             : field === "building"
               ? "Ask who they'd like to talk to (kind of founders/startups/people) — one short question."
               : "Ask what they're building / working on — one short question.",
