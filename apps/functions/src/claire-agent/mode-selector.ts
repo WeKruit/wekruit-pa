@@ -493,6 +493,31 @@ function hasParsedProfileOnFile(user: Record<string, unknown>): boolean {
  * wall, while a partial-onboarding user still gets the one genuinely-missing question. Structured
  * presence checks over the already-fetched pa-users doc — NO LLM, NO text→enum regex.
  */
+/**
+ * Do we ACTUALLY hold this person's background — data we fetched, not a claim they typed?
+ *
+ * `hasIngestedBackground` below does NOT answer that: it early-returns `true` on a non-empty
+ * `linkedinUrl`, which is free text typed into the web form. It is never verified, never resolved,
+ * and nothing is fetched from it — so the name overpromises (it is really "has any LinkedIn signal
+ * or profile"). Live 2026-07-24: two YC users (3d1TYXwutJuP…, b6ag31sPyxKR…) typed a URL — one of
+ * them `Linkedin.com/in/avnithv`, not even a valid URL — and were therefore treated as already
+ * imported. They got NO LinkedIn unlock, so no enrichment ever ran and they never got the
+ * "here's what stands out" pitch. `experienceHighlights: 0`, `latestResumeArtifactId: null`.
+ *
+ * A typed URL is an INTENT, not a fact, and it is not proof of identity either — anyone can type
+ * anyone's profile. Only an OAuth connect proves it's them. This mirrors the four-state ladder
+ * already in website-entry-event.ts (`url_linked` is deliberately NOT `enriched`).
+ *
+ * Used for the YC LinkedIn offer only — `hasIngestedBackground` is shared with non-YC paths, so it
+ * is left untouched to keep the blast radius at zero.
+ */
+function hasRealIngestedBackground(user: Record<string, unknown>): boolean {
+  if (hasParsedProfileOnFile(user)) return true // we parsed something real
+  if (user.linkedinOauthLinked === true) return true // verified identity + Coresignal mirror
+  if (Array.isArray(user.experienceHighlights) && user.experienceHighlights.length > 0) return true
+  return false // a self-typed linkedinUrl alone is NOT background — offer the one-tap connect
+}
+
 function hasIngestedBackground(user: Record<string, unknown>): boolean {
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
   if (hasParsedProfileOnFile(user)) return true
@@ -712,7 +737,9 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
       isSharedOnboardingGreetingOrKickoff(args.inboundText ?? "")
     // LinkedIn one-tap leads the intake until real background lands (the
     // Coresignal enrich flips hasIngestedBackground on re-entry).
-    const offerLinkedin = !hasIngestedBackground(user)
+    // REAL background only — a self-typed linkedinUrl must NOT suppress the unlock (see
+    // hasRealIngestedBackground). If we have nothing fetched, ask them.
+    const offerLinkedin = !hasRealIngestedBackground(user)
     // ONE deterministic consequence nudge (Adam 2026-07-21: "tell them it will be bad
     // for matching and their image"): the offer went out on the kickoff; the FIRST
     // non-kickoff turn with LinkedIn still unconnected carries the mandatory heads-up.
