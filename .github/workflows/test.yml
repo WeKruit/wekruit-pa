@@ -6,8 +6,20 @@
 # 8 webhook tests went red on main; nobody noticed for 22h until Phase 32
 # deploy rolled the broken main into prod).
 #
-# Cost: ~3 min per run on GitHub-hosted Ubuntu. Free for public repos and
+# Cost: ~16 min per run on GitHub-hosted Ubuntu. Free for public repos and
 # included in the team plan for private.
+#
+# 2026-07-25 — timeout raised 15 -> 30 min. The original 15 was sized for the
+# "~3 min" suite of 2026-04; it is now 22 packages and the job legitimately
+# needs ~16 min, so it was being killed mid-run at the cap:
+#   install 0:40 · build 2:45 · typecheck 1:05 · unit tests 11:00+
+# The unit-test step is the bulk, and the last package to run (apps/functions,
+# 3676 tests) was still going when the axe fell. This was invisible until
+# 2026-07-25 because the build step had been failing first for days.
+#
+# ~1 min of the unit-test step is duplicate work: apps/functions `pretest`
+# re-builds 16 workspace packages that step "Build (workspace...)" already
+# built. Worth trimming if this ever approaches the new cap; not urgent.
 
 name: test
 
@@ -29,7 +41,7 @@ jobs:
   typecheck-and-test:
     name: typecheck + unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
