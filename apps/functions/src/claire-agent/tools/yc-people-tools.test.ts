@@ -75,37 +75,6 @@ async function callMatch(
 }
 
 describe("match_yc_people — guards must never produce silence", () => {
-  it("rolling 5-people/5-min budget spent → delivered:false + must speak", async () => {
-    const now = new Date().toISOString()
-    const out = await callMatch(
-      // 5 people delivered inside the window → budget 0.
-      { ycPeopleMatchRecent: [1, 2, 3, 4, 5].map((i) => `${now}#rec${i}`) },
-      // A REAL follow-up ask — exactly the case that used to go silent.
-      { query: "what about founders?" },
-    )
-    assert.equal(out.count, 0, "nothing was sent")
-    assert.equal(out.delivered, false, "must NOT claim a delivery that did not happen")
-    assert.ok(out.nextAction, "must tell the model what to say")
-    // Assert the CONTRACT (it must instruct a reply), not one phrasing of it — the previous
-    // literal /MUST still reply/ broke the moment the wording was reworded for a different fix.
-    assert.match(out.nextAction!, /\breply with (one|at least one)\b/i)
-    // The ONLY mention of an empty reply must be a prohibition of it.
-    assert.match(out.nextAction!, /NEVER reply with an empty message list/i)
-    // The user must never be told about our plumbing.
-    assert.doesNotMatch(out.nextAction!, /\b(budget|limit|blocked)\b.*\bsay\b/i)
-    // LEAK REGRESSION (live 2026-07-25, +16172568414): an earlier nextAction EXPLAINED itself
-    // ("those bubbles are still on their screen"), and the model paraphrased that explanation
-    // straight into the thread — "looks like your previous batch is still on their screen so
-    // nothing new came through right this second." Rationale written here is text the model can
-    // echo, so the field must forbid the phrasings rather than contain them.
-    assert.match(out.nextAction!, /NEVER explain why/i, "must forbid explaining the suppression")
-    for (const leak of ["nothing new came through", "still on your screen", "previous batch"]) {
-      assert.ok(
-        out.nextAction!.toLowerCase().includes(`'${leak}'`),
-        `must name "${leak}" as a banned phrase, not use it as narration`,
-      )
-    }
-  })
 
   it("60s double-fire guard → delivered:false + must speak", async () => {
     const out = await callMatch(

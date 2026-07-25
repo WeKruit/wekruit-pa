@@ -95,7 +95,20 @@ async function score(ctx, qVec) {
   const strong = out.filter(
     (r) => (ctx.facetIsAnswer && !r.relaxed) || (r.s >= best * REL && r.s >= ABS),
   )
-  return (strong.length >= 1 ? strong : out.slice(0, 1)).slice(0, 5)
+  const shortlist = strong.length >= 1 ? strong : out.slice(0, 1)
+  // AFTER only: multi-kind asks take turns so the majority kind cannot sweep every slot.
+  const kinds = ctx.kinds ?? []
+  if (kinds.length < 2) return shortlist.slice(0, 5)
+  const taken = new Set()
+  const buckets = kinds.map((k) => {
+    const b = shortlist.filter((r) => !r.relaxed && !taken.has(r) && (ctx.old ? r.m.ptOld : r.m.ptNew)[0] === k)
+    for (const r of b) taken.add(r)
+    return b
+  })
+  const ordered = []
+  for (let i = 0; buckets.some((b) => b[i] !== undefined); i++)
+    for (const b of buckets) if (b[i]) ordered.push(b[i])
+  return [...ordered, ...shortlist.filter((r) => !taken.has(r))].slice(0, 5)
 }
 
 const ASKS = JSON.parse(readFileSync(process.argv[3], "utf8"))
@@ -112,6 +125,7 @@ for (const a of ASKS) {
     // BEFORE: founder prior always on. AFTER: off whenever a personType was named.
     ctx.founderPrior = mode === "before" ? true : !a.pt?.length
     ctx.facetIsAnswer = mode === "after" && Boolean(a.pt?.length)
+    ctx.kinds = mode === "after" ? (a.pt ?? []) : []
     const res = await score(ctx, qVec)
     const nInv = res.filter((r) => (mode === "before" ? r.m.ptOld : r.m.ptNew)[0] === "investor").length
     console.log(`  --- ${mode.toUpperCase()}  facetMatched=${ctx.faceted.length} didRelax=${ctx.didRelax} returned=${res.length} PRIMARY-investor=${nInv}/${res.length}`)

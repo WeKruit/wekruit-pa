@@ -33,19 +33,6 @@ const PersonTypeEnum = z.enum(PERSON_TYPE_VOCAB)
 /** Field on pa-users holding recordIds we already sent, so "show me more" never repeats a face. */
 const SENT_FIELD = "ycPeopleMatchSent"
 
-/**
- * Rolling cap on PEOPLE delivered, not on calls (Adam 2026-07-25: "another one dumping too many
- * people, didn't i said limit a bit"). Per-call clamp was already 5, but two asks in a row produced
- * a 10-bubble wall. 5 people / 5 minutes: a follow-up ask is still answered, it just draws from the
- * remaining budget rather than starting a fresh 5.
- */
-const MAX_PEOPLE_PER_WINDOW = 5
-// 90s, NOT 5 min (revised same day). The bug this guard exists for is two asks SECONDS apart each
-// firing their own 5 ("more robotics founders?" / "or founding engineers?" → a 10-bubble wall). A
-// 5-minute window over-corrected and started refusing legitimate follow-ups a minute later — live,
-// a user asked "lemme meet andrew broskie" and got "i can't send another batch yet", which is a
-// worse experience than the flood it was preventing. 90s kills the burst and nothing else.
-const PEOPLE_WINDOW_MS = 90 * 1000
 
 /** text → 1536-d, via the same OpenAI client the CV embed path uses. Never throws. */
 async function embedText(text: string): Promise<number[] | null> {
@@ -155,11 +142,11 @@ async function deliverPeopleBubbles(
       await ctx.transport.sendText(buildPersonBubble(r), { seq: seq++, paced: true })
       sent++
     }
-    await stagger()
-    await ctx.transport.sendText(
-      "more land here as the pool fills — tell me who you'd want next and i'll aim at that.",
-      { seq: seq++, paced: true },
-    )
+    // NO TRAILER (Adam 2026-07-25: "I also see duplicate message"). Every batch ended with the SAME
+    // sentence, so a user who asked twice saw "more land here as the pool fills — tell me who you'd
+    // want next and i'll aim at that." verbatim twice, minutes apart, and it read as a stuck bot.
+    // It also carried a dash, which Adam banned the same day. The people ARE the message; the model
+    // says whatever else the turn needs. One fixed closer per batch is duplication by construction.
     ctx.log("pa.claire.match_yc_people.delivered", {
       userId: ctx.userId,
       people: out.results.length,
@@ -275,49 +262,12 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       // "it's blocking a re-send", leaking our plumbing into their conversation. The double-fire it
       // exists to stop is two identical argument-less calls inside one turn.
       const hasNewAsk = Boolean(args.query.trim())
-      // ROLLING PEOPLE BUDGET (Adam 2026-07-25: "another one dumping too many people, didn't i said
-      // limit a bit"). The per-call clamp is 5, but a user who fires two asks back-to-back ("more
-      // robotics founders?" / "or founding engineers?") gets 5 + 5 = a 10-bubble wall — live at
-      // 11:37. Capping the CALL was never enough; the cap has to be on people-per-window.
-      // A new ask is still always honoured (that regression leaked "it's blocking a re-send" to a
-      // real attendee) — it just draws from the remaining budget instead of a fresh 5.
-      let budget = MAX_PEOPLE_PER_WINDOW
-      try {
-        const snap = await ctx.db.collection("pa-users").doc(ctx.userId).get()
-        const recent = (snap.data()?.ycPeopleMatchRecent ?? []) as unknown[]
-        const cutoff = Date.now() - PEOPLE_WINDOW_MS
-        // Entries are `<iso>#<recordId>`; split on the first '#' to read the stamp.
-        const inWindow = recent.filter((t) => {
-          if (typeof t !== "string") return false
-          const ms = new Date(t.split("#")[0] ?? "").getTime()
-          return Number.isFinite(ms) && ms >= cutoff
-        }).length
-        budget = Math.max(0, MAX_PEOPLE_PER_WINDOW - inWindow)
-        if (budget === 0) {
-          ctx.log("pa.claire.match_yc_people.window_budget_spent", { userId: ctx.userId, inWindow })
-          return {
-            ok: true,
-            // delivered:FALSE — nothing went out on this call. Claiming delivered:true here is what
-            // the tool description turns into "reply with an EMPTY message list", so a budget-spent
-            // guard would answer a REAL question ("what about founders?") with literal silence.
-            // delivered:false routes to the description's "you MUST speak" contract instead.
-            delivered: false,
-            count: 0,
-            reason: "recent_batch_still_on_screen",
-            // NEVER PUT THE REASON IN HERE (Adam 2026-07-25, third leak of the day). An earlier
-            // version explained itself — "those bubbles are still on their screen" — and the model
-            // paraphrased that explanation straight into the thread: "i tried to pull design-engineer
-            // folks, but looks like your previous batch is still on their screen so nothing new came
-            // through right this second." The user does not have a batch "on their screen", they have
-            // a conversation. Any rationale written here is text the model can and will echo, so this
-            // field now carries ONLY the instruction and the banned phrasings.
-            nextAction:
-              "Reply with ONE short, natural message and do NOT send more people this turn. If they named someone they want to meet, THAT is what you answer (Adam 2026-07-25): tell them you'll try to make the connection and will let them know if it's mutual, and encourage them to reach out themselves in the meantime, LinkedIn is right there. Otherwise just answer what they asked and say more people land here as the pool fills. NEVER ask them which of the people you already sent they want to 'go deeper on', 'dive deeper on', or pick between: that is not a thing we do and nobody asked for it. NEVER explain why more people aren't coming: do not say 'nothing new came through', 'still on your screen', 'previous batch', 'i tried to pull', 'can't send another batch', 'can't land right now', or anything about limits, budgets, timing or internal state. NEVER reply with an empty message list.",
-          }
-        }
-      } catch {
-        /* fail-open → full budget */
-      }
+      // The rolling "people per window" budget that used to live here is DELETED (Adam 2026-07-25:
+      // "remove that", "they ask for find match your invention is ruining this"). It was mine, it was
+      // never asked for, and when it hit zero it refused to match and made the model invent a
+      // counter-question — three separate users asked plain questions ("can you find me some girls as
+      // well", "would like some cybersec related too", "and can u find me Berkeley kids") and got no
+      // people. An ask now always matches. The per-call clamp of 5 is the only limit.
       try {
         const snap = hasNewAsk ? null : await ctx.db.collection("pa-users").doc(ctx.userId).get()
         const last = String(snap?.data()?.ycPeopleMatchLastAt ?? "")
@@ -356,7 +306,7 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       let out: YcPeopleMatchOutput
       try {
         out = await runYcPeopleMatch(
-          { userId: ctx.userId, limit: Math.min(args.limit ?? 5, budget), filters },
+          { userId: ctx.userId, limit: args.limit ?? 5, filters },
           {
             db: ctx.db,
             embed: embedText,
@@ -403,13 +353,6 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
             {
               [SENT_FIELD]: FieldValue.arrayUnion(...out.results.map((r) => r.recordId)),
               ycPeopleMatchLastAt: ctx.nowIso(),
-              // One entry PER PERSON delivered — the rolling window budget above counts these, so
-              // two asks in quick succession draw from ONE pool of 5 instead of getting 5 each.
-              // `<iso>#<recordId>`, not a bare timestamp: arrayUnion dedupes equal values, and all
-              // results of one call share the same nowIso(), so bare stamps would collapse to 1.
-              ycPeopleMatchRecent: FieldValue.arrayUnion(
-                ...out.results.map((r) => `${ctx.nowIso()}#${r.recordId}`),
-              ),
             },
             { merge: true },
           )

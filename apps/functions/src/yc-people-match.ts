@@ -521,6 +521,47 @@ function norm(x: string): string {
   return String(x ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_")
 }
 
+/**
+ * A MULTI-KIND ASK GETS EVERY KIND IT NAMED.
+ *
+ * `personType` is OR-ed, so "founders and investors" admits both — and then loses, because the pool
+ * is not balanced: 214 people whose primary type is `founder` against 21 investors. Cosine ranks them
+ * together and the majority sweeps every slot. Measured live on the 1159-pool, "Majorly founders and
+ * investors" (personType [founder,investor], the shape 8 real asks used today) returned FIVE founders
+ * and ZERO investors — an answer to half the question that looks like an answer to all of it.
+ *
+ * So take turns: best founder, best investor, next founder, next investor. Order WITHIN each kind is
+ * still pure cosine, so nobody is promoted over a better match of their own kind, and the head of the
+ * list is still the single best person we found. A kind the pool cannot fill simply contributes
+ * nothing and the others close up — this never pads and never invents.
+ *
+ * Single-kind asks and unfaceted asks return the input untouched.
+ */
+export function interleaveByPersonType<T extends { m: PeoplePoolMember; relaxed: boolean }>(
+  rows: readonly T[],
+  kinds: readonly string[],
+): T[] {
+  if (kinds.length < 2) return [...rows]
+  const taken = new Set<T>()
+  const buckets = kinds.map((k) => {
+    const want = norm(k)
+    const b = rows.filter((r) => !r.relaxed && !taken.has(r) && r.m.personType[0] === want)
+    // A person is only ever counted once, even if two named kinds could claim them.
+    for (const r of b) taken.add(r)
+    return b
+  })
+  const out: T[] = []
+  for (let i = 0; buckets.some((b) => b[i] !== undefined); i++) {
+    for (const b of buckets) {
+      const r = b[i]
+      if (r) out.push(r)
+    }
+  }
+  // Anything the buckets did not claim (relaxed filler, or a primary type nobody asked for that only
+  // got here via the cosine floors) keeps its place behind them, in its original order.
+  return [...out, ...rows.filter((r) => !taken.has(r))]
+}
+
 /** Apply every set facet. All AND-ed; an unset facet is a pass. */
 export function passesFacets(
   m: PeoplePoolMember,
@@ -1037,6 +1078,8 @@ export async function runYcPeopleMatch(
   // What remains is: embed the ask, and check whether it landed on anybody (`askBoundToAnyone`).
   const useProfile = !queryText
 
+  // The user named a person-type, so we are no longer guessing — the founder prior stands down.
+  const personTypeAsked = Boolean(f.personType?.length)
   const scoreAgainst = (qVec: number[]) => {
     const out: Array<{ m: PeoplePoolMember; score: number; relaxed: boolean }> = []
     for (const m of ranked) {
@@ -1072,9 +1115,16 @@ export async function runYcPeopleMatch(
       // this event is actually about. Sized deliberately below one exposure step (0.04) so it can
       // never overpower relevance or undo exposure spreading — a clearly better non-founder still
       // wins. What it fixes, live: an ask for hard-tech/robotics BUILDERS returned "Assistant
-      // Manager @ Larsen & Toubro" (construction), and an ask for drug-discovery investors/operators
-      // returned "GTM @ Corgi", while real founders sat at nearly the same cosine.
-      if (m.personType.includes("founder")) score += FOUNDER_PRIOR
+      // Manager @ Larsen & Toubro" (construction).
+      //
+      // NEVER AGAINST AN EXPLICIT ASK (regression, same day — Adam: "why the investors query was
+      // working and it failed so bad now?"). A default preference must not overrule the user's own
+      // words. When they asked for investors, the membership facet let founder-labelled people
+      // through AND this prior then PROMOTED them, so the two compounded into five founders for an
+      // investor ask, six asks running. The prior is a tiebreak for when we are guessing; the moment
+      // they name a type, we are not guessing. `personTypeAsked` is false for a plain query, so the
+      // default behaviour Adam asked for is unchanged.
+      if (!personTypeAsked && m.personType.includes("founder")) score += FOUNDER_PRIOR
       out.push({ m, score, relaxed: didRelax && !faceted.includes(m) })
     }
     return out
@@ -1209,7 +1259,8 @@ export async function runYcPeopleMatch(
   )
   // Below the floor we still show up to MIN_RESULTS — three plausible people are worth the walk
   // across the room, and `didRelax`/the intro line keep us honest about what they are.
-  const kept = (strong.length >= MIN_RESULTS ? strong : scored.slice(0, MIN_RESULTS)).slice(0, limit)
+  const shortlist = strong.length >= MIN_RESULTS ? strong : scored.slice(0, MIN_RESULTS)
+  const kept = interleaveByPersonType(shortlist, f.personType ?? []).slice(0, limit)
   const thin = kept.length < limit
   log("yc_people_match.result_count", {
     userId: input.userId,
