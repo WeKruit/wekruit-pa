@@ -905,7 +905,12 @@ export async function runYcPeopleMatch(
   // a worse one: the weak tail is what the person remembers, and it buries the good matches.
   // Clamped HERE rather than in the tool schema so no caller — model, MCP, or a future surface —
   // can widen it.
-  const limit = Math.max(1, Math.min(input.limit ?? 5, 5))
+  // 3-5 BY DEFAULT, MORE ONLY IF THEY ASK (Adam 2026-07-25). The default is unchanged at 5 and the
+  // model cannot drift upward on its own — `limit` is only ever above 5 when it was set from the
+  // user's own words ("give me 10 more", "as many investors as u can"), which used to be silently
+  // clamped to 5 with no acknowledgement. 10 is the ceiling: past that it is a wall of bubbles
+  // again, which is the flood this cap exists to prevent.
+  const limit = Math.max(1, Math.min(input.limit ?? 5, 10))
   const f = input.filters ?? {}
   const log = deps.log ?? (() => {})
 

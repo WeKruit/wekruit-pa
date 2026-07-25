@@ -244,9 +244,11 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       sameSchool: z.boolean().nullable(),
       sameCompany: z.boolean().nullable(),
       sameMajor: z.boolean().nullable(),
-      // 3-5 people, never more. The matcher clamps this server-side too — the schema just stops the
-      // model from asking for a burst it will not get.
-      limit: z.number().int().min(1).max(5).nullable(),
+      // LEAVE THIS NULL. Null means 5, which is the right answer almost every time. Set it above 5
+      // ONLY when the person explicitly asked for more in their own words ("give me 10 more", "as
+      // many investors as you can") — never to be generous, never because a list felt short. Below
+      // 5 is fine when they asked for "one or two". The matcher clamps to 10 server-side regardless.
+      limit: z.number().int().min(1).max(10).nullable(),
     }),
     async execute(args) {
       // ONE MATCH PER TURN. Live 2026-07-25: an attendee who asked "angels and investors pls" got

@@ -46,7 +46,7 @@ const show = (label, list) => {
   console.log(`\n############ ${label} (${list.length} asks) ############`)
   for (const a of list) {
     const cards = (outByUser.get(a.uid) ?? [])
-      .filter((r) => String(r.createdAt ?? "") > a.at && String(r.createdAt ?? "") < new Date(Date.parse(a.at) + 8 * 60000).toISOString())
+      .filter((r) => String(r.createdAt ?? "") > a.at && String(r.createdAt ?? "") < new Date(Date.parse(a.at) + 100000).toISOString())
       .map((r) => String(r.body ?? ""))
       .filter((b) => / — .+ @ /.test(b) || /^[A-Z][a-zA-Z'\-. ]+ — /.test(b))
     if (cards.length === 0) continue
