@@ -27,7 +27,7 @@ import { type ProcessSessionStore, type ProcessToolContext } from "./tools/proce
 import { buildClairePrompt, buildClaireTurnContext } from "./prompt.js"
 import { buildClaireGuardrails } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverBubblesEx } from "./delivery.js"
-import { scrubYcJobOffers } from "./yc-people-guard.js"
+import { scrubYcJobOffers, scrubYcInternalNarration } from "./yc-people-guard.js"
 import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
@@ -1336,6 +1336,21 @@ export async function runClaireTurn(
     if (scrub.scrubbed > 0) {
       log("yc.job_offer_scrubbed", { userId: input.userId, bubblesScrubbed: scrub.scrubbed })
       bubbles = scrub.bubbles
+    }
+    // INTERNAL-STATE NARRATION SCRUB (2026-07-25 live event). Same seam, same reason as the
+    // job-offer scrub above: the ban was prompt-side (and payload-side, in the tool's own
+    // `nextAction`) and the model said the banned words to real attendees anyway — "your previous
+    // batch is still on their screen so nothing new came through", three turns running, while the
+    // person kept asking for more people. It is also the only guard that can catch the ECHO case,
+    // where the model reproduces an already-leaked sentence from conversation history with no tool
+    // call involved — no tool return value can reach that, only the delivery seam.
+    const narr = scrubYcInternalNarration(bubbles)
+    if (narr.scrubbed > 0) {
+      log("yc.internal_narration_scrubbed", {
+        userId: input.userId,
+        bubblesScrubbed: narr.scrubbed,
+      })
+      bubbles = narr.bubbles
     }
   }
 
