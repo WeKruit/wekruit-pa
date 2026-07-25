@@ -10,6 +10,7 @@ import { buildProcessTools, type PrescreenPrompts } from "./process-tools.js"
 import { buildSchedulingTools } from "./scheduling-tools.js"
 import { buildVoiceCallTools } from "./voice-call-tools.js"
 import { buildYcPeopleTools } from "./yc-people-tools.js"
+import { buildWekruitPartnerRolesTools } from "./wekruit-partner-roles-tool.js"
 
 /** Prescreen seed the turn forwards into the FSM tools (qId → DIRECTION + qId → judge RUBRIC). */
 export interface BuildClaireToolsOptions {
@@ -60,6 +61,13 @@ export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsO
     // INVERSE of the allowlists above: match_yc_people is the YC lane's OWN matcher (people, not
     // jobs). It is built ONLY here, so no other lane can ever see or call it.
     ...(opts.ycPeopleMode ? buildYcPeopleTools(ctx) : []),
+    // NARROW AUTHORIZED EXCEPTION (Adam 2026-07-25: "只要他们主动问就没关系"). show_wekruit_partner_roles
+    // is the ONE job-content tool on this lane, and it is YC-ONLY for the same reason match_yc_people
+    // is: it is built here and nowhere else, so no other lane can see it. It is NOT a relaxation of the
+    // job-tool omission above — find_match and friends stay gone. It reads no candidate signal and does
+    // no matching (Adam: "我们不能直接match你在招聘的要不然违法"); it lists our own partner inventory,
+    // and only when the person raised jobs/hiring themselves (enforced in the tool description + prompt).
+    ...(opts.ycPeopleMode ? buildWekruitPartnerRolesTools(ctx) : []),
     // YC lane: keep only record_yc_intake from the process tools — the onboarding rail's questions
     // ARE job-search questions, and the prescreen FSM tools are job-interview machinery.
     ...(opts.ycPeopleMode

@@ -71,12 +71,24 @@ export function buildPeopleIntro(out: YcPeopleMatchOutput): string {
     : `only ${n} people here match that exactly — those come first, and the rest are close on what you're building 👇`
 }
 
-/** ONE person per bubble: name — title @ company / why / linkedin. No markdown (iMessage is literal). */
+/**
+ * ONE person per bubble: name — title @ company / what they build / linkedin.
+ * No markdown (iMessage is literal).
+ *
+ * SUMMARY ONLY, NEVER THE WHY (Adam 2026-07-25: "reason可以不用，要不然万一我们搞错了咋办"). The
+ * matcher still computes `reason`, and it is still returned and logged — it just does not go on the
+ * card. A why-line is a CLAIM about the match ("also went to Berkeley", "also building in fintech"),
+ * so when the match is wrong it is wrong out loud, in the person's own words, to someone who is
+ * about to walk up and introduce themselves. `summary` is a claim about the person only — sourced
+ * from their own enriched profile, true whether or not we matched well. When we are wrong, a card
+ * that merely describes someone is a weak recommendation; a card that asserts a shared school we
+ * invented is a broken one.
+ */
 export function buildPersonBubble(r: YcPeopleMatchOutput["results"][number]): string {
   const head = [r.title, r.company].filter(Boolean).join(" @ ")
   const lines: string[] = [[r.name ?? "someone worth meeting", head].filter(Boolean).join(" — ")]
-  // `explainMatch` falls back to "title @ company" — don't echo the header back at them.
-  if (r.reason && r.reason !== head) lines.push(r.reason)
+  // Never echo the header back at them (`summary` can degenerate to "title @ company").
+  if (r.summary && r.summary !== head) lines.push(r.summary)
   if (r.linkedinUrl) lines.push(r.linkedinUrl)
   return lines.join("\n")
 }
@@ -144,6 +156,16 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       "THEMSELVES ('people from my school', 'anyone who worked where I worked', 'same major') → the matching " +
       "sameSchool / sameCompany / sameMajor boolean — NEVER guess their school or employer name, the tool resolves " +
       "it from their own profile server-side; anything else, or a vibe ('people building something like mine') → query. " +
+      "NO TARGET NAMED — ASK ONE QUESTION, DON'T MATCH: if their answer names nobody in particular " +
+      "('anyone', 'no preference', 'not picky', 'idk', 'open to anything', 'whoever', or a bare 'hi'/'ok'), " +
+      "do NOT call this tool on it. There is nothing in it to match on, and matching anyway returns the " +
+      "same handful of people to every person who shrugs. Ask ONE short, warm, concrete question instead " +
+      "— name two or three directions off what they just told you they're building ('founders in your " +
+      "space? people who've shipped what you're shipping? investors?') — then call it with what they pick. " +
+      "SELF-REFERENTIAL ASKS: if they want people like THEMSELVES ('someone like me', 'building something " +
+      "like mine', 'anyone doing what i'm doing', 'similar background'), call this tool with query NULL. " +
+      "The empty call already means 'match from what they told me they're building' — passing their words " +
+      "as a query instead matches the WORDS ('building', 'similar') and returns nonsense. " +
       "AMBIGUOUS SHORTHAND — ASK, DON'T GUESS: if their ask hinges on an abbreviation that could mean " +
       "more than one thing in this crowd ('RL' = reinforcement learning or real life? 'PM' = product or " +
       "project manager? 'CV' = computer vision or a résumé?), do NOT call this tool on a guess. Ask ONE " +
@@ -212,20 +234,34 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       }
       const delivered = await deliverPeopleBubbles(ctx, out)
       if (delivered) {
-        // Remember the faces so a later "more" pulls fresh ones. Fail-open.
+        // Two ledgers, different scopes:
+        //   SENT_FIELD (per-user)     — never show the same face to the SAME person twice.
+        //   ycExposureCount (global)  — how often this person has been shown to ANYONE, so the
+        //     matcher can demote the crowd-pleasers. Without it a handful of generically-appealing
+        //     profiles get pushed at all ~1000 attendees. Every result is already `fresh` for this
+        //     user (runYcPeopleMatch filters by SENT_FIELD before ranking), so each is a genuinely
+        //     new impression — no double-count.
+        // Fail-open: a bookkeeping miss must never break the turn.
         try {
-          await ctx.db
-            .collection("pa-users")
-            .doc(ctx.userId)
-            .set(
-              {
-                [SENT_FIELD]: FieldValue.arrayUnion(...out.results.map((r) => r.recordId)),
-                ycPeopleMatchLastAt: ctx.nowIso(),
-              },
+          const batch = ctx.db.batch()
+          batch.set(
+            ctx.db.collection("pa-users").doc(ctx.userId),
+            {
+              [SENT_FIELD]: FieldValue.arrayUnion(...out.results.map((r) => r.recordId)),
+              ycPeopleMatchLastAt: ctx.nowIso(),
+            },
+            { merge: true },
+          )
+          for (const r of out.results) {
+            batch.set(
+              ctx.db.collection("pa-external-candidate-records").doc(r.recordId),
+              { ycExposureCount: FieldValue.increment(1) },
               { merge: true },
             )
+          }
+          await batch.commit()
         } catch {
-          /* fail-open — a bookkeeping miss must never break the turn */
+          /* fail-open */
         }
       }
       return {
