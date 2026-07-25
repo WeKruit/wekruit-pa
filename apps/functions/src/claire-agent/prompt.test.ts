@@ -184,7 +184,9 @@ test("ENTRY POSTURE — yc_startup_school renders the founder-scene no-push dire
   const withPosture = buildClaireTurnContext({ mode: "triage", lang: "en", entryPosture: "yc_startup_school" })
   assert.match(withPosture, /ENTRY POSTURE — YC STARTUP SCHOOL/)
   assert.match(withPosture, /do NOT run any structured intake/)
-  assert.match(withPosture, /text them RIGHT HERE and email them/)
+  // Adam 2026-07-25: matches are delivered immediately by match_yc_people — no date/time promise.
+  assert.match(withPosture, /text them people worth meeting RIGHT HERE/)
+  assert.match(withPosture, /NEVER promise a delivery date or time/)
   // Adam-LOCKED 2026-07-23: people matching, NEVER job recommendations (investors sign up too).
   assert.match(withPosture, /PEOPLE-matching/)
   assert.match(withPosture, /may be an investor or a founder, NOT a candidate/)
@@ -212,7 +214,7 @@ test("warm greeting example names are fenced — live probe caught 'hey Adam' bl
   assert.match(warm, /greet WITHOUT any name/)
 })
 
-test("YC EVENT INTAKE directive renders slots + one-nudge consequence + July 25 7pm match close", () => {
+test("YC EVENT INTAKE directive renders slots + one-nudge consequence + immediate match close", () => {
   // nudgeLinkedin turn (the ONE mode-selector-flagged turn) → mandatory consequence heads-up.
   const nudgeTurn = buildClaireTurnContext({
     mode: "triage",
@@ -225,8 +227,10 @@ test("YC EVENT INTAKE directive renders slots + one-nudge consequence + July 25 
   assert.match(nudgeTurn, /founders see a much thinner profile/)
   assert.match(nudgeTurn, /what are they building/)
   assert.match(nudgeTurn, /record_yc_intake\(field='building'\)/)
-  assert.match(nudgeTurn, /July 25 at 7pm PT/)
-  assert.match(nudgeTurn, /nothing else for them to do/)
+  // Matches land IMMEDIATELY now (Adam 2026-07-25): the complete-intake close CALLS the people
+  // matcher instead of promising a delivery time.
+  assert.match(nudgeTurn, /call match_yc_people RIGHT AWAY/)
+  assert.doesNotMatch(nudgeTurn, /July 25 at 7pm PT/)
   assert.doesNotMatch(nudgeTurn, /docs\.google\.com/i)
 
   // Already nudged (flag absent, LinkedIn still unconnected) → hard "never again".

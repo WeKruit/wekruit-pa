@@ -9,6 +9,7 @@ import { buildDeliveryTools } from "./delivery-tools.js"
 import { buildProcessTools, type PrescreenPrompts } from "./process-tools.js"
 import { buildSchedulingTools } from "./scheduling-tools.js"
 import { buildVoiceCallTools } from "./voice-call-tools.js"
+import { buildYcPeopleTools } from "./yc-people-tools.js"
 
 /** Prescreen seed the turn forwards into the FSM tools (qId → DIRECTION + qId → judge RUBRIC). */
 export interface BuildClaireToolsOptions {
@@ -56,6 +57,9 @@ export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsO
     ...(opts.ycPeopleMode
       ? matching.filter((t) => YC_ALLOWED_MATCHING_TOOLS.has((t as { name?: string }).name ?? ""))
       : matching),
+    // INVERSE of the allowlists above: match_yc_people is the YC lane's OWN matcher (people, not
+    // jobs). It is built ONLY here, so no other lane can ever see or call it.
+    ...(opts.ycPeopleMode ? buildYcPeopleTools(ctx) : []),
     // YC lane: keep only record_yc_intake from the process tools — the onboarding rail's questions
     // ARE job-search questions, and the prescreen FSM tools are job-interview machinery.
     ...(opts.ycPeopleMode

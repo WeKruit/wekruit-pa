@@ -1,4 +1,3 @@
-import { YC_MATCH_DELIVERY_WHEN } from "@pa/pa-orchestrator"
 /**
  * YC people-lane job-offer scrub (Adam-LOCKED 2026-07-24).
  *
@@ -30,7 +29,7 @@ const NEGATION_RE =
 
 /** Deterministic people-framed replacement when scrubbing empties a bubble. */
 export const YC_PEOPLE_REDIRECT =
-  `for YC Startup School this chat is people-matching (founders, investors, operators worth meeting) — not job roles. your matches land on ${YC_MATCH_DELIVERY_WHEN} and i'll text you right here (and email you).`
+  "for YC Startup School this chat is people-matching (founders, investors, operators worth meeting) — not job roles. i'll text you a first few right here, and more after."
 
 /**
  * Split on sentence boundaries while KEEPING the delimiter, so rebuilt text reads naturally

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { buildProcessTools, emptyProcessStore } from "./process-tools.js"
+import { buildProcessTools, emptyProcessStore, isContentlessYcIntakeAnswer } from "./process-tools.js"
 import { DEFAULT_ONBOARDING_SLOTS } from "../reducers/onboarding-fsm.js"
 import type { ProcessToolContext } from "./process-tools.js"
 
@@ -126,4 +126,42 @@ test("record_onboarding_answer walks all slots and completes onboarding durably"
   assert.equal(doc.sharedOnboarding.currentQuestionId, null, "last slot → no next question")
   assert.equal(doc.sharedOnboarding.completed, true)
   assert.equal(doc.onboardingState, "complete")
+})
+
+/**
+ * REGRESSION (live 2026-07-24): user zO7RW9ECC7HlWQZxwgwL has ycIntake.building = "right now" —
+ * an echo of Claire's own question ("what are you building right now?") recorded as the answer.
+ * Their match query became "right now. everyone". The matcher ranks 988 real attendees off these
+ * two strings, so the guard is load-bearing. Vague-but-real answers must still get through.
+ */
+test("record_yc_intake echo guard: contentless in, real intent through", () => {
+  for (const junk of ["right now", "Right now", "yes", "ok", "sure", "idk", "nothing", "hi", "", "  ", "want to meet"]) {
+    assert.equal(isContentlessYcIntakeAnswer(junk), true, `must REJECT contentless: ${JSON.stringify(junk)}`)
+  }
+  for (const real of [
+    "AI vet scribe",
+    "Anyone", // vague but a real scope answer to "who do you want to meet"
+    "Founders",
+    "everyone",
+    "consumer founders and investors",
+    "a dev tool for LLM evals",
+  ]) {
+    assert.equal(isContentlessYcIntakeAnswer(real), false, `must ACCEPT real answer: ${JSON.stringify(real)}`)
+  }
+})
+
+test("record_yc_intake rejects an echo answer instead of writing it to pa-users", async () => {
+  const { db, store } = makeDb({ [`pa-users/${UID}`]: {} })
+  const recordYcIntake = buildProcessTools(makeCtx(db)).at(-1)!
+  const raw = await recordYcIntake.invoke({} as never, JSON.stringify({ field: "building", answer: "right now" }))
+  const out = (typeof raw === "string" ? JSON.parse(raw) : raw) as { ok: boolean; error: string; nextAction?: string }
+  assert.equal(out.ok, false)
+  assert.equal(out.error, "contentless_answer")
+  assert.match(out.nextAction ?? "", /ask the question again/i, "tells the model to re-ask")
+  assert.equal((store.get(`pa-users/${UID}`) as { ycIntake?: unknown }).ycIntake, undefined, "nothing written")
+
+  // ...and a real answer still lands.
+  await recordYcIntake.invoke({} as never, JSON.stringify({ field: "building", answer: "AI vet scribe" }))
+  const intake = (store.get(`pa-users/${UID}`) as { ycIntake: { building: string } }).ycIntake
+  assert.equal(intake.building, "AI vet scribe")
 })

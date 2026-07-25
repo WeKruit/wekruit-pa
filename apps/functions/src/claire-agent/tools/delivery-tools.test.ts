@@ -85,3 +85,17 @@ test("DEDICATED YC LANE: ycPeopleMode drops EVERY job tool — the model cannot 
   assert.ok(yc.includes("privacy"), "STOP/privacy survives the YC lane")
   assert.ok(yc.includes("record_yc_intake"), "the yc intake tool survives")
 })
+
+test("match_yc_people is YC-ONLY: absent from every other lane, present on the YC lane", () => {
+  const normal = names(buildClaireTools(ctx))
+  assert.equal(
+    normal.includes("match_yc_people"),
+    false,
+    `a non-YC agent must NEVER see the people matcher; got ${normal.join(",")}`,
+  )
+  const pitchTurn = names(buildClaireTools(ctx, { forbidSuppressingDelivery: true }))
+  assert.equal(pitchTurn.includes("match_yc_people"), false, "not on the pitch turn either")
+
+  const yc = names(buildClaireTools(ctx, { ycPeopleMode: true }))
+  assert.ok(yc.includes("match_yc_people"), `YC lane exposes the people matcher; got ${yc.join(",")}`)
+})
