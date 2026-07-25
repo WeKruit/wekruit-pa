@@ -1,6 +1,10 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { enrichFromTypedLinkedinUrl, normalizeTypedLinkedinUrl } from "./enrich-from-typed-linkedin.js"
+import {
+  enrichFromTypedLinkedinUrl,
+  extractLinkedinProfileUrl,
+  normalizeTypedLinkedinUrl,
+} from "./enrich-from-typed-linkedin.js"
 
 describe("normalizeTypedLinkedinUrl — real values seen in prod", () => {
   it("adds a missing scheme", () => {
@@ -34,6 +38,39 @@ describe("normalizeTypedLinkedinUrl — real values seen in prod", () => {
     assert.equal(normalizeTypedLinkedinUrl("https://example.com/in/someone"), null)
     assert.equal(normalizeTypedLinkedinUrl("evil-linkedin.com.attacker.io/in/x"), null)
   })
+
+  it("rejects OUR OWN oauth-linked placeholder — it is a bind marker, not a profile", () => {
+    // Live: 30 of the 32 stranded YC users carry exactly this in `linkedinUrl`. It is a linkedin.com
+    // URL, so without this it would sail through and be sent to Coresignal as a profile.
+    assert.equal(normalizeTypedLinkedinUrl("https://www.linkedin.com/oauth-linked/7RLX9e4Qjo"), null)
+  })
+})
+
+describe("extractLinkedinProfileUrl — a URL pasted into a chat message", () => {
+  it("finds the profile URL inside a sentence", () => {
+    assert.equal(
+      extractLinkedinProfileUrl("sure! https://www.linkedin.com/in/ada-lovelace/ here you go"),
+      "https://www.linkedin.com/in/ada-lovelace/",
+    )
+    assert.equal(
+      extractLinkedinProfileUrl("linkedin.com/in/ada-lovelace"),
+      "https://linkedin.com/in/ada-lovelace",
+    )
+  })
+
+  it("drops trailing sentence punctuation off the slug", () => {
+    assert.equal(
+      extractLinkedinProfileUrl("mine is linkedin.com/in/ada."),
+      "https://linkedin.com/in/ada",
+    )
+  })
+
+  it("ignores anything that is not a /in/ profile", () => {
+    assert.equal(extractLinkedinProfileUrl("we're hiring, see linkedin.com/company/wekruit"), null)
+    assert.equal(extractLinkedinProfileUrl("https://www.linkedin.com/oauth-linked/abc"), null)
+    assert.equal(extractLinkedinProfileUrl("what are you building?"), null)
+    assert.equal(extractLinkedinProfileUrl(""), null)
+  })
 })
 
 function dbWith(user: Record<string, unknown>, captured: Record<string, unknown>[] = []) {
@@ -59,15 +96,66 @@ describe("enrichFromTypedLinkedinUrl — gates", () => {
     assert.deepEqual(r, { ok: false, reason: "no_key" })
   })
 
-  it("no-ops when REAL background already exists (OAuth wins over a typed claim)", async () => {
+  it("no-ops when REAL background already exists", async () => {
     for (const user of [
-      { linkedinOauthLinked: true, linkedinUrl: "https://linkedin.com/in/x" },
       { experienceHighlights: ["a"], linkedinUrl: "https://linkedin.com/in/x" },
+      { coresignalEmployeeId: 12345, linkedinUrl: "https://linkedin.com/in/x" },
       { latestResumeArtifactId: "art_1", linkedinUrl: "https://linkedin.com/in/x" },
     ]) {
       const r = await enrichFromTypedLinkedinUrl({ db: dbWith(user), userId: "u1", apiKey: "k" })
       assert.deepEqual(r, { ok: false, reason: "already_enriched" })
     }
+  })
+
+  it("an OAuth BIND is not background — it must not block the enrich", async () => {
+    // The whole 2026-07-25 gap: `linkedinOauthLinked` used to short-circuit here, so the 32 YC
+    // users who connected but arrived with no profile could never be enriched by any later path.
+    const r = await enrichFromTypedLinkedinUrl({
+      db: dbWith({
+        linkedinOauthLinked: true,
+        linkedinOauthSub: "7RLX9e4Qjo",
+        linkedinUrl: "https://www.linkedin.com/oauth-linked/7RLX9e4Qjo",
+      }),
+      userId: "u1",
+      apiKey: "k",
+      rawUrl: "https://www.linkedin.com/in/ada-lovelace",
+      search: async () => null, // stop before the network; reaching here is the assertion
+    })
+    assert.deepEqual(r, { ok: false, reason: "no_match" })
+  })
+
+  it("a pasted URL wins over the stored placeholder", async () => {
+    let searched: string | null = null
+    const r = await enrichFromTypedLinkedinUrl({
+      db: dbWith({
+        linkedinOauthLinked: true,
+        linkedinUrl: "https://www.linkedin.com/oauth-linked/7RLX9e4Qjo",
+      }),
+      userId: "u1",
+      apiKey: "k",
+      rawUrl: "linkedin.com/in/ada-lovelace",
+      search: async (url: string) => {
+        searched = url
+        return null
+      },
+    })
+    assert.deepEqual(r, { ok: false, reason: "no_match" })
+    assert.equal(searched, "https://linkedin.com/in/ada-lovelace")
+  })
+
+  it("without a pasted URL, a placeholder-only user is unusable (never search the marker)", async () => {
+    const r = await enrichFromTypedLinkedinUrl({
+      db: dbWith({
+        linkedinOauthLinked: true,
+        linkedinUrl: "https://www.linkedin.com/oauth-linked/7RLX9e4Qjo",
+      }),
+      userId: "u1",
+      apiKey: "k",
+      search: (async () => {
+        throw new Error("must never search our own bind marker")
+      }) as never,
+    })
+    assert.deepEqual(r, { ok: false, reason: "no_url" })
   })
 
   it("no-ops on an unusable URL — never guesses", async () => {

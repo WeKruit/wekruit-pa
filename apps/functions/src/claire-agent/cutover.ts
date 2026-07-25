@@ -20,6 +20,7 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
+import { hasFetchedBackground } from "./mode-selector.js"
 import { isThinClaireEnabled } from "./flags.js"
 import { isCanaryUser, isClaireEntryUxCanary, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
@@ -56,6 +57,10 @@ import {
   type MergeConfirmClassifier,
 } from "./merge-resume-confirm.js"
 import { buildDecisionTrace } from "./decision-trace.js"
+import {
+  extractLinkedinProfileUrl,
+  enrichFromTypedLinkedinUrl,
+} from "../enrich-from-typed-linkedin.js"
 import type { ClaireLang, ClaireToolContext } from "./types.js"
 import {
   resumePendingProfileReadinessPrescreenStart,
@@ -282,6 +287,31 @@ export async function maybeRunThinClaire(
     ""
   const inboundMessageHandle =
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
+
+  // ── PASTED LINKEDIN URL → ENRICH (2026-07-25) ──────────────────────────────────────────────────
+  // We ask people to "paste your LinkedIn profile URL" in three different places (the YC event
+  // kickoff, the linkedinJustConnected re-entry, the new OAuth-linked-but-empty ask) and NOTHING
+  // consumed the answer: enrichFromTypedLinkedinUrl only ever had one caller, the signup form.
+  // A pasted URL is the reliable path — it enriched 54/54 of the YC users who had one, while the
+  // photo-asset fallback resolved 0/28 — so a URL arriving in chat must do what a URL on the form
+  // does. Deterministic, not a tool the model may forget to call.
+  // Fire-and-forget like the résumé ingest: an external API call must never add latency to the
+  // reply. The function is fail-open, no-ops when real background already exists, and writes DATA
+  // only (it never emits a runtime event, so this can never text anyone).
+  const pastedLinkedinUrl = extractLinkedinProfileUrl(text)
+  if (pastedLinkedinUrl) {
+    log("thin_claire.linkedin_url_pasted", { eventId, userId })
+    void enrichFromTypedLinkedinUrl({
+      db,
+      userId,
+      apiKey: process.env.CORESIGNAL_API_KEY ?? null,
+      rawUrl: pastedLinkedinUrl,
+    })
+      .then((r) => log("thin_claire.linkedin_url_pasted.done", { eventId, userId, result: r }))
+      .catch(() => {
+        /* already logged + fail-open inside; never surface into the turn */
+      })
+  }
 
   if (cvParsedReentry) {
     log("thin_claire.cv_parsed_reentry", { eventId, userId })
@@ -732,13 +762,52 @@ export async function maybeRunThinClaire(
         // YC people-matching users NEVER get "pull roles" (Adam-LOCKED 2026-07-23 — investors
         // sign up too). Read the yc flags (fail-open) and pick people-promise copy instead.
         let ycFallback = false
+        let gotNothing = false
+        let oauthLinked = false
         try {
           const u = (await db.collection(PA_COLLECTIONS.users).doc(userId).get()).data() ?? {}
           ycFallback = isYcPeopleUser(u)
+          gotNothing = !hasFetchedBackground(u)
+          oauthLinked = u.linkedinOauthLinked === true
         } catch { /* fail-open → standard copy */ }
-        const fbBody = ycFallback
-          ? "got it — you're in the founder-match pool 🤝 i'll text you people worth meeting right here: a first few now, more after. anything you want me to know first?"
-          : "got your résumé — your profile's updated 🙌 want me to pull roles that fit now, or tweak/add anything first?"
+        // Both routes back in, per Adam 2026-07-25 ("tell them linkedin is slow, asking them either
+        // share the link or retry the login"). Which one LEADS depends on what actually helps them,
+        // because offering the wrong one first wastes their time:
+        //   - never completed the tap → retrying genuinely works, so lead with the link.
+        //   - tap completed, profile empty → the same tap returns the same nothing (measured: 39
+        //     placeholders, 1 enriched), so lead with paste/résumé and offer retry only after.
+        let retryLink = ""
+        if (gotNothing) {
+          try {
+            const { getOrIssueLinkedinConnectLink } = await import("../linkedin-connect/connect-token.js")
+            retryLink = (await getOrIssueLinkedinConnectLink(db, userId, String(toE164))) ?? ""
+          } catch {
+            retryLink = ""
+          }
+          // A token mint failure must not produce a bare "👉 " with nothing after it.
+          if (!retryLink) retryLink = "https://wekruit.com/connect-linkedin"
+        }
+        const slowNote =
+          "heads up, that login page is slow to load — if it gets closed before it finishes, LinkedIn cancels it on their side."
+        const pasteAsk =
+          "paste your LinkedIn link here (linkedin.com/in/…) or drop your résumé — either works and i'll pull it from there."
+        const nothingBody = oauthLinked
+          ? `you're connected 🤝 but LinkedIn didn't pass your profile over on their side, so i still can't see your background (that's on them, not you).\n\nquickest fix: ${pasteAsk}\n\nor give the login another go here 👉 ${retryLink}`
+          : `looks like the LinkedIn login didn't go through 🙈 ${slowNote}\n\nworth one more try (give it a few seconds to load) 👉 ${retryLink}\n\nor skip it entirely — ${pasteAsk}`
+        // "GOT IT" WHEN WE GOT NOTHING (Adam 2026-07-25, live: 32 of 33 sends today). The composer
+        // returning null on a LinkedIn-connect re-entry IS the signal that the profile never arrived:
+        // every one of those 32 had linkedinOauthLinked=true, a `/oauth-linked/<sub>` placeholder URL,
+        // and an empty profile — LinkedIn's OIDC withholds the vanity URL when the member's public
+        // profile isn't visible, so their tap authorized us and handed over nothing usable.
+        // Saying "got it — you're in the pool" there claims we hold a background we do not, and it
+        // asks for NOTHING, so they go quiet believing they're done. Say what actually happened and
+        // ask for the two things that fix it — paste the URL (easiest, no second slow LinkedIn load)
+        // or drop the résumé. Adam: "不能拿假的；如果有问题就要和他说这个link有问题啊".
+        const fbBody = gotNothing
+          ? nothingBody
+          : ycFallback
+            ? "got it — you're in the founder-match pool 🤝 i'll text you people worth meeting right here: a first few now, more after. anything you want me to know first?"
+            : "got your résumé — your profile's updated 🙌 want me to pull roles that fit now, or tweak/add anything first?"
         await fbTransport
           .sendText(fbBody, { seq: 0 })
           .catch((e) => log("thin_claire.pitch_engine.fallback_send_failed", { eventId, err: String(e) }))
@@ -1585,6 +1654,41 @@ export async function maybeRunThinClaire(
         log("thin_claire.yc_linkedin_nudge_stamped", { eventId, userId })
       } catch (err) {
         log("thin_claire.yc_linkedin_nudge_stamp_failed", { eventId, userId, error: String(err) })
+      }
+    }
+    // ONE-SHOT KICKOFF STAMP (live incident 2026-07-25, +16473289032). The kickoff is
+    // first contact BY DEFINITION, yet its gate was a text predicate with no memory —
+    // so any later message that tripped the predicate replayed the welcome INSTEAD of
+    // answering. `isSharedOnboardingGreetingOrKickoff` scans anywhere in the body for
+    // opener shapes, and this user's 6879-char résumé dump matched
+    // `parseHelloWekruitOpener` (it extracted bindCode "ATTENDEE" out of the prose).
+    // The loop was self-sealing: kickoff skips the model → record_yc_intake never runs
+    // → intake stays empty → still kickoff-eligible → his answer swallowed twice.
+    // Measured blast radius: 9 users, 13 replayed kickoffs since 07-24.
+    // Stamping (not tightening the predicate) is the fix that holds for EVERY caller —
+    // no second message can ever be a first contact, whatever the text looks like.
+    if (decision.ycEventIntake?.kickoff) {
+      try {
+        await db
+          .collection(PA_COLLECTIONS.users)
+          .doc(userId)
+          .set({ ycIntake: { kickoffSentAt: new Date().toISOString() } }, { merge: true })
+        log("thin_claire.yc_kickoff_stamped", { eventId, userId })
+      } catch (err) {
+        log("thin_claire.yc_kickoff_stamp_failed", { eventId, userId, error: String(err) })
+      }
+    }
+    // Same post-delivery contract for the LinkedIn-URL ask. Its OWN stamp, not linkedinNudgedAt:
+    // these people were usually nudged BEFORE they connected, so a shared stamp would swallow the ask.
+    if (decision.ycEventIntake?.askLinkedinUrl) {
+      try {
+        await db
+          .collection(PA_COLLECTIONS.users)
+          .doc(userId)
+          .set({ ycIntake: { linkedinUrlAskedAt: new Date().toISOString() } }, { merge: true })
+        log("thin_claire.yc_linkedin_url_ask_stamped", { eventId, userId })
+      } catch (err) {
+        log("thin_claire.yc_linkedin_url_ask_stamp_failed", { eventId, userId, error: String(err) })
       }
     }
 

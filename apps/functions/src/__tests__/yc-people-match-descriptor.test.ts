@@ -207,13 +207,16 @@ describe("yc-people-match ranking", () => {
   it("demotes an over-exposed person so recommendations spread across the pool", async () => {
     const { deps } = fakeDeps(
       {
-        popular: { coresignalMatch: "ok", name: "Popular", currentTitle: LONG, matchEmbedding: [1, 0, 0], ycExposureCount: 5 },
+        popular: { coresignalMatch: "ok", name: "Popular", currentTitle: LONG, matchEmbedding: [1, 0, 0], ycExposureCount: 1 },
         unseen: { coresignalMatch: "ok", name: "Unseen", currentTitle: LONG, matchEmbedding: [0.99, 0.14, 0] },
       },
       { ycIntake: { building: "anything", wantsToMeet: "anyone" } },
     )
     const out = await runYcPeopleMatch({ userId: "u1", limit: 2 }, deps)
-    // Popular has the higher raw cosine (1.0 vs ~0.99) but has been shown to 5 users already.
+    // Popular has the higher raw cosine (1.0 vs ~0.999) but has been shown to a user already, so
+    // the exposure demotion flips the order. Kept intentionally CLOSE: the relevance floor drops
+    // anyone meaningfully worse than the best hit, so a wide synthetic gap would test the floor
+    // rather than the demotion this case is about.
     assert.equal(out.results[0]?.name, "Unseen")
     assert.equal(out.results[1]?.name, "Popular")
   })
