@@ -202,8 +202,10 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       "wording in query. A wrong guess costs them five irrelevant people; one question costs a second. " +
       "Unambiguous shorthand ('SWE', 'ML', 'YC') needs no question — just put it in query. " +
       "`query` IS REQUIRED — you must always say what you are matching on. For the first match right after intake, pass what THEY said they want to meet (plus what they are building). For any later ask, pass THAT ask. There is no empty call: a match with no query would silently re-match their signup answer and throw away what they just said. " +
-      "CRITICAL: when it returns delivered:true the people bubbles have ALREADY been sent as separate messages — you " +
-      "MUST then reply with an EMPTY message list (any text duplicates them). Only when delivered:false do you speak.",
+      "CRITICAL: when it returns delivered:true AND count > 0 the people bubbles have ALREADY been sent as separate " +
+      "messages — you MUST then reply with an EMPTY message list (any text duplicates them). " +
+      "Whenever it returns delivered:false you MUST speak: send at least one real sentence following `nextAction`. " +
+      "An empty message list is ONLY ever correct after a delivered:true with count > 0.",
     parameters: z.object({
       // REQUIRED, non-nullable, on purpose. It used to be nullable with the description sanctioning
       // an "empty call = match from what they already told you" — and measured over a real-model
@@ -268,11 +270,15 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
           ctx.log("pa.claire.match_yc_people.window_budget_spent", { userId: ctx.userId, inWindow })
           return {
             ok: true,
-            delivered: true,
+            // delivered:FALSE — nothing went out on this call. Claiming delivered:true here is what
+            // the tool description turns into "reply with an EMPTY message list", so a budget-spent
+            // guard would answer a REAL question ("what about founders?") with literal silence.
+            // delivered:false routes to the description's "you MUST speak" contract instead.
+            delivered: false,
             count: 0,
             reason: "recent_batch_still_on_screen",
             nextAction:
-              "You just sent them a batch of people — those bubbles are still on their screen. Do NOT send more right now and do NOT mention any limit, budget, or internal reason. Instead reply in ONE short message: ask which of the ones you already sent they want to go deeper on, or answer whatever else they asked.",
+              "You just sent them a batch of people — those bubbles are still on their screen, so do NOT send more people right now. You MUST still reply with ONE short message: answer whatever they just asked, or ask which of the people you already sent they want to go deeper on. Do NOT mention any limit, budget, or internal reason. NEVER reply with an empty message list.",
           }
         }
       } catch {
@@ -285,11 +291,14 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
           ctx.log("pa.claire.match_yc_people.suppressed_double_fire", { userId: ctx.userId, last })
           return {
             ok: true,
-            delivered: true,
+            // delivered:FALSE for the same reason as the budget guard above — see that comment. This
+            // one used to say "Reply with an EMPTY message list" out loud, which is silence on any
+            // turn where the call carried no query but the PERSON asked something real.
+            delivered: false,
             count: 0,
             reason: "already_matched_this_turn",
             nextAction:
-              "You ALREADY sent them people moments ago — those bubbles are on their screen. Do NOT match again and do NOT mention any blocking, re-send, or internal reason: that is our plumbing, not their problem. Reply with an EMPTY message list, or if they asked something else, answer just that.",
+              "You ALREADY sent them people moments ago — those bubbles are on their screen, so do NOT match again. You MUST still reply with ONE short message answering what they just said. Do NOT mention any blocking, re-send, or internal reason: that is our plumbing, not their problem. NEVER reply with an empty message list.",
           }
         }
       } catch {

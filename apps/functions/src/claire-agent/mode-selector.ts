@@ -669,9 +669,27 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // 2. ONBOARDING (reuse the legacy sharedOnboarding durable state; the AGENT records via the tool).
   let user: Record<string, unknown> = {}
   try {
-    const snap = await args.db.collection(USERS).doc(args.userId).get()
+    // ONE RETRY (live incident 2026-07-25). THIS read is the sole source of the YC entry posture:
+    // `isYcPeopleUser` is a pure function of pa-users.source / firstTouchCampaign / ycEventEntryAt, so
+    // a failed read does not merely lose a tone overlay — it makes `isYcEventUser` false, which drops
+    // `entryPosture`, which restores EVERY job tool (tools/index.ts ycPeopleMode), drops the YC prompt
+    // directive, and disables the job-offer delivery scrub. Measured: two yc_startup_school attendees
+    // 20s apart during an inbound backlog answered "who do you want to meet?" and were handed
+    // find_match / set_matching_preferences — one got a job-flavoured non-answer, the other got
+    // literal silence. A single retry removes the transient; a persistent failure still degrades to
+    // triage, but now says so in the log instead of failing open silently.
+    let snap
+    try {
+      snap = await args.db.collection(USERS).doc(args.userId).get()
+    } catch {
+      snap = await args.db.collection(USERS).doc(args.userId).get()
+    }
     user = (snap.exists ? snap.data() : {}) ?? {}
-  } catch {
+  } catch (err) {
+    log("mode.user_read_failed_degraded_to_triage", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
     return { mode: "triage" }
   }
 
