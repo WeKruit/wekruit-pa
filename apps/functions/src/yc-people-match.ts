@@ -127,6 +127,13 @@ export interface YcPeopleMatchOutput {
   facetMatched: number
   /** True when we widened because the facets were too narrow. */
   didRelax: boolean
+  /**
+   * The ASK itself landed on nobody in this pool, so these people were ranked by the asker's own
+   * domain instead of by what they asked for. Not a failure and not a filter — the results are still
+   * the closest we have — but the intro has to say so rather than presenting them as the ask's
+   * answer. See the `askMissed` block in `runYcPeopleMatch` for the measured split.
+   */
+  askMissed?: boolean
   reason?: "no_intake" | "empty_pool" | "embed_failed"
 }
 
@@ -874,7 +881,43 @@ export async function runYcPeopleMatch(
     .map((x) => String(x ?? "").replace(/_/g, " ").trim())
     .filter(Boolean)
     .join(", ")
-  const queryText = [(f.query ?? "").trim() || intent, steer].filter(Boolean).join(". ")
+  // THE ASK ADDS TO THEIR DOMAIN, IT DOES NOT REPLACE IT.
+  //
+  // This line used to be `f.query || intent`, so an explicit ask THREW AWAY everything the person
+  // had told us they were building. That is the whole of the 2026-07-25 bad-match incident, because
+  // the asks people actually make name a KIND OF PERSON and nothing else — the domain only ever
+  // lives in `building`:
+  //   ask "builders" (8 chars)             discarded "robotics + autonomous systems; custom corexy
+  //                                        gantry for micro-vascular anastomosis"
+  //   ask "investors/operators" (19)       discarded "phd in ML and drug development modelling"
+  //   ask "open to all" (11)               discarded "finance/fintech and hardware/robotics"
+  // Stripped of the domain, the ask lands on nobody in particular and the pool ranks FLAT — measured
+  // on the live 1033-person pool, "builders" scored mean 0.171 / sd 0.037 across everyone, and the
+  // single highest PROFILE cosine in the entire cohort (0.335) belonged to an Assistant Manager in
+  // construction at Larsen & Toubro, which is exactly the card that got delivered. Ranking noise at
+  // 4σ still produces a confident-looking list of five.
+  //
+  // MEASURED, live pool, the four flagged asks (scripts/probe-yc-ask-context.ts), before → after:
+  //   "builders"                       construction / B2B automation → humanoid-soccer-robot
+  //                                    autonomy, robotics systems integration, robotics tooling
+  //   "founders who are hiring;        a dishwasher, an SEO mobile app, an EU tender platform →
+  //    investors/operators"            eIF4E cancer therapeutics @ YC, AI-for-drug-discovery @
+  //                                    Stanford, drug-discovery AI @ Acyclic Labs
+  //   "open to all"                    diabetes app / CTF writeups → AI-native fintech, Jane Street
+  //   "people at UPenn M&T"            UPenn M&T #1 BEFORE and after (0.422 → 0.527) — a sharp,
+  //                                    self-sufficient ask is not diluted by this; it gets sharper
+  //
+  // MEASURED AND REJECTED, do not re-derive: scoring the ask and the domain as SEPARATE vectors and
+  // blending them, `(askCos + w*ctxCos)/(1+w)`, at w = 0.5 / 1 / 2. It is worse than concatenation at
+  // every weight, because the two cosines live on different scales (a bare ask means 0.17, a domain
+  // line 0.37) so the blend is dominated by the flat, noisy term it was meant to rescue — "builders"
+  // kept its wrong #1 at all three weights.
+  //
+  // `wantsToMeet` is deliberately NOT folded in: it is a who-ask, the current `query` supersedes it,
+  // and `personType` already handles who as a facet. Only `building` — what they are actually doing —
+  // travels with every ask.
+  const ask = (f.query ?? "").trim()
+  const queryText = [ask || intent, ask ? building : "", steer].filter(Boolean).join(". ")
   if (!queryText) {
     log("yc_people_match.no_intake", { userId: input.userId })
     return { results: [], poolSize: 0, facetMatched: 0, didRelax: false, reason: "no_intake" }
@@ -973,6 +1016,18 @@ export async function runYcPeopleMatch(
       // ("marketplace", "devtools") binds to the second, a person-shaped ask ("who's like me") to
       // the first, and max() lets each query use whichever surface actually carries it instead of
       // averaging one into noise. Fail-soft: no descriptor vector (~10 of 992) → profile score.
+      //
+      // THIS max() IS LENGTH-BIASED and that is FINE now — do not "fix" it without re-measuring.
+      // The descriptor is ~40 tokens and the profile ~1500, so a SHORT query out-cosines against the
+      // descriptor for every member alike, and max() then picks the surface by text length rather
+      // than by fit: measured on the live pool, descriptor won 74-81% of rows for an 11-19 char ask
+      // versus 21-22% for a 140-223 char one, crossing over around 60-100 chars. The fix is upstream:
+      // now that every ask carries the asker's `building` line (see `queryText`), the pool-wide
+      // descriptor-minus-profile offset measures 0.000 on four of the five flagged asks — the bias is
+      // gone by construction. A self-calibrating de-bias (subtract that offset before max()) was
+      // built and measured on top of this: it is a NO-OP everywhere except a genuinely contentless
+      // ask ("researchers" + a `building` line that literally reads "research"), where it reorders
+      // two near-identical research interns. Not worth the code.
       if (m.descriptorEmbedding?.length) {
         score = Math.max(score, deps.cosine(qVec, m.descriptorEmbedding))
       }
@@ -1012,6 +1067,55 @@ export async function runYcPeopleMatch(
       recovered: Boolean(pVec),
     })
     if (pVec) scored = scoreAgainst(pVec)
+  }
+
+  // HONESTY, MEASURED ON THE ASK ALONE — do not fold this into the gate above.
+  //
+  // Now that `queryText` carries their `building` line, every score sits in the same band the
+  // asker's own intake ask reaches, so `ABSOLUTE_FLOOR` stopped biting for an ask the pool cannot
+  // answer. Measured on the live 1033-person pool right after that change: "professional opera
+  // singers", "farmers" and "commercial airline pilots" each came back as FIVE confident-looking
+  // robotics people at 0.46-0.49, because the domain half of the blend was doing all the ranking.
+  // Before the change those same asks returned one person and the intro said the list was thin —
+  // the honesty Adam asked for ("如果没有那么好的人就说现在profile pool就这些") was real, and folding
+  // the domain in is what removed it.
+  //
+  // So judge the ASK on its own merits, with the same 0.33 test, which is the data it was measured
+  // on. Ask alone, live pool: opera singers .282 · farmers .293 · dentists .322 · airline pilots
+  // .327 all fail, while every genuine in-pool ask clears it — builders .335 · open to all .338 ·
+  // researchers .445 · investors/operators .456 · UPenn M&T .462 · fintech .560 · robotics founders
+  // .573. A contentless shrug ("anyone" .280, "no preference" .228) fails it too, which is correct
+  // and not a separate case: in BOTH situations the people we are about to send were chosen by the
+  // asker's own domain, not by what they asked for, and the card should say so.
+  //
+  // NOT A FILTER. Nobody is dropped and nothing is re-ranked — this only sets a flag so the intro
+  // can be honest ("nobody here matches that exactly — but these are the closest on what you're
+  // building"). The alternative, staying silent, passes robotics engineers off as opera singers.
+  let askMissed = false
+  if (ask && !useProfile && scored.length > 0) {
+    // The ask's OWN best hit. No second embed when the ask already IS the whole query (an asker with
+    // no `building` line on file) — `topScore` measured exactly that, on exactly these vectors.
+    let best = topScore
+    if (queryText !== ask) {
+      const aVec = await deps.embed(ask)
+      best = -1
+      for (const m of ranked) {
+        if (!aVec || !m.embedding?.length) continue
+        let s = deps.cosine(aVec, m.embedding)
+        if (m.descriptorEmbedding?.length) s = Math.max(s, deps.cosine(aVec, m.descriptorEmbedding))
+        if (s > best) best = s
+      }
+    }
+    // `best < 0` means we could not measure (embed failed / nobody had a vector) — say nothing
+    // rather than claim a miss we did not establish.
+    askMissed = best >= 0 && !askBoundToAnyone(best)
+    if (askMissed) {
+      log("yc_people_match.ask_missed_pool", {
+        userId: input.userId,
+        ask,
+        bestAskScore: Math.round(best * 1000) / 1000,
+      })
+    }
   }
   scored.sort((a, b) => {
     // Facet hits always outrank relaxed filler regardless of cosine.
@@ -1081,5 +1185,5 @@ export async function runYcPeopleMatch(
     didRelax,
     returned: results.length,
   })
-  return { results, poolSize: pool.length, facetMatched, didRelax }
+  return { results, poolSize: pool.length, facetMatched, didRelax, askMissed }
 }

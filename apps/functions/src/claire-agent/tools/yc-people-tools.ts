@@ -69,10 +69,24 @@ async function loadAlreadySent(db: Firestore, userId: string): Promise<Set<strin
 }
 
 /**
+ * Said when the people we are about to send were picked by the asker's own domain rather than by
+ * what they asked for. Used by BOTH honesty paths — a facet that matched nobody, and an ask that
+ * landed on nobody — because they are the same claim to the person reading it.
+ */
+const CLOSEST_NOT_EXACT = "nobody here matches that exactly — but these are the closest on what you're building 👇"
+
+/**
  * Intro line. HONESTY RULE (Adam): when the matcher had to widen a narrow facet ask it says so —
  * we never silently substitute someone who does not actually match what they asked for.
  */
 export function buildPeopleIntro(out: YcPeopleMatchOutput): string {
+  // THE ASK ITSELF MISSED THE POOL. Measured 2026-07-25: once every ask carries the asker's own
+  // `building` line (which is what stopped robotics people being matched to a construction manager),
+  // the scores for an unanswerable ask rise into the normal band and the absolute floor no longer
+  // trims the list — "professional opera singers" returned five confident robotics engineers. The
+  // matcher flags it; this is where we stop pretending. Checked FIRST because it is the strongest
+  // claim available about the list, and it is true whether the list is long or short.
+  if (out.askMissed && out.results.length > 0) return CLOSEST_NOT_EXACT
   // SHORT LIST → SAY IT'S SHORT (Adam 2026-07-25: "如果小的话就说ok我们确实没有太多匹配的"). The
   // matcher stops at whoever actually clears the bar instead of padding to 5, so a two-person answer
   // is a real signal about the pool, not a failure — and naming it is what keeps the two people
@@ -84,9 +98,7 @@ export function buildPeopleIntro(out: YcPeopleMatchOutput): string {
       : "not many here match that closely, so this is a short list rather than a padded one 👇"
   }
   if (!out.didRelax) return "found a few Startup School people worth meeting 👇"
-  if (out.facetMatched === 0) {
-    return "nobody here matches that exactly — but these are the closest on what you're building 👇"
-  }
+  if (out.facetMatched === 0) return CLOSEST_NOT_EXACT
   const n = out.facetMatched
   return n === 1
     ? "only 1 person here matches that exactly — that's the first one, and the rest are close on what you're building 👇"

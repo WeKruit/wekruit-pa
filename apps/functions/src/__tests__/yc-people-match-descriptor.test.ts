@@ -130,7 +130,13 @@ describe("yc-people-match ranking", () => {
     assert.equal(out.results[0]?.score, 1)
   })
 
-  it("an explicit ask is embedded ALONE, not buried in the asker's profile prose", async () => {
+  it("an explicit ask carries their `building` line but NOT the profile prose", async () => {
+    // Live 2026-07-25: the ask REPLACED the intake context, so "builders" from someone building a
+    // robotics gantry matched a construction manager, and "investors/operators" from an ML/drug-
+    // development PhD matched Goldman Sachs analysts. The ask names a kind of person; the domain
+    // only ever lives in `building`, so it travels with every ask.
+    // The 1500-token profile projection stays out — that dilution is separately measured and is
+    // what the "embed the ask alone" note in the source is about.
     const { deps, embedded } = fakeDeps(
       { a: { coresignalMatch: "ok", name: "A", currentTitle: LONG, matchEmbedding: [1, 0, 0] } },
       {
@@ -140,7 +146,9 @@ describe("yc-people-match ranking", () => {
       },
     )
     await runYcPeopleMatch({ userId: "u1", filters: { query: "investors" } }, deps)
-    assert.equal(embedded[0], "investors", "the ask must be the whole query text")
+    assert.equal(embedded[0], "investors. an AI headhunter", "ask + what they're building")
+    assert.doesNotMatch(embedded[0]!, /unrelated profile prose/, "profile stays out")
+    assert.doesNotMatch(embedded[0]!, /anyone/, "wantsToMeet is superseded by the ask")
   })
 
   it("a NULL query is the self-referential path — it matches on who the asker is", async () => {
@@ -172,7 +180,7 @@ describe("yc-people-match ranking", () => {
         },
       )
       await runYcPeopleMatch({ userId: "u1", filters: { query: ask } }, deps)
-      assert.equal(embedded[0], ask, `"${ask}" must survive as the query text`)
+      assert.equal(embedded[0], `${ask}. an AI headhunter`, `"${ask}" must survive as the query text`)
     }
   })
 
@@ -188,7 +196,7 @@ describe("yc-people-match ranking", () => {
       },
     )
     await runYcPeopleMatch({ userId: "u1", filters: { query: "no preference at all" } }, deps)
-    assert.equal(embedded[0], "no preference at all", "the ask is tried first")
+    assert.equal(embedded[0], "no preference at all. an AI headhunter", "the ask is tried first")
     assert.match(embedded[1]!, /Founder @ Acme/, "…then recovered onto the profile")
   })
 
@@ -201,7 +209,57 @@ describe("yc-people-match ranking", () => {
       },
     )
     await runYcPeopleMatch({ userId: "u1", filters: { query: "fintech" } }, deps)
-    assert.deepEqual(embedded, ["fintech"], "no profile re-embed when the ask landed on someone")
+    assert.equal(embedded[0], "fintech. an AI headhunter", "ranked on the ask + their domain")
+    // The ask is also embedded ALONE — that is the honesty probe (`askMissed`), not a re-rank.
+    // What must never appear is the asker's PROFILE projection: that is the fallback lane, and
+    // running it here would throw away an ask that landed on someone.
+    assert.ok(
+      embedded.every((t) => !/Founder @ Acme/.test(t)),
+      "no profile re-embed when the ask landed on someone",
+    )
+  })
+
+  // THE 2026-07-25 INCIDENT, in miniature. Idan said he was building a robotics gantry and wanted to
+  // meet "builders"; the agent put "builders" in `query`, the matcher dropped his robotics context,
+  // and the top card was an Assistant Manager doing construction at Larsen & Toubro. The fake
+  // embedder here reproduces exactly that shape: a bare kind-of-person ask points at the wrong axis,
+  // and only the `building` line pulls the query onto the robotics one.
+  it("a kind-of-person ask keeps the asker's domain — 'builders' must not return construction", async () => {
+    const { deps, embedded } = fakeDeps(
+      {
+        construction: { coresignalMatch: "ok", name: "Construction Manager", currentTitle: LONG, matchEmbedding: [1, 0, 0] },
+        robotics: { coresignalMatch: "ok", name: "Robotics Builder", currentTitle: LONG, matchEmbedding: [0, 1, 0] },
+      },
+      { ycIntake: { building: "custom corexy gantry, robotics + autonomous systems", wantsToMeet: "builders" } },
+    )
+    const out = await runYcPeopleMatch({ userId: "u1", limit: 2, filters: { query: "builders" } }, deps)
+    assert.match(embedded[0]!, /corexy/, "the domain has to reach the embedder at all")
+    assert.equal(out.results[0]?.name, "Robotics Builder")
+  })
+
+  // Folding `building` into every ask lifts the scores of an UNANSWERABLE ask into the normal band
+  // too, so the absolute floor stops trimming it — live, "professional opera singers" came back as
+  // five confident robotics engineers. The list is still the closest we have; it just must not be
+  // presented as an answer to the ask.
+  it("flags askMissed when the ask itself lands on nobody, without dropping anyone", async () => {
+    const { deps } = fakeDeps(
+      { a: { coresignalMatch: "ok", name: "Robot Person", currentTitle: LONG, matchEmbedding: [0, 1, 0] } },
+      { ycIntake: { building: "warehouse robots", wantsToMeet: "anyone" } },
+    )
+    // "opera singers" alone → axis 0, orthogonal to the whole pool → binds to nobody.
+    // "opera singers. warehouse robots" → axis 1, so the RANKING still finds the robot person.
+    const out = await runYcPeopleMatch({ userId: "u1", filters: { query: "opera singers" } }, deps)
+    assert.equal(out.results[0]?.name, "Robot Person", "still returns the closest — this is not a filter")
+    assert.equal(out.askMissed, true)
+  })
+
+  it("does NOT flag askMissed when the ask genuinely binds", async () => {
+    const { deps } = fakeDeps(
+      { a: { coresignalMatch: "ok", name: "Robot Person", currentTitle: LONG, matchEmbedding: [0, 1, 0] } },
+      { ycIntake: { building: "warehouse robots", wantsToMeet: "anyone" } },
+    )
+    const out = await runYcPeopleMatch({ userId: "u1", filters: { query: "robotics founders" } }, deps)
+    assert.equal(out.askMissed, false)
   })
 
   it("demotes an over-exposed person so recommendations spread across the pool", async () => {

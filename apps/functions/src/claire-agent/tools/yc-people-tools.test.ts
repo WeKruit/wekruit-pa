@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { buildYcPeopleTools } from "./yc-people-tools.js"
+import { buildPeopleIntro, buildYcPeopleTools } from "./yc-people-tools.js"
 import type { ClaireToolContext } from "../types.js"
 
 /**
@@ -113,5 +113,31 @@ describe("match_yc_people — guards must never produce silence", () => {
     // An unqualified "delivered:true → empty message list" is what made count:0 mean silence.
     assert.match(description, /delivered:true AND count > 0/)
     assert.match(description, /delivered:false you MUST speak/)
+  })
+})
+
+describe("buildPeopleIntro — never present a domain substitute as the answer to the ask", () => {
+  const five = Array.from({ length: 5 }, (_, i) => ({
+    recordId: `r${i}`, name: `P${i}`, linkedinUrl: null, title: "T", company: "C", location: null,
+    score: 0.47, reason: "r", summary: "s", relaxed: false, matchStatus: null,
+  }))
+
+  it("says so when the ask itself missed the pool, even with a full list of five", () => {
+    // The failure this guards: post-`building`-fold, "professional opera singers" returned five
+    // robotics engineers at normal-looking scores, and the old copy called them "a few Startup
+    // School people worth meeting".
+    const intro = buildPeopleIntro({ results: five, poolSize: 1033, facetMatched: 1033, didRelax: false, askMissed: true })
+    assert.match(intro, /nobody here matches that exactly/)
+  })
+
+  it("still speaks normally when the ask actually bound", () => {
+    const intro = buildPeopleIntro({ results: five, poolSize: 1033, facetMatched: 1033, didRelax: false, askMissed: false })
+    assert.match(intro, /worth meeting/)
+    assert.doesNotMatch(intro, /nobody here matches/)
+  })
+
+  it("an empty list is not overridden — the caller handles nothing-to-send", () => {
+    const intro = buildPeopleIntro({ results: [], poolSize: 1033, facetMatched: 0, didRelax: false, askMissed: true })
+    assert.doesNotMatch(intro, /nobody here matches that exactly/)
   })
 })
