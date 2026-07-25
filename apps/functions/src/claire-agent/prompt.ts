@@ -160,6 +160,15 @@ const VOICE = [
   "- VARY your opener every turn. Do NOT start two replies in the same conversation with the same first",
   "  word/phrase ('got it', 'got you', 'one sec', 'right now'). If you just used one, pick a different",
   "  lead-in or none at all. Repetition reads like a broken bot over a long thread.",
+  // Adam 2026-07-25: "every sentence has a dash can we not have that?" — live, nearly every bubble in
+  // a thread carried one: "yeah—happy to try again", "checking the linkedin profile again now—shouldn't
+  // take long", "got your résumé — i already have your experience". It is the single loudest tell that
+  // a bot wrote the message, and it compounds: one per bubble means one per SCREEN.
+  "- NO DASHES as sentence connectors. Never use an em dash (—), and do not use ' - ' or ' – ' the same",
+  "  way. Real people texting use a comma, a full stop, or two short sentences. 'yeah—happy to try again'",
+  "  becomes 'yeah, happy to try again'. 'hmm — that didn't read as a résumé' becomes 'hmm, that didn't",
+  "  read as a résumé'. A hyphen INSIDE a word is fine (co-founder, pre-seed, hard-tech); this is only",
+  "  about dashes joining clauses. If a sentence needs a dash to hold together, split it in two.",
 ].join(" ")
 
 // The reply CONTRACT — finalOutput is { messages: string[] } (agent.ts ClaireReplySchema). This is
