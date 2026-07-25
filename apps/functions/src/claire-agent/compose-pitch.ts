@@ -16,6 +16,7 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { YC_MATCH_DELIVERY_WHEN } from "@pa/pa-orchestrator"
 
 const USERS = PA_COLLECTIONS.users
 const PITCH_MODEL = "gpt-5.4-mini" // Adam-picked: stronger than nano for the product centerpiece.
@@ -791,7 +792,7 @@ export async function composePitchTurn(
     // find_match job pull, and a founder got pitched SWE openings (Adam 2026-07-23). YC is
     // people matching, not job roles.
     const pool =
-      "you're in the founder-match pool 🤝 i'll text you right here (and email you) once we find you a good match — founders, investors, operators worth meeting."
+      `you're in the founder-match pool 🤝 your matches — founders, investors, operators worth meeting — land on ${YC_MATCH_DELIVERY_WHEN}, and i'll text you right here (and email you).`
     offer = !u.ycIntake?.building
       ? `${pool} while that's brewing — what are you building right now?`
       : !u.ycIntake?.wantsToMeet

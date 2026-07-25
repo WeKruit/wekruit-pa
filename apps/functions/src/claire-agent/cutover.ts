@@ -57,6 +57,7 @@ import {
 } from "./merge-resume-confirm.js"
 import { buildDecisionTrace } from "./decision-trace.js"
 import type { ClaireLang, ClaireToolContext } from "./types.js"
+import { YC_MATCH_DELIVERY_WHEN } from "@pa/pa-orchestrator"
 import {
   resumePendingProfileReadinessPrescreenStart,
   runPreScreenForUser,
@@ -724,7 +725,7 @@ export async function maybeRunThinClaire(
           ycFallback = isYcPeopleUser(u)
         } catch { /* fail-open → standard copy */ }
         const fbBody = ycFallback
-          ? "got it — you're in the founder-match pool 🤝 i'll text you right here once we find you a good match. anything you want me to know while we work on it?"
+          ? `got it — you're in the founder-match pool 🤝 your matches (people worth meeting) come on ${YC_MATCH_DELIVERY_WHEN}, and i'll text you right here. anything you want me to know before then?`
           : "got your résumé — your profile's updated 🙌 want me to pull roles that fit now, or tweak/add anything first?"
         await fbTransport
           .sendText(fbBody, { seq: 0 })

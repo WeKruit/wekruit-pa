@@ -125,6 +125,7 @@ export {
   buildBindCodeOpenerBody,
   buildYcEventOpenerBody,
   YC_EVENT_OPENER_PREFIX,
+  YC_MATCH_DELIVERY_WHEN,
   isYcEventOpenerText,
   parseHelloWekruitOpener,
   looksLikeGarbledStartToken,

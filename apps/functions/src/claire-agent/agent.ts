@@ -37,6 +37,7 @@ import {
   HI_WEKRUIT_OPENER_PREFIX,
   LINKEDIN_DONE_OPENER_PREFIX,
   VERIFICATION_CODE_OPENER_PREFIX,
+  YC_MATCH_DELIVERY_WHEN,
 } from "@pa/pa-orchestrator"
 
 /** Main conversation model (the per-tool LLM judge model is configured separately). */
@@ -1021,7 +1022,7 @@ export async function runClaireTurn(
     // clarifying questions and an invented promise to email an attachment. Promise DIRECT matching
     // instead, which is what actually happens.
     const framing =
-      "i'll get a quick idea of what you're building and who you want to meet, then match you directly with the right Startup School people — i'll text you right here."
+      `i'll get a quick idea of what you're building and who you want to meet, then match you with the right Startup School people — your matches land on ${YC_MATCH_DELIVERY_WHEN} and i'll text you right here.`
     const parts: string[] = [
       "hey!! welcome 🎉 i'm claire — i match startup school folks with founders who are building + hiring.",
       ...(deps.ycEventIntake.offerLinkedin
