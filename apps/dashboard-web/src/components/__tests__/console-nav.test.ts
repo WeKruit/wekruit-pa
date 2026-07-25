@@ -112,11 +112,24 @@ test("recruiters section is consolidated into the hub (legacy routes out of nav)
   )
 })
 
-test("ops mode stays founder-sized (≤ 22 items)", () => {
+// Budget raised 22 → 23 on 2026-07-25. Commit 875faf92 (#598, headhunter Slack
+// agent) deliberately added three ops surfaces — Setup, Funnel, Interviews —
+// taking the count 20 → 23. That PR never saw this test go red: the same commit
+// introduced an undeclared @modelcontextprotocol/sdk import, so CI died at the
+// build step and the unit-test step never ran. The three routes are live and in
+// use, so the budget is stale, not the nav. Raising it deliberately keeps the
+// guard honest against *unbounded* growth — the next bump should also be a
+// conscious act, not a reflex.
+const OPS_ITEM_BUDGET = 23
+
+test(`ops mode stays founder-sized (≤ ${OPS_ITEM_BUDGET} items)`, () => {
   const opsSections = CONSOLE_NAV.filter((sec) => sec.mode === "ops")
   assert.ok(opsSections.length > 0, "no ops-mode sections found")
   const opsItemCount = opsSections.reduce((n, sec) => n + sec.items.length, 0)
-  assert.ok(opsItemCount <= 22, `ops mode has ${opsItemCount} items (max 22)`)
+  assert.ok(
+    opsItemCount <= OPS_ITEM_BUDGET,
+    `ops mode has ${opsItemCount} items (max ${OPS_ITEM_BUDGET}) — demote one to dev mode, or raise the budget on purpose`,
+  )
 })
 
 test("no duplicate route across sections", () => {
