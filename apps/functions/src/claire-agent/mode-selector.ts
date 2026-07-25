@@ -61,6 +61,7 @@ import {
 } from "./prescreen-ai-question.js"
 import { isCanaryUser, isClaireEntryUxCanary } from "./canary.js"
 import { isEnrichmentInFlight } from "./enrichment-inflight.js"
+import { extractLinkedinProfileUrl } from "../enrich-from-typed-linkedin.js"
 import { shouldNudgeGmail } from "./gmail-nudge.js"
 
 const USERS = "pa-users"
@@ -751,11 +752,18 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // already imported — do NOT re-offer LinkedIn". Deterministic flag, not prose the model may skip.
   // One-shot on its OWN stamp: `linkedinNudgedAt` is a different beat (fires when NOT linked), and
   // these people were typically nudged BEFORE they connected — sharing a stamp would silence the ask.
+  // NEVER ASK FOR WHAT IS IN THE MESSAGE (live 2026-07-25, +13129727824 11:54): the user pasted
+  // `http://linkedin.com/in/sofia-grimm` and this flag — computed off a snapshot taken before the
+  // enrich could write — made the reply "can you paste your linkedin profile URL here exactly".
+  // Awaiting the enrich in cutover fixes the common case by flipping `hasFetchedBackground`; this
+  // guard covers the rest (Coresignal miss, key absent, URL wrapped in prose so cutover lets the
+  // normal turn run). Pure URL parsing of the inbound text — not intent classification.
   const askLinkedinUrl =
     isYcEventUser &&
     user.linkedinOauthLinked === true &&
     !hasRealLinkedinProfileUrl(user) &&
     !hasFetchedBackground(user) &&
+    !extractLinkedinProfileUrl(args.inboundText ?? "") &&
     !ycIntakeState?.linkedinUrlAskedAt
   if (isYcEventUser && ycIntakeState?.completedAt) {
     // INTAKE DONE — still emit a directive (this used to be `undefined`, leaving the model with no

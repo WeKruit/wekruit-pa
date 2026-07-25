@@ -23,7 +23,11 @@
 import { randomUUID } from "crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { logger } from "firebase-functions/v2"
-import { fetchEmployeeCollect, searchEmployeeIdByLinkedinUrl } from "@pa/external-supply"
+import {
+  canonicalizeLinkedInUrl,
+  fetchEmployeeCollect,
+  searchEmployeeIdByLinkedinUrl,
+} from "@pa/external-supply"
 import { PA_COLLECTIONS, type ExternalCandidateRecord } from "@pa/core-types"
 import {
   runCoresignalExperiencesMirror,
@@ -49,6 +53,18 @@ export function normalizeTypedLinkedinUrl(raw: string): string | null {
   // below (it IS a linkedin.com URL) and would be sent to Coresignal as if it were a profile —
   // live, 30 of the 32 stranded YC users carry exactly this string in `linkedinUrl`.
   if (s.includes("/oauth-linked/")) return null
+  // CANONICAL WHEN WE CAN (2026-07-25). A URL typed into a phone arrives as `http://…`, `WWW.…`,
+  // with a trailing slash, a `/de/in/…` locale prefix, or `?utm_source=share&…` tracking junk stuck
+  // on the end — and the Coresignal lookup is a `match_phrase` on the indexed profile URL, so the
+  // junk is a live miss risk. `canonicalizeLinkedInUrl` is the SAME normalizer the OAuth connect
+  // runs before storing/searching, so a pasted URL and a connected one become byte-identical
+  // strings. It only accepts the `/in/<slug>` shape; anything else keeps the lenient path below
+  // (the signup form stores whatever LinkedIn URL the candidate typed).
+  // `canonicalizeLinkedInUrl` matches the `/in/` segment case-SENSITIVELY (it feeds identity
+  // hashing, so it is deliberately strict) — retry with that one segment folded rather than loosen
+  // a normalizer that `pa-candidate-handles` ids depend on.
+  const canonical = canonicalizeLinkedInUrl(s) ?? canonicalizeLinkedInUrl(s.replace(/\/in\//i, "/in/"))
+  if (canonical) return canonical
   const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s.replace(/^\/+/, "")}`
   try {
     const u = new URL(withScheme)

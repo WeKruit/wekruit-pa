@@ -61,6 +61,7 @@ import {
   extractLinkedinProfileUrl,
   enrichFromTypedLinkedinUrl,
 } from "../enrich-from-typed-linkedin.js"
+import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 import type { ClaireLang, ClaireToolContext } from "./types.js"
 import {
   resumePendingProfileReadinessPrescreenStart,
@@ -113,6 +114,14 @@ export function isImageAttachmentUrl(url: string): boolean {
 /** Honest reply for an image-only drop — never pretend to read a résumé out of a screenshot. */
 export const IMAGE_ATTACHMENT_REPLY =
   "heads up — that came through as an image, and i can't read those yet 😅 if it's your résumé, send the actual file (PDF) or a link to it. if you're showing me something on your screen, just tell me what it says and i'll help"
+
+/** Instant ack while the pasted-URL Coresignal pull runs (mirrors the OAuth connect ack). */
+export const LINKEDIN_PASTE_ACK =
+  "got it ✅ pulling your background off that link now — one sec"
+
+/** The pull came back empty. Say so; NEVER invent a background we didn't fetch. */
+export const LINKEDIN_PASTE_NO_MATCH_REPLY =
+  "hmm — i pulled on that link and got nothing back on my side 😕 that's on the data provider, not you. drop your résumé here (PDF) and i'll take everything from that instead"
 
 /** Real reply when an attempted résumé ingest fails (instead of the old silent log-and-drop). */
 export const RESUME_INGEST_FAILURE_REPLY =
@@ -288,29 +297,125 @@ export async function maybeRunThinClaire(
   const inboundMessageHandle =
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
 
-  // ── PASTED LINKEDIN URL → ENRICH (2026-07-25) ──────────────────────────────────────────────────
+  // ── PASTED LINKEDIN URL → ENRICH → PITCH (2026-07-25) ──────────────────────────────────────────
   // We ask people to "paste your LinkedIn profile URL" in three different places (the YC event
-  // kickoff, the linkedinJustConnected re-entry, the new OAuth-linked-but-empty ask) and NOTHING
-  // consumed the answer: enrichFromTypedLinkedinUrl only ever had one caller, the signup form.
-  // A pasted URL is the reliable path — it enriched 54/54 of the YC users who had one, while the
-  // photo-asset fallback resolved 0/28 — so a URL arriving in chat must do what a URL on the form
-  // does. Deterministic, not a tool the model may forget to call.
-  // Fire-and-forget like the résumé ingest: an external API call must never add latency to the
-  // reply. The function is fail-open, no-ops when real background already exists, and writes DATA
-  // only (it never emits a runtime event, so this can never text anyone).
-  const pastedLinkedinUrl = extractLinkedinProfileUrl(text)
+  // kickoff, the linkedinJustConnected re-entry, the OAuth-linked-but-empty ask) and until now
+  // NOTHING consumed the answer. A pasted URL is the reliable path — it enriched 54/54 of the YC
+  // users who had one, while the photo-asset fallback resolved 0/28 — so a URL arriving in chat
+  // must do exactly what a successful OAuth connect does: enrich, then pitch.
+  //
+  // MEASURED FAILURE this hook replaces (live, 2026-07-25 event day): 6 users pasted a
+  // `linkedin.com/in/…` URL, 0 were enriched by it, 0 got a pitch, and 2 were asked for the link
+  // AGAIN in the same breath (+13129727824 11:54 pasted `http://linkedin.com/in/sofia-grimm` and
+  // got "can you paste your linkedin profile URL here exactly"). THREE causes, all fixed here:
+  //   1. `CORESIGNAL_API_KEY` was never bound to onPaInbound / paMessageCoalescer, so the call
+  //      returned `no_key` before touching the network. Bound in index.ts alongside this change.
+  //   2. Fire-and-forget. A gen2 background promise is not guaranteed CPU after the handler
+  //      returns, AND even when it landed it wrote AFTER selectMode had already read pa-users —
+  //      so `askLinkedinUrl` re-fired off a stale snapshot and Claire asked for the link she was
+  //      holding. AWAITING is what makes the write land before the snapshot the turn is built on;
+  //      that alone retires the re-ask, because `hasFetchedBackground` is then true.
+  //   3. No pitch. Enrichment wrote data and stopped. The OAuth path emits a
+  //      `resume_parse_completed` handoff and the pitch engine composes the "here's how i'll
+  //      describe you" bubbles off it — so we emit the SAME event rather than build a second path.
+  // The URL extractor was NOT the cause: `http://`, no-www, and trailing slash all parse fine
+  // (regression-tested). Pool membership + the `/oauth-linked/` placeholder replacement happen
+  // inside enrichFromTypedLinkedinUrl, which gates the pool on `isYcPeopleUser` itself.
+  const pastedLinkedinUrl =
+    rawMeta.runtimeEvent === true ? null : extractLinkedinProfileUrl(text)
   if (pastedLinkedinUrl) {
-    log("thin_claire.linkedin_url_pasted", { eventId, userId })
-    void enrichFromTypedLinkedinUrl({
-      db,
-      userId,
-      apiKey: process.env.CORESIGNAL_API_KEY ?? null,
-      rawUrl: pastedLinkedinUrl,
-    })
-      .then((r) => log("thin_claire.linkedin_url_pasted.done", { eventId, userId, result: r }))
-      .catch(() => {
-        /* already logged + fail-open inside; never surface into the turn */
+    // Only chase a URL for someone we hold NO real background for — otherwise a URL mentioned mid
+    // conversation (a co-founder's profile, a job link) would re-run an enrich on the wrong person.
+    // Same predicate the mode-selector gates the ask on, so the two can never disagree.
+    let needsBackground = false
+    try {
+      const uSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      needsBackground = !hasFetchedBackground((uSnap.data() ?? {}) as Record<string, unknown>)
+    } catch {
+      /* read error → treat as "already have it" and leave the turn alone */
+    }
+    if (needsBackground) {
+      // A bare URL IS the whole turn (this is the live shape: they were asked, they answered), so we
+      // own it end to end — ack, enrich, pitch — exactly the OAuth shape. A URL wrapped in real prose
+      // ("building X, here's my linkedin") still enriches, but the normal turn answers what they said,
+      // so their intake answer is never swallowed. Structural token check, not intent classification.
+      const urlIsWholeMessage = !hasRealUserText(
+        text.split(/\s+/).filter((tok) => !/linkedin\.com/i.test(tok)).join(" "),
+      )
+      log("thin_claire.linkedin_url_pasted", { eventId, userId, urlIsWholeMessage })
+      const nowIso = new Date().toISOString()
+      const linkedinTransport =
+        toE164
+          ? createSendblueTransport({
+              db,
+              toE164: String(toE164),
+              inboundMessageHandle,
+              userId,
+              sessionId,
+              inboundEventId: eventId,
+              log,
+              ...(deps.dryRun ? { dryRun: true } : {}),
+            })
+          : null
+      const ownsTurn = urlIsWholeMessage && linkedinTransport !== null
+      if (ownsTurn) {
+        // Coresignal + the mirror's merge run 10-30s. The marker holds a concurrent inbound
+        // ("still pulling your info") and the ack means the wait is never dead air.
+        await setEnrichmentInFlight(db, userId, "linkedin", nowIso).catch(() => {})
+        await linkedinTransport!
+          .sendText(LINKEDIN_PASTE_ACK, { seq: 0 })
+          .catch((err) => log("thin_claire.linkedin_url_pasted.ack_failed", { eventId, err: String(err) }))
+      }
+      const enrich = await enrichFromTypedLinkedinUrl({
+        db,
+        userId,
+        apiKey: process.env.CORESIGNAL_API_KEY ?? null,
+        rawUrl: pastedLinkedinUrl,
+        nowIso,
       })
+      log("thin_claire.linkedin_url_pasted.done", { eventId, userId, result: enrich })
+      if (enrich.ok && toE164) {
+        // THE SAME EVENT THE OAUTH CONNECT EMITS — same composer, same bubbles, no second pitch
+        // path to drift. Keyed on this inbound event so a retry of this turn dedups to one pitch.
+        const handoff = await enqueueRuntimeEventHandoff(db, {
+          userId,
+          toE164: String(toE164),
+          source: "linkedin_connect",
+          eventKind: "resume_parse_completed",
+          idempotencyKey: `linkedin-pasted:${userId}:${eventId}`,
+          requireExistingSession: false,
+          context: { cvParsedTrigger: true, enrichmentSource: "linkedin", linkedinEnriched: true },
+        }).catch((err) => {
+          log("thin_claire.linkedin_url_pasted.handoff_failed", { eventId, userId, err: String(err) })
+          return null
+        })
+        log("thin_claire.linkedin_url_pasted.handoff", { eventId, userId, ok: handoff?.ok ?? false })
+      }
+      if (!enrich.ok) {
+        // Never leave the in-flight marker stuck — that is the "forever silence" shape (2026-06-11).
+        await clearEnrichmentInFlight(db, userId, nowIso).catch(() => {})
+      }
+      // `already_enriched` = someone else's write landed first (a résumé, a concurrent OAuth). That
+      // user is fine; let the normal turn answer them instead of claiming a pull we didn't do.
+      if (ownsTurn && (enrich.ok || enrich.reason !== "already_enriched")) {
+        if (!enrich.ok) {
+          // HONEST, NOT INVENTED (Adam: "不能拿假的"). We asked, they answered, the lookup found
+          // nothing — say that and offer the résumé, never fabricate a background or re-ask for the
+          // link they just gave us.
+          await linkedinTransport!
+            .sendText(LINKEDIN_PASTE_NO_MATCH_REPLY, { seq: 1 })
+            .catch((err) =>
+              log("thin_claire.linkedin_url_pasted.no_match_send_failed", { eventId, err: String(err) }),
+            )
+        }
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set({ status: "completed", handledBy: "thin_claire_linkedin_url_pasted" }, { merge: true })
+          .catch(() => {})
+        return true
+      }
+    }
   }
 
   if (cvParsedReentry) {

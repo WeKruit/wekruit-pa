@@ -18,10 +18,30 @@ describe("normalizeTypedLinkedinUrl — real values seen in prod", () => {
     )
   })
 
-  it("keeps a well-formed URL", () => {
-    assert.equal(
-      normalizeTypedLinkedinUrl("https://www.linkedin.com/in/xuanzuo-liu/"),
+  it("canonicalizes every shape a phone produces to ONE string", () => {
+    // Same normalizer the OAuth connect runs, so a pasted URL and a connected one are byte-identical
+    // — and the Coresignal `match_phrase` never sees `?utm_source=share` junk stuck on the slug.
+    for (const raw of [
       "https://www.linkedin.com/in/xuanzuo-liu/",
+      "http://linkedin.com/in/xuanzuo-liu",
+      "WWW.LinkedIn.com/IN/Xuanzuo-Liu",
+      "https://www.linkedin.com/in/xuanzuo-liu?utm_source=share&utm_medium=member_ios",
+      "https://de.linkedin.com/in/xuanzuo-liu",
+    ]) {
+      assert.equal(normalizeTypedLinkedinUrl(raw), "https://linkedin.com/in/xuanzuo-liu", raw)
+    }
+  })
+
+  it("LIVE 2026-07-25 +13129727824 — the exact string Claire re-asked for", () => {
+    // She replied "can you paste your linkedin profile URL here exactly (linkedin.com/in/…)" to a
+    // message that WAS that URL. The extractor was never the cause; assert that permanently.
+    assert.equal(
+      normalizeTypedLinkedinUrl("http://linkedin.com/in/sofia-grimm"),
+      "https://linkedin.com/in/sofia-grimm",
+    )
+    assert.equal(
+      extractLinkedinProfileUrl("http://linkedin.com/in/sofia-grimm"),
+      "https://linkedin.com/in/sofia-grimm",
     )
   })
 
@@ -50,7 +70,7 @@ describe("extractLinkedinProfileUrl — a URL pasted into a chat message", () =>
   it("finds the profile URL inside a sentence", () => {
     assert.equal(
       extractLinkedinProfileUrl("sure! https://www.linkedin.com/in/ada-lovelace/ here you go"),
-      "https://www.linkedin.com/in/ada-lovelace/",
+      "https://linkedin.com/in/ada-lovelace",
     )
     assert.equal(
       extractLinkedinProfileUrl("linkedin.com/in/ada-lovelace"),

@@ -666,6 +666,12 @@ const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const DEEPGRAM_API_KEY = defineSecret("DEEPGRAM_API_KEY")
 const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
+// PASTED LINKEDIN URL → ENRICH (2026-07-25). The cutover hook resolves a URL a candidate pastes
+// into chat through Coresignal, the same way the signup form and the OAuth connect do. It reads
+// `process.env.CORESIGNAL_API_KEY`, which was bound on every OTHER enrich entry point but NOT on
+// the two inbound functions — so every chat paste returned `no_key` before touching the network
+// (measured live on event day: 6 pasters, 0 enriched). Absent secret still degrades gracefully.
+const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
 // v1.8 Phase 74.5 — feature flag for memory compaction (default off, secret=true to enable).
 const MEMORY_COMPACTION_ENABLED = defineSecret("MEMORY_COMPACTION_ENABLED")
 // v1.8 Phase 77 — admin allowlist for __PA_COMPACT__ + __PA_FIND_MATCH__ + prescreen-as-admin.
@@ -1624,6 +1630,8 @@ export const onPaInbound = onDocumentCreated(
       MAILGUN_DOMAIN,
       MAILGUN_FROM,
       MAILGUN_REGION,
+      // Pasted-LinkedIn-URL enrichment in the thin cutover (see the declaration above).
+      CORESIGNAL_API_KEY,
     ],
     // LATENCY FIX (Adam 2026-06-02): maxInstances:1 + concurrency:1 serialized EVERY inbound
     // globally — one turn at a time, plus a cold-start on the first message after idle (the live
@@ -2453,7 +2461,7 @@ export const paMessageCoalescer = onRequest(
     // CALCOM_API_KEY + MAILGUN_* added (2026-06-01): thin Claire also runs through the
     // coalescer inbound path, so its scheduling tools need process.env.CALCOM_API_KEY /
     // MAILGUN_* populated. A missing CALCOM_API_KEY just makes the tools fail-open.
-    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY, CALCOM_API_KEY, MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION],
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY, CALCOM_API_KEY, MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION, CORESIGNAL_API_KEY],
     // 512MiB → 1GiB (2026-05-30): this function hosts thin Claire for COALESCED inbounds (onPaInbound
     // skips them), so a `recommend` turn runs find_match HERE. V16 pulls ~67MB of job docs (1536-float
     // embeddings → ~150-300MB parsed) on top of the @openai/agents + mem0 + Sendblue SDK baseline,
