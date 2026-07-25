@@ -684,14 +684,27 @@ export async function maybeRunThinClaire(
         } catch { /* fail-open → standard beats */ }
         const pitchBeatMs = ycEventFastPitch ? 2500 : 10000
         const offerBeatMs = ycEventFastPitch ? 1200 : 2500
-        await transport.sendText(bubbles[0]!, { seq: 0 }) // confirmation — immediate
+        // PACED ON THE FAST PATH (live 2026-07-24, Adam's own test): the beats above are what keep
+        // these three in order, because without `paced` the outbox ALSO applies its own
+        // length-proportional dwell (up to 8s). At the standard 10s/2.5s beats that dwell is always
+        // smaller than the gap, so order holds. But the YC beats are 2.5s/1.2s — SHORTER than the
+        // dwell the long pitch earns — so the short offer overtook it:
+        //   confirmation created 03:30:54.8 → sent 03:30:58.7
+        //   PITCH        created 03:30:57.6 → sent 03:31:15.4   ← 11s late
+        //   offer        created 03:30:58.9 → sent 03:31:04.1
+        // `paced: true` makes the outbox POST IMMEDIATELY and skip that dwell (same mechanism
+        // delivery.ts already uses for multi-bubble replies), so the explicit beats here become the
+        // only spacing and sequence is guaranteed. Only set on the fast path: the 10s path is
+        // long-proven and its dwell is harmless.
+        const pace = ycEventFastPitch ? { paced: true } : {}
+        await transport.sendText(bubbles[0]!, { seq: 0, ...pace }) // confirmation — immediate
         try { await transport.typing() } catch { /* typing is pure UX */ }
         if (!deps.dryRun) await new Promise((r) => setTimeout(r, pitchBeatMs)) // reasoning beat before the pitch
-        await transport.sendText(bubbles[1]!, { seq: 1 }) // the PITCH
+        await transport.sendText(bubbles[1]!, { seq: 1, ...pace }) // the PITCH
         if (bubbles[2]) {
           try { await transport.typing() } catch { /* typing is pure UX */ }
           if (!deps.dryRun) await new Promise((r) => setTimeout(r, offerBeatMs)) // short beat, THEN the offer
-          await transport.sendText(bubbles[2]!, { seq: 2 }) // the OFFER — always after the pitch
+          await transport.sendText(bubbles[2]!, { seq: 2, ...pace }) // the OFFER — always after the pitch
         }
         await db
           .collection(PA_COLLECTIONS.inboundEvents)
