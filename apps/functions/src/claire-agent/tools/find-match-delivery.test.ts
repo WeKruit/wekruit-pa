@@ -316,7 +316,7 @@ function ycUserDbStub(userDoc: Record<string, unknown>): unknown {
   }
 }
 
-test("YC event entrant BEFORE the operator send: find_match holds (no matcher call, no timestamp reason)", async () => {
+test("YC event entrant BEFORE the operator send: find_match holds (no matcher call, July 25 7pm reason)", async () => {
   let matcherCalled = false
   const { ctx, sent } = recordingCtx(async () => {
     matcherCalled = true
@@ -325,8 +325,8 @@ test("YC event entrant BEFORE the operator send: find_match holds (no matcher ca
   ;(ctx as { db: unknown }).db = ycUserDbStub({ firstTouchCampaign: "yc-startup-school", source: "yc_startup_school" })
   const out = await run(ctx)
   assert.equal(out.ok, false)
-  assert.match(String(out.reason), /once there is a good match/i)
-  assert.doesNotMatch(String(out.reason), /7pm|July 25|tonight/i)
+  assert.match(String(out.reason), /July 25 at 7pm PT/i)
+  assert.doesNotMatch(String(out.reason), /docs\.google\.com/i)
   assert.equal(matcherCalled, false, "matcher must NOT run before the operator send")
   assert.equal(sent.length, 0, "no role bubbles delivered")
 })
@@ -369,7 +369,7 @@ test("website /yc-startup user (source==yc, no event flag) is ALSO held — YC n
   const out = await run(ctx)
   assert.equal(out.ok, false)
   assert.match(String(out.reason), /once there is a good match|people/i)
-  assert.doesNotMatch(String(out.reason), /7pm|July 25|tonight/i)
+  assert.doesNotMatch(String(out.reason), /docs\.google\.com/i)
   assert.equal(matcherCalled, false, "source==yc must NOT run the job matcher — investors sign up too")
   assert.equal(sent.length, 0, "no job roles delivered to a yc user")
 })

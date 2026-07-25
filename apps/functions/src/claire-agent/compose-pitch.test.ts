@@ -646,7 +646,7 @@ test("YC entry: closer is the notify promise — never a pull-ask, never the evi
   )
 })
 
-test("YC EVENT entry (QR): closer promises match follow-up without a timestamp and CONTINUES the intake", async () => {
+test("YC EVENT entry (QR): closer promises the July 25 7pm match time and CONTINUES the intake", async () => {
   const base = {
     displayName: "Adam Yang",
     source: "yc_startup_school",
@@ -658,8 +658,8 @@ test("YC EVENT entry (QR): closer promises match follow-up without a timestamp a
 
   // building unanswered → closer asks it inline (pitch turn is deterministic, agent never gets a follow-up turn).
   const a = await composePitchTurn(makeStubDb({ ...base }).db, "u1", "2026-07-22T00:00:00Z", mock)
-  assert.match(a![2]!, /once we find you a good match/)
-  assert.doesNotMatch(a![2]!, /7pm|July 25|tonight/)
+  assert.match(a![2]!, /July 25 at 7pm PT/)
+  assert.doesNotMatch(a![2]!, /docs\.google\.com|attendee (contact )?list/i, 'list stays removed (#622)')
   assert.match(a![2]!, /what are you building/, "intake question lives inline in the deterministic pitch closer")
   assert.doesNotMatch(a![2]!, /say the word/, "never the instant-peek offer for an event entrant")
 
@@ -670,8 +670,8 @@ test("YC EVENT entry (QR): closer promises match follow-up without a timestamp a
     "2026-07-22T00:00:00Z",
     mock,
   )
-  assert.match(b![2]!, /once we find you a good match/)
-  assert.doesNotMatch(b![2]!, /7pm|July 25|tonight/)
+  assert.match(b![2]!, /July 25 at 7pm PT/)
+  assert.doesNotMatch(b![2]!, /docs\.google\.com|attendee (contact )?list/i, 'list stays removed (#622)')
   assert.match(b![2]!, /who do you want to meet/, "intake question lives inline in the deterministic pitch closer")
 
   // intake complete → plain match close, nothing else to do.
@@ -681,8 +681,8 @@ test("YC EVENT entry (QR): closer promises match follow-up without a timestamp a
     "2026-07-22T00:00:00Z",
     mock,
   )
-  assert.match(c![2]!, /once we find you a good match/)
-  assert.doesNotMatch(c![2]!, /7pm|July 25|tonight/)
+  assert.match(c![2]!, /July 25 at 7pm PT/)
+  assert.doesNotMatch(c![2]!, /docs\.google\.com|attendee (contact )?list/i, 'list stays removed (#622)')
   assert.match(c![2]!, /nothing else you need to do/)
 
   // Website /yc-startup (source=yc, no event campaign) gets the SAME people closer now —
@@ -694,7 +694,7 @@ test("YC EVENT entry (QR): closer promises match follow-up without a timestamp a
     "2026-07-22T00:00:00Z",
     mock,
   )
-  assert.match(site![2]!, /once we find you a good match/, "website yc gets the no-timing people promise")
-  assert.doesNotMatch(site![2]!, /7pm|July 25|tonight/)
+  assert.match(site![2]!, /July 25 at 7pm PT/, "website yc gets the same people-match time promise")
+  assert.doesNotMatch(site![2]!, /docs\.google\.com|attendee (contact )?list/i, "list stays removed (#622)")
   assert.doesNotMatch(site![2]!, /say the word|peek at who/i, "no job-peek for website yc either")
 })

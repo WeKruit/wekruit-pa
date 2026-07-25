@@ -36,6 +36,7 @@ import {
   AI_USAGE_SHARED_KEY,
   type OnboardingCanonicalTagInput,
   type PartialUserTags,
+  YC_MATCH_DELIVERY_WHEN,
 } from "@pa/pa-orchestrator"
 import type { ClaireToolContext } from "../types.js"
 import {
@@ -624,7 +625,7 @@ export function buildProcessTools(
           recorded: field,
           intakeComplete: complete,
           nextAction: complete
-            ? "CLOSE the intake now: tell them you've got what you need and WeKruit will match them with relevant Startup School people from here. Say you'll text them once you find a good match. Warm, one message, no attendee list link, no timing promise, no further questions."
+            ? `CLOSE the intake now: tell them you've got what you need and WeKruit will match them with the right Startup School people. Say their matches land on ${YC_MATCH_DELIVERY_WHEN} and you'll text them right here. Warm, one message, NO attendee list link (there is none to share), no further questions.`
             : field === "building"
               ? "Ask who they'd like to talk to (kind of founders/startups/people) — one short question."
               : "Ask what they're building / working on — one short question.",

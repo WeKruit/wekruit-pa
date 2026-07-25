@@ -155,7 +155,7 @@ export async function runYcSendMatches(
   // making a delivery-time promise.
   const body = [
     "got it — you're in the YC Startup School people-match pool 🤝",
-    "we're lining up folks worth meeting based on what you shared. i'll text you right here once we find you a good match.",
+    "we're lining up folks worth meeting based on what you shared. i'll text you right here as they land.",
     "reply with anyone you'd especially like to meet, or any context that would make an intro more useful.",
   ]
     .join("\n\n")

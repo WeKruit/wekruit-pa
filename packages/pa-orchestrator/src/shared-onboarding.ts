@@ -262,6 +262,19 @@ const HELLO_WEKRUIT_OPENER_RE =
  *  the code clause. Token = the QR scanToken (UUID) → parses as candidateId like
  *  every other QR opener. */
 export const YC_EVENT_OPENER_PREFIX = "Hey! I'm at YC Startup School — my code is"
+
+/**
+ * When the YC Startup School people-matches actually go out (Adam 2026-07-24).
+ *
+ * This is a REAL commitment we keep — the operator send (paAdminYcSendMatches) runs at that hour —
+ * so Claire may state it. #622 stripped both the attendee list AND this timing; the list stays
+ * removed (there is nothing to share), but the timing comes back because it is true and it tells
+ * the attendee when to expect us.
+ *
+ * ONE constant, because the promise was previously hand-written in 8 places and drifted. If the
+ * event time changes, change it here.
+ */
+export const YC_MATCH_DELIVERY_WHEN = "July 25 at 7pm PT"
 const YC_EVENT_OPENER_RE =
   /^(?:hey|hi|hello)?[!,.\s]*i['’]?m at yc startup school[\s,!.…—–-]*(?:this is\s+(?:my\s+)?code(?:\s+is)?|my\s+code\s+is|code(?:\s+is)?)?\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
 /** True when the text is the YC event QR opener. Used by the mode selector to flip an
