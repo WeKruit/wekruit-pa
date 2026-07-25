@@ -27,8 +27,7 @@ describe("session history hygiene — SDK wrapper unwrapping", () => {
     }
   })
 
-  it("keeps the row when the wrapper carries no usable text", () => {
-    const body = '{"messages":[]}'
-    assert.equal(unwrapStructuredOutputRow({ role: "assistant", body }).body, body)
+  it("blanks an empty wrapper so the history filter drops it instead of replaying JSON", () => {
+    assert.equal(unwrapStructuredOutputRow({ role: "assistant", body: '{"messages":[]}' }).body, "")
   })
 })
