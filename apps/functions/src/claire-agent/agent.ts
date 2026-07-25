@@ -37,7 +37,6 @@ import {
   HI_WEKRUIT_OPENER_PREFIX,
   LINKEDIN_DONE_OPENER_PREFIX,
   VERIFICATION_CODE_OPENER_PREFIX,
-  YC_MATCH_DELIVERY_WHEN,
 } from "@pa/pa-orchestrator"
 
 /** Main conversation model (the per-tool LLM judge model is configured separately). */
@@ -1021,8 +1020,11 @@ export async function runClaireTurn(
     // duly asked for it ("Share the list with me"), and Claire had nothing: live, that produced FIVE
     // clarifying questions and an invented promise to email an attachment. Promise DIRECT matching
     // instead, which is what actually happens.
+    // NO TIMING CLAUSE (Adam 2026-07-25): matches are delivered IMMEDIATELY by match_yc_people the
+    // moment the two intake answers land, so the old "your matches land on <date>" promise is now a
+    // lie in the other direction — it would make them wait for something already on its way.
     const framing =
-      `i'll get a quick idea of what you're building and who you want to meet, then match you with the right Startup School people — your matches land on ${YC_MATCH_DELIVERY_WHEN} and i'll text you right here.`
+      "i'll get a quick idea of what you're building and who you want to meet, then match you with the right Startup School people."
     const parts: string[] = [
       "hey!! welcome 🎉 i'm claire — i match startup school folks with founders who are building + hiring.",
       ...(deps.ycEventIntake.offerLinkedin

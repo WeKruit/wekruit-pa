@@ -50,7 +50,6 @@ import {
   validateOnboardingCanonicalTags,
   type OnboardingCanonicalTagInput,
   type PartialUserTags,
-  YC_MATCH_DELIVERY_WHEN,
 } from "@pa/pa-orchestrator"
 import { writeFeedbackEvent } from "@pa/pa-persistence"
 import { mem0Add, type Mem0Config } from "@pa/memory"
@@ -1425,7 +1424,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           recCount: 0,
           jobs: [] as string[],
           reason:
-            `yc_people_hold: this is a YC Startup School PEOPLE-matching user — we match them with founders/investors/operators, NEVER job roles. Tell them warmly their people matches land on ${YC_MATCH_DELIVERY_WHEN} and you will text right here — NEVER list job roles, NEVER pitch openings, NEVER call this tool again this turn.`,
+            "yc_people_hold: this is a YC Startup School PEOPLE-matching user — we match them with founders/investors/operators, NEVER job roles. Tell them warmly you'll text them people worth meeting right here — a first few now, more after. NEVER promise a delivery time, NEVER list job roles, NEVER pitch openings, NEVER call this tool again this turn.",
           snapshotTags,
         }
       }

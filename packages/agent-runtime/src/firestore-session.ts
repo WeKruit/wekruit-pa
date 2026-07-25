@@ -49,6 +49,72 @@ function defaultLog(..._args: unknown[]): void {
 }
 
 /**
+ * The agent's reply is persisted by `addItems` as the SDK's structured-output wrapper — a JSON
+ * string `{"messages":["bubble one","bubble two"]}`. Replaying that verbatim feeds the model its
+ * own serialization format as if it were conversation. Flatten it back to the prose that was
+ * actually sent.
+ *
+ * Returns the row unchanged when it is not a wrapper (cheap guard first, parse only on a candidate,
+ * any parse error → treat as ordinary text).
+ */
+export function unwrapStructuredOutputRow<T extends { role?: string; body?: string }>(row: T): T {
+  // ASSISTANT ONLY. The wrapper is written by `addItems` for the agent's own reply; a USER who
+  // happens to paste JSON is sending us their real message and must never be rewritten.
+  if (row?.role !== "assistant") return row
+  const body = row?.body
+  if (typeof body !== "string") return row
+  const trimmed = body.trim()
+  if (!trimmed.startsWith("{") || !trimmed.includes('"messages"')) return row
+  try {
+    const parsed = JSON.parse(trimmed) as { messages?: unknown }
+    if (!Array.isArray(parsed.messages)) return row
+    const text = parsed.messages
+      .filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+      .join("\n\n")
+      .trim()
+    if (!text) return row
+    return { ...row, body: text }
+  } catch {
+    return row
+  }
+}
+
+/** Normalize for duplicate comparison — the wrapper and the delivered bubble differ in whitespace. */
+function dupeKey(body: string): string {
+  return body.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 160)
+}
+
+/**
+ * Collapse an assistant sentence that appears more than once in the window.
+ *
+ * The same turn lands twice — once via `addItems` (the wrapper, now unwrapped above) and once as
+ * the delivered bubble — so without this the model sees every one of its own replies duplicated.
+ * Measured live 2026-07-25: 49 duplicate assistant rows in a single day.
+ *
+ * Only ASSISTANT rows are collapsed, and only against rows already seen in this window: a user
+ * legitimately repeating themselves ("yes" … "yes") is real signal and must survive.
+ */
+function dedupeAdjacentAssistant<T extends { role?: string; body?: string }>(rows: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const row of rows) {
+    if (row?.role !== "assistant" || typeof row.body !== "string") {
+      out.push(row)
+      continue
+    }
+    const key = dupeKey(row.body)
+    if (!key) {
+      out.push(row)
+      continue
+    }
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(row)
+  }
+  return out
+}
+
+/**
  * Public helper so callers (orchestrator, tests) can produce the same
  * idempotency key the Session uses internally. Set this as the
  * `idempotencyKey` on rows you write directly so the SDK's
@@ -176,8 +242,22 @@ export class FirestoreSession implements Session {
       return meta.cleared !== true && meta.popped !== true
     })
     const sorted = live.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    // HISTORY HYGIENE (Adam 2026-07-25, measured on live data): 18% of today's assistant rows
+    // (52/297) were the SDK's raw structured-output wrapper `{"messages":[...]}`, and 49 rows were
+    // the SAME sentence stored twice — once as that wrapper by addItems, once as the delivered
+    // bubble. The model re-reads all of it every turn, so ~a fifth of its context window was JSON
+    // noise plus duplicates. That is what makes it misjudge WHICH message a short reply is
+    // answering (live: it asked "did you mean OpenComment is your product?" one turn after itself
+    // saying "Founder who shipped OpenComment").
+    //
+    // `isStructuredOutputWrapper` already existed in delivery.ts but was only used to exclude these
+    // rows from the dedup set — never from the history the model actually reads.
+    //
+    // We UNWRAP rather than drop: the wrapper is the only copy when a turn produced text the
+    // delivery layer did not separately persist, so dropping it would lose real conversation.
+    const cleaned = dedupeAdjacentAssistant(sorted.map(unwrapStructuredOutputRow))
     const cap = limit ?? this.historyLimit
-    const tail = cap > 0 ? sorted.slice(-cap) : sorted
+    const tail = cap > 0 ? cleaned.slice(-cap) : cleaned
     const items: AgentInputItem[] = []
     for (const row of tail) {
       const mapped = chatMessageToInputItem(row)

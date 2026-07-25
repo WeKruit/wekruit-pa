@@ -36,7 +36,6 @@ import {
   AI_USAGE_SHARED_KEY,
   type OnboardingCanonicalTagInput,
   type PartialUserTags,
-  YC_MATCH_DELIVERY_WHEN,
 } from "@pa/pa-orchestrator"
 import type { ClaireToolContext } from "../types.js"
 import {
@@ -57,6 +56,53 @@ const CareerStageEnum = z.enum(CAREER_STAGE_VOCAB)
 const VisaEnum = z.enum(VISA_VOCAB)
 const CompanySizeEnum = z.enum(COMPANY_SIZE_VOCAB)
 const HardnessAxisEnum = z.enum(HARDNESS_AXIS_VOCAB)
+
+/**
+ * YC intake echo/filler guard (live 2026-07-24). User zO7RW9ECC7HlWQZxwgwL has
+ * ycIntake.building = "right now": Claire asked "what are you building right now?",
+ * the user later said "Right now" while answering something else, and the model
+ * recorded it — the match query became literally "right now. everyone". The matcher
+ * ranks 988 real attendees off these two strings, so junk in = junk matches.
+ *
+ * WHERE THE LINE SITS — reject only text that carries NO intent at all:
+ *  - vague-but-real scope answers ("Anyone", "Founders", "investors") ARE usable
+ *    intent for "who do you want to meet" and must be ACCEPTED. Vagueness is a
+ *    matcher problem, not a capture problem.
+ *  - filler ("yes", "ok", "idk", "nothing") and fragments echoed back out of the
+ *    question we just asked ("right now", "want to meet") are not answers at all.
+ * So: (1) strip filler tokens — nothing left → reject; (2) a MULTI-word answer that
+ * is a literal fragment of either canonical question → reject. Single words are never
+ * echo-rejected: "founders" is a fragment of the meet question AND a real answer to it.
+ */
+const YC_INTAKE_FILLER_TOKENS = new Set([
+  "a", "am", "an", "and", "any", "are", "at", "be", "but", "cool", "do", "dont", "dunno", "for",
+  "haha", "hey", "hi", "hello", "how", "i", "idk", "if", "im", "in", "is", "it", "its", "just",
+  "know", "lol", "maybe", "me", "my", "na", "nah", "nice", "no", "none", "nope", "not", "nothing",
+  "now", "of", "ok", "okay", "on", "or", "really", "right", "same", "sorry", "so", "sure", "thanks",
+  "thank", "that", "the", "there", "this", "to", "uh", "um", "we", "well", "what", "yea", "yeah",
+  "yep", "yes", "you", "your", "ya",
+])
+
+/** The two questions this lane asks, in the phrasings the prompt uses. */
+const YC_INTAKE_QUESTIONS = [
+  "what are you building right now",
+  "what are you building or working on right now",
+  "what are you working on right now",
+  "who do you want to meet",
+  "who would you like to talk to",
+  "what kind of founders startups or people do you want to meet",
+]
+
+const normalizeYcIntake = (v: string) =>
+  v.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ")
+
+export function isContentlessYcIntakeAnswer(answer: string): boolean {
+  const norm = normalizeYcIntake(answer)
+  if (!norm) return true
+  const words = norm.split(" ")
+  if (words.every((w) => YC_INTAKE_FILLER_TOKENS.has(w))) return true
+  return words.length > 1 && YC_INTAKE_QUESTIONS.some((q) => q.includes(norm))
+}
 
 /** Per-axis hardness/negotiability the agent can attach to a slot answer. */
 const HardnessEntryParam = z.object({
@@ -601,6 +647,16 @@ export function buildProcessTools(
             "That text is their greeting/opener, not an answer. Ask the question conversationally and record what they actually say.",
         }
       }
+      // Live 2026-07-24: "right now" got stored as ycIntake.building — an echo of our own
+      // question, not an answer. See isContentlessYcIntakeAnswer for where the line sits.
+      if (isContentlessYcIntakeAnswer(text)) {
+        return {
+          ok: false,
+          error: "contentless_answer",
+          nextAction:
+            "That's filler or an echo of the question you just asked, not an answer — do NOT record it. Ask the question again naturally in your own words (react to what they did say first, don't repeat yourself verbatim), and record only what they actually tell you.",
+        }
+      }
       if (!ctx.db || !ctx.userId) return { ok: false, error: "no_user_context" }
       const nowIso = new Date().toISOString()
       try {
@@ -625,7 +681,7 @@ export function buildProcessTools(
           recorded: field,
           intakeComplete: complete,
           nextAction: complete
-            ? `CLOSE the intake now: tell them you've got what you need and WeKruit will match them with the right Startup School people. Say their matches land on ${YC_MATCH_DELIVERY_WHEN} and you'll text them right here. Warm, one message, NO attendee list link (there is none to share), no further questions.`
+            ? "MATCH THEM NOW: the intake is complete, so call match_yc_people immediately (no arguments needed — it uses what they just told you). It delivers the people itself. Do NOT promise a time, do NOT ask another question, do NOT mention an attendee list (there is none)."
             : field === "building"
               ? "Ask who they'd like to talk to (kind of founders/startups/people) — one short question."
               : "Ask what they're building / working on — one short question.",

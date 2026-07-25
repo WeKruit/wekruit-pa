@@ -316,7 +316,7 @@ function ycUserDbStub(userDoc: Record<string, unknown>): unknown {
   }
 }
 
-test("YC event entrant BEFORE the operator send: find_match holds (no matcher call, July 25 7pm reason)", async () => {
+test("YC event entrant BEFORE the operator send: find_match holds (no matcher call, people-match reason)", async () => {
   let matcherCalled = false
   const { ctx, sent } = recordingCtx(async () => {
     matcherCalled = true
@@ -325,7 +325,8 @@ test("YC event entrant BEFORE the operator send: find_match holds (no matcher ca
   ;(ctx as { db: unknown }).db = ycUserDbStub({ firstTouchCampaign: "yc-startup-school", source: "yc_startup_school" })
   const out = await run(ctx)
   assert.equal(out.ok, false)
-  assert.match(String(out.reason), /July 25 at 7pm PT/i)
+  assert.match(String(out.reason), /people worth meeting right here/i)
+  assert.doesNotMatch(String(out.reason), /July 25 at 7pm PT/i, "no timing promise (Adam 2026-07-25)")
   assert.doesNotMatch(String(out.reason), /docs\.google\.com/i)
   assert.equal(matcherCalled, false, "matcher must NOT run before the operator send")
   assert.equal(sent.length, 0, "no role bubbles delivered")

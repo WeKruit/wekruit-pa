@@ -1,0 +1,249 @@
+/**
+ * tools/yc-people-tools.ts — the YC lane's ONE matching tool.
+ *
+ * `runYcPeopleMatch` (src/yc-people-match.ts) already does the matching; this file is only the
+ * agent seam: tool params → filters, and DETERMINISTIC delivery of the results as one-person-per-
+ * bubble texts (same shape as `deliverRecBubbles` in matching-tools.ts, for the same reason — the
+ * model reliably crams multiple people into one bubble and drops the LinkedIn URLs).
+ *
+ * Built ONLY when `ycPeopleMode` is on (tools/index.ts). Every other lane never sees it.
+ */
+import { tool, z } from "../sdk.js"
+import { INDUSTRY_SECTOR_VOCAB, ROLE_FUNCTION_VOCAB } from "@wekruit/shared-tags"
+import { cosineSimilarity } from "@pa/job-rec"
+import type { Firestore } from "firebase-admin/firestore"
+import { FieldValue } from "firebase-admin/firestore"
+import type { ClaireToolContext } from "../types.js"
+import {
+  runYcPeopleMatch,
+  YC_COHORT_2026,
+  type YcPeopleMatchFilters,
+  type YcPeopleMatchOutput,
+} from "../../yc-people-match.js"
+import { defaultEmbeddingClient } from "../../lib/embeddings.js"
+
+// Rebuild the closed enums on the SDK's zod@4 instance (shared-tags' schemas are zod@3 — see the
+// same note in matching-tools.ts). The VOCAB arrays are plain strings, instance-agnostic.
+const IndustrySectorEnum = z.enum(INDUSTRY_SECTOR_VOCAB)
+const RoleFunctionEnum = z.enum(ROLE_FUNCTION_VOCAB)
+
+/** Field on pa-users holding recordIds we already sent, so "show me more" never repeats a face. */
+const SENT_FIELD = "ycPeopleMatchSent"
+
+/** text → 1536-d, via the same OpenAI client the CV embed path uses. Never throws. */
+async function embedText(text: string): Promise<number[] | null> {
+  try {
+    const client = await defaultEmbeddingClient()
+    if (!client) return null
+    const resp = await client.embeddings.create({
+      model: "text-embedding-3-small",
+      input: text.slice(0, 8000),
+    })
+    const vec = resp.data?.[0]?.embedding
+    return Array.isArray(vec) && vec.length > 0 ? vec : null
+  } catch {
+    return null
+  }
+}
+
+async function loadAlreadySent(db: Firestore, userId: string): Promise<Set<string>> {
+  try {
+    const snap = await db.collection("pa-users").doc(userId).get()
+    const xs = (snap.data() ?? {})[SENT_FIELD]
+    return new Set(Array.isArray(xs) ? xs.filter((x): x is string => typeof x === "string") : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/**
+ * Intro line. HONESTY RULE (Adam): when the matcher had to widen a narrow facet ask it says so —
+ * we never silently substitute someone who does not actually match what they asked for.
+ */
+export function buildPeopleIntro(out: YcPeopleMatchOutput): string {
+  if (!out.didRelax) return "found a few Startup School people worth meeting 👇"
+  if (out.facetMatched === 0) {
+    return "nobody here matches that exactly — but these are the closest on what you're building 👇"
+  }
+  const n = out.facetMatched
+  return n === 1
+    ? "only 1 person here matches that exactly — that's the first one, and the rest are close on what you're building 👇"
+    : `only ${n} people here match that exactly — those come first, and the rest are close on what you're building 👇`
+}
+
+/** ONE person per bubble: name — title @ company / why / linkedin. No markdown (iMessage is literal). */
+export function buildPersonBubble(r: YcPeopleMatchOutput["results"][number]): string {
+  const head = [r.title, r.company].filter(Boolean).join(" @ ")
+  const lines: string[] = [[r.name ?? "someone worth meeting", head].filter(Boolean).join(" — ")]
+  // `explainMatch` falls back to "title @ company" — don't echo the header back at them.
+  if (r.reason && r.reason !== head) lines.push(r.reason)
+  if (r.linkedinUrl) lines.push(r.linkedinUrl)
+  return lines.join("\n")
+}
+
+/**
+ * Deliver the people as separate bubbles, paced at the EMIT seam so the outbox's concurrent
+ * consumers get an unambiguous arrival order. `paced:true` is REQUIRED — without it the outbox
+ * applies its own length-scaled dwell and the long bubbles land out of order.
+ */
+async function deliverPeopleBubbles(
+  ctx: ClaireToolContext,
+  out: YcPeopleMatchOutput,
+): Promise<boolean> {
+  let seq = 0
+  const stagger = async (): Promise<void> => {
+    if (seq === 0) return
+    await ctx.transport.typing().catch(() => {})
+    await new Promise((r) => setTimeout(r, 900 + Math.floor(Math.random() * 300)))
+  }
+  let sent = 0
+  try {
+    await ctx.transport.sendText(buildPeopleIntro(out), { seq: seq++, paced: true })
+    for (const r of out.results) {
+      await stagger()
+      await ctx.transport.sendText(buildPersonBubble(r), { seq: seq++, paced: true })
+      sent++
+    }
+    await stagger()
+    await ctx.transport.sendText(
+      "more land here as the pool fills — tell me who you'd want next and i'll aim at that.",
+      { seq: seq++, paced: true },
+    )
+    ctx.log("pa.claire.match_yc_people.delivered", {
+      userId: ctx.userId,
+      people: out.results.length,
+      didRelax: out.didRelax,
+    })
+    return true
+  } catch (e) {
+    // Partial: ≥1 person already on the candidate's screen → still report delivered so the agent
+    // doesn't re-narrate the same people. Nothing sent → the agent speaks instead of a dead turn.
+    ctx.log("pa.claire.match_yc_people.deliver_failed", {
+      userId: ctx.userId,
+      sent,
+      err: e instanceof Error ? e.message : String(e),
+    })
+    return sent > 0
+  }
+}
+
+export function buildYcPeopleTools(ctx: ClaireToolContext) {
+  const matchYcPeople = tool({
+    name: "match_yc_people",
+    description:
+      "Match this YC Startup School attendee with OTHER attendees worth meeting AND deliver them. " +
+      "Call it the moment their intake is complete, and any time they ask who they should meet / for more people / " +
+      "for a different kind of person. " +
+      "HOW TO SPLIT THEIR ASK: a DOMAIN word ('fintech', 'healthcare', 'AI') → industrySector using the canonical " +
+      "vocab (fintech → financial_technology); a CAPABILITY or tech ('ML', 'RL', 'SWE', 'design', 'go-to-market') → " +
+      "put it in QUERY, not skills — the semantic stage resolves abbreviations and synonyms on its own (measured: " +
+      "query='SWE' returns actual SWE interns; the skills facet returns 4 wrong people, because it is a literal " +
+      "token filter over a noisy field). Use `skills` ONLY when they name a precise technology you want to HARD-filter " +
+      "on and are willing to get fewer results ('only people who actually write Rust'); a " +
+      "NAMED school or employer they say out loud ('Berkeley', 'ex-Stripe') → schools / companies; a relationship to " +
+      "THEMSELVES ('people from my school', 'anyone who worked where I worked', 'same major') → the matching " +
+      "sameSchool / sameCompany / sameMajor boolean — NEVER guess their school or employer name, the tool resolves " +
+      "it from their own profile server-side; anything else, or a vibe ('people building something like mine') → query. " +
+      "AMBIGUOUS SHORTHAND — ASK, DON'T GUESS: if their ask hinges on an abbreviation that could mean " +
+      "more than one thing in this crowd ('RL' = reinforcement learning or real life? 'PM' = product or " +
+      "project manager? 'CV' = computer vision or a résumé?), do NOT call this tool on a guess. Ask ONE " +
+      "short confirming question ('RL as in reinforcement learning?'), then call it with the resolved " +
+      "wording in query. A wrong guess costs them five irrelevant people; one question costs a second. " +
+      "Unambiguous shorthand ('SWE', 'ML', 'YC') needs no question — just put it in query. " +
+      "Empty call (everything null) = default match from what they already told you they're building and who they want to meet. " +
+      "CRITICAL: when it returns delivered:true the people bubbles have ALREADY been sent as separate messages — you " +
+      "MUST then reply with an EMPTY message list (any text duplicates them). Only when delivered:false do you speak.",
+    parameters: z.object({
+      query: z.string().nullable(),
+      skills: z.array(z.string()).nullable(),
+      industrySector: z.array(IndustrySectorEnum).nullable(),
+      roleFunction: z.array(RoleFunctionEnum).nullable(),
+      companies: z.array(z.string()).nullable(),
+      schools: z.array(z.string()).nullable(),
+      major: z.array(z.string()).nullable(),
+      location: z.array(z.string()).nullable(),
+      sameSchool: z.boolean().nullable(),
+      sameCompany: z.boolean().nullable(),
+      sameMajor: z.boolean().nullable(),
+      limit: z.number().int().min(1).max(10).nullable(),
+    }),
+    async execute(args) {
+      const filters: YcPeopleMatchFilters = {
+        ...(args.query ? { query: args.query } : {}),
+        ...(args.skills?.length ? { skills: args.skills } : {}),
+        ...(args.industrySector?.length ? { industrySector: args.industrySector } : {}),
+        ...(args.roleFunction?.length ? { roleFunction: args.roleFunction } : {}),
+        ...(args.companies?.length ? { companies: args.companies } : {}),
+        ...(args.schools?.length ? { schools: args.schools } : {}),
+        ...(args.major?.length ? { major: args.major } : {}),
+        ...(args.location?.length ? { location: args.location } : {}),
+        ...(args.sameSchool ? { sameSchool: true } : {}),
+        ...(args.sameCompany ? { sameCompany: true } : {}),
+        ...(args.sameMajor ? { sameMajor: true } : {}),
+      }
+      let out: YcPeopleMatchOutput
+      try {
+        out = await runYcPeopleMatch(
+          { userId: ctx.userId, limit: args.limit ?? 5, filters },
+          {
+            db: ctx.db,
+            embed: embedText,
+            cosine: cosineSimilarity,
+            loadAlreadySent: (db, userId) => loadAlreadySent(db, userId),
+            log: ctx.log,
+          },
+        )
+      } catch (e) {
+        ctx.log("pa.claire.match_yc_people.failed", {
+          userId: ctx.userId,
+          err: e instanceof Error ? e.message : String(e),
+        })
+        return { ok: false, delivered: false, count: 0, reason: "matcher_error" }
+      }
+      if (out.results.length === 0) {
+        return {
+          ok: false,
+          delivered: false,
+          count: 0,
+          reason: out.reason ?? "no_results",
+          nextAction:
+            "No people to send. Say warmly that you're still lining up the right person for them and you'll text right here as soon as you have one. Do NOT invent names, do NOT mention job roles.",
+        }
+      }
+      const delivered = await deliverPeopleBubbles(ctx, out)
+      if (delivered) {
+        // Remember the faces so a later "more" pulls fresh ones. Fail-open.
+        try {
+          await ctx.db
+            .collection("pa-users")
+            .doc(ctx.userId)
+            .set(
+              {
+                [SENT_FIELD]: FieldValue.arrayUnion(...out.results.map((r) => r.recordId)),
+                ycPeopleMatchLastAt: ctx.nowIso(),
+              },
+              { merge: true },
+            )
+        } catch {
+          /* fail-open — a bookkeeping miss must never break the turn */
+        }
+      }
+      return {
+        ok: true,
+        delivered,
+        count: out.results.length,
+        facetMatched: out.facetMatched,
+        didRelax: out.didRelax,
+        cohort: YC_COHORT_2026,
+        ...(delivered
+          ? {}
+          : {
+              people: out.results.map((r) => buildPersonBubble(r)),
+              nextAction: "Delivery failed — send these people yourself, ONE person per message.",
+            }),
+      }
+    },
+  })
+
+  return [matchYcPeople]
+}
