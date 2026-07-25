@@ -963,7 +963,24 @@ export async function runYcPeopleMatch(
   // Sparse-result rule: never silently substitute. We keep the facet hits FIRST and mark anything
   // from the widened pool `relaxed`, so Claire can say "only 2 from your school — these are close".
   const didRelax = anyFacetSet && faceted.length < MIN_FACET_RESULTS
-  const ranked = didRelax ? [...faceted, ...fresh.filter((m) => !faceted.includes(m))] : faceted
+  // WIDEN THE CIRCUMSTANCES, NEVER THE PERSON (Adam 2026-07-25: "this person ask for investor why we
+  // keep sending wrong match???"). Relaxing used to drop EVERY facet, so an under-filled ask like
+  // `personType:[investor] + location:[nyc]` fell back to the whole 1159-person cohort and padded the
+  // list with founders — the exact card a user then screenshots with "none of these people are
+  // investors tho". A school, a company or a city is a CIRCUMSTANCE and widening it still answers the
+  // question loosely; WHO SOMEONE IS is the question itself, and a non-investor in an investor ask is
+  // not a loose answer, it is a wrong one. So the widened pool still has to clear `personType`
+  // (passing only that facet — every other one is unset, therefore a pass). When the user named no
+  // person-type this is a no-op and relax behaves exactly as before.
+  const ranked =
+    didRelax ?
+      [
+        ...faceted,
+        ...fresh.filter(
+          (m) => !faceted.includes(m) && passesFacets(m, { personType: f.personType }, asker),
+        ),
+      ]
+    : faceted
   const facetMatched = faceted.length
 
   // 4. Semantic stage — rank inside whatever survived.
@@ -1106,7 +1123,13 @@ export async function runYcPeopleMatch(
   // can be honest ("nobody here matches that exactly — but these are the closest on what you're
   // building"). The alternative, staying silent, passes robotics engineers off as opera singers.
   let askMissed = false
-  if (ask && !useProfile && scored.length > 0) {
+  // A FACET THAT MATCHED PEOPLE HAS ALREADY ANSWERED THE ASK, so do not then tell the person nobody
+  // matches. This gate is a cosine test on the ask text, and "investors" cosines weakly against every
+  // VC profile in the pool (0.28-0.44 measured) — enough to trip it while 21 verified investors sit
+  // in `faceted`. Firing here would put "nobody here matches that exactly" on top of a list of
+  // exactly the right people, which is a worse lie than the one this flag exists to prevent.
+  const facetAnsweredIt = Boolean(f.personType?.length) && facetMatched > 0
+  if (ask && !useProfile && !facetAnsweredIt && scored.length > 0) {
     // The ask's OWN best hit. No second embed when the ask already IS the whole query (an asker with
     // no `building` line on file) — `topScore` measured exactly that, on exactly these vectors.
     let best = topScore
@@ -1163,8 +1186,26 @@ export async function runYcPeopleMatch(
   // that one is measured BEFORE the profile-recovery rescore, so it can describe a ranking we threw
   // away.
   const bestScore = scored[0]?.score ?? 0
+  // A PERSON-TYPE FACET HIT IS A CATEGORICAL MATCH, NOT A DEGREE OF ONE — the floors do not apply to
+  // it (Adam 2026-07-25: "I just want u to give me as many investors as u can", and separately
+  // "可以是3-5个"). The floors are cosine tests, and cosine on an investor ask measures DOMAIN overlap
+  // between the asker's startup and the investor's thesis prose — not whether the person invests.
+  // Measured on the live 1159-pool over four real investor asks: 21 people whose PRIMARY type is
+  // `investor` cleared the facet, and the absolute floor then cut every one of those lists to a
+  // SINGLE person, because a VC's profile simply does not cosine-match "DJ transition graphs" or
+  // "digital accessibility compliance". One card in answer to "as many investors as u can" reads as
+  // us having nobody, when we had twenty-one.
+  //
+  // The floors still guard everything they were built for. `relaxed` rows — the widened filler — face
+  // them unchanged, so an under-filled ask cannot pad itself with confident-looking noise. And the
+  // facet exemption cannot manufacture a match: it only ever admits people the closed-vocab facet
+  // ALREADY verified are the kind of person that was asked for. Cosine still orders them, so the best
+  // domain fit is still card #1; it just stops being a veto over a question it cannot answer.
+  const facetIsTheAnswer = Boolean(f.personType?.length)
   const strong = scored.filter(
-    (s) => s.score >= bestScore * RELATIVE_FLOOR && s.score >= ABSOLUTE_FLOOR,
+    (s) =>
+      (facetIsTheAnswer && !s.relaxed) ||
+      (s.score >= bestScore * RELATIVE_FLOOR && s.score >= ABSOLUTE_FLOOR),
   )
   // Below the floor we still show up to MIN_RESULTS — three plausible people are worth the walk
   // across the room, and `didRelax`/the intro line keep us honest about what they are.

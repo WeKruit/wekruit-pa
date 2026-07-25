@@ -190,6 +190,16 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       "investing; it cannot tell that a person IS an investor — measured live, 'angels and investors pls' " +
       "returned an IBM UX designer and two software engineers. Use the facet and they come back right. " +
       "Combine freely: 'fintech investors' = personType:[investor] + industrySector:[financial_technology]. " +
+      "PUT IN `personType` ONLY THE KINDS THEY ACTUALLY NAMED — AT MOST TWO. Listing more kinds does not " +
+      "broaden the search, it DELETES it: the facet is an OR, so every extra kind admits hundreds more " +
+      "people, and naming most of the vocabulary matches the entire cohort and filters nothing at all. " +
+      "Measured live 2026-07-25 — 'Interested in investors and mentors' arrived as personType with ELEVEN " +
+      "kinds and 'Founders and builders in the robotics space' with THIRTEEN, and both users got the same " +
+      "generic founders they would have got with no facet at all, because an all-of-vocab facet IS no facet. " +
+      "'investors' → [investor], full stop. 'founders and investors' → [founder,investor]. A vague or " +
+      "everyone-ish ask ('anyone', 'a bit of everything', 'all of those', 'not picky') → personType NULL: " +
+      "null means rank the whole pool on what they're building, which is what they asked for. NEVER pad the " +
+      "list with kinds they did not say, and never add a kind just because it seems adjacent. " +
       "HOW TO SPLIT THEIR ASK: a DOMAIN word ('fintech', 'healthcare', 'AI') → industrySector using the canonical " +
       "vocab (fintech → financial_technology); a CAPABILITY or tech ('ML', 'RL', 'SWE', 'design', 'go-to-market') → " +
       "put it in QUERY, not skills — the semantic stage resolves abbreviations and synonyms on its own (measured: " +
