@@ -8,12 +8,15 @@
 #
 # Cost: ~3 min per run on GitHub-hosted Ubuntu. Free for public repos and
 # included in the team plan for private.
+#
+# 2026-07-25 trigger trim: PR-only. A PR run already tests the merge of head
+# into main, so the push-on-main run re-tested an identical tree ~3 min later
+# and doubled this workflow's runs for zero extra signal. Same checks locally:
+# `pnpm -r build && pnpm -r typecheck && pnpm -r test`.
 
 name: test
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:

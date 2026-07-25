@@ -107,7 +107,14 @@ cheap to maintain and review. To grow it:
 
 ## CI
 
-`.github/workflows/ranking-eval.yml` runs this as a **non-blocking,
-informational** job (mirroring `eval.yml` style) on PRs touching matcher /
-eval code, nightly, and on demand. It uploads the JSON report as an artifact.
-It is intentionally not a required merge check.
+None — run it locally. `.github/workflows/ranking-eval.yml` was deleted
+2026-07-25: it carried `continue-on-error: true`, so it reported success on
+every run by construction and could never surface a ranking regression.
+
+This eval is $0 and fully deterministic (no LLM, no network), so run it
+directly when you touch a matcher:
+
+```bash
+pnpm eval:ranking          # --strict, exits 1 on threshold violation
+pnpm eval:ranking:report   # human report, never exits non-zero
+```
