@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { callWithFallback } from "@pa/pa-resume-parser"
-import { YC_COHORT_2026, type BusinessDescriptor } from "../src/yc-people-match.js"
+import { PERSON_TYPE_VOCAB, YC_COHORT_2026, type BusinessDescriptor } from "../src/yc-people-match.js"
 
 const require = createRequire(`${process.cwd()}/apps/functions/`)
 const admin = require("firebase-admin")

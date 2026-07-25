@@ -80,6 +80,17 @@ export async function paSendblueOutboxRetrySweepHandler(
     return { scanned: candidates.length, reprocessed: 0 }
   }
 
+  // Oldest first. The query has no orderBy, so Firestore returns by doc key —
+  // effectively random. That could put a multi-bubble burst's seq=5 in an
+  // EARLIER chunk than its seq=0, and the handler's order gate would then sit
+  // out its full 20s escape hatch waiting for a predecessor this very sweep has
+  // not reached yet. ISO `createdAt` sorts lexicographically = chronologically.
+  orphans.sort((a, b) =>
+    String((a.data as { createdAt?: unknown }).createdAt ?? "").localeCompare(
+      String((b.data as { createdAt?: unknown }).createdAt ?? "")
+    )
+  )
+
   log("[sendblue][retry-sweep] found orphans", {
     scanned: candidates.length,
     orphans: orphans.length,

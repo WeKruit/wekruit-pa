@@ -1,5 +1,7 @@
 /**
- * Compute + store the people-match embedding for an enriched cohort.
+ * Compute + store the people-match embeddings for an enriched cohort — TWO per record:
+ * `matchEmbedding` (full profile projection) and `descriptorEmbedding` (the business descriptor
+ * alone). The matcher scores a query against both and keeps the better (see `runYcPeopleMatch`).
  *
  * Uses `synthesizePeopleMatchText` (the people projection, NOT the job-matching
  * `synthesizeCvSummaryText`) and the same `text-embedding-3-small` model the rest of the platform
@@ -14,7 +16,12 @@
  */
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
-import { toPoolMember, YC_COHORT_2026 } from "../src/yc-people-match.js"
+import {
+  descriptorText,
+  toPoolMember,
+  YC_COHORT_2026,
+  type BusinessDescriptor,
+} from "../src/yc-people-match.js"
 
 const require = createRequire("/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/serene-diffie-15b15a/apps/functions/")
 const admin = require("firebase-admin")
@@ -40,19 +47,31 @@ async function main() {
   const client = new OpenAI({ apiKey })
 
   const snap = await db.collection("pa-external-candidate-records").where("enrichment.cohort", "==", cohort).get()
-  type Row = { id: string; text: string }
+  // TWO vectors per record: the full profile projection, and the business descriptor ALONE. Same
+  // queue, same batching — only the destination field differs (see the matcher's max() scoring).
+  type Row = { id: string; field: "matchEmbedding" | "descriptorEmbedding"; text: string }
   const todo: Row[] = []
   let enriched = 0
   for (const doc of snap.docs) {
     const d = doc.data() as Record<string, unknown>
     if (d.coresignalMatch !== "ok") continue
     enriched++
-    if (!refresh && Array.isArray(d.matchEmbedding) && d.matchEmbedding.length > 0) continue
     const m = toPoolMember(doc.id, d)
     if (m.matchText.length < 20) continue
-    todo.push({ id: doc.id, text: m.matchText })
+    if (refresh || !(Array.isArray(d.matchEmbedding) && d.matchEmbedding.length > 0)) {
+      todo.push({ id: doc.id, field: "matchEmbedding", text: m.matchText })
+    }
+    // ~10 of 992 records have no descriptor; they simply get no second vector and rank on the
+    // profile vector alone.
+    const dText = descriptorText((d.businessDescriptor ?? null) as BusinessDescriptor | null)
+    if (dText.length >= 20 && (refresh || !(Array.isArray(d.descriptorEmbedding) && d.descriptorEmbedding.length > 0))) {
+      todo.push({ id: doc.id, field: "descriptorEmbedding", text: dText })
+    }
   }
-  console.log(`[yc-embed] cohort=${cohort} records=${snap.size} enriched=${enriched} needEmbedding=${todo.length}`)
+  const nDesc = todo.filter((r) => r.field === "descriptorEmbedding").length
+  console.log(
+    `[yc-embed] cohort=${cohort} records=${snap.size} enriched=${enriched} needEmbedding=${todo.length} (profile=${todo.length - nDesc} descriptor=${nDesc})`,
+  )
   if (!apply) { console.log("[yc-embed] DRY RUN — pass --apply"); return }
 
   let done = 0
@@ -63,9 +82,13 @@ async function main() {
     for (let k = 0; k < res.data.length; k += WRITE_CHUNK) {
       const wb = db.batch()
       res.data.slice(k, k + WRITE_CHUNK).forEach((e: { embedding: number[] }, j: number) => {
+        const row = slice[k + j]!
+        const at = new Date().toISOString()
         wb.set(
-          db.collection("pa-external-candidate-records").doc(slice[k + j]!.id),
-          { matchEmbedding: e.embedding, matchEmbeddingModel: MODEL, matchEmbeddedAt: new Date().toISOString() },
+          db.collection("pa-external-candidate-records").doc(row.id),
+          row.field === "matchEmbedding"
+            ? { matchEmbedding: e.embedding, matchEmbeddingModel: MODEL, matchEmbeddedAt: at }
+            : { descriptorEmbedding: e.embedding, descriptorEmbeddedAt: at },
           { merge: true },
         )
       })

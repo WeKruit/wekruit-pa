@@ -43,7 +43,22 @@ export interface PeoplePoolMember {
   skills: string[]
   /** Text used for the semantic stage. */
   matchText: string
+  /** Index-time "what their company actually builds" — the honest why-line when no facet is set. */
+  whatTheyBuild: string | null
   embedding?: number[] | null
+  /**
+   * Second vector: the `businessDescriptor` ALONE (see `descriptorText`). Optional — ~10 of 992
+   * records have no descriptor, and those still rank on `embedding` alone.
+   */
+  descriptorEmbedding?: number[] | null
+  /** How many DISTINCT users have already been shown this person (see `EXPOSURE_FIELD`). */
+  exposureCount: number
+  /** `PERSON_TYPE_VOCAB` — what KIND of person, index-time. Empty when undescribed. */
+  personType: string[]
+  /** `COMPANY_STAGE_VOCAB` value for their current company, or "unknown". See `inferCompanyStage`. */
+  companyStage: string
+  /** Where `companyStage` came from — "company_size" means we guessed it from headcount. */
+  companyStageSource: CompanyStageSource
   /** "Likely Match" | "First Result" | "Needs Review" | … — the sheet's own confidence. */
   matchStatus: string | null
 }
@@ -59,6 +74,17 @@ export interface YcPeopleMatchFilters {
   schools?: string[]
   major?: string[]
   location?: string[]
+  /**
+   * `PERSON_TYPE_VOCAB` — "investors", "founders", "operators", "students". OR-ed within the facet.
+   * A facet, not a semantic hint, because a title is a job and not a kind of person.
+   */
+  personType?: string[]
+  /**
+   * `COMPANY_STAGE_VOCAB` — "startup series B 左右的". OR-ed within the facet, matched EXACTLY
+   * against `inferCompanyStage`, so an ask nobody satisfies returns ~nothing and trips the relax
+   * path rather than manufacturing confident-looking wrong people.
+   */
+  fundingStage?: string[]
   /** Relational — resolved from the ASKER's own profile, never guessed by the model. */
   sameSchool?: boolean
   sameCompany?: boolean
@@ -75,6 +101,13 @@ export interface YcPeopleMatchResult {
   score: number
   /** Human-readable "why" naming WHICH signal matched. */
   reason: string
+  /**
+   * What they actually build — the index-time `businessDescriptor.whatTheyBuild`, first sentence.
+   * SEPARATE from `reason` on purpose: a facet ask makes `reason` the facet ("also went to
+   * Berkeley"), which says nothing about the person. Adam 2026-07-25: every card carries a bit of
+   * the enrichment we already paid for. Null when the record has no descriptor (~10 of 992).
+   */
+  summary: string | null
   /** True when the facet filter yielded too few and this row came from the widened pool. */
   relaxed: boolean
   matchStatus: string | null
@@ -109,11 +142,114 @@ export interface BusinessDescriptor {
   domain: string[]
   /** One sentence: product category + who buys it. */
   whatTheyBuild: string
+  /**
+   * WHAT KIND OF PERSON this is — `PERSON_TYPE_VOCAB`, multi-pick. Also nano-derived.
+   *
+   * This is the single most common ask at the event and semantics answered it only by luck of
+   * wording. Measured 2026-07-25 over the real cohort: "investors, VCs, angel investors" ranked
+   * actual investors (Hico Ventures, pebblebed) because those companies have the word "Ventures"
+   * in them; "operators at startups" returned a YC Fellow and an a16z design fellow, and
+   * "senior mentors or advisors" returned a CS tutor and a research intern. A title is a job, not
+   * a kind of person — so the kind gets materialised here and filtered as a FACET.
+   */
+  personType?: string[]
   generatedAt?: string
 }
 
-/** Flatten a descriptor into embeddable prose. Empty string when absent. */
-function descriptorText(b: BusinessDescriptor | null | undefined): string {
+/**
+ * The kinds of person people actually ask for at Startup School. Grounded, not invented: every
+ * value below appears verbatim in a real `ycIntake.wantsToMeet` answer or an inbound text read on
+ * 2026-07-25 — "consumer founders and investors", "infra founders and anyone doing dev tools",
+ * "operators who need to face them directly", "creatives", "people who run fellowships",
+ * "someone who would be willing to mentor me", "Finding cofounder / Product side".
+ *
+ * Multi-pick: a founder is usually also an engineer, and both are true.
+ */
+export const PERSON_TYPE_VOCAB = [
+  "founder",
+  "investor",
+  /** Runs a fellowship / accelerator / community / event programme (YC staff, Cansbridge, ASES). */
+  "program_operator",
+  "engineer",
+  "researcher",
+  "product",
+  "designer",
+  /** Non-founder, non-engineer at an operating company — GTM, bizops, ops, sales. */
+  "operator",
+  "executive",
+  "recruiter",
+  /** Still in school (or an internship as their current role). */
+  "student",
+] as const
+
+/**
+ * How confident the `companyStage` value is. Load-bearing for honesty: Adam 2026-07-25,
+ * "查不到就不要硬匹配，给用户说咱们这个确实少" — a stage we GUESSED from headcount must not be
+ * presented like a funding round we looked up.
+ */
+export type CompanyStageSource = "library" | "yc_batch" | "stealth" | "company_size" | "unknown"
+
+/**
+ * Funding stage for an attendee's CURRENT company.
+ *
+ * WHY NOT THE COMPANY LIBRARY: `pa-companies` was accumulated from JOB POSTINGS, so it knows
+ * mature employers. Against this cohort it resolves 137 of 937 (15%) — 83 `ipo_public`,
+ * 26 `series_d_plus`, 9 `private_mature`, and exactly ONE `series_b`. Startup School people are
+ * overwhelmingly at their own just-founded company (dossierai.org, Operon, Coasty), which no
+ * job-board-derived library will ever contain. So the library is kept as an exact override where
+ * it exists and everything else is inferred.
+ *
+ * WHAT WE INFER FROM: Coresignal already hands us `companySizeRange` on the current role for
+ * 809 of 992 records (82%) — six times the library's reach, free, no LLM. Headcount is NOT funding
+ * stage, and this function does not pretend otherwise; it returns the single most likely stage and
+ * a `source` saying it came from headcount, and `unknown` (never a guess) when there is no signal.
+ * A `fundingStage` facet matches this value EXACTLY, so a stage nobody in the room is at yields
+ * ~nothing and trips the existing relax/honesty path instead of manufacturing five confident hits.
+ *
+ * The YC batch tag beats headcount: "(YC S26)" in a title is a direct statement of stage, and
+ * those companies are usually too new for Coresignal to have sized at all.
+ */
+export function inferCompanyStage(p: {
+  currentTitle?: string | null
+  currentCompany?: string | null
+  /** Coresignal experience rows — `companySizeRange` is read off the current role. */
+  experience?: Array<{ currentRole?: unknown; companySizeRange?: unknown }>
+  /** `pa-companies.companyStage`, when the company is in the library. Wins outright. */
+  libraryStage?: string | null
+}): { stage: string; source: CompanyStageSource } {
+  const lib = String(p.libraryStage ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_")
+  if (lib && lib !== "unknown") return { stage: lib, source: "library" }
+
+  const titleAndCompany = `${p.currentTitle ?? ""} ${p.currentCompany ?? ""}`
+  // "(YC S26)", "YC W24", "(YC F25)" — a batch tag names the stage better than headcount does.
+  if (/\(?\byc\s*[swf]\d{2}\b\)?/i.test(titleAndCompany)) return { stage: "seed", source: "yc_batch" }
+  if (/\bstealth\b/i.test(titleAndCompany)) return { stage: "pre_seed", source: "stealth" }
+
+  const exp = p.experience ?? []
+  const cur = exp.find((e) => e?.currentRole === true) ?? exp[0]
+  const size = String(cur?.companySizeRange ?? "")
+  // Single most likely stage per headcount band. Deliberately NOT a range: a band would match
+  // every stage query and never trip the honesty path.
+  const stage =
+    /^myself only/i.test(size) ? "pre_seed"
+    : /^1-10\b/.test(size) ? "seed"
+    : /^11-50\b/.test(size) ? "series_a"
+    : /^51-200\b/.test(size) ? "series_b"
+    : /^201-500\b/.test(size) ? "series_c"
+    : /^501-1000\b/.test(size) ? "series_d_plus"
+    : /^1001-5000\b/.test(size) ? "series_d_plus"
+    : /^5001-10,?000\b/.test(size) ? "ipo_public"
+    : /^10,?001\+/.test(size) ? "ipo_public"
+    : ""
+  return stage ? { stage, source: "company_size" } : { stage: "unknown", source: "unknown" }
+}
+
+/**
+ * Flatten a descriptor into embeddable prose. Empty string when absent.
+ * Also the exact text of the SECOND, descriptor-only vector (`descriptorEmbedding`) —
+ * `scripts/embed-yc-attendees.ts` embeds this string verbatim.
+ */
+export function descriptorText(b: BusinessDescriptor | null | undefined): string {
   if (!b) return ""
   const parts = [
     (b.businessModel ?? []).map((x) => x.replace(/_/g, " ")).join(", "),
@@ -131,9 +267,17 @@ function descriptorText(b: BusinessDescriptor | null | undefined): string {
  * head takes it to 0.88 (measured over the 988-person cohort, 2026-07-25) — the abstraction has to
  * hold real mass in a mean-pooled vector or the profile prose drowns it.
  *
- * ponytail: crude term weighting. If this ever needs to be finer, the measured next step is a
- * SEPARATE descriptor-only vector scored alongside the profile vector (precision@8 0.97) — but that
- * is a second field plus a scoring change in the matcher, so not until this stops being enough.
+ * The separate descriptor-only vector this comment used to point at is now SHIPPED
+ * (`descriptorEmbedding`, max() in `runYcPeopleMatch`) and measured at P@8 0.977 vs 0.886 for this
+ * head alone. The head stays: it is what the ~10 descriptor-less records still rank on, and removing
+ * it is an unmeasured change to every stored vector.
+ *
+ * MEASURED AND REJECTED (2026-07-25), do not re-litigate without new data: a centroid/"hub" penalty
+ * (score -= W * cos(member, poolCentroid)) and mean-centering. The 20 members nearest the pool
+ * centroid never appeared in ANY top-8 across 17 queries, so hubness was not the cause of repeated
+ * faces (query dilution was — see the embed-target note in `runYcPeopleMatch`), and every hub
+ * variant cost person-level quality: judged P@8 0.613 → 0.487 (W=.15) / 0.412 (.30) / 0.400 (.50),
+ * mean-centering 0.512, while coverage barely moved (42 → 45 of 50 slots).
  */
 const MODEL_REPEATS = 3
 
@@ -280,6 +424,11 @@ function looseHit(haystack: string[], needles: string[]): boolean {
   })
 }
 
+/** Closed-vocab token normaliser — "Series B" / "series-b" → "series_b". */
+function norm(x: string): string {
+  return String(x ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_")
+}
+
 /** Apply every set facet. All AND-ed; an unset facet is a pass. */
 export function passesFacets(
   m: PeoplePoolMember,
@@ -310,6 +459,11 @@ export function passesFacets(
     )
     if (!looseHit(probe, needles)) return false
   }
+  // EXACT, not loose: both are closed vocabularies we generated ourselves, so a substring match
+  // would only create false hits ("founder" ⊂ "co_founder" is fine, "product" ⊂ "product_operator"
+  // is not) and there is no user typing to be forgiving about.
+  if (f.personType?.length && !f.personType.some((x) => m.personType.includes(norm(x)))) return false
+  if (f.fundingStage?.length && !f.fundingStage.some((x) => norm(x) === m.companyStage)) return false
   // Relational — resolved from the ASKER, so the model never has to know their school name.
   if (f.sameSchool && !looseHit(m.schools, asker.schools)) return false
   if (f.sameCompany && !looseHit(m.companies, asker.companies)) return false
@@ -343,9 +497,28 @@ export function explainMatch(
     const hit = m.skills.find((s) => looseHit([s], f.skills!))
     if (hit) return `works on ${hit}`
   }
+  // NO FACET SET — the DEFAULT path. The intake-complete auto-fire passes only `query`, so every
+  // branch above is skipped and the old fallback returned "title @ company"… which is byte-identical
+  // to the bubble's own header, so `buildPersonBubble` suppressed it and the person arrived with NO
+  // why-line at all (live 2026-07-25: "Max Chen — Associate Product Manager @ Tesla" + a URL, for an
+  // "ai agent or robotics" ask — he actually builds AI agent products for supply-chain ops at Tesla,
+  // and the match was good, but it READ like a random Tesla PM).
+  // `whatTheyBuild` is the index-time descriptor already loaded on the record and already the thing
+  // the semantic stage matched on, so it is the honest "why". First sentence only — the generator
+  // often appends a second, weaker clause.
+  const built = firstSentence(m.whatTheyBuild)
+  if (built) return built
   const t = m.currentTitle ?? ""
   const c = m.currentCompany ?? ""
   return t && c ? `${t} @ ${c}` : t || c || "worth meeting"
+}
+
+/** First sentence, trimmed to one bubble line. "" when there is nothing usable. */
+function firstSentence(v: string | null | undefined): string {
+  const s = String(v ?? "").trim()
+  if (!s) return ""
+  const head = (s.split(/(?<=\.)\s+/)[0] ?? s).trim().replace(/\.$/, "")
+  return head.length > 180 ? `${head.slice(0, 177).trimEnd()}…` : head
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +526,43 @@ export function explainMatch(
 // ---------------------------------------------------------------------------
 
 const RECORDS = "pa-external-candidate-records"
+
+/**
+ * Per-record counter: how many distinct users have been shown this person.
+ *
+ * WHY A SCALAR ON THE RECORD, not a list or a shared map doc: the delivery path writes it with
+ * `FieldValue.increment(1)` per delivered recordId, which is server-side atomic, so two users
+ * matched concurrently cannot lose an increment. The repo already has the counterexample —
+ * `set(..., {merge:true})` on an ARRAY replaces the whole array and clobbers concurrent writes
+ * (`sendblue/pool.ts`, which moved its counters into a map doc for exactly this reason). A single
+ * shared map doc would work too but funnels every delivery through one hot document; the record
+ * doc is already loaded by `loadCohortPool`, so reading the count here is free.
+ *
+ * WRITER (owned by `claire-agent/tools/yc-people-tools.ts`): after a delivered match, alongside the
+ * existing `ycPeopleMatchSent` arrayUnion, increment ONLY ids not already in that array — the field
+ * counts distinct users, so a repeat delivery to the same user must not double-count:
+ *     for (const id of newlySentIds) {
+ *       batch.set(db.collection("pa-external-candidate-records").doc(id),
+ *                 { ycExposureCount: FieldValue.increment(1) }, { merge: true })
+ *     }
+ * Until that hook exists the field is absent, the count reads 0, and scoring is unchanged.
+ */
+export const EXPOSURE_FIELD = "ycExposureCount"
+
+/**
+ * Soft exposure demotion: `EXPOSURE_STEP * min(timesShown, EXPOSURE_CAP)` off the cosine.
+ *
+ * Adam 2026-07-25: "不要来重复就推荐这几个人；要够零散". Per-user dedupe (`ycPeopleMatchSent`) only stops
+ * repeats WITHIN one user — nothing stopped one person being shown to every attendee.
+ *
+ * TUNED, not guessed. Sequential simulation over all 15 distinct intake users (production limit=5,
+ * 75 slots), sweeping the step: 0 → 55 distinct people / max 4 repeats; 0.01 → 59; 0.02 → 61;
+ * 0.04 → 70 distinct / max 2 repeats. Blind-judged quality of what each user received did NOT drop
+ * (P@5 rel>=1: 0.547 / 0.547 / 0.547 / 0.613). SOFT on purpose: 0.20 is the largest total penalty,
+ * so a genuinely strong match still outranks a never-shown weak one.
+ */
+const EXPOSURE_STEP = 0.04
+const EXPOSURE_CAP = 5
 
 function strArr(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : []
@@ -387,7 +597,25 @@ export function toPoolMember(recordId: string, d: Record<string, unknown>): Peop
         ? String((d.enrichment as Record<string, unknown>).matchStatus)
         : null,
     matchText: "",
+    whatTheyBuild: str((d.businessDescriptor as BusinessDescriptor | undefined)?.whatTheyBuild),
     embedding: Array.isArray(d.matchEmbedding) ? (d.matchEmbedding as number[]) : null,
+    descriptorEmbedding: Array.isArray(d.descriptorEmbedding)
+      ? (d.descriptorEmbedding as number[])
+      : null,
+    exposureCount: typeof d[EXPOSURE_FIELD] === "number" ? (d[EXPOSURE_FIELD] as number) : 0,
+    personType: strArr((d.businessDescriptor as BusinessDescriptor | undefined)?.personType),
+    ...(() => {
+      // Read-time, not a stored field: `companySizeRange` already rides every Coresignal record, so
+      // deriving here needs no backfill and can never go stale against the profile it came from.
+      // `companyStageLibrary` is the only cached part (a `pa-companies` lookup the record can't do).
+      const { stage, source } = inferCompanyStage({
+        currentTitle: str(d.currentTitle),
+        currentCompany: str(d.currentCompany),
+        experience: exp as Array<{ currentRole?: unknown; companySizeRange?: unknown }>,
+        libraryStage: typeof d.companyStageLibrary === "string" ? d.companyStageLibrary : null,
+      })
+      return { companyStage: stage, companyStageSource: source }
+    })(),
   }
   member.matchText = synthesizePeopleMatchText({
     name: member.name,
@@ -441,6 +669,56 @@ export interface YcPeopleMatchDeps {
 /** Below this, a facet ask is treated as too narrow and we widen — visibly, never silently. */
 const MIN_FACET_RESULTS = 3
 
+/**
+ * An ask that carries no target ("anyone", "no preference", "whoever honestly") embeds to a vector
+ * sitting near nothing in particular, so the pool ranks flat and the result is noise — measured
+ * 2026-07-25 on the live 988-person pool, those asks returned the SAME top-5 for 5 different real
+ * askers, and two real users resolved to identical people purely because both shrugged at intake.
+ * 3 of 5 askers shrugged, so this is the common answer, not an edge case.
+ */
+const MIN_ASK_SIGNAL = 0.33
+
+/**
+ * Did the ask actually bind to anybody? Judged by its BEST achieved similarity in the pool.
+ *
+ * A contentless ask ("anyone", "no preference", "whoever honestly") embeds to a vector that sits
+ * near nothing in particular, so the entire pool scores flat and the ranking is noise — measured
+ * 2026-07-25 on the live 988-person pool, those asks returned the SAME top-5 for 5 different real
+ * askers, and two real users resolved to identical people purely because both shrugged at intake.
+ * 3 of 5 askers shrugged, so this is the common answer, not an edge case.
+ *
+ * A BACKSTOP, NOT THE DECISION (Adam 2026-07-25: "一定不能只用regex或者string去做match，所有的root
+ * 都必须是语意匹配，然后不清楚要问用户clarifying"). The primary judgment lives in the agent, which
+ * has the conversation and can simply ASK when an answer names no target — see the `match_yc_people`
+ * tool description. This floor only catches what still reaches the matcher.
+ *
+ * An earlier pass used a stopword set: it needed hand-maintenance, could never cover the paraphrase
+ * a real person types, and read "anyone building robotics" as empty for the same reason it read
+ * "anyone" as empty. So the test is on the RESULT, not the words — did the ask land on anybody?
+ *
+ * MEASURED, live 988-person pool, 2026-07-25 (33 asks, `scripts/probe-ask-signal.ts`):
+ *   real ask                     0.365 - 0.675   design .365 · climate .398 · fintech .674
+ *   meaningful one-worder        0.353 - 0.401   founders .353 · engineers .382 · students .401
+ *   junk                         0.180 - 0.327   yes .180 · ok .248 · "?" .293 · hi .327
+ *   contentless                  0.192 - 0.296   doesn't-matter .192 · anyone .289 · open-to-anything .296
+ * 0.33 is the widest-margin split of that data — everything meaningful above, everything empty
+ * below, on a 0.069 gap.
+ *
+ * TWO THINGS I TRIED THAT DO NOT WORK, so nobody re-derives them:
+ *  - A HIGHER floor (0.40, 0.52) looks safe against the contentless numbers and quietly eats real
+ *    asks: 0.52 ate "investors" (.501), 0.40 ate "design" (.365) and "climate" (.398). Absolute
+ *    cosine tracks ask LENGTH as much as content — a one-word ask scores low against long profile
+ *    prose even when it is perfectly clear.
+ *  - The z-score of the top hit (discrimination rather than magnitude) SOUNDS scale-free and is
+ *    not: real asks scored z 2.91-6.60 and contentless z 3.24-4.46, fully overlapping, with
+ *    "AI agents" (z 2.91) ranking BELOW "anyone" (z 4.46).
+ * The margin here is thin, which is exactly why this is the backstop and the model is the gate.
+ * Re-measure with that script before moving it; do not nudge it to fix one anecdote.
+ */
+function askBoundToAnyone(topScore: number): boolean {
+  return topScore >= MIN_ASK_SIGNAL
+}
+
 export async function runYcPeopleMatch(
   input: { userId: string; cohort?: string; limit?: number; filters?: YcPeopleMatchFilters },
   deps: YcPeopleMatchDeps,
@@ -493,6 +771,7 @@ export async function runYcPeopleMatch(
   const anyFacetSet = Boolean(
     f.skills?.length || f.schools?.length || f.companies?.length || f.major?.length ||
       f.location?.length || f.industrySector?.length || f.roleFunction?.length ||
+      f.personType?.length || f.fundingStage?.length ||
       f.sameSchool || f.sameCompany || f.sameMajor,
   )
   // Sparse-result rule: never silently substitute. We keep the facet hits FIRST and mark anything
@@ -510,22 +789,92 @@ export async function runYcPeopleMatch(
       company: typeof h.company === "string" ? h.company : null,
       description: typeof h.description === "string" ? h.description : null,
     })),
-    intent: queryText,
+    // `intent`, NOT `queryText`. This projection is the FALLBACK — who the asker is when their ask
+    // carried nothing. Folding the ask back into it makes the fallback circular for the askers who
+    // need it most: someone with no experience highlights degenerates to the intent alone, so an
+    // "anyone" ask would recover onto an embedding of "anyone". Their intake `building` line is
+    // real content they gave us, and it survives here even when an explicit ask overrode it.
+    intent,
   })
-  const qVec = await deps.embed(askerText || queryText)
+  // WHICH TEXT DO WE EMBED? The ask goes in ALONE — explicit OR from intake.
+  //
+  // The projection above is ~1500 tokens of the asker's own experience with the ask as ONE line, so
+  // for anyone with a real profile the ask barely moves the vector: measured over 6 unrelated asks
+  // (investor / series B / hiring / cofounder / pre-seed / student founder) for three real askers
+  // with 10 experience highlights each, top-8 overlap across asks was 0.41 / 0.56 / 0.93 Jaccard —
+  // only 9-16 DISTINCT people across 48 slots, and the SAME two faces (Daniel Kim, Jerry Xiao) came
+  // back #1/#2 for all six. Embedding the ask alone: 0.033 overlap, 42 distinct, and "hiring"
+  // actually returns recruiters. (Askers with no highlights were never affected — their projection
+  // degenerates to the intent, which is why this only showed up for enriched users.)
+  //
+  // THE SAME DILUTION HITS THE DEFAULT AUTO-FIRE LANE — the one 100% of event users hit, where
+  // there is no `f.query` and the ask is their own `ycIntake.building` + `wantsToMeet`. Swept over
+  // the 19 real users who completed intake (2026-07-25, 988-person pool, judged precision@8 against
+  // what each literally said they wanted): profile-diluted 0.563 → intent-alone 0.813 on the 4
+  // askers who have a profile at all, monotone in the blend weight (W=.25 .625 / .50 .719 /
+  // .80 .719 / .90 .781 / 1.0 .813), so the blend never beats the endpoint and no constant is
+  // needed. Distinct people held (90 → 89 of 152 slots) and cross-user overlap held (0.024 →
+  // 0.028), so this does not undo exposure spreading. MEASURED AND REJECTED: dual max(intent,
+  // profile) is a NO-OP (0.563 — the 1500-token profile vector out-cosines the short intent on
+  // every slot), and head-repeating the intent x3 (the `businessModelHead` trick, which works
+  // index-side) HURT: 0.563 and distinct 90 → 84, while perturbing all 15 profile-less users.
+  //
+  // NO STRING TESTS ON THE ASK (Adam 2026-07-25). Two used to live here and both are gone:
+  //
+  //  - a `/\b(like|similar to)\s+(me|mine)\b/` regex for self-referential asks ("something like
+  //    mine"), which have no content of their own and want the asker's profile instead. That is a
+  //    reference-resolution question, and the agent — which has the conversation — answers it by
+  //    calling this tool with `query` NULL, the documented "match from what they already told you"
+  //    path. A regex could only ever catch the phrasings someone thought of; measured, it missed
+  //    "anyone doing what i'm doing" and "people with a similar background".
+  //  - a MIN_INTENT_CHARS length floor on a thin intake answer, which is redundant with the signal
+  //    gate below and actively wrong: "founders" (8 chars) and "students" (8) are real asks that
+  //    score 0.353 / 0.401, while "hi" and "yes" fail the gate on their own merits.
+  //
+  // What remains is: embed the ask, and check whether it landed on anybody (`askBoundToAnyone`).
+  const useProfile = !queryText
+
+  const scoreAgainst = (qVec: number[]) => {
+    const out: Array<{ m: PeoplePoolMember; score: number; relaxed: boolean }> = []
+    for (const m of ranked) {
+      if (!m.embedding || m.embedding.length === 0) continue
+      let score = deps.cosine(qVec, m.embedding)
+      // TWO VECTORS, take the better. The profile vector is ~1500 tokens of role/experience prose;
+      // the descriptor vector is the ~40-token business abstraction alone. An abstract ask
+      // ("marketplace", "devtools") binds to the second, a person-shaped ask ("who's like me") to
+      // the first, and max() lets each query use whichever surface actually carries it instead of
+      // averaging one into noise. Fail-soft: no descriptor vector (~10 of 992) → profile score.
+      if (m.descriptorEmbedding?.length) {
+        score = Math.max(score, deps.cosine(qVec, m.descriptorEmbedding))
+      }
+      // A "Needs Review" row is a semi-automatic, possibly-wrong LinkedIn match. Demote rather than
+      // drop — the sheet itself warns some rows are the wrong person.
+      if (m.matchStatus === "Needs Review") score -= 0.05
+      // Spread exposure across the 988 instead of concentrating on the same ~20 faces.
+      if (m.exposureCount > 0) score -= EXPOSURE_STEP * Math.min(m.exposureCount, EXPOSURE_CAP)
+      out.push({ m, score, relaxed: didRelax && !faceted.includes(m) })
+    }
+    return out
+  }
+
+  const qVec = await deps.embed(useProfile ? askerText || queryText : queryText)
   if (!qVec) {
     log("yc_people_match.embed_failed", { userId: input.userId })
     return { results: [], poolSize: pool.length, facetMatched, didRelax, reason: "embed_failed" }
   }
+  let scored = scoreAgainst(qVec)
 
-  const scored: Array<{ m: PeoplePoolMember; score: number; relaxed: boolean }> = []
-  for (const m of ranked) {
-    if (!m.embedding || m.embedding.length === 0) continue
-    let score = deps.cosine(qVec, m.embedding)
-    // A "Needs Review" row is a semi-automatic, possibly-wrong LinkedIn match. Demote rather than
-    // drop — the sheet itself warns some rows are the wrong person.
-    if (m.matchStatus === "Needs Review") score -= 0.05
-    scored.push({ m, score, relaxed: didRelax && !faceted.includes(m) })
+  // Did the ask bind to anyone? Asked of the RESULT, not of the words — see `askBoundToAnyone`.
+  // Only the ask lane can fail this: the profile lane is already the fallback.
+  const topScore = scored.reduce((mx, s) => Math.max(mx, s.score), -1)
+  if (!useProfile && scored.length > 0 && !askBoundToAnyone(topScore)) {
+    const pVec = askerText ? await deps.embed(askerText) : null
+    log("yc_people_match.ask_carried_no_signal", {
+      userId: input.userId,
+      topScore: Math.round(topScore * 1000) / 1000,
+      recovered: Boolean(pVec),
+    })
+    if (pVec) scored = scoreAgainst(pVec)
   }
   scored.sort((a, b) => {
     // Facet hits always outrank relaxed filler regardless of cosine.
@@ -542,6 +891,7 @@ export async function runYcPeopleMatch(
     location: m.location,
     score: Math.round(score * 1000) / 1000,
     reason: explainMatch(m, f, asker),
+    summary: firstSentence(m.whatTheyBuild) || null,
     relaxed,
     matchStatus: m.matchStatus,
   }))
