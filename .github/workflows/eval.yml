@@ -45,19 +45,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm, not npm — matches test.yml / qa-v1.5.yml / ranking-eval.yml.
+      # `npm ci` is unusable here: the root `//zod-split` note documents that
+      # zod@4 (root) vs openai@4's peerOptional zod@^3 is an expected
+      # cross-workspace ERESOLVE that npm only installs past with --force.
+      # Nightly runs 2026-07-20..25 all died on that install step.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: 24
+          cache: pnpm
 
-      - name: Install
-        run: npm ci
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
+      # No workspace build step: tests/scenarios/runner.mjs imports only node
+      # builtins + root deps (yaml, firebase-admin, openai) + sibling .mjs —
+      # nothing from any @pa/*/dist.
       - name: Dry-run plan (sanity check)
-        run: npm run eval -- --dry-run
+        run: pnpm run eval -- --dry-run
 
       - name: Run eval
-        run: npm run eval
+        run: pnpm run eval
 
       - name: Upload eval artifacts
         if: always()
