@@ -40,7 +40,12 @@ const SENT_FIELD = "ycPeopleMatchSent"
  * remaining budget rather than starting a fresh 5.
  */
 const MAX_PEOPLE_PER_WINDOW = 5
-const PEOPLE_WINDOW_MS = 5 * 60 * 1000
+// 90s, NOT 5 min (revised same day). The bug this guard exists for is two asks SECONDS apart each
+// firing their own 5 ("more robotics founders?" / "or founding engineers?" → a 10-bubble wall). A
+// 5-minute window over-corrected and started refusing legitimate follow-ups a minute later — live,
+// a user asked "lemme meet andrew broskie" and got "i can't send another batch yet", which is a
+// worse experience than the flood it was preventing. 90s kills the burst and nothing else.
+const PEOPLE_WINDOW_MS = 90 * 1000
 
 /** text → 1536-d, via the same OpenAI client the CV embed path uses. Never throws. */
 async function embedText(text: string): Promise<number[] | null> {
@@ -289,8 +294,15 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
             delivered: false,
             count: 0,
             reason: "recent_batch_still_on_screen",
+            // NEVER PUT THE REASON IN HERE (Adam 2026-07-25, third leak of the day). An earlier
+            // version explained itself — "those bubbles are still on their screen" — and the model
+            // paraphrased that explanation straight into the thread: "i tried to pull design-engineer
+            // folks, but looks like your previous batch is still on their screen so nothing new came
+            // through right this second." The user does not have a batch "on their screen", they have
+            // a conversation. Any rationale written here is text the model can and will echo, so this
+            // field now carries ONLY the instruction and the banned phrasings.
             nextAction:
-              "You just sent them a batch of people — those bubbles are still on their screen, so do NOT send more people right now. You MUST still reply with ONE short message: answer whatever they just asked, or ask which of the people you already sent they want to go deeper on. Do NOT mention any limit, budget, or internal reason. NEVER reply with an empty message list.",
+              "Reply with ONE short, natural message and do NOT send more people this turn. If they named someone they want to meet, THAT is what you answer (Adam 2026-07-25): tell them you'll try to make the connection and will let them know if it's mutual, and encourage them to reach out themselves in the meantime, LinkedIn is right there. Otherwise just answer what they asked and say more people land here as the pool fills. NEVER ask them which of the people you already sent they want to 'go deeper on', 'dive deeper on', or pick between: that is not a thing we do and nobody asked for it. NEVER explain why more people aren't coming: do not say 'nothing new came through', 'still on your screen', 'previous batch', 'i tried to pull', 'can't send another batch', 'can't land right now', or anything about limits, budgets, timing or internal state. NEVER reply with an empty message list.",
           }
         }
       } catch {
@@ -309,8 +321,9 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
             delivered: false,
             count: 0,
             reason: "already_matched_this_turn",
+            // Same rule as the window-budget guard above: instruction only, never the rationale.
             nextAction:
-              "You ALREADY sent them people moments ago — those bubbles are on their screen, so do NOT match again. You MUST still reply with ONE short message answering what they just said. Do NOT mention any blocking, re-send, or internal reason: that is our plumbing, not their problem. NEVER reply with an empty message list.",
+              "Reply with ONE short, natural message answering what they just said, and do NOT match again this turn. NEVER explain why: do not say 'already sent', 'moments ago', 'nothing new', 'i tried to pull', or anything about blocking, re-sending, limits or internal state. NEVER reply with an empty message list.",
           }
         }
       } catch {

@@ -545,7 +545,21 @@ export function passesFacets(
   //
   // EXACT, not loose: both are closed vocabularies we generated ourselves, and `includes` here is
   // array membership over canonical tokens, not text containment.
-  if (f.personType?.length && !f.personType.some((x) => m.personType.includes(norm(x)))) return false
+  // PRIMARY personType only (Adam 2026-07-25: "this person ask for investor why we keep sending
+  // wrong match???"). `personType` is a RANKED list from the descriptor LLM — slot 0 is who the
+  // person actually is, slots 1-2 are weak secondary colour. Membership treated every slot as equal,
+  // so an "investors" ask returned:
+  //     Jack Lau      Co-Founder @ Stealth AI     founder,investor
+  //     Ryan Schwartz Co-Founder @ Stealth        founder,investor
+  //     Calvin Cha    Product & Growth @ Blidz    product,founder,investor
+  //     Teresa Huang  Product Manager @ DataVisor product,engineer,investor
+  // — four founders/PMs — while 13 people whose PRIMARY type is `investor` (Richard Liu @ Llama
+  // Ventures, Sonica Prakash @ Crater Ventures, Raghav Goyal @ Antler, Samuel Kim @ Hico Ventures…)
+  // were never surfaced. 22 records carry `investor` anywhere; only 13 of those ARE investors.
+  // Matching slot 0 is what makes the facet mean what the user meant. If that yields too few, the
+  // EXISTING relax path widens and says so out loud — the honest behaviour we already have, rather
+  // than a silent substitution dressed up as a match.
+  if (f.personType?.length && !f.personType.some((x) => norm(x) === m.personType[0])) return false
   if (f.fundingStage?.length && !f.fundingStage.some((x) => norm(x) === m.companyStage)) return false
   // Relational — a JOIN on identifiers resolved from the ASKER, so the model never has to know
   // their school name and the comparison stops being fuzzy at all.
