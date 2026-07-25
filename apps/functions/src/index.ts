@@ -902,6 +902,14 @@ async function createProvisionalUser(
     if (options.senderGroupId) extra.senderGroupId = options.senderGroupId
     extra.senderAssignedAt = nowIso()
     extra.senderAssignedSource = "qr_scan"
+    // PER-DAY, PER-NUMBER new-user count. Sendblue's ceiling is a DAILY one, and the existing
+    // lifetime counter had drifted to 0/0/0 while the real split was 913/439/453, so it could not
+    // answer "how many new contacts has this number taken TODAY". Keyed by the number that will
+    // text them — the same thing Sendblue counts. Deliberately NOT awaited: bookkeeping must never
+    // delay a real person's first reply.
+    void import("./sendblue/pool.js")
+      .then((m) => m.bumpDailyNewUser(db, extra.senderNumber!, nowIso()))
+      .catch(() => undefined)
   } else {
     // USER↔NUMBER BINDING (2026-06-02) — TEXT-ONLY provisional users (the
     // direct-start path: an unregistered number that texts "hi" with NO QR scan)
@@ -934,6 +942,10 @@ async function createProvisionalUser(
         } catch {
           /* counter bump is best-effort — overlay clamps on read */
         }
+        // …and the per-day, per-number count Sendblue actually enforces on. Fire-and-forget.
+        void import("./sendblue/pool.js")
+          .then((m) => m.bumpDailyNewUser(db, minted, nowIso()))
+          .catch(() => undefined)
       }
     } catch (err) {
       logger.warn("[createProvisionalUser] text-only sender binding mint failed (non-fatal)", {
@@ -2657,7 +2669,24 @@ export const paSendblueOutbox = onDocumentCreated(
     // ceiling for the 14MB bundle + Sendblue REST roundtrip.
     memory: "512MiB",
     timeoutSeconds: 120,
-    concurrency: 1,
+    // THROUGHPUT (live YC event 2026-07-25). Measured delivery lag createdAt→sent over 90 min
+    // of event load (984 rows): p50 15s, p90 248s, p99 628s, max 931s — and Adam read every one
+    // of those as "no response". Ruled out first, by data, not guesswork: capacityDeferred=0
+    // (not the per-number send cap), attempts=0 fleet-wide (not retries/backoff), and the lag is
+    // present on `unpaced` rows too (not the seq-order gate).
+    //
+    // The cause is this handler's own shape: it SLEEPS inside the invocation — the typing dwell
+    // plus up to SEQ_ORDER_MAX_WAIT_MS in awaitEarlierBubblesSent — while `concurrency: 1` pins
+    // one whole instance per row. The work is ~all await, ~no CPU, so one row per instance is the
+    // worst possible packing: at ~11 rows/min with minute-scale dwells the queue simply cannot
+    // drain, and every later row inherits the backlog.
+    //
+    // concurrency > 1 requires cpu >= 1 (512MiB defaults to 0.583), hence the explicit cpu.
+    // Ordering is NOT affected: awaitEarlierBubblesSent gates on Firestore row status, which is
+    // cross-instance by construction — it never relied on single-slot serialization.
+    cpu: 1,
+    concurrency: 20,
+    maxInstances: 60,
     // minInstances 0→1 (Adam 2026-07-23, first-touch latency): the inbound chain
     // (paSendblueWebhook + onPaInbound) is already warm, but the SEND path cold-started
     // ~5s on the first reply after idle (measured 2026-07-23: row created 01:39:44 →

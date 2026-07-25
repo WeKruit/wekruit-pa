@@ -44,6 +44,11 @@ export type TypedLinkedinEnrichResult =
 export function normalizeTypedLinkedinUrl(raw: string): string | null {
   const s = raw.trim()
   if (!s) return null
+  // OUR OWN PLACEHOLDER IS NOT A PROFILE (2026-07-25). When LinkedIn's OIDC returns no vanity URL
+  // we store `https://www.linkedin.com/oauth-linked/<sub>` as a bind marker. It passes every check
+  // below (it IS a linkedin.com URL) and would be sent to Coresignal as if it were a profile —
+  // live, 30 of the 32 stranded YC users carry exactly this string in `linkedinUrl`.
+  if (s.includes("/oauth-linked/")) return null
   const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s.replace(/^\/+/, "")}`
   try {
     const u = new URL(withScheme)
@@ -54,11 +59,27 @@ export function normalizeTypedLinkedinUrl(raw: string): string | null {
   }
 }
 
-/** True when we already hold REAL fetched background — mirrors mode-selector.hasIngestedBackground. */
+/** First `linkedin.com/in/<slug>` profile URL in a free-text message, or null. */
+export function extractLinkedinProfileUrl(text: string): string | null {
+  const m = /(?:https?:\/\/)?(?:[a-z0-9-]+\.)?linkedin\.com\/in\/[^\s<>"')\]]+/i.exec(text ?? "")
+  if (!m) return null
+  // Trailing sentence punctuation is not part of the slug ("here's mine: linkedin.com/in/ada.").
+  return normalizeTypedLinkedinUrl(m[0].replace(/[.,;:!?]+$/, ""))
+}
+
+/**
+ * True when we already hold REAL fetched background.
+ *
+ * DELIBERATELY NOT an OAuth-bind check (2026-07-25). It used to early-return on
+ * `linkedinOauthLinked`, on the assumption that a bind implies data. It does not: LinkedIn's OIDC
+ * only hands back a profile URL when the member's public profile is visible, so 32 of 87 YC users
+ * who successfully connected had a bind, a placeholder URL and ZERO background — and this guard was
+ * what made a later enrich attempt return `already_enriched` and do nothing. Test for the payload
+ * (experiences / Coresignal row / résumé), never for the bind.
+ */
 function alreadyHasRealBackground(user: Record<string, unknown>): boolean {
-  if (user.linkedinOauthLinked === true) return true
-  if (typeof user.linkedinOauthSub === "string" && user.linkedinOauthSub.trim()) return true
   if (Array.isArray(user.experienceHighlights) && user.experienceHighlights.length > 0) return true
+  if (typeof user.coresignalEmployeeId === "number") return true
   if (typeof user.latestResumeArtifactId === "string" && user.latestResumeArtifactId.trim()) return true
   return false
 }
@@ -68,6 +89,9 @@ export async function enrichFromTypedLinkedinUrl(args: {
   userId: string
   apiKey: string | null
   nowIso?: string
+  /** URL supplied THIS turn (pasted into chat) — wins over the stored `linkedinUrl`, and is
+   *  persisted when it resolves so the placeholder marker stops shadowing a real profile. */
+  rawUrl?: string
   /** Test seams — default to the real Coresignal calls. */
   search?: typeof searchEmployeeIdByLinkedinUrl
   fetch?: typeof fetchEmployeeCollect
@@ -92,7 +116,7 @@ export async function enrichFromTypedLinkedinUrl(args: {
     log("skipped_already_enriched")
     return { ok: false, reason: "already_enriched" }
   }
-  const raw = typeof user.linkedinUrl === "string" ? user.linkedinUrl : ""
+  const raw = args.rawUrl ?? (typeof user.linkedinUrl === "string" ? user.linkedinUrl : "")
   const url = normalizeTypedLinkedinUrl(raw)
   if (!url) {
     log("skipped_unusable_url", { raw: raw.slice(0, 60) })
@@ -142,11 +166,38 @@ export async function enrichFromTypedLinkedinUrl(args: {
         error: err instanceof Error ? err.message : String(err),
       })
     }
+    // YC POOL SYNC — make this person MATCHABLE BY OTHERS, not just a receiver of matches.
+    // Without it the pool is the frozen 1066-row import: measured 2026-07-25 mid-event, 143 people
+    // had scanned and 40 were fully enriched, and ZERO of them were in the pool — every attendee was
+    // invisible to every attendee who arrived after them, which is exactly backwards for the
+    // highest-intent people we have.
+    // `syncYcPoolMember` gates on `isYcPeopleUser` itself (fail-closed), so a normal candidate
+    // enriching here is stored globally and simply never joins the cohort. Fail-open: the pool is a
+    // bonus, the enrich is the payload.
+    try {
+      const { syncYcPoolMember } = await import("./yc-pool-sync.js")
+      const sync = await syncYcPoolMember({
+        db,
+        userId,
+        record,
+        nowIso,
+        log: (e, p) => logger.info(`typed_linkedin_enrich.pool.${e}`, { userId, ...(p ?? {}) }),
+      })
+      logger.info("typed_linkedin_enrich.pool_sync", { userId, ok: sync?.ok === true, reason: sync?.reason ?? null, ms: sync?.ms ?? null })
+    } catch (err) {
+      logger.warn("typed_linkedin_enrich.pool_sync_failed", {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
     // Stamp provenance so downstream can tell an unverified typed-URL enrich from an OAuth bind.
     await db.collection(PA_COLLECTIONS.users).doc(userId).set(
       {
         linkedinEnrichSource: "typed_url_unverified",
         linkedinEnrichedAt: nowIso,
+        // A pasted URL that RESOLVED replaces whatever was there (usually our own
+        // `/oauth-linked/` placeholder) so every later reader sees a real profile.
+        ...(args.rawUrl ? { linkedinUrl: url } : {}),
         ...(nameLooksConsistent ? {} : { linkedinEnrichNameMismatch: true }),
         updatedAt: nowIso,
       },

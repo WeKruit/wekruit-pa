@@ -362,7 +362,12 @@ export async function connectLinkedinProspectViaOAuth(
       linkedinOauthLinked: true,
       linkedinOauthConnectedAt: nowIso,
       linkedinOauthSub: sub,
-      linkedinUrl: handleUrl,
+      // ONLY a REAL url (Adam 2026-07-25 live: "不能拿假的"). The "/oauth-linked/<sub>" marker still
+      // goes to `pa-candidate-handles` above — it is a fine IDENTITY handle — but writing it here
+      // made every downstream reader believe we hold this person's LinkedIn, so nobody ever asked
+      // again and enrichment could never succeed. Measured during the YC event: 17 users with a real
+      // URL enriched 17/17; 10 users with the marker enriched 0/10 and were silently stuck.
+      ...(realUrl ? { linkedinUrl: realUrl } : {}),
       updatedAt: nowIso,
     }
     const name = input.name?.trim()
@@ -577,6 +582,30 @@ export async function enrichFromCoresignal(args: {
     })
   } catch (err) {
     logger.warn("linkedin_connect.tags_dual_write_failed", {
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // 3. YC POOL SYNC — being enriched is what makes someone MATCHABLE BY OTHERS, and this is the
+  // path most event attendees take (LinkedIn OAuth, not a typed URL). Until this was wired the pool
+  // was the frozen 1066-row import: measured mid-event 2026-07-25, 143 people had scanned, 40 were
+  // fully enriched, and ZERO were in the pool — each attendee invisible to everyone who arrived
+  // after them. `syncYcPoolMember` gates on `isYcPeopleUser` itself (fail-closed), so a normal
+  // candidate connecting LinkedIn is enriched and stored globally but never joins the cohort.
+  // Fail-open: the pool is a bonus, the enrich is the payload.
+  try {
+    const { syncYcPoolMember } = await import("../yc-pool-sync.js")
+    const sync = await syncYcPoolMember({
+      db,
+      userId,
+      record,
+      nowIso,
+      log: (e, p) => logger.info(`linkedin_connect.pool.${e}`, p),
+    })
+    logger.info("linkedin_connect.pool_sync", { userId, ok: sync?.ok === true, reason: sync?.reason ?? null, ms: sync?.ms ?? null })
+  } catch (err) {
+    logger.warn("linkedin_connect.pool_sync_failed", {
       userId,
       err: err instanceof Error ? err.message : String(err),
     })

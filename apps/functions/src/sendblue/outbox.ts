@@ -998,7 +998,22 @@ export async function paSendblueOutboxHandler(
   let user: OutboxUser | null = null
   if (deps.getUser) {
     user = await deps.getUser(deps.db, userId)
-    if (!user) {
+    // IDENTITY NOTICES SURVIVE A MISSING USER (live YC event, 2026-07-25). Someone whose iPhone
+    // sends iMessage from their Apple ID EMAIL has no `pa-users` doc yet, so
+    // `email-sender-resolution.ts` falls back to `ownerId = emailHandle` — an id that by definition
+    // resolves to nothing here. The row then died as "user not found" BEFORE Sendblue was ever
+    // called. The notice it was carrying is the one that says "text me from your phone number
+    // instead", so the only people who could ever receive it were the ones who did not need it: 8
+    // attendees texted, were correctly identified, and got total silence.
+    //
+    // Safe because this row type already carries its own authorization — `runtimeApproved`, an
+    // `ensureEmailInboundEvidence` write, and RULE 1's existing `pa_identity_notice` exemption a few
+    // lines below (same reasoning: it is a direct reply into the thread the inbound just arrived
+    // from). The only downstream read of `user` is `user?.senderNumber`, already optional, which
+    // falls back to the pool pick.
+    const identityNotice =
+      String((data as { runtimeSource?: unknown }).runtimeSource ?? "") === "pa_identity_notice"
+    if (!user && !identityNotice) {
       await ref.set(
         {
           status: "failed",

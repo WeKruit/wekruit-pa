@@ -17,6 +17,7 @@ import type { ClaireToolContext } from "../types.js"
 import {
   runYcPeopleMatch,
   YC_COHORT_2026,
+  PERSON_TYPE_VOCAB,
   type YcPeopleMatchFilters,
   type YcPeopleMatchOutput,
 } from "../../yc-people-match.js"
@@ -26,9 +27,20 @@ import { defaultEmbeddingClient } from "../../lib/embeddings.js"
 // same note in matching-tools.ts). The VOCAB arrays are plain strings, instance-agnostic.
 const IndustrySectorEnum = z.enum(INDUSTRY_SECTOR_VOCAB)
 const RoleFunctionEnum = z.enum(ROLE_FUNCTION_VOCAB)
+// Rebuilt on the SDK zod instance, same reason as the two above.
+const PersonTypeEnum = z.enum(PERSON_TYPE_VOCAB)
 
 /** Field on pa-users holding recordIds we already sent, so "show me more" never repeats a face. */
 const SENT_FIELD = "ycPeopleMatchSent"
+
+/**
+ * Rolling cap on PEOPLE delivered, not on calls (Adam 2026-07-25: "another one dumping too many
+ * people, didn't i said limit a bit"). Per-call clamp was already 5, but two asks in a row produced
+ * a 10-bubble wall. 5 people / 5 minutes: a follow-up ask is still answered, it just draws from the
+ * remaining budget rather than starting a fresh 5.
+ */
+const MAX_PEOPLE_PER_WINDOW = 5
+const PEOPLE_WINDOW_MS = 5 * 60 * 1000
 
 /** text → 1536-d, via the same OpenAI client the CV embed path uses. Never throws. */
 async function embedText(text: string): Promise<number[] | null> {
@@ -61,6 +73,16 @@ async function loadAlreadySent(db: Firestore, userId: string): Promise<Set<strin
  * we never silently substitute someone who does not actually match what they asked for.
  */
 export function buildPeopleIntro(out: YcPeopleMatchOutput): string {
+  // SHORT LIST → SAY IT'S SHORT (Adam 2026-07-25: "如果小的话就说ok我们确实没有太多匹配的"). The
+  // matcher stops at whoever actually clears the bar instead of padding to 5, so a two-person answer
+  // is a real signal about the pool, not a failure — and naming it is what keeps the two people
+  // credible. Silently handing over a short list reads as "that's all there is", which is a
+  // different and worse claim.
+  if (!out.didRelax && out.results.length < 3) {
+    return out.results.length === 1
+      ? "honestly there's only one person here worth pointing you at for that — but they're a real one 👇"
+      : "not many here match that closely, so this is a short list rather than a padded one 👇"
+  }
   if (!out.didRelax) return "found a few Startup School people worth meeting 👇"
   if (out.facetMatched === 0) {
     return "nobody here matches that exactly — but these are the closest on what you're building 👇"
@@ -146,6 +168,11 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       "Match this YC Startup School attendee with OTHER attendees worth meeting AND deliver them. " +
       "Call it the moment their intake is complete, and any time they ask who they should meet / for more people / " +
       "for a different kind of person. " +
+      "A KIND OF PERSON ('investors', 'angels', 'VCs', 'founders', 'operators', 'students', 'recruiters', " +
+      "'designers', 'researchers') → personType, NOT query. An embedding can only tell that text is ABOUT " +
+      "investing; it cannot tell that a person IS an investor — measured live, 'angels and investors pls' " +
+      "returned an IBM UX designer and two software engineers. Use the facet and they come back right. " +
+      "Combine freely: 'fintech investors' = personType:[investor] + industrySector:[financial_technology]. " +
       "HOW TO SPLIT THEIR ASK: a DOMAIN word ('fintech', 'healthcare', 'AI') → industrySector using the canonical " +
       "vocab (fintech → financial_technology); a CAPABILITY or tech ('ML', 'RL', 'SWE', 'design', 'go-to-market') → " +
       "put it in QUERY, not skills — the semantic stage resolves abbreviations and synonyms on its own (measured: " +
@@ -156,12 +183,14 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       "THEMSELVES ('people from my school', 'anyone who worked where I worked', 'same major') → the matching " +
       "sameSchool / sameCompany / sameMajor boolean — NEVER guess their school or employer name, the tool resolves " +
       "it from their own profile server-side; anything else, or a vibe ('people building something like mine') → query. " +
-      "NO TARGET NAMED — ASK ONE QUESTION, DON'T MATCH: if their answer names nobody in particular " +
-      "('anyone', 'no preference', 'not picky', 'idk', 'open to anything', 'whoever', or a bare 'hi'/'ok'), " +
-      "do NOT call this tool on it. There is nothing in it to match on, and matching anyway returns the " +
-      "same handful of people to every person who shrugs. Ask ONE short, warm, concrete question instead " +
-      "— name two or three directions off what they just told you they're building ('founders in your " +
-      "space? people who've shipped what you're shipping? investors?') — then call it with what they pick. " +
+      "'anyone' / 'no preference' / 'not picky' IS a fine answer — take it and match (Adam 2026-07-25). " +
+      "It falls back to matching on what THEY are building, which is the right read of a shrug. Never " +
+      "interrogate someone for shrugging. " +
+      "PUT THIS TURN'S ASK IN `query`: if their latest message names who they want ('any fintech people?', " +
+      "'robotics', 'RL'), that wording goes in `query`. An empty call does NOT mean 'use what they just " +
+      "said' — it re-matches their ORIGINAL intake answer, so a null query throws away the ask you are " +
+      "responding to. Empty call is only for the first match right after intake, or when they ask for " +
+      "'more' of the same. " +
       "SELF-REFERENTIAL ASKS: if they want people like THEMSELVES ('someone like me', 'building something " +
       "like mine', 'anyone doing what i'm doing', 'similar background'), call this tool with query NULL. " +
       "The empty call already means 'match from what they told me they're building' — passing their words " +
@@ -172,14 +201,26 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       "short confirming question ('RL as in reinforcement learning?'), then call it with the resolved " +
       "wording in query. A wrong guess costs them five irrelevant people; one question costs a second. " +
       "Unambiguous shorthand ('SWE', 'ML', 'YC') needs no question — just put it in query. " +
-      "Empty call (everything null) = default match from what they already told you they're building and who they want to meet. " +
+      "`query` IS REQUIRED — you must always say what you are matching on. For the first match right after intake, pass what THEY said they want to meet (plus what they are building). For any later ask, pass THAT ask. There is no empty call: a match with no query would silently re-match their signup answer and throw away what they just said. " +
       "CRITICAL: when it returns delivered:true the people bubbles have ALREADY been sent as separate messages — you " +
       "MUST then reply with an EMPTY message list (any text duplicates them). Only when delivered:false do you speak.",
     parameters: z.object({
-      query: z.string().nullable(),
+      // REQUIRED, non-nullable, on purpose. It used to be nullable with the description sanctioning
+      // an "empty call = match from what they already told you" — and measured over a real-model
+      // probe, 11 of 16 post-intake asks that named a target ("fintech", "robotics", "RL") arrived
+      // with EVERY argument null. The matcher then fell back to the stored intake answer and
+      // silently matched the wrong thing: no error, bubbles delivered, healthy-looking logs.
+      // Making it required removes the failure instead of compensating for it — the model cannot
+      // call this tool without saying what it is matching on.
+      query: z.string(),
       skills: z.array(z.string()).nullable(),
       industrySector: z.array(IndustrySectorEnum).nullable(),
       roleFunction: z.array(RoleFunctionEnum).nullable(),
+      // WHAT KIND of person. This is the facet that fixes the failure Adam saw live 2026-07-25:
+      // "angels and investors pls" returned an IBM UX designer and two software engineers, because
+      // an embedding can tell that text is ABOUT investing but not that a person IS an investor.
+      // A title is a job; this is a kind. Set it whenever they name a kind of person.
+      personType: z.array(PersonTypeEnum).nullable(),
       companies: z.array(z.string()).nullable(),
       schools: z.array(z.string()).nullable(),
       major: z.array(z.string()).nullable(),
@@ -187,14 +228,79 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       sameSchool: z.boolean().nullable(),
       sameCompany: z.boolean().nullable(),
       sameMajor: z.boolean().nullable(),
-      limit: z.number().int().min(1).max(10).nullable(),
+      // 3-5 people, never more. The matcher clamps this server-side too — the schema just stops the
+      // model from asking for a burst it will not get.
+      limit: z.number().int().min(1).max(5).nullable(),
     }),
     async execute(args) {
+      // ONE MATCH PER TURN. Live 2026-07-25: an attendee who asked "angels and investors pls" got
+      // ELEVEN cards in a single burst — more than the per-call ceiling, so the tool had fired twice
+      // for one message. Their running total reached 24 people. Every batch was genuinely asked
+      // for; the volume came from double-firing plus an over-large batch, and a re-run inside the
+      // same turn can only return the NEXT-best people anyway (already-sent ids are excluded), so
+      // the second call is strictly worse AND doubles the flood.
+      // Fail-open: a read error must never block a real match.
+      // ONLY suppresses a call carrying NO new ask. Someone who pushes back ("nope, none of these
+      // work", "more investors") is making a genuinely new request and must always get a fresh set —
+      // an earlier version of this guard blocked exactly that, and Claire then told the attendee
+      // "it's blocking a re-send", leaking our plumbing into their conversation. The double-fire it
+      // exists to stop is two identical argument-less calls inside one turn.
+      const hasNewAsk = Boolean(args.query.trim())
+      // ROLLING PEOPLE BUDGET (Adam 2026-07-25: "another one dumping too many people, didn't i said
+      // limit a bit"). The per-call clamp is 5, but a user who fires two asks back-to-back ("more
+      // robotics founders?" / "or founding engineers?") gets 5 + 5 = a 10-bubble wall — live at
+      // 11:37. Capping the CALL was never enough; the cap has to be on people-per-window.
+      // A new ask is still always honoured (that regression leaked "it's blocking a re-send" to a
+      // real attendee) — it just draws from the remaining budget instead of a fresh 5.
+      let budget = MAX_PEOPLE_PER_WINDOW
+      try {
+        const snap = await ctx.db.collection("pa-users").doc(ctx.userId).get()
+        const recent = (snap.data()?.ycPeopleMatchRecent ?? []) as unknown[]
+        const cutoff = Date.now() - PEOPLE_WINDOW_MS
+        // Entries are `<iso>#<recordId>`; split on the first '#' to read the stamp.
+        const inWindow = recent.filter((t) => {
+          if (typeof t !== "string") return false
+          const ms = new Date(t.split("#")[0] ?? "").getTime()
+          return Number.isFinite(ms) && ms >= cutoff
+        }).length
+        budget = Math.max(0, MAX_PEOPLE_PER_WINDOW - inWindow)
+        if (budget === 0) {
+          ctx.log("pa.claire.match_yc_people.window_budget_spent", { userId: ctx.userId, inWindow })
+          return {
+            ok: true,
+            delivered: true,
+            count: 0,
+            reason: "recent_batch_still_on_screen",
+            nextAction:
+              "You just sent them a batch of people — those bubbles are still on their screen. Do NOT send more right now and do NOT mention any limit, budget, or internal reason. Instead reply in ONE short message: ask which of the ones you already sent they want to go deeper on, or answer whatever else they asked.",
+          }
+        }
+      } catch {
+        /* fail-open → full budget */
+      }
+      try {
+        const snap = hasNewAsk ? null : await ctx.db.collection("pa-users").doc(ctx.userId).get()
+        const last = String(snap?.data()?.ycPeopleMatchLastAt ?? "")
+        if (last && Date.now() - new Date(last).getTime() < 60_000) {
+          ctx.log("pa.claire.match_yc_people.suppressed_double_fire", { userId: ctx.userId, last })
+          return {
+            ok: true,
+            delivered: true,
+            count: 0,
+            reason: "already_matched_this_turn",
+            nextAction:
+              "You ALREADY sent them people moments ago — those bubbles are on their screen. Do NOT match again and do NOT mention any blocking, re-send, or internal reason: that is our plumbing, not their problem. Reply with an EMPTY message list, or if they asked something else, answer just that.",
+          }
+        }
+      } catch {
+        /* fail-open */
+      }
       const filters: YcPeopleMatchFilters = {
-        ...(args.query ? { query: args.query } : {}),
+        ...(args.query.trim() ? { query: args.query.trim() } : {}),
         ...(args.skills?.length ? { skills: args.skills } : {}),
         ...(args.industrySector?.length ? { industrySector: args.industrySector } : {}),
         ...(args.roleFunction?.length ? { roleFunction: args.roleFunction } : {}),
+        ...(args.personType?.length ? { personType: args.personType } : {}),
         ...(args.companies?.length ? { companies: args.companies } : {}),
         ...(args.schools?.length ? { schools: args.schools } : {}),
         ...(args.major?.length ? { major: args.major } : {}),
@@ -206,7 +312,7 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       let out: YcPeopleMatchOutput
       try {
         out = await runYcPeopleMatch(
-          { userId: ctx.userId, limit: args.limit ?? 5, filters },
+          { userId: ctx.userId, limit: Math.min(args.limit ?? 5, budget), filters },
           {
             db: ctx.db,
             embed: embedText,
@@ -223,13 +329,17 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
         return { ok: false, delivered: false, count: 0, reason: "matcher_error" }
       }
       if (out.results.length === 0) {
+        // Empty here almost always means EXHAUSTED, not broken: everyone matching has already been
+        // sent to this person (the pool is ~988 and `ycPeopleMatchSent` excludes repeats). Adam
+        // 2026-07-25: when there is nobody left, say we're waiting on more profiles — that is the
+        // true reason, and it tells them more are coming instead of reading as a dead end.
         return {
           ok: false,
           delivered: false,
           count: 0,
           reason: out.reason ?? "no_results",
           nextAction:
-            "No people to send. Say warmly that you're still lining up the right person for them and you'll text right here as soon as you have one. Do NOT invent names, do NOT mention job roles.",
+            "Nobody new to send right now — you have already sent them everyone matching. Tell them exactly that, warmly: more Startup School profiles are still coming in, and you'll text the moment there's someone worth their time. Do NOT repeat anyone you already sent, do NOT invent names, do NOT mention job roles.",
         }
       }
       const delivered = await deliverPeopleBubbles(ctx, out)
@@ -249,6 +359,13 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
             {
               [SENT_FIELD]: FieldValue.arrayUnion(...out.results.map((r) => r.recordId)),
               ycPeopleMatchLastAt: ctx.nowIso(),
+              // One entry PER PERSON delivered — the rolling window budget above counts these, so
+              // two asks in quick succession draw from ONE pool of 5 instead of getting 5 each.
+              // `<iso>#<recordId>`, not a bare timestamp: arrayUnion dedupes equal values, and all
+              // results of one call share the same nowIso(), so bare stamps would collapse to 1.
+              ycPeopleMatchRecent: FieldValue.arrayUnion(
+                ...out.results.map((r) => `${ctx.nowIso()}#${r.recordId}`),
+              ),
             },
             { merge: true },
           )

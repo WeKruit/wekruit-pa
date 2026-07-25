@@ -523,9 +523,18 @@ export async function runRegisterLayoffCandidate(
 // Bound so the fire-and-forget typed-URL enrichment inside runRegisterLayoffCandidate can reach
 // Coresignal. Absent key → the helper no-ops (reason "no_key"); registration is unaffected.
 const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
+// The same enrichment now also builds the YC people-pool row (yc-pool-sync.ts, via the mirror's
+// afterMirror seam), which needs the OpenAI key for the descriptor + both embeddings. Without it a
+// YC signup lands in the pool with NO vector, which reads as "present" and matches nobody.
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 
 export const openRegisterLayoffCandidate = onCall<RegisterInput>(
-  { region: "us-central1", cors: true, memory: "512MiB", secrets: [CORESIGNAL_API_KEY] },
+  {
+    region: "us-central1",
+    cors: true,
+    memory: "512MiB",
+    secrets: [CORESIGNAL_API_KEY, PA_OPENAI_AGENT_API_KEY],
+  },
   async (req) => {
     return runRegisterLayoffCandidate(req.data, { db: getFirestore() })
   },

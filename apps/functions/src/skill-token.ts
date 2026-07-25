@@ -125,6 +125,13 @@ function isTechnical(canon: string): boolean {
 const ALIASES: Record<string, string> = {
   aiml: "machine_learning",
   ai_ml: "machine_learning",
+  // `rl` and a bare stored `reinforcement` both canonicalized to nothing, so the skills facet
+  // returned ZERO people for "rl" and only 46 of 56 for "reinforcement learning" (measured on the
+  // 988-person cohort, 2026-07-25). An alias is the right home for this: the ambiguity ("RL" can
+  // mean real life) is resolved by the agent ASKING before it matches, not by the token table
+  // refusing to resolve.
+  rl: "reinforcement_learning",
+  reinforcement: "reinforcement_learning",
   llm: "large_language_models",
   llms: "large_language_models",
   large_language_model: "large_language_models",
