@@ -630,7 +630,9 @@ test("YC entry: closer is the notify promise — never a pull-ask, never the evi
   assert.equal(out![1], "PITCH", "the pitch bubble is unchanged")
   // Adam 2026-07-20: founder matching is NOT pitch-coaching — the yc read-back
   // must never be framed as the candidate's "pitch".
-  assert.match(out![0]!, /stands out/, "yc confirmation frames as what-stands-out")
+  // Adam 2026-07-24: the confirmation says what the next bubble is FOR — the line we hand to
+  // the people we intro them to — which also invites a correction if we got them wrong.
+  assert.match(out![0]!, /how i'll describe you/, "yc confirmation frames as how-I-describe-you")
   assert.doesNotMatch(out![0]!, /pitch/i, "yc confirmation never says 'pitch'")
   const offer = out![2]!
   assert.match(offer, /founder-match pool/)

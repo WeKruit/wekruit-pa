@@ -729,12 +729,16 @@ export async function composePitchTurn(
   // it's an improvement, not a re-pitch). LinkedIn-only keeps the original opener.
   // YC posture NEVER frames the read-back as "your pitch" (Adam 2026-07-20: founder
   // matching is not pitch-coaching) — it's "here's what stands out", then the pool promise.
+  // YC framing (Adam 2026-07-24): the confirmation should say "this is how I'll DESCRIBE YOU",
+  // because the next bubble is exactly that — the line we hand to the founders/investors we intro
+  // them to. "here's what stands out" read like a compliment about them; "how i'll describe you"
+  // tells them what it's FOR, and invites a correction if we got it wrong.
   let confirmation = ycPosture
     ? resumeIsRich
-      ? "got it — read through your résumé, here's what stands out 👀"
+      ? "got it — read through your résumé. here's how i'll describe you to the people i intro you to 👇"
       : profile.recentCompany
-        ? `got it — pulled your ${profile.recentCompany} experience, here's what stands out 👀`
-        : "got it — pulled your experience, here's what stands out 👀"
+        ? `got it — pulled your ${profile.recentCompany} experience. here's how i'll describe you to the people i intro you to 👇`
+        : "got it — pulled your experience. here's how i'll describe you to the people i intro you to 👇"
     : resumeIsRich
       ? "got it — went through your résumé, added the technical detail to your pitch 👍"
       : profile.recentCompany
