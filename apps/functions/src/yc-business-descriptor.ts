@@ -40,37 +40,19 @@ personType: WHAT KIND OF PERSON this is, from EXACTLY this closed list, 1-3 entr
   founder, investor, program_operator, engineer, researcher, product, designer, operator, executive,
   recruiter, student.
   Definitions that are easy to get wrong:
-    investor        — CURRENTLY sits at an organisation whose business is deploying capital (VC, PE,
-                      angel syndicate, family office, corporate venture arm, student-run venture
-                      fund) in a role that sources, evaluates or decides on investments.
-                      THE SENIORITY OF THE TITLE IS IRRELEVANT. Intern, Extern, Fellow, Scout,
-                      Analyst, Associate, Partner, Managing Partner and Board Observer AT A FUND all
-                      mean investor: "Intern @ Khosla Ventures" is an investor, NOT a student;
-                      "Fellow @ Comma Capital" is an investor, NOT a program_operator; "Analyst @
-                      Harvard Undergraduate Venture Capital Group" is an investor, NOT a student.
-                      NOT someone who merely works at a fintech or a bank, and NOT an engineer /
-                      PM / salesperson at a company that merely has "Capital", "Partners" or
-                      "Ventures" in its NAME (Capital One, Goldman Sachs and Tower Research Capital
-                      are not funds for this purpose — judge the ORGANISATION, then the ROLE).
-                      A founder who raised money is NOT an investor; but someone who founded a fund
-                      AND runs it ("Co-founder & Managing Partner @ X Ventures") IS — investor
-                      first, founder second, because their job is deploying the fund.
+    investor        — deploys capital: VC/angel/PE, an investing role at a fund, "Managing Partner",
+                      "Investment Analyst". NOT someone who merely works at a fintech, and NOT a
+                      founder who has raised money.
     program_operator— runs a fellowship / accelerator / community / event programme (YC staff,
-                      Cansbridge, ASES). Adjacent to investors but distinct — if the programme IS a
-                      fund and the person works on its investments, they are an investor, not this.
+                      Cansbridge, ASES). Adjacent to investors but distinct.
     operator        — non-founder, non-engineer at an operating company: GTM, sales, bizops, ops.
     executive       — VP/C-level at a company they did not found.
     student         — still in school, or an internship IS their current role. An "Incoming X Intern"
-                      is a student, not an engineer. EXCEPT when that internship is at an investment
-                      fund, where investor comes first.
+                      is a student, not an engineer.
   A person is often two (a technical founder is founder+engineer). Pick from the CURRENT role first.
 
 Weight the CURRENT role most. If a company is unknown to you, infer conservatively from the title and
-blurb rather than inventing a product. Students/interns with no company: describe the field they work in.
-
-NEVER INVENT A ROLE. If the input carries no current title, no company and no experience, return an
-EMPTY personType — a skills list alone is not evidence that someone is an investor, a founder or an
-executive, and a wrong label there is a person we hand to a stranger under a false description.`
+blurb rather than inventing a product. Students/interns with no company: describe the field they work in.`
 
 export const DESCRIPTOR_SCHEMA = {
   type: "object",

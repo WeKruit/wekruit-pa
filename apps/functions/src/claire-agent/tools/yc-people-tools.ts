@@ -355,6 +355,13 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
             {
               [SENT_FIELD]: FieldValue.arrayUnion(...out.results.map((r) => r.recordId)),
               ycPeopleMatchLastAt: ctx.nowIso(),
+              // One entry PER PERSON delivered — the rolling window budget above counts these, so
+              // two asks in quick succession draw from ONE pool of 5 instead of getting 5 each.
+              // `<iso>#<recordId>`, not a bare timestamp: arrayUnion dedupes equal values, and all
+              // results of one call share the same nowIso(), so bare stamps would collapse to 1.
+              ycPeopleMatchRecent: FieldValue.arrayUnion(
+                ...out.results.map((r) => `${ctx.nowIso()}#${r.recordId}`),
+              ),
             },
             { merge: true },
           )
