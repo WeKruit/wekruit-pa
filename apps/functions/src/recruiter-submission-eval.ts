@@ -228,7 +228,8 @@ Rules:
 - PRIMARY EVIDENCE = the candidate's résumé full text (when provided) + the recruiter's submitted fields/notes. The Coresignal research is CORROBORATION ONLY — it can be stale, sparse, or a wrong-identity match for the pasted LinkedIn URL. When the résumé and the research disagree, TRUST THE RÉSUMÉ. Verify hard items primarily against the résumé; NEVER reject because the research lacks or contradicts what the résumé clearly evidences.
 - NO-RÉSUMÉ FALLBACK: when no résumé text is available (none uploaded, or a link that could not be fetched), the LinkedIn/Coresignal research + the recruiter's submitted fields/notes BECOME your primary evidence — judge fit on what you DO have. A missing résumé is "unverifiable", NOT a disqualifier: do NOT reject merely because the résumé is absent or because hard items cannot be confirmed for lack of one. If the available research/notes plausibly support the hard requirements, prefer verdict "borderline" (human review) so a human can request the résumé. Reject ONLY when the AVAILABLE evidence shows a clear MISMATCH against a hard requirement — wrong field/role, clearly insufficient experience, or an applicable anti-signal — never on absence of a résumé alone. (Still apply the WRONG-IDENTITY GUARD below: research that is a different person is neither evidence FOR nor AGAINST.)
 - WRONG-IDENTITY GUARD (check FIRST): the independent research is fetched from the LinkedIn URL the recruiter pasted, which CAN BE WRONG — a mistyped/ambiguous URL or a common-name collision resolves a DIFFERENT person. Before using research as evidence, sanity-check it plausibly belongs to THIS candidate: compare the research subject's name, profession/field, and seniority against the candidate's submitted name, current role, resume notes, and skills. If the research SHARPLY CONFLICTS with the candidate's own resume — a fundamentally different profession or field (e.g. research shows a pharmacist / Walgreens pharmacy manager while the resume and current role are a senior software engineer) — treat the research as a LIKELY WRONG-IDENTITY match: **set \`identityConflict\`: true**, DO NOT use the research as disqualifying evidence, DO NOT reject on it, judge on the submitted resume/notes alone, prefer verdict "borderline" (human review), and state the identity conflict explicitly in \`reasons\`. Only treat research as authoritative when it is consistent with the candidate's own info; set \`identityConflict\`: false otherwise (including when research is simply absent/sparse — that is "unverifiable", NOT a conflict and NOT disqualifying).
-- Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the candidate info or research contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text.
+- Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the candidate info or research contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text — WITH ONE EXCEPTION, below.
+- THE EXCEPTION — CIRCUMSTANCE ITEMS ARE NEVER GAPS FOR LACK OF EVIDENCE. First classify each hard item: is it about the candidate's BACKGROUND (years, technologies, systems built, domains worked in) or about their CIRCUMSTANCES/INTENT (willing to work on-site in a named city, available full-time, will relocate, start date, visa intent, salary acceptance)? A resume and a LinkedIn profile describe background; they can NEVER evidence circumstances — only the person can answer those. So for a CIRCUMSTANCE item: put it in checklist.hard.gaps ONLY when the evidence CONTRADICTS it (they say remote-only, or are elsewhere and will not move) or the recruiter explicitly marked it unmet. Otherwise COUNT IT AS MET for the tally, leave it OUT of gaps entirely, and name it in the reasons array as an open question to confirm with the candidate. Concretely: an item like "Available for full-time, in-person work in San Francisco", with nothing said either way, is NOT a gap — it is an unasked question, and it must not appear in gaps in any wording. Measured live 2026-07-26: all 191 submissions to one role carried exactly that gap purely because nobody had asked, capping every candidate below advance. BACKGROUND items are unchanged: absence of evidence there IS a gap.
 - Apply the same evidence bar to fit and bonus items; list unmet/unverifiable item texts in their gaps arrays.
 - For anti-signal items, flagged = items that plausibly apply to this candidate; list their exact item texts in checklist.anti.flags. Also flag anti-signals you observe in the research even when the recruiter left them unticked.
 - met/total (and flagged/total) must tally the rubric items per group; total = number of items in that group.
@@ -260,7 +261,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 type ChecklistGroup = {
   kind: "hard" | "fit" | "bonus" | "anti"
   heading: string
-  items: Array<{ id: string; text: string }>
+  items: Array<{ id: string; text: string; circumstance?: boolean }>
 }
 
 export function extractChecklistGroups(job: Record<string, unknown>): ChecklistGroup[] {
@@ -743,6 +744,45 @@ async function judgeSubmission(
         ...parsed.data,
         confidence: clamp01(parsed.data.confidence),
         checklist: normalizeChecklist(parsed.data.checklist, groups),
+      }
+      // CIRCUMSTANCE ITEMS: DETERMINISTIC, NOT PROMPT-ONLY.
+      //
+      // A hard item that asks about availability / on-site willingness / relocation / start date
+      // cannot be evidenced by a resume or a LinkedIn profile — only the person can answer it. The
+      // judge is TOLD this (see JUDGE_SYSTEM_PROMPT), and a real-LLM probe on 2026-07-26 showed it
+      // obeys inconsistently: the weak case dropped the item correctly while the strong case still
+      // listed it. A prompt-only rule loses under nondeterminism, so the reducer enforces it — the
+      // same shape as the wrong-identity clamp below.
+      //
+      // Which items are circumstance is DATA, not inference: `circumstance: true` on the rubric
+      // item, authored by whoever wrote the rubric. No text matching, so a reworded item cannot
+      // silently change meaning. Only strips when the judge did NOT find contradicting evidence —
+      // a stated remote-only preference still produces a real gap, because the judge puts its
+      // reason in `reasons`, which we leave untouched.
+      const circumstanceTexts = new Set(
+        groups
+          .filter((g) => g.kind === "hard")
+          .flatMap((g) => g.items.filter((i) => i.circumstance === true).map((i) => i.text.toLowerCase())),
+      )
+      if (circumstanceTexts.size > 0) {
+        const kept = judgment.checklist.hard.gaps.filter(
+          (gap) => !circumstanceTexts.has(gap.trim().toLowerCase()),
+        )
+        if (kept.length !== judgment.checklist.hard.gaps.length) {
+          const dropped = judgment.checklist.hard.gaps.length - kept.length
+          deps.log?.("circumstance_gaps_stripped", { submissionId, dropped })
+          judgment = {
+            ...judgment,
+            checklist: {
+              ...judgment.checklist,
+              hard: {
+                ...judgment.checklist.hard,
+                gaps: kept,
+                met: Math.min(judgment.checklist.hard.total, judgment.checklist.hard.met + dropped),
+              },
+            },
+          }
+        }
       }
       // Deterministic guard on the locked stinginess rule: "advance" is only
       // valid with zero hard gaps. LLM judges; the reducer enforces.
