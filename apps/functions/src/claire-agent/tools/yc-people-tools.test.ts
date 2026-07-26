@@ -6,11 +6,13 @@ import type { ClaireToolContext } from "../types.js"
 /**
  * NEVER-SILENT CONTRACT for match_yc_people (live incident 2026-07-25).
  *
- * The tool description turns `delivered:true` into "reply with an EMPTY message list". Both
- * short-circuit guards (the 60s double-fire guard and the 5-people/5-min rolling budget) used to
- * return `delivered:true, count:0` — i.e. they claimed a delivery that never happened, so a real
- * question ("what about founders?") was answered with literal silence. These tests pin the fix:
- * a guard that sends NOTHING must report `delivered:false` and must demand a spoken reply.
+ * The tool description turns `delivered:true` into "reply with an EMPTY message list". Two
+ * short-circuit guards used to return `delivered:true, count:0` — claiming a delivery that never
+ * happened — so a real question ("what about founders?") was answered with literal silence.
+ *
+ * BOTH GUARDS ARE NOW DELETED (Adam 2026-07-26: "no rolling budget / next action"), so the tests
+ * that pinned their individual shapes are gone with them. What survives is the rule that outlived
+ * them: the empty-list instruction is scoped to a REAL delivery, never to a zero-count return.
  */
 
 /** Minimal ctx — the guards only read pa-users/{userId} and log. Nothing else is reached. */
