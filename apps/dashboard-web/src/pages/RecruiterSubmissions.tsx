@@ -136,7 +136,6 @@ interface SubmissionDoc {
   sheetSyncError?: string | null
   createdAt?: { seconds: number } | null
   createdAtMs?: number
-  triageSortMs?: number
   hardScorePct?: number
   aiVerdictRank?: number
 }
@@ -376,8 +375,6 @@ function payoutAmountLabel(payout?: SubmissionDoc["recruiterPayout"]): string {
 const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "interviewing", "backburner", "offer", "client_review", "hired", "rejected", "duplicate"]
 const ACTIVE_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "interviewing", "backburner", "offer", "client_review"]
 const PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
-const TRIAGE_FIRST_STATUSES = ["submitted", "new", "reviewing"]
-const TRIAGE_SORT_BOOST_MS = 1e15
 const ADVANCED_SUBMISSION_STATUSES = ["advanced", "wekruit_interview", "interviewing", "offer", "client_review", "hired"]
 const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
@@ -1082,9 +1079,6 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
         if (cancelled) return
         const all = (listResult.rows as (Omit<SubmissionDoc, "id"> & { id: string })[]).map((data) => {
           const createdAtMs = data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0
-          const triageSortMs = TRIAGE_FIRST_STATUSES.includes(data.status ?? "new")
-            ? createdAtMs + TRIAGE_SORT_BOOST_MS
-            : createdAtMs
           const hardScorePct = data.score?.hardTotal
             ? data.score.hardChecked / data.score.hardTotal
             : 0
@@ -1094,7 +1088,7 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
           const RANK: Record<string, number> = { advance: 3, borderline: 2, reject: 1 }
           const vRank = RANK[data.aiEvaluation?.verdict ?? ""] ?? 0
           const aiVerdictRank = vRank + Math.min(0.99, data.aiEvaluation?.confidence ?? 0)
-          return { ...data, createdAtMs, triageSortMs, hardScorePct, aiVerdictRank }
+          return { ...data, createdAtMs, hardScorePct, aiVerdictRank }
         })
         const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
         for (const d of jobSnap.docs) {
@@ -1131,7 +1125,11 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
   }, [rows])
 
   const table = useTable<SubmissionDoc>(rows, {
-    defaultSort: { key: "triageSortMs", dir: "desc" },
+    // AI verdict first, not arrival order (Adam 2026-07-26). A 4.6k-row board sorted by
+    // recency makes the strongest candidate indistinguishable from the 3.8k behind them;
+    // `aiVerdictRank` is advance(3) > borderline(2) > reject(1) > pending(0), tie-broken by
+    // confidence, so the top of page 1 is the shortlist. Recency is one click on Submitted.
+    defaultSort: { key: "aiVerdictRank", dir: "desc" },
     pageSize: 50,
     search: (r, q) =>
       (r.submitter?.name?.toLowerCase().includes(q) ?? false) ||
