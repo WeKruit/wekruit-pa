@@ -59,8 +59,10 @@ import {
 import { buildDecisionTrace } from "./decision-trace.js"
 import {
   extractLinkedinProfileUrl,
-  enrichFromTypedLinkedinUrl,
+  looksLikeLinkedinShareAttempt,
 } from "../enrich-from-typed-linkedin.js"
+import { linkAndEnrichLinkedin } from "../linkedin-connect/linkedin-connect-submit.js"
+import { canonicalizeLinkedInUrl } from "@pa/external-supply"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 import type { ClaireLang, ClaireToolContext } from "./types.js"
 import {
@@ -119,9 +121,25 @@ export const IMAGE_ATTACHMENT_REPLY =
 export const LINKEDIN_PASTE_ACK =
   "got it ✅ pulling your background off that link now — one sec"
 
-/** The pull came back empty. Say so; NEVER invent a background we didn't fetch. */
+/** They meant to share a profile, but nothing resolvable arrived — ask once, plainly, never silence. */
+export const LINKEDIN_SHARE_UNREADABLE_REPLY =
+  "i think you meant to send your linkedin, but it came through without the actual link on my side 🙈 can you paste it as plain text — linkedin.com/in/yourname? (the share button tends to eat it)"
+
+/**
+ * The lookup genuinely found nobody. Ask for the ONE form measured to work against the provider
+ * (2026-07-25: `www.linkedin.com/in/<slug>` resolves; `?utm_source=share_via` and `uk.linkedin.com`
+ * both return null), so the ask is actionable instead of a shrug.
+ */
 export const LINKEDIN_PASTE_NO_MATCH_REPLY =
-  "hmm — i pulled on that link and got nothing back on my side 😕 that's on the data provider, not you. drop your résumé here (PDF) and i'll take everything from that instead"
+  "hmm — i couldn't fetch that profile 😕 can you try the plain www.linkedin.com/in/... form (the share button adds tracking bits that break the lookup)? or just drop your résumé as a PDF and i'll take everything from that"
+
+/** OUR side broke (missing key, network, provider 5xx). Never blame their link for our failure. */
+export const LINKEDIN_OUR_SIDE_FAILED_REPLY =
+  "argh — my side hiccuped pulling that, nothing to do with your link 🙈 give me a moment and send it once more, or drop your résumé (PDF) and i'll work from that"
+
+/** Already connected. Acknowledge, do not re-pitch, and never ask for a PDF. */
+export const LINKEDIN_ALREADY_CONNECTED_REPLY =
+  "you're already connected 🤝 i've got your background — tell me who you'd want to meet and i'll get matching"
 
 /** Real reply when an attempted résumé ingest fails (instead of the old silent log-and-drop). */
 export const RESUME_INGEST_FAILURE_REPLY =
@@ -320,21 +338,22 @@ export async function maybeRunThinClaire(
   //      describe you" bubbles off it — so we emit the SAME event rather than build a second path.
   // The URL extractor was NOT the cause: `http://`, no-www, and trailing slash all parse fine
   // (regression-tested). Pool membership + the `/oauth-linked/` placeholder replacement happen
-  // inside enrichFromTypedLinkedinUrl, which gates the pool on `isYcPeopleUser` itself.
+  // inside enrichFromCoresignal, which gates the pool on `isYcPeopleUser` itself.
   const pastedLinkedinUrl =
     rawMeta.runtimeEvent === true ? null : extractLinkedinProfileUrl(text)
   if (pastedLinkedinUrl) {
-    // Only chase a URL for someone we hold NO real background for — otherwise a URL mentioned mid
-    // conversation (a co-founder's profile, a job link) would re-run an enrich on the wrong person.
-    // Same predicate the mode-selector gates the ask on, so the two can never disagree.
-    let needsBackground = false
-    try {
-      const uSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
-      needsBackground = !hasFetchedBackground((uSnap.data() ?? {}) as Record<string, unknown>)
-    } catch {
-      /* read error → treat as "already have it" and leave the turn alone */
-    }
-    if (needsBackground) {
+    // THE HOOK OWNS ANY TURN THAT IS JUST A PROFILE URL — enriched or not.
+    //
+    // This used to be gated on `needsBackground`, so someone we had ALREADY enriched fell straight
+    // past here into the résumé/media branch and was answered "that didn't read as a résumé 😅 send
+    // the file itself (PDF)". Live 2026-07-25: +447542282427 re-sent a perfectly good
+    // `uk.linkedin.com/in/rucha-agashe-687888338` — because a recovery message of ours asked her to
+    // — and that is exactly what she got back.
+    //
+    // `needsBackground` still decides whether we ENRICH (a URL mentioned mid-conversation must not
+    // re-run an enrich on the wrong person); `linkAndEnrichLinkedin` returns `already_bound` and we
+    // answer honestly. It no longer decides who owns the turn.
+    {
       // A bare URL IS the whole turn (this is the live shape: they were asked, they answered), so we
       // own it end to end — ack, enrich, pitch — exactly the OAuth shape. A URL wrapped in real prose
       // ("building X, here's my linkedin") still enriches, but the normal turn answers what they said,
@@ -363,18 +382,24 @@ export async function maybeRunThinClaire(
         // ("still pulling your info") and the ack means the wait is never dead air.
         await setEnrichmentInFlight(db, userId, "linkedin", nowIso).catch(() => {})
         await linkedinTransport!
-          .sendText(LINKEDIN_PASTE_ACK, { seq: 0 })
+          .sendText(LINKEDIN_PASTE_ACK, { seq: 0, allowRepeat: true })
           .catch((err) => log("thin_claire.linkedin_url_pasted.ack_failed", { eventId, err: String(err) }))
       }
-      const enrich = await enrichFromTypedLinkedinUrl({
+      // THE SAME CALL THE OAUTH LOGIN MAKES. Canonicalise first: measured against the live
+      // provider, `?utm_source=share_via` (the iOS share button) and a locale host
+      // (`uk.linkedin.com`) both return null, and those are the two most common real-world forms.
+      const canonical = canonicalizeLinkedInUrl(pastedLinkedinUrl)
+      const enrich = await linkAndEnrichLinkedin({
         db,
         userId,
-        apiKey: process.env.CORESIGNAL_API_KEY ?? null,
-        rawUrl: pastedLinkedinUrl,
         nowIso,
+        apiKey: process.env.CORESIGNAL_API_KEY ?? null,
+        ...(canonical ? { canonicalUrl: canonical } : {}),
+        rawUrl: pastedLinkedinUrl,
+        source: "paste",
       })
       log("thin_claire.linkedin_url_pasted.done", { eventId, userId, result: enrich })
-      if (enrich.ok && toE164) {
+      if (enrich.enriched && toE164) {
         // THE SAME EVENT THE OAUTH CONNECT EMITS — same composer, same bubbles, no second pitch
         // path to drift. Keyed on this inbound event so a retry of this turn dedups to one pitch.
         const handoff = await enqueueRuntimeEventHandoff(db, {
@@ -391,19 +416,27 @@ export async function maybeRunThinClaire(
         })
         log("thin_claire.linkedin_url_pasted.handoff", { eventId, userId, ok: handoff?.ok ?? false })
       }
-      if (!enrich.ok) {
+      if (!enrich.enriched) {
         // Never leave the in-flight marker stuck — that is the "forever silence" shape (2026-06-11).
         await clearEnrichmentInFlight(db, userId, nowIso).catch(() => {})
       }
-      // `already_enriched` = someone else's write landed first (a résumé, a concurrent OAuth). That
-      // user is fine; let the normal turn answer them instead of claiming a pull we didn't do.
-      if (ownsTurn && (enrich.ok || enrich.reason !== "already_enriched")) {
-        if (!enrich.ok) {
-          // HONEST, NOT INVENTED (Adam: "不能拿假的"). We asked, they answered, the lookup found
-          // nothing — say that and offer the résumé, never fabricate a background or re-ask for the
-          // link they just gave us.
+      if (ownsTurn) {
+        if (!enrich.enriched) {
+          // WHOSE FAULT IS IT? The copy used to collapse every failure into "i couldn't read your
+          // link", which on 2026-07-25 told eight people their perfectly good URL was broken because
+          // the Coresignal key was missing on our side. Split it:
+          //   already_bound  → we already have them; say so, never re-pitch, never mention a PDF
+          //   no_key / error → OURS. Say our side hiccuped. Never mention their link.
+          //   no_match       → theirs, honestly: not in the provider's data. Ask for the ONE form
+          //                    measured to work (`www.linkedin.com/in/...`) so the ask is actionable.
+          const body =
+            enrich.reason === "already_bound"
+              ? LINKEDIN_ALREADY_CONNECTED_REPLY
+              : enrich.reason === "no_key" || enrich.reason === "error"
+                ? LINKEDIN_OUR_SIDE_FAILED_REPLY
+                : LINKEDIN_PASTE_NO_MATCH_REPLY
           await linkedinTransport!
-            .sendText(LINKEDIN_PASTE_NO_MATCH_REPLY, { seq: 1 })
+            .sendText(body, { seq: 1, allowRepeat: true })
             .catch((err) =>
               log("thin_claire.linkedin_url_pasted.no_match_send_failed", { eventId, err: String(err) }),
             )
@@ -415,6 +448,39 @@ export async function maybeRunThinClaire(
           .catch(() => {})
         return true
       }
+    }
+  }
+
+  // A SHARE WE COULDN'T READ MUST NEVER END IN SILENCE (Adam 2026-07-25: "if not valid linkedin
+  // pasted ask them again"). They tried to hand us their profile and we got no slug out of it —
+  // the iOS share sheet sending only "Check out X's profile on LinkedIn" with the URL stripped, or
+  // the `linkedin.com/me?trk=…` self-link, which has no slug to resolve at all. Both were answered
+  // with nothing today. Gated on `needsBackground` for the same reason the URL path is: someone we
+  // already know who merely mentions LinkedIn is having a conversation, not sharing a profile.
+  if (!pastedLinkedinUrl && rawMeta.runtimeEvent !== true && toE164 && looksLikeLinkedinShareAttempt(text)) {
+    let needsBackground = false
+    try {
+      const uSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      needsBackground = !hasFetchedBackground((uSnap.data() ?? {}) as Record<string, unknown>)
+    } catch {
+      /* read error → leave the turn to the agent */
+    }
+    if (needsBackground) {
+      log("thin_claire.linkedin_share_unreadable", { eventId, userId })
+      const t = createSendblueTransport({
+        db, toE164: String(toE164), inboundMessageHandle, userId, sessionId,
+        inboundEventId: eventId, log, ...(deps.dryRun ? { dryRun: true } : {}),
+      })
+      // allowRepeat: fixed copy, and someone fumbling the share may well fumble it twice.
+      await t
+        .sendText(LINKEDIN_SHARE_UNREADABLE_REPLY, { seq: 0, allowRepeat: true })
+        .catch((err) => log("thin_claire.linkedin_share_unreadable.send_failed", { eventId, err: String(err) }))
+      await db
+        .collection(PA_COLLECTIONS.inboundEvents)
+        .doc(eventId)
+        .set({ status: "completed", handledBy: "thin_claire_linkedin_share_unreadable" }, { merge: true })
+        .catch(() => {})
+      return true
     }
   }
 

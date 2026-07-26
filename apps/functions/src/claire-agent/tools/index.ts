@@ -11,6 +11,7 @@ import { buildSchedulingTools } from "./scheduling-tools.js"
 import { buildVoiceCallTools } from "./voice-call-tools.js"
 import { buildYcPeopleTools } from "./yc-people-tools.js"
 import { buildWekruitPartnerRolesTools } from "./wekruit-partner-roles-tool.js"
+import { buildLinkedinProfileTools } from "./linkedin-profile-tool.js"
 
 /** Prescreen seed the turn forwards into the FSM tools (qId → DIRECTION + qId → judge RUBRIC). */
 export interface BuildClaireToolsOptions {
@@ -80,5 +81,10 @@ export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsO
     // interviews. People intros are operator-curated, not self-booked from this chat.
     ...(opts.ycPeopleMode ? [] : buildSchedulingTools(ctx)),
     ...buildVoiceCallTools(ctx),
+    // EVERY LANE. Someone handing us their LinkedIn is not YC-specific, and the decision of whether
+    // they MEANT to hand it over is the model's (Adam 2026-07-25: "why don't we make it a tool call
+    // and ask the agent to decide?"). The tool owns parsing and fetching; the model owns intent and
+    // the words. That replaces a regex that was measurably wrong in both directions.
+    ...buildLinkedinProfileTools(ctx),
   ]
 }

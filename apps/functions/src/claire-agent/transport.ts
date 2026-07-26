@@ -227,9 +227,15 @@ export function createSendblueTransport(
     // therefore delivers in strict order WITH its caption (one durable row), instead of a separate
     // once/day media row that races the recs. The idempotency key folds the body hash + the per-turn
     // inboundEventId, so this image+caption row re-sends every find_match (per-turn), as intended.
+    // `opts.allowRepeat` opts a bubble out of the outbox's 5-minute identical-body guard. Needed
+    // for FIXED template copy that is legitimately correct to repeat: someone who re-sends their
+    // LinkedIn link three minutes later must get the ack again, not silence. Live 2026-07-25 —
+    // +19293876878 pasted the same URL seven times and four of them were terminal
+    // `duplicate_skipped`, so from their side we simply stopped responding. Model-composed prose
+    // never needs this (it varies); only byte-identical constants do.
     async sendText(
       text: string,
-      opts?: { seq?: number; paced?: boolean; mediaUrl?: string },
+      opts?: { seq?: number; paced?: boolean; mediaUrl?: string; allowRepeat?: boolean },
     ): Promise<void> {
       record("text", text)
       if (dryRun) return
@@ -245,6 +251,7 @@ export function createSendblueTransport(
           ...(typeof opts?.seq === "number" ? { seq: opts.seq } : {}),
           ...(opts?.paced ? { paced: true } : {}),
           ...(mediaUrl ? { mediaUrl } : {}),
+          ...(opts?.allowRepeat ? { allowRepeat: true } : {}),
           runtimeApproved: true,
           runtimeSource: "pa_orchestrator",
         })

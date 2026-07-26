@@ -145,7 +145,9 @@ describe("enrichFromTypedLinkedinUrl — gates", () => {
   })
 
   it("a pasted URL wins over the stored placeholder", async () => {
-    let searched: string | null = null
+    // Record EVERY attempt: resolution is a ladder (canonical → as-typed), so a single-value
+    // recorder captures whichever rung ran last, not the one that matters.
+    const searched: string[] = []
     const r = await enrichFromTypedLinkedinUrl({
       db: dbWith({
         linkedinOauthLinked: true,
@@ -155,12 +157,20 @@ describe("enrichFromTypedLinkedinUrl — gates", () => {
       apiKey: "k",
       rawUrl: "linkedin.com/in/ada-lovelace",
       search: async (url: string) => {
-        searched = url
+        searched.push(url)
         return null
       },
     })
     assert.deepEqual(r, { ok: false, reason: "no_match" })
-    assert.equal(searched, "https://linkedin.com/in/ada-lovelace")
+    // The CANONICAL form must be tried — measured against the live provider 2026-07-25, the
+    // `match_phrase` on `linkedin_url` returns null for a `?utm_source=share_via` query string and
+    // for a locale host (`uk.linkedin.com`), the two commonest forms people send.
+    assert.ok(
+      searched.includes("https://www.linkedin.com/in/ada-lovelace"),
+      `canonical form was never searched; tried: ${JSON.stringify(searched)}`,
+    )
+    // And the placeholder is never sent to the provider — it is a bind marker, not a profile.
+    assert.ok(!searched.some((u) => u.includes("/oauth-linked/")))
   })
 
   it("without a pasted URL, a placeholder-only user is unusable (never search the marker)", async () => {

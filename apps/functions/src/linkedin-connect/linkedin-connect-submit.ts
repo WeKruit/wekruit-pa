@@ -496,19 +496,188 @@ export async function resolveLinkedinEmployeeId(input: {
   apiKey: string
   picture?: string | null
   canonicalUrl?: string | null
-}): Promise<{ employeeId: number; via: "photo" | "url" } | null> {
+  /** The string the person actually typed, when it differs from the canonical form. Tried LAST. */
+  rawUrl?: string | null
+  /** Test seams — default to the real Coresignal calls. */
+  searchByUrl?: typeof searchEmployeeIdByLinkedinUrl
+  searchByPhoto?: typeof searchEmployeeIdByPhotoAssetId
+}): Promise<{ employeeId: number; via: "photo" | "url" | "raw_url" } | null> {
   const { apiKey } = input
+  const byUrlFn = input.searchByUrl ?? searchEmployeeIdByLinkedinUrl
+  const byPhotoFn = input.searchByPhoto ?? searchEmployeeIdByPhotoAssetId
   const assetId = licdnAssetKey(input.picture ?? undefined)?.split(":")[0]
   if (assetId) {
-    const byPhoto = await searchEmployeeIdByPhotoAssetId(assetId, { apiKey })
+    const byPhoto = await byPhotoFn(assetId, { apiKey })
     if (byPhoto !== null) return { employeeId: byPhoto, via: "photo" }
   }
   const url = (input.canonicalUrl ?? "").trim()
   if (url) {
-    const byUrl = await searchEmployeeIdByLinkedinUrl(url, { apiKey })
+    const byUrl = await byUrlFn(url, { apiKey })
     if (byUrl !== null) return { employeeId: byUrl, via: "url" }
   }
+  // AS-TYPED, LAST RESORT. Measured against the live API 2026-07-25: the `match_phrase` on
+  // `linkedin_url` tolerates scheme / no-www / trailing slash / slug case / host case on its own,
+  // but returns NULL for a `?utm_source=share_via` query string and for a locale host
+  // (`uk.linkedin.com`) — the two most common real-world forms, which is why canonicalization runs
+  // first. This step exists for the inverse case: canonicalization returned null (an unusual shape
+  // it refuses to fold) and the raw string is still something Coresignal can match.
+  // NOT in this ladder, deliberately: trimming the numeric suffix or guessing a shortened slug — a
+  // near-miss there resolves a STRANGER, which is worse than not resolving at all.
+  const rawUrl = (input.rawUrl ?? "").trim()
+  if (rawUrl && rawUrl !== url) {
+    const byRaw = await byUrlFn(rawUrl, { apiKey })
+    if (byRaw !== null) return { employeeId: byRaw, via: "raw_url" }
+  }
   return null
+}
+
+/**
+ * BIND + ENRICH — the one sequence every LinkedIn entry point runs.
+ *
+ * Adam, repeatedly: a pasted link and an OAuth login are the SAME code pattern, reuse it. They were
+ * not. `enrich-from-typed-linkedin.ts` grew a second copy of the same four steps (resolve → mirror →
+ * tags → pool) and the two drifted; every LinkedIn bug reported on 2026-07-25 was a symptom. The
+ * copy also silently lacked what only lives here: `linkCandidateHandle` (identity-conflict
+ * detection — without it a pasted URL belonging to someone else overwrites a profile) and the photo
+ * rung of the resolution ladder.
+ *
+ * Everything above this is entry-specific and stays with the caller: OAuth owns token verification
+ * and the reroute deep-link; the paste hook owns pulling a URL out of free text. Everything from the
+ * bind onward is this function.
+ *
+ * No-throw contract: every step fails open, because a bind or tag hiccup must never dead-end the
+ * candidate. The return says what actually happened so the caller can pick honest copy.
+ */
+export async function linkAndEnrichLinkedin(args: {
+  db: Firestore
+  userId: string
+  nowIso: string
+  apiKey: string | null
+  /** Canonical `https://www.linkedin.com/in/<slug>` — strips the two forms Coresignal rejects. */
+  canonicalUrl?: string
+  /** As-typed, for the last rung of the ladder. */
+  rawUrl?: string
+  picture?: string
+  source: "oauth" | "paste"
+  /** Test seams — default to the real Coresignal calls. */
+  searchByUrl?: typeof searchEmployeeIdByLinkedinUrl
+  searchByPhoto?: typeof searchEmployeeIdByPhotoAssetId
+  fetchOne?: typeof fetchEmployeeCollect
+}): Promise<{
+  enriched: boolean
+  alreadyBound: boolean
+  /** Distinguishes OUR failure from THEIRS — copy must never blame a link for a missing key. */
+  reason: "enriched" | "already_bound" | "no_key" | "no_match" | "error"
+}> {
+  const { db, userId, nowIso } = args
+  const log = (e: string, f?: Record<string, unknown>) =>
+    logger.info(`linkedin_link_enrich.${e}`, { userId, source: args.source, ...(f ?? {}) })
+
+  // "ALREADY DONE" MEANS DIFFERENT THINGS ON THE TWO PATHS — do not unify these.
+  //
+  //   oauth → a BIND. Re-running the login must not re-enrich or fire a second pitch.
+  //   paste → real BACKGROUND. Gating a paste on the bind is precisely the bug that stranded 32 YC
+  //           users: LinkedIn's OIDC only returns a vanity URL when the public profile is visible,
+  //           so they had a bind, an `/oauth-linked/<sub>` placeholder and ZERO background. They are
+  //           pasting their URL *because* the bind produced nothing — short-circuiting there makes
+  //           the enrich a permanent no-op. (Regression caught by
+  //           `enrich-from-typed-linkedin.test.ts`: "an OAuth BIND is not background".)
+  let alreadyBound = false
+  try {
+    if (args.source === "oauth") {
+      alreadyBound = await candidateHasLinkedinBind(db, userId)
+    } else {
+      const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const u = (snap.data() ?? {}) as Record<string, unknown>
+      alreadyBound =
+        (Array.isArray(u.experienceHighlights) && u.experienceHighlights.length > 0) ||
+        typeof u.coresignalEmployeeId === "number" ||
+        (typeof u.latestResumeArtifactId === "string" && u.latestResumeArtifactId.trim().length > 0)
+    }
+  } catch {
+    /* read error → treat as first connect; a redundant enrich is cheap, a permanent no-op is not */
+  }
+
+  const handleUrl = args.canonicalUrl ?? args.rawUrl
+  if (handleUrl) {
+    try {
+      await linkCandidateHandle(db, {
+        candidateId: userId,
+        kind: "linkedin",
+        value: handleUrl,
+        source: "candidate",
+        verified: args.source === "oauth",
+        now: nowIso,
+        evidence: [
+          {
+            source: "system",
+            summary: args.source === "oauth" ? "LinkedIn OAuth sign-in (one-tap connect)" : "LinkedIn URL pasted in chat",
+          },
+        ],
+      })
+    } catch (err) {
+      log("link_handle_noted", { err: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  if (alreadyBound) {
+    log("already_bound")
+    return { enriched: false, alreadyBound: true, reason: "already_bound" }
+  }
+  if (!args.apiKey) {
+    // OUR failure, not theirs. Live 2026-07-25: an operator script read the key from `.env` (it is a
+    // Firebase secret), got null, and told EIGHT people "couldn't read that one" about URLs that
+    // were fine — four of whom we had already enriched. Never let this reach user-facing copy.
+    log("no_api_key")
+    return { enriched: false, alreadyBound: false, reason: "no_key" }
+  }
+
+  try {
+    const out = await enrichFromCoresignal({
+      db,
+      userId,
+      apiKey: args.apiKey,
+      nowIso,
+      ...(args.canonicalUrl ? { canonicalUrl: args.canonicalUrl } : {}),
+      ...(args.rawUrl ? { rawUrl: args.rawUrl } : {}),
+      ...(args.picture ? { picture: args.picture } : {}),
+      ...(args.searchByUrl ? { searchByUrl: args.searchByUrl } : {}),
+      ...(args.searchByPhoto ? { searchByPhoto: args.searchByPhoto } : {}),
+      ...(args.fetchOne ? { fetchOne: args.fetchOne } : {}),
+    })
+    if (out.enriched) {
+      // A URL that RESOLVED replaces whatever was on the profile — usually our own
+      // `/oauth-linked/<sub>` marker, which makes every downstream reader believe we already hold
+      // this person's LinkedIn and is why 30 stranded users could never be re-asked. Persist the
+      // CANONICAL form so a pasted link and an OAuth-connected one are byte-identical strings.
+      const persistUrl = args.canonicalUrl ?? args.rawUrl
+      if (persistUrl) {
+        await db
+          .collection(PA_COLLECTIONS.users)
+          .doc(userId)
+          .set(
+            {
+              linkedinUrl: persistUrl,
+              linkedinEnrichedAt: nowIso,
+              // Provenance: a typed URL is the person ASSERTING identity, an OAuth bind proves it.
+              linkedinEnrichSource: args.source === "oauth" ? "oauth_verified" : "typed_url_unverified",
+              updatedAt: nowIso,
+            },
+            { merge: true },
+          )
+          .catch((err) => log("persist_url_failed", { err: String(err) }))
+      }
+    }
+    log("done", { enriched: out.enriched })
+    return {
+      enriched: out.enriched,
+      alreadyBound: false,
+      reason: out.enriched ? "enriched" : "no_match",
+    }
+  } catch (err) {
+    log("failed", { err: err instanceof Error ? err.message : String(err) })
+    return { enriched: false, alreadyBound: false, reason: "error" }
+  }
 }
 
 /**
@@ -524,13 +693,22 @@ export async function enrichFromCoresignal(args: {
   nowIso: string
   /** Resolve by URL (paste) and/or photo (OIDC login) — photo wins. At least one required. */
   canonicalUrl?: string
+  /** What the person literally typed — the as-typed rung of the resolution ladder. */
+  rawUrl?: string
   picture?: string
+  /** Test seams — default to the real Coresignal calls. */
+  searchByUrl?: typeof searchEmployeeIdByLinkedinUrl
+  searchByPhoto?: typeof searchEmployeeIdByPhotoAssetId
+  fetchOne?: typeof fetchEmployeeCollect
 }): Promise<{ enriched: boolean }> {
   const { db, userId, apiKey, nowIso } = args
   const resolved = await resolveLinkedinEmployeeId({
     apiKey,
     picture: args.picture,
     canonicalUrl: args.canonicalUrl,
+    rawUrl: args.rawUrl,
+    ...(args.searchByUrl ? { searchByUrl: args.searchByUrl } : {}),
+    ...(args.searchByPhoto ? { searchByPhoto: args.searchByPhoto } : {}),
   })
   if (resolved === null) {
     logger.info("linkedin_connect.coresignal_no_match", { userId })
@@ -546,7 +724,7 @@ export async function enrichFromCoresignal(args: {
     apiKey,
     now: nowIso,
     source: "linkedin_connect",
-    fetch: fetchEmployeeCollect,
+    fetch: args.fetchOne ?? fetchEmployeeCollect,
     link: args.canonicalUrl,
     log: (event, fields) => logger.info(`linkedin_connect.${event}`, { userId, ...(fields ?? {}) }),
   })

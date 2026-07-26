@@ -28,18 +28,9 @@ const embed = async (t: string) =>
 
 /** phone → the ask to match on. `null` = do NOT match, send the given line only. */
 const PLAN: { phone: string; query: string | null; note?: string }[] = [
-  { phone: "+16152432573", query: "quant recruiters, quantitative finance and trading" },
   { phone: "+18577570369", query: "founders and investors" },
   { phone: "+19725051505", query: "later stage founders" },
-  // DROPPED: their message was "The first one" — a reply to a question we asked, not an ask of
-  // their own. Any query here would be me inventing their intent, and a guessed match sent to an
-  // already-annoyed person is worse than nothing. Left for the live agent, which has the thread.
-  { phone: "+14082047538", query: "people working on interdisciplinary fields" },
-  { phone: "+16473289032", query: "agentic AI, LLM evaluation and full-stack infrastructure builders" },
-  { phone: "+19178615579", query: "cybersecurity and security engineering founders" },
-  // A joke, not a match ask. Cards here would be the same tin-eared bot behaviour Adam is angry
-  // about, so this one gets a human sentence and nothing else.
-  { phone: "+16178318159", query: null, note: "i retired them 😄 what are you looking for at startup school — founders, investors, or people building near you?" },
+  { phone: "+13237398246", query: "AI-driven products, founders building near NEXA" },
 ]
 
 async function answeredSince(uid: string, lastMs: number): Promise<boolean> {
@@ -48,7 +39,7 @@ async function answeredSince(uid: string, lastMs: number): Promise<boolean> {
     const r = x.data()
     if (r.status !== "sent" && r.status !== "delivered") return false
     const c = Date.parse(String(r.createdAt ?? ""))
-    return Number.isFinite(c) && c > lastMs - 2000
+    return Number.isFinite(c) && c > lastMs
   })
 }
 
