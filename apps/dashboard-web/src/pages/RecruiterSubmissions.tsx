@@ -429,6 +429,22 @@ function feedbackRatingTone(rating: unknown): "ok" | "warn" | "info" | "muted" {
   return "warn"
 }
 
+/**
+ * A 1-4 rating SUGGESTED from the AI verdict, shown only while the human rating is unset.
+ *
+ * The rating field itself stays operator-only — the AI never writes status or rating, that rule is
+ * locked. This is display: a board of 190+ machine-sourced rows was a solid wall of "unrated" with
+ * no way to tell a strong row from a weak one without opening each drawer. Same "AI suggests,
+ * human confirms" posture already used for the candidate tier.
+ */
+function suggestedRating(ai: { verdict?: string; confidence?: number } | undefined): number | null {
+  if (!ai?.verdict) return null
+  const c = ai.confidence ?? 0
+  if (ai.verdict === "advance") return c >= 0.7 ? 4 : 3
+  if (ai.verdict === "borderline") return c >= 0.6 ? 3 : 2
+  return 1
+}
+
 function reviewSummaryTone(tone: SubmissionReviewTone): Parameters<typeof Badge>[0]["tone"] {
   return tone === "ok" ? "ok" : tone === "warn" ? "warn" : tone === "info" ? "info" : "muted"
 }
@@ -1450,8 +1466,21 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     {
       key: "recruiterFeedbackRating",
       label: "Rating",
-      width: 84,
-      render: (r) => <Badge tone={feedbackRatingTone(r.recruiterFeedbackRating)}>{feedbackRatingLabel(r.recruiterFeedbackRating)}</Badge>,
+      width: 92,
+      render: (r) => {
+        const human = normalizeFeedbackRating(r.recruiterFeedbackRating)
+        if (human !== null) return <Badge tone={feedbackRatingTone(human)}>{human}/4</Badge>
+        // No human rating yet — show what the AI would say, clearly marked, so a 190-row batch
+        // isn't an undifferentiated wall of "unrated". Suggestion only; nothing is written.
+        const s = suggestedRating(r.aiEvaluation)
+        if (s === null) return <Badge tone="muted">unrated</Badge>
+        return (
+          <>
+            <Badge tone="muted">unrated</Badge>
+            <div style={{ color: "#777", fontSize: 11, marginTop: 3 }}>AI {s}/4</div>
+          </>
+        )
+      },
     },
     {
       key: "feedback",
