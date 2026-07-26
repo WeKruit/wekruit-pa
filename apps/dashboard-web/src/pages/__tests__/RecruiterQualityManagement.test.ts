@@ -49,6 +49,10 @@ test("recruiter quality dashboard reuses the complete trimmed submissions list",
     pageSource.indexOf("function RecruiterQualityPanel()"),
     pageSource.indexOf("function RecruiterQualityDetailPanel("),
   )
-  assert.match(panelSource, /cachedLoad\("recruiter-submissions:list", getRecruiterSubmissionsList\)/)
+  // `:v2` — the key was bumped deliberately when `aiEvaluation.verdict`/`confidence` were added to
+  // the server projection. Without the bump, a 3-minute sessionStorage entry cached before the
+  // change keeps serving rows with no verdict, so the new AI column renders "pending" for everyone.
+  // The assertion is on the SHARED key, which is the point of the test — not on its version.
+  assert.match(panelSource, /cachedLoad\("recruiter-submissions:list:v2", getRecruiterSubmissionsList\)/)
   assert.doesNotMatch(panelSource, /collection\(db\(\), "pa-recruiter-submissions"\)/)
 })
