@@ -1,6 +1,10 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { enrichFromTypedLinkedinUrl, normalizeTypedLinkedinUrl } from "./enrich-from-typed-linkedin.js"
+import {
+  enrichFromTypedLinkedinUrl,
+  extractLinkedinProfileUrl,
+  normalizeTypedLinkedinUrl,
+} from "./enrich-from-typed-linkedin.js"
 
 describe("normalizeTypedLinkedinUrl — real values seen in prod", () => {
   it("adds a missing scheme", () => {
@@ -14,10 +18,30 @@ describe("normalizeTypedLinkedinUrl — real values seen in prod", () => {
     )
   })
 
-  it("keeps a well-formed URL", () => {
-    assert.equal(
-      normalizeTypedLinkedinUrl("https://www.linkedin.com/in/xuanzuo-liu/"),
+  it("canonicalizes every shape a phone produces to ONE string", () => {
+    // Same normalizer the OAuth connect runs, so a pasted URL and a connected one are byte-identical
+    // — and the Coresignal `match_phrase` never sees `?utm_source=share` junk stuck on the slug.
+    for (const raw of [
       "https://www.linkedin.com/in/xuanzuo-liu/",
+      "http://linkedin.com/in/xuanzuo-liu",
+      "WWW.LinkedIn.com/IN/Xuanzuo-Liu",
+      "https://www.linkedin.com/in/xuanzuo-liu?utm_source=share&utm_medium=member_ios",
+      "https://de.linkedin.com/in/xuanzuo-liu",
+    ]) {
+      assert.equal(normalizeTypedLinkedinUrl(raw), "https://linkedin.com/in/xuanzuo-liu", raw)
+    }
+  })
+
+  it("LIVE 2026-07-25 +13129727824 — the exact string Claire re-asked for", () => {
+    // She replied "can you paste your linkedin profile URL here exactly (linkedin.com/in/…)" to a
+    // message that WAS that URL. The extractor was never the cause; assert that permanently.
+    assert.equal(
+      normalizeTypedLinkedinUrl("http://linkedin.com/in/sofia-grimm"),
+      "https://linkedin.com/in/sofia-grimm",
+    )
+    assert.equal(
+      extractLinkedinProfileUrl("http://linkedin.com/in/sofia-grimm"),
+      "https://linkedin.com/in/sofia-grimm",
     )
   })
 
@@ -33,6 +57,39 @@ describe("normalizeTypedLinkedinUrl — real values seen in prod", () => {
   it("rejects a non-LinkedIn host (never fetch some other site's profile)", () => {
     assert.equal(normalizeTypedLinkedinUrl("https://example.com/in/someone"), null)
     assert.equal(normalizeTypedLinkedinUrl("evil-linkedin.com.attacker.io/in/x"), null)
+  })
+
+  it("rejects OUR OWN oauth-linked placeholder — it is a bind marker, not a profile", () => {
+    // Live: 30 of the 32 stranded YC users carry exactly this in `linkedinUrl`. It is a linkedin.com
+    // URL, so without this it would sail through and be sent to Coresignal as a profile.
+    assert.equal(normalizeTypedLinkedinUrl("https://www.linkedin.com/oauth-linked/7RLX9e4Qjo"), null)
+  })
+})
+
+describe("extractLinkedinProfileUrl — a URL pasted into a chat message", () => {
+  it("finds the profile URL inside a sentence", () => {
+    assert.equal(
+      extractLinkedinProfileUrl("sure! https://www.linkedin.com/in/ada-lovelace/ here you go"),
+      "https://linkedin.com/in/ada-lovelace",
+    )
+    assert.equal(
+      extractLinkedinProfileUrl("linkedin.com/in/ada-lovelace"),
+      "https://linkedin.com/in/ada-lovelace",
+    )
+  })
+
+  it("drops trailing sentence punctuation off the slug", () => {
+    assert.equal(
+      extractLinkedinProfileUrl("mine is linkedin.com/in/ada."),
+      "https://linkedin.com/in/ada",
+    )
+  })
+
+  it("ignores anything that is not a /in/ profile", () => {
+    assert.equal(extractLinkedinProfileUrl("we're hiring, see linkedin.com/company/wekruit"), null)
+    assert.equal(extractLinkedinProfileUrl("https://www.linkedin.com/oauth-linked/abc"), null)
+    assert.equal(extractLinkedinProfileUrl("what are you building?"), null)
+    assert.equal(extractLinkedinProfileUrl(""), null)
   })
 })
 
@@ -59,15 +116,89 @@ describe("enrichFromTypedLinkedinUrl — gates", () => {
     assert.deepEqual(r, { ok: false, reason: "no_key" })
   })
 
-  it("no-ops when REAL background already exists (OAuth wins over a typed claim)", async () => {
+  it("no-ops when REAL background already exists", async () => {
     for (const user of [
-      { linkedinOauthLinked: true, linkedinUrl: "https://linkedin.com/in/x" },
       { experienceHighlights: ["a"], linkedinUrl: "https://linkedin.com/in/x" },
+      { coresignalEmployeeId: 12345, linkedinUrl: "https://linkedin.com/in/x" },
       { latestResumeArtifactId: "art_1", linkedinUrl: "https://linkedin.com/in/x" },
     ]) {
       const r = await enrichFromTypedLinkedinUrl({ db: dbWith(user), userId: "u1", apiKey: "k" })
       assert.deepEqual(r, { ok: false, reason: "already_enriched" })
     }
+  })
+
+  it("an OAuth BIND is not background — it must not block the enrich", async () => {
+    // The whole 2026-07-25 gap: `linkedinOauthLinked` used to short-circuit here, so the 32 YC
+    // users who connected but arrived with no profile could never be enriched by any later path.
+    const r = await enrichFromTypedLinkedinUrl({
+      db: dbWith({
+        linkedinOauthLinked: true,
+        linkedinOauthSub: "7RLX9e4Qjo",
+        linkedinUrl: "https://www.linkedin.com/oauth-linked/7RLX9e4Qjo",
+      }),
+      userId: "u1",
+      apiKey: "k",
+      rawUrl: "https://www.linkedin.com/in/ada-lovelace",
+      search: async () => null, // stop before the network; reaching here is the assertion
+    })
+    assert.deepEqual(r, { ok: false, reason: "no_match" })
+  })
+
+  it("a pasted URL wins over the stored placeholder", async () => {
+    // Record EVERY attempt: resolution is a ladder (canonical → as-typed), so a single-value
+    // recorder captures whichever rung ran last, not the one that matters.
+    const searched: string[] = []
+    const r = await enrichFromTypedLinkedinUrl({
+      db: dbWith({
+        linkedinOauthLinked: true,
+        linkedinUrl: "https://www.linkedin.com/oauth-linked/7RLX9e4Qjo",
+      }),
+      userId: "u1",
+      apiKey: "k",
+      rawUrl: "linkedin.com/in/ada-lovelace",
+      search: async (url: string) => {
+        searched.push(url)
+        return null
+      },
+    })
+    assert.deepEqual(r, { ok: false, reason: "no_match" })
+    // The CANONICAL form must be tried — measured against the live provider 2026-07-25, the
+    // `match_phrase` on `linkedin_url` returns null for a `?utm_source=share_via` query string and
+    // for a locale host (`uk.linkedin.com`), the two commonest forms people send.
+    // EXACT equality, not substring. A substring check would also pass for
+    // `https://evil.tld/?x=https://www.linkedin.com/in/ada-lovelace`, which is the whole class of
+    // bug CodeQL flags as js/incomplete-url-substring-sanitization — and here the exact string is
+    // precisely what we mean: the canonical form, byte for byte.
+    assert.ok(
+      searched.some((u) => u === "https://www.linkedin.com/in/ada-lovelace"),
+      `canonical form was never searched; tried: ${JSON.stringify(searched)}`,
+    )
+    // And the placeholder is never sent to the provider — it is a bind marker, not a profile.
+    // Compare the parsed path rather than a substring, same reasoning as above.
+    assert.ok(
+      !searched.some((u) => {
+        try {
+          return new URL(u).pathname.split("/").filter(Boolean)[0]?.toLowerCase() === "oauth-linked"
+        } catch {
+          return false
+        }
+      }),
+    )
+  })
+
+  it("without a pasted URL, a placeholder-only user is unusable (never search the marker)", async () => {
+    const r = await enrichFromTypedLinkedinUrl({
+      db: dbWith({
+        linkedinOauthLinked: true,
+        linkedinUrl: "https://www.linkedin.com/oauth-linked/7RLX9e4Qjo",
+      }),
+      userId: "u1",
+      apiKey: "k",
+      search: (async () => {
+        throw new Error("must never search our own bind marker")
+      }) as never,
+    })
+    assert.deepEqual(r, { ok: false, reason: "no_url" })
   })
 
   it("no-ops on an unusable URL — never guesses", async () => {

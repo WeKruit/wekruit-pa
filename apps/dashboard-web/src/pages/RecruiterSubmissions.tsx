@@ -138,6 +138,7 @@ interface SubmissionDoc {
   createdAtMs?: number
   triageSortMs?: number
   hardScorePct?: number
+  aiVerdictRank?: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -426,6 +427,22 @@ function feedbackRatingTone(rating: unknown): "ok" | "warn" | "info" | "muted" {
   if (n >= 3) return "ok"
   if (n === 2) return "info"
   return "warn"
+}
+
+/**
+ * A 1-4 rating SUGGESTED from the AI verdict, shown only while the human rating is unset.
+ *
+ * The rating field itself stays operator-only — the AI never writes status or rating, that rule is
+ * locked. This is display: a board of 190+ machine-sourced rows was a solid wall of "unrated" with
+ * no way to tell a strong row from a weak one without opening each drawer. Same "AI suggests,
+ * human confirms" posture already used for the candidate tier.
+ */
+function suggestedRating(ai: { verdict?: string; confidence?: number } | undefined): number | null {
+  if (!ai?.verdict) return null
+  const c = ai.confidence ?? 0
+  if (ai.verdict === "advance") return c >= 0.7 ? 4 : 3
+  if (ai.verdict === "borderline") return c >= 0.6 ? 3 : 2
+  return 1
 }
 
 function reviewSummaryTone(tone: SubmissionReviewTone): Parameters<typeof Badge>[0]["tone"] {
@@ -1059,7 +1076,7 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
         // ~2.6MB of just the table/search/filter fields so search + the state
         // filter see the whole pool. Cached (in-mem 3-min) for instant re-open.
         const [listResult, jobSnap] = await Promise.all([
-          cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
+          cachedLoad("recruiter-submissions:list:v2", getRecruiterSubmissionsList),
           getDocs(query(collection(db(), "pa-jobs"), limit(500))),
         ])
         if (cancelled) return
@@ -1071,7 +1088,13 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
           const hardScorePct = data.score?.hardTotal
             ? data.score.hardChecked / data.score.hardTotal
             : 0
-          return { ...data, createdAtMs, triageSortMs, hardScorePct }
+          // Sorting the AI column on the raw string would order alphabetically (advance, borderline,
+          // reject) — right by luck, wrong the moment a verdict is renamed. Rank it explicitly, and
+          // break ties by confidence so the strongest advance sits at the top.
+          const RANK: Record<string, number> = { advance: 3, borderline: 2, reject: 1 }
+          const vRank = RANK[data.aiEvaluation?.verdict ?? ""] ?? 0
+          const aiVerdictRank = vRank + Math.min(0.99, data.aiEvaluation?.confidence ?? 0)
+          return { ...data, createdAtMs, triageSortMs, hardScorePct, aiVerdictRank }
         })
         const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
         for (const d of jobSnap.docs) {
@@ -1372,6 +1395,29 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
       },
     },
     {
+      // The AI verdict, ahead of Hard/Fit/Anti. Those three are the SUBMITTER's checklist claim,
+      // so a batch that honestly leaves unknowns unticked reads 0/4 down the whole page and looks
+      // like every candidate failed. The judge's own read is the signal; it was previously
+      // drawer-only because `aiEvaluation` was absent from the list projection.
+      key: "aiVerdictRank",
+      label: "AI",
+      sortable: true,
+      width: 108,
+      render: (r) => {
+        const v = r.aiEvaluation?.verdict
+        if (!v) return <span style={{ color: "#999" }}>pending</span>
+        // Same palette `statusBadge` uses: ok / warn / info / muted (rejected is "warn" there).
+        const tone = v === "advance" ? "ok" : v === "reject" ? "warn" : "info"
+        const conf = typeof r.aiEvaluation?.confidence === "number" ? r.aiEvaluation.confidence.toFixed(2) : null
+        return (
+          <>
+            <Badge tone={tone}>{v}</Badge>
+            {conf && <div style={{ color: "#777", fontSize: 11, marginTop: 3 }}>{conf}</div>}
+          </>
+        )
+      },
+    },
+    {
       key: "hardScorePct",
       label: "Hard",
       sortable: true,
@@ -1420,8 +1466,21 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     {
       key: "recruiterFeedbackRating",
       label: "Rating",
-      width: 84,
-      render: (r) => <Badge tone={feedbackRatingTone(r.recruiterFeedbackRating)}>{feedbackRatingLabel(r.recruiterFeedbackRating)}</Badge>,
+      width: 92,
+      render: (r) => {
+        const human = normalizeFeedbackRating(r.recruiterFeedbackRating)
+        if (human !== null) return <Badge tone={feedbackRatingTone(human)}>{human}/4</Badge>
+        // No human rating yet — show what the AI would say, clearly marked, so a 190-row batch
+        // isn't an undifferentiated wall of "unrated". Suggestion only; nothing is written.
+        const s = suggestedRating(r.aiEvaluation)
+        if (s === null) return <Badge tone="muted">unrated</Badge>
+        return (
+          <>
+            <Badge tone="muted">unrated</Badge>
+            <div style={{ color: "#777", fontSize: 11, marginTop: 3 }}>AI {s}/4</div>
+          </>
+        )
+      },
     },
     {
       key: "feedback",
@@ -1484,9 +1543,9 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
                 })
                 // Keep the cached list in sync so re-opening the tab shows the
                 // new status immediately (server cache self-heals within 60s).
-                const cached = readCache<RecruiterSubmissionsListResult>("recruiter-submissions:list", 3 * 60_000)
+                const cached = readCache<RecruiterSubmissionsListResult>("recruiter-submissions:list:v2", 3 * 60_000)
                 if (cached) {
-                  writeCache("recruiter-submissions:list", {
+                  writeCache("recruiter-submissions:list:v2", {
                     ...cached.data,
                     rows: cached.data.rows.map((rr) =>
                       (rr as { id?: string }).id === next.id ? { ...rr, ...next } : rr,
@@ -2578,7 +2637,7 @@ function RecruiterQualityPanel() {
     try {
       const [profileSnap, submissionList, candidateSnap, applicationSnap] = await Promise.all([
         getDocs(collection(db(), "pa-recruiter-users")),
-        cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
+        cachedLoad("recruiter-submissions:list:v2", getRecruiterSubmissionsList),
         getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
         getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
       ])

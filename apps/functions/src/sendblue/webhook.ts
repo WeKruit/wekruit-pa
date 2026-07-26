@@ -33,6 +33,7 @@ import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.
 // Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
 import { ingestCv as defaultIngestCv, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
 import { isThinClaireEnabled } from "../claire-agent/flags.js"
+import { extractLinkedinProfileUrl } from "../enrich-from-typed-linkedin.js"
 import {
   isInboundReceiveEvent,
   normalizeSendblueInbound,
@@ -1043,6 +1044,25 @@ export async function handleSendblueWebhook(
         err: audioErr instanceof Error ? audioErr.message : String(audioErr),
       })
     }
+  }
+
+  // ---- 3d1. A LINK PREVIEW IS NOT A RÉSUMÉ (live, 2026-07-25) -----------
+  //
+  // Sharing a LinkedIn profile from the iOS app sends the URL *with* a preview image, so
+  // `media_url` is set and every `!mediaUrl` branch below is skipped — the message never reaches
+  // the pasted-LinkedIn hook and lands in the PDF-oriented ingestCv path instead. Captured live:
+  // +447542282427 sent `https://uk.linkedin.com/in/rucha-agashe-687888338` with the LinkedIn logo
+  // attached and we replied "that didn't read as a résumé on my side 😅 can you send the file
+  // itself (PDF)?" — a perfectly good profile link, answered with a request for a document.
+  //
+  // Same shape as the voice-note branch above: when the text carries a real profile URL, CONSUME
+  // the media so the rest of the pipeline runs the normal TEXT path. We only ever drop the image
+  // here — a résumé PDF has no LinkedIn profile URL in its message text, so it cannot be caught.
+  if (mediaUrl && typeof normalized.text === "string" && extractLinkedinProfileUrl(normalized.text)) {
+    log("[sendblue][webhook] linkedin link preview → dropping media, running text path", {
+      fromNumber: normalized.fromNumber,
+    })
+    mediaUrl = null
   }
 
   // ---- 3e0. v1.9 G2 — ATS pending-trigger virtualization --------------

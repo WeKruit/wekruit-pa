@@ -55,6 +55,12 @@ const SELECT_FIELDS = [
   "companyLabelSnapshot",
   "status",
   "score",
+  // The AI verdict, so the LIST can rank by it. `score` is only the SUBMITTER's checklist claim —
+  // a machine-sourced batch that honestly leaves unknowns unticked reads 0/4 across the board and
+  // the table looks like every candidate failed, when the judge's own read is the real signal.
+  // Two scalars only; the full aiEvaluation stays drawer-only (see the trimmed-projection note).
+  "aiEvaluation.verdict",
+  "aiEvaluation.confidence",
   "createdAt",
   "sheetSyncError",
   "sheetSyncedAt",

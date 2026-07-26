@@ -22,6 +22,7 @@ import {
   YC_COHORT_2026,
   type BusinessDescriptor,
 } from "../src/yc-people-match.js"
+import { companyFactsText, type CompanyProfileLike } from "../src/company-facts-text.js"
 
 const require = createRequire("/Users/adam/Desktop/WeKruit/wekruit-pa/.claude/worktrees/serene-diffie-15b15a/apps/functions/")
 const admin = require("firebase-admin")
@@ -63,7 +64,13 @@ async function main() {
     }
     // ~10 of 992 records have no descriptor; they simply get no second vector and rank on the
     // profile vector alone.
-    const dText = descriptorText((d.businessDescriptor ?? null) as BusinessDescriptor | null)
+    // Descriptor vector = business abstraction + the COMPANY FACTS in plain words. Without the
+    // second half "YC backed founders" / "series B" have nothing to bind to (measured: only 3 of
+    // 992 descriptors mentioned YC while 39 records carried a real batch tag).
+    const dText = [
+      descriptorText((d.businessDescriptor ?? null) as BusinessDescriptor | null),
+      companyFactsText((d.companyProfile ?? null) as CompanyProfileLike | null),
+    ].filter((x) => x && x.trim().length > 0).join(". ")
     if (dText.length >= 20 && (refresh || !(Array.isArray(d.descriptorEmbedding) && d.descriptorEmbedding.length > 0))) {
       todo.push({ id: doc.id, field: "descriptorEmbedding", text: dText })
     }

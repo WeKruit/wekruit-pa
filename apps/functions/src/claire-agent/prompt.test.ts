@@ -256,3 +256,41 @@ test("YC EVENT INTAKE directive renders slots + one-nudge consequence + immediat
   const plain = buildClaireTurnContext({ mode: "triage", lang: "en", entryPosture: "yc_startup_school" })
   assert.doesNotMatch(plain, /YC EVENT INTAKE \(they scanned/)
 })
+
+test("YC LINKEDIN-URL ASK: thanks them, says LinkedIn didn't pass the profile, never 'once you're linked'", () => {
+  const ask = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "building", offerLinkedin: false, askLinkedinUrl: true },
+  })
+  assert.match(ask, /ASK FOR THEIR LINKEDIN URL — MANDATORY THIS TURN/)
+  assert.match(ask, /connect DID work/)
+  assert.match(ask, /paste their LinkedIn profile URL/)
+  // The exact contradiction that confused a live user this morning must be forbidden, and the
+  // "already imported" line (which is what these people used to get) must be gone.
+  assert.match(ask, /NEVER say 'once you're linked'/)
+  assert.doesNotMatch(ask, /- Their background is already imported/)
+  assert.doesNotMatch(ask, /LINKEDIN NUDGE — MANDATORY THIS TURN/)
+
+  // Fires after intake completion too — and the "ask NOTHING further" rule is exempted so the two
+  // directives don't contradict each other in the same prompt.
+  const done = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "wants_to_meet", offerLinkedin: false, intakeComplete: true, askLinkedinUrl: true },
+  })
+  assert.match(done, /ASK FOR THEIR LINKEDIN URL/)
+  assert.match(done, /ask NOTHING further EXCEPT the mandatory LinkedIn-URL ask/)
+
+  // Flag absent → byte-unchanged behaviour (the "already imported" line still owns that turn).
+  const off = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "building", offerLinkedin: false },
+  })
+  assert.doesNotMatch(off, /ASK FOR THEIR LINKEDIN URL/)
+  assert.match(off, /- Their background is already imported/)
+})

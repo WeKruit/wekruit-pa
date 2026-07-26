@@ -58,7 +58,12 @@ export interface ClaireTransport {
    * ordered pa-outbound row, so the image is delivered IN-ORDER with its caption (not a decoupled
    * once/day row that races the recs).
    */
-  sendText(text: string, opts?: { seq?: number; paced?: boolean; mediaUrl?: string }): Promise<void>
+  /** `allowRepeat` opts out of the outbox 5-minute identical-body guard — for fixed template copy
+   *  that is correct to repeat (a re-pasted LinkedIn link must be acked again, not swallowed). */
+  sendText(
+    text: string,
+    opts?: { seq?: number; paced?: boolean; mediaUrl?: string; allowRepeat?: boolean },
+  ): Promise<void>
   tapback(reaction: ClaireReaction): Promise<void>
   noReply(reason: string): Promise<void>
 }
@@ -109,6 +114,18 @@ export interface ClaireToolContext {
    * candidate's stored pa-users.phoneE164.
    */
   toE164?: string
+  /**
+   * The candidate's text for THIS turn, verbatim. Threaded so a tool can fall back to what the
+   * person actually just said instead of trusting the model to have copied it into an argument.
+   * Absent on a proactive/outbound-initiated turn (there is no inbound text).
+   *
+   * Added for `match_yc_people`: measured 2026-07-25 over a real-model probe, 11 of 16 post-intake
+   * asks that named a target ("fintech", "robotics", "RL") were sent with EVERY argument null,
+   * because the tool description sanctions an empty call as "match from what they already told
+   * you". The matcher then fell back to their stored intake answer and silently matched the wrong
+   * thing — no error, bubbles delivered normally, and from the logs it looks like a healthy match.
+   */
+  userText?: string
   log: (event: string, payload?: Record<string, unknown>) => void
   nowIso: () => string
   /**
