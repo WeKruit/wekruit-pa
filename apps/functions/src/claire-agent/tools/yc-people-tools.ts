@@ -244,11 +244,11 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       sameSchool: z.boolean().nullable(),
       sameCompany: z.boolean().nullable(),
       sameMajor: z.boolean().nullable(),
-      // LEAVE THIS NULL. Null means 5, which is the right answer almost every time. Set it above 5
-      // ONLY when the person explicitly asked for more in their own words ("give me 10 more", "as
-      // many investors as you can") — never to be generous, never because a list felt short. Below
-      // 5 is fine when they asked for "one or two". The matcher clamps to 10 server-side regardless.
-      limit: z.number().int().min(1).max(10).nullable(),
+      // `limit` is DELETED, not tightened. It read "LEAVE THIS NULL… set above 5 ONLY when the
+      // person explicitly asked", and on the live event the model passed 10 on 50 of 259 calls to
+      // people who had asked for nothing of the kind. Removing the parameter removes the failure;
+      // the same reasoning already applied to `query` above. Every call now returns exactly five,
+      // and "show me more" is served by the already-sent exclusion handing back the next five.
     }),
     async execute(args) {
       // ONE MATCH PER TURN. Live 2026-07-25: an attendee who asked "angels and investors pls" got
@@ -308,7 +308,7 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       let out: YcPeopleMatchOutput
       try {
         out = await runYcPeopleMatch(
-          { userId: ctx.userId, limit: args.limit ?? 5, filters },
+          { userId: ctx.userId, limit: 5, filters },
           {
             db: ctx.db,
             embed: embedText,

@@ -905,12 +905,14 @@ export async function runYcPeopleMatch(
   // a worse one: the weak tail is what the person remembers, and it buries the good matches.
   // Clamped HERE rather than in the tool schema so no caller — model, MCP, or a future surface —
   // can widen it.
-  // 3-5 BY DEFAULT, MORE ONLY IF THEY ASK (Adam 2026-07-25). The default is unchanged at 5 and the
-  // model cannot drift upward on its own — `limit` is only ever above 5 when it was set from the
-  // user's own words ("give me 10 more", "as many investors as u can"), which used to be silently
-  // clamped to 5 with no acknowledgement. 10 is the ceiling: past that it is a wall of bubbles
-  // again, which is the flood this cap exists to prevent.
-  const limit = Math.max(1, Math.min(input.limit ?? 5, 10))
+  // HARD 5. The previous ceiling of 10 assumed the model would only exceed 5 when the person asked
+  // in their own words. Measured on the live event instead: of 259 calls, 62 (24%) passed >5 and 50
+  // passed 10, and 50 of 140 matched users got more than five cards in one burst (worst: 40).
+  // +18176878717 got 10 cards on each of four calls having never asked for more, and replied "What?
+  // I asked a question why are you giving me more people". The knob was a prompt-only rule under
+  // fire, and prompt-only rules lose. "More if they ask" needs no knob: already-sent ids are
+  // excluded below, so the next ask returns the NEXT five.
+  const limit = Math.max(1, Math.min(input.limit ?? 5, 5))
   const f = input.filters ?? {}
   const log = deps.log ?? (() => {})
 
