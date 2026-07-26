@@ -61,6 +61,7 @@ import {
 } from "./prescreen-ai-question.js"
 import { isCanaryUser, isClaireEntryUxCanary } from "./canary.js"
 import { isEnrichmentInFlight } from "./enrichment-inflight.js"
+import { extractLinkedinProfileUrl } from "../enrich-from-typed-linkedin.js"
 import { shouldNudgeGmail } from "./gmail-nudge.js"
 
 const USERS = "pa-users"
@@ -669,9 +670,27 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // 2. ONBOARDING (reuse the legacy sharedOnboarding durable state; the AGENT records via the tool).
   let user: Record<string, unknown> = {}
   try {
-    const snap = await args.db.collection(USERS).doc(args.userId).get()
+    // ONE RETRY (live incident 2026-07-25). THIS read is the sole source of the YC entry posture:
+    // `isYcPeopleUser` is a pure function of pa-users.source / firstTouchCampaign / ycEventEntryAt, so
+    // a failed read does not merely lose a tone overlay — it makes `isYcEventUser` false, which drops
+    // `entryPosture`, which restores EVERY job tool (tools/index.ts ycPeopleMode), drops the YC prompt
+    // directive, and disables the job-offer delivery scrub. Measured: two yc_startup_school attendees
+    // 20s apart during an inbound backlog answered "who do you want to meet?" and were handed
+    // find_match / set_matching_preferences — one got a job-flavoured non-answer, the other got
+    // literal silence. A single retry removes the transient; a persistent failure still degrades to
+    // triage, but now says so in the log instead of failing open silently.
+    let snap
+    try {
+      snap = await args.db.collection(USERS).doc(args.userId).get()
+    } catch {
+      snap = await args.db.collection(USERS).doc(args.userId).get()
+    }
     user = (snap.exists ? snap.data() : {}) ?? {}
-  } catch {
+  } catch (err) {
+    log("mode.user_read_failed_degraded_to_triage", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
     return { mode: "triage" }
   }
 
@@ -733,11 +752,18 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // already imported — do NOT re-offer LinkedIn". Deterministic flag, not prose the model may skip.
   // One-shot on its OWN stamp: `linkedinNudgedAt` is a different beat (fires when NOT linked), and
   // these people were typically nudged BEFORE they connected — sharing a stamp would silence the ask.
+  // NEVER ASK FOR WHAT IS IN THE MESSAGE (live 2026-07-25, +13129727824 11:54): the user pasted
+  // `http://linkedin.com/in/sofia-grimm` and this flag — computed off a snapshot taken before the
+  // enrich could write — made the reply "can you paste your linkedin profile URL here exactly".
+  // Awaiting the enrich in cutover fixes the common case by flipping `hasFetchedBackground`; this
+  // guard covers the rest (Coresignal miss, key absent, URL wrapped in prose so cutover lets the
+  // normal turn run). Pure URL parsing of the inbound text — not intent classification.
   const askLinkedinUrl =
     isYcEventUser &&
     user.linkedinOauthLinked === true &&
     !hasRealLinkedinProfileUrl(user) &&
     !hasFetchedBackground(user) &&
+    !extractLinkedinProfileUrl(args.inboundText ?? "") &&
     !ycIntakeState?.linkedinUrlAskedAt
   if (isYcEventUser && ycIntakeState?.completedAt) {
     // INTAKE DONE — still emit a directive (this used to be `undefined`, leaving the model with no

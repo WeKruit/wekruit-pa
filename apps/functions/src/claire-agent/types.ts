@@ -58,7 +58,12 @@ export interface ClaireTransport {
    * ordered pa-outbound row, so the image is delivered IN-ORDER with its caption (not a decoupled
    * once/day row that races the recs).
    */
-  sendText(text: string, opts?: { seq?: number; paced?: boolean; mediaUrl?: string }): Promise<void>
+  /** `allowRepeat` opts out of the outbox 5-minute identical-body guard — for fixed template copy
+   *  that is correct to repeat (a re-pasted LinkedIn link must be acked again, not swallowed). */
+  sendText(
+    text: string,
+    opts?: { seq?: number; paced?: boolean; mediaUrl?: string; allowRepeat?: boolean },
+  ): Promise<void>
   tapback(reaction: ClaireReaction): Promise<void>
   noReply(reason: string): Promise<void>
 }

@@ -657,6 +657,35 @@ test("YC LINKEDIN-URL ASK: the tap worked but LinkedIn gave us no profile (2026-
   })
   assert.equal(alreadyAsked.ycEventIntake?.askLinkedinUrl, undefined, "stamped → never asked twice")
 
+  // LIVE INCIDENT 2026-07-25 11:54, +13129727824. She was asked for her URL, she sent
+  // `http://linkedin.com/in/sofia-grimm`, and the reply was "can you paste your linkedin profile URL
+  // here exactly (linkedin.com/in/…)" — this flag, computed off a snapshot taken before the enrich
+  // could write. Never ask for what is already in the message.
+  for (const pasted of [
+    "http://linkedin.com/in/sofia-grimm",
+    "https://www.linkedin.com/in/aanya-tolat",
+    "linkedin.com/in/suhaan-mobhani/",
+    "here you go — https://www.linkedin.com/in/jiani-ruan/?utm_source=share",
+  ]) {
+    const supplied = await selectClaireMode({
+      db: makeDb(stranded).db,
+      userId: NONCANARY_UID,
+      inboundText: pasted,
+    })
+    assert.equal(
+      supplied.ycEventIntake?.askLinkedinUrl,
+      undefined,
+      `they just sent "${pasted}" — never ask for it again`,
+    )
+  }
+  // Still asks when the message merely TALKS about LinkedIn without carrying a profile URL.
+  const talkedAbout = await selectClaireMode({
+    db: makeDb(stranded).db,
+    userId: NONCANARY_UID,
+    inboundText: "i connected my linkedin already",
+  })
+  assert.equal(talkedAbout.ycEventIntake?.askLinkedinUrl, true, "no URL in the message → still ask")
+
   // Who must NEVER get it: an enriched user, someone with a real URL, and someone who never connected.
   for (const [label, user] of [
     ["enriched", { ...stranded, experienceHighlights: ["Founder @ Foo"] }],

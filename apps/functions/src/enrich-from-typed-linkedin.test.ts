@@ -18,10 +18,30 @@ describe("normalizeTypedLinkedinUrl — real values seen in prod", () => {
     )
   })
 
-  it("keeps a well-formed URL", () => {
-    assert.equal(
-      normalizeTypedLinkedinUrl("https://www.linkedin.com/in/xuanzuo-liu/"),
+  it("canonicalizes every shape a phone produces to ONE string", () => {
+    // Same normalizer the OAuth connect runs, so a pasted URL and a connected one are byte-identical
+    // — and the Coresignal `match_phrase` never sees `?utm_source=share` junk stuck on the slug.
+    for (const raw of [
       "https://www.linkedin.com/in/xuanzuo-liu/",
+      "http://linkedin.com/in/xuanzuo-liu",
+      "WWW.LinkedIn.com/IN/Xuanzuo-Liu",
+      "https://www.linkedin.com/in/xuanzuo-liu?utm_source=share&utm_medium=member_ios",
+      "https://de.linkedin.com/in/xuanzuo-liu",
+    ]) {
+      assert.equal(normalizeTypedLinkedinUrl(raw), "https://linkedin.com/in/xuanzuo-liu", raw)
+    }
+  })
+
+  it("LIVE 2026-07-25 +13129727824 — the exact string Claire re-asked for", () => {
+    // She replied "can you paste your linkedin profile URL here exactly (linkedin.com/in/…)" to a
+    // message that WAS that URL. The extractor was never the cause; assert that permanently.
+    assert.equal(
+      normalizeTypedLinkedinUrl("http://linkedin.com/in/sofia-grimm"),
+      "https://linkedin.com/in/sofia-grimm",
+    )
+    assert.equal(
+      extractLinkedinProfileUrl("http://linkedin.com/in/sofia-grimm"),
+      "https://linkedin.com/in/sofia-grimm",
     )
   })
 
@@ -50,7 +70,7 @@ describe("extractLinkedinProfileUrl — a URL pasted into a chat message", () =>
   it("finds the profile URL inside a sentence", () => {
     assert.equal(
       extractLinkedinProfileUrl("sure! https://www.linkedin.com/in/ada-lovelace/ here you go"),
-      "https://www.linkedin.com/in/ada-lovelace/",
+      "https://linkedin.com/in/ada-lovelace",
     )
     assert.equal(
       extractLinkedinProfileUrl("linkedin.com/in/ada-lovelace"),
@@ -125,7 +145,9 @@ describe("enrichFromTypedLinkedinUrl — gates", () => {
   })
 
   it("a pasted URL wins over the stored placeholder", async () => {
-    let searched: string | null = null
+    // Record EVERY attempt: resolution is a ladder (canonical → as-typed), so a single-value
+    // recorder captures whichever rung ran last, not the one that matters.
+    const searched: string[] = []
     const r = await enrichFromTypedLinkedinUrl({
       db: dbWith({
         linkedinOauthLinked: true,
@@ -135,12 +157,33 @@ describe("enrichFromTypedLinkedinUrl — gates", () => {
       apiKey: "k",
       rawUrl: "linkedin.com/in/ada-lovelace",
       search: async (url: string) => {
-        searched = url
+        searched.push(url)
         return null
       },
     })
     assert.deepEqual(r, { ok: false, reason: "no_match" })
-    assert.equal(searched, "https://linkedin.com/in/ada-lovelace")
+    // The CANONICAL form must be tried — measured against the live provider 2026-07-25, the
+    // `match_phrase` on `linkedin_url` returns null for a `?utm_source=share_via` query string and
+    // for a locale host (`uk.linkedin.com`), the two commonest forms people send.
+    // EXACT equality, not substring. A substring check would also pass for
+    // `https://evil.tld/?x=https://www.linkedin.com/in/ada-lovelace`, which is the whole class of
+    // bug CodeQL flags as js/incomplete-url-substring-sanitization — and here the exact string is
+    // precisely what we mean: the canonical form, byte for byte.
+    assert.ok(
+      searched.some((u) => u === "https://www.linkedin.com/in/ada-lovelace"),
+      `canonical form was never searched; tried: ${JSON.stringify(searched)}`,
+    )
+    // And the placeholder is never sent to the provider — it is a bind marker, not a profile.
+    // Compare the parsed path rather than a substring, same reasoning as above.
+    assert.ok(
+      !searched.some((u) => {
+        try {
+          return new URL(u).pathname.split("/").filter(Boolean)[0]?.toLowerCase() === "oauth-linked"
+        } catch {
+          return false
+        }
+      }),
+    )
   })
 
   it("without a pasted URL, a placeholder-only user is unusable (never search the marker)", async () => {

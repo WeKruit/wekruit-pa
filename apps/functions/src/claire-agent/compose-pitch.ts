@@ -695,7 +695,15 @@ export async function composePitchTurn(
   const alreadyPitched =
     Boolean((userDoc as { pitchedAt?: unknown }).pitchedAt) ||
     (userDoc as { onboardingStatus?: unknown }).onboardingStatus === "complete"
-  const resumeIsRich = Boolean(resume) && isThinEvidence(profile) === false
+  // A LINKEDIN MIRROR IS NOT A RÉSUMÉ (live 2026-07-26, +16508800410). `runCoresignalExperiencesMirror`
+  // writes a `parsedCandidateResumes` doc for LinkedIn data too, so `Boolean(resume)` is true for
+  // someone who never sent a document — and the confirmation told him "read through your résumé"
+  // moments after he pasted a LinkedIn link. Key on the artefact's SOURCE, not its existence.
+  const resumeSource = typeof (resume as { source?: unknown } | null)?.source === "string"
+    ? String((resume as { source?: unknown }).source)
+    : ""
+  const isRealResume = Boolean(resume) && resumeSource !== "coresignal_collect_v2"
+  const resumeIsRich = isRealResume && isThinEvidence(profile) === false
   // YC FOUNDER-MATCH ENTRY (Adam 2026-07-20 "换个口吻…不用推进"): a /yc-startup arrival keeps the
   // we-know-you confirmation + pitch, but the CLOSER never pushes ("want me to pull roles?") — it
   // states the notify promise instead: in the founder pool, text here + email when a match pops.
