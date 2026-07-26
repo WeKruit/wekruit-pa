@@ -165,12 +165,25 @@ describe("enrichFromTypedLinkedinUrl — gates", () => {
     // The CANONICAL form must be tried — measured against the live provider 2026-07-25, the
     // `match_phrase` on `linkedin_url` returns null for a `?utm_source=share_via` query string and
     // for a locale host (`uk.linkedin.com`), the two commonest forms people send.
+    // EXACT equality, not substring. A substring check would also pass for
+    // `https://evil.tld/?x=https://www.linkedin.com/in/ada-lovelace`, which is the whole class of
+    // bug CodeQL flags as js/incomplete-url-substring-sanitization — and here the exact string is
+    // precisely what we mean: the canonical form, byte for byte.
     assert.ok(
-      searched.includes("https://www.linkedin.com/in/ada-lovelace"),
+      searched.some((u) => u === "https://www.linkedin.com/in/ada-lovelace"),
       `canonical form was never searched; tried: ${JSON.stringify(searched)}`,
     )
     // And the placeholder is never sent to the provider — it is a bind marker, not a profile.
-    assert.ok(!searched.some((u) => u.includes("/oauth-linked/")))
+    // Compare the parsed path rather than a substring, same reasoning as above.
+    assert.ok(
+      !searched.some((u) => {
+        try {
+          return new URL(u).pathname.split("/").filter(Boolean)[0]?.toLowerCase() === "oauth-linked"
+        } catch {
+          return false
+        }
+      }),
+    )
   })
 
   it("without a pasted URL, a placeholder-only user is unusable (never search the marker)", async () => {
