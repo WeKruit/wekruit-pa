@@ -76,21 +76,10 @@ async function callMatch(
 
 describe("match_yc_people — guards must never produce silence", () => {
 
-  it("60s double-fire guard → delivered:false + must speak", async () => {
-    const out = await callMatch(
-      // Budget untouched, but a batch went out 10s ago and this call carries no new ask.
-      { ycPeopleMatchLastAt: new Date(Date.now() - 10_000).toISOString() },
-      { query: "" },
-    )
-    assert.equal(out.count, 0, "nothing was sent")
-    assert.equal(out.delivered, false, "must NOT claim a delivery that did not happen")
-    assert.ok(out.nextAction, "must tell the model what to say")
-    // Assert the CONTRACT (it must instruct a reply), not one phrasing of it — the previous
-    // literal /MUST still reply/ broke the moment the wording was reworded for a different fix.
-    assert.match(out.nextAction!, /\breply with (one|at least one)\b/i)
-    // The ONLY mention of an empty reply must be a prohibition of it.
-    assert.match(out.nextAction!, /NEVER reply with an empty message list/i)
-  })
+  // The 60s double-fire guard this used to pin is DELETED (Adam 2026-07-26: "no rolling budget /
+  // next action"). It was dead code — `hasNewAsk` was always true once `query` became required —
+  // and its `nextAction` rationale leaked to attendees. Volume is a hard clamp of 5 per response
+  // in `runYcPeopleMatch` now, so there is no short-circuit left here to go silent.
 
   it("the empty-list rule in the tool description is scoped to a REAL delivery", async () => {
     const [matchYcPeople] = buildYcPeopleTools(makeCtx({}))

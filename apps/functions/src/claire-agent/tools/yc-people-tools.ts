@@ -251,46 +251,19 @@ export function buildYcPeopleTools(ctx: ClaireToolContext) {
       // and "show me more" is served by the already-sent exclusion handing back the next five.
     }),
     async execute(args) {
-      // ONE MATCH PER TURN. Live 2026-07-25: an attendee who asked "angels and investors pls" got
-      // ELEVEN cards in a single burst — more than the per-call ceiling, so the tool had fired twice
-      // for one message. Their running total reached 24 people. Every batch was genuinely asked
-      // for; the volume came from double-firing plus an over-large batch, and a re-run inside the
-      // same turn can only return the NEXT-best people anyway (already-sent ids are excluded), so
-      // the second call is strictly worse AND doubles the flood.
-      // Fail-open: a read error must never block a real match.
-      // ONLY suppresses a call carrying NO new ask. Someone who pushes back ("nope, none of these
-      // work", "more investors") is making a genuinely new request and must always get a fresh set —
-      // an earlier version of this guard blocked exactly that, and Claire then told the attendee
-      // "it's blocking a re-send", leaking our plumbing into their conversation. The double-fire it
-      // exists to stop is two identical argument-less calls inside one turn.
-      const hasNewAsk = Boolean(args.query.trim())
-      // The rolling "people per window" budget that used to live here is DELETED (Adam 2026-07-25:
-      // "remove that", "they ask for find match your invention is ruining this"). It was mine, it was
-      // never asked for, and when it hit zero it refused to match and made the model invent a
-      // counter-question — three separate users asked plain questions ("can you find me some girls as
-      // well", "would like some cybersec related too", "and can u find me Berkeley kids") and got no
-      // people. An ask now always matches. The per-call clamp of 5 is the only limit.
-      try {
-        const snap = hasNewAsk ? null : await ctx.db.collection("pa-users").doc(ctx.userId).get()
-        const last = String(snap?.data()?.ycPeopleMatchLastAt ?? "")
-        if (last && Date.now() - new Date(last).getTime() < 60_000) {
-          ctx.log("pa.claire.match_yc_people.suppressed_double_fire", { userId: ctx.userId, last })
-          return {
-            ok: true,
-            // delivered:FALSE for the same reason as the budget guard above — see that comment. This
-            // one used to say "Reply with an EMPTY message list" out loud, which is silence on any
-            // turn where the call carried no query but the PERSON asked something real.
-            delivered: false,
-            count: 0,
-            reason: "already_matched_this_turn",
-            // Same rule as the window-budget guard above: instruction only, never the rationale.
-            nextAction:
-              "Reply with ONE short, natural message answering what they just said, and do NOT match again this turn. NEVER explain why: do not say 'already sent', 'moments ago', 'nothing new', 'i tried to pull', or anything about blocking, re-sending, limits or internal state. NEVER reply with an empty message list.",
-          }
-        }
-      } catch {
-        /* fail-open */
-      }
+      // NO SUPPRESSION GUARD HERE (Adam 2026-07-25: "no rolling budget / next action").
+      //
+      // Two of my inventions used to live at this seam and both hurt real people:
+      //   - a rolling "people per window" budget that refused to match once it hit zero, so three
+      //     attendees asking plain questions ("can you find me some girls as well", "would like some
+      //     cybersec related too", "and can u find me Berkeley kids") got nothing;
+      //   - a double-fire guard returning a `nextAction`, whose rationale the model paraphrased
+      //     straight to attendees ("still on your screen", "previous batch", "go deeper on").
+      //
+      // It was also dead: `hasNewAsk` was `Boolean(args.query.trim())` and `query` is required and
+      // non-nullable, so the condition was always true and the guard never ran. Volume is handled
+      // where it belongs — a hard clamp of 5 per response in `runYcPeopleMatch`, with `limit`
+      // removed from the schema so the model cannot raise it. An ask always matches.
       const filters: YcPeopleMatchFilters = {
         ...(args.query.trim() ? { query: args.query.trim() } : {}),
         ...(args.skills?.length ? { skills: args.skills } : {}),
