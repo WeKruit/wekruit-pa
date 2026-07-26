@@ -2,7 +2,11 @@
  * Submit today's enriched YC Startup School users to Photon · Backend Engineer on the recruiter
  * platform, so the AI eval runs on them and Adam can review the ranking in the admin UI.
  *
- * SCOPE (Adam 2026-07-25): "only the new 196 users" — today's `pa-users` with real enrichment.
+ * SCOPE (Adam 2026-07-26): the WHOLE YC cohort in `pa-users` minus whoever already has a Photon BE
+ * submission — re-runnable, so a later signup is picked up on the next run. (The first run was
+ * scoped to one 20-hour window; that slice can no longer see the cohort.) Enrichment is still
+ * required: a phone-only signup with no LinkedIn gives the judge nothing to read, and submitting
+ * them would only fill the board with pending/reject noise.
  * NOT the 1066-attendee `pa-external-candidate-records` YC pool.
  *
  * PATH: POSTs the real `paRecruiterSubmission` CF with `source:"api"` (the only submission source
@@ -102,8 +106,8 @@ function build(u) {
     source: "api",
     submitter: SUBMITTER,
     candidate: {
-      name: u.displayName ?? u.linkedinOauthName ?? "(unknown)",
-      email: u.email ?? u.linkedinOauthEmail,
+      name: nameOf(u) ?? "(unknown)",
+      email: emailOf(u),
       link: u.linkedinUrl,
       linkedinUrl: u.linkedinUrl,
       currentRole: u.tags?.recentRoleTitle ?? u.experienceHighlights?.[0]?.title ?? "",
@@ -111,7 +115,15 @@ function build(u) {
       yoe: yrs === null ? "" : `${yrs}`,
       notes: [
         `YC Startup School 2026 — scanned ${String(u.createdAt).slice(0, 16)}Z.`,
-        u.tags?.workHistorySummary ? `History: ${u.tags.workHistorySummary}` : "",
+        // workHistorySummary is absent on the LinkedIn-only signups; fall back to the raw roles we
+        // already hold so the human reviewer never opens a submission with no history in it.
+        u.tags?.workHistorySummary
+          ? `History: ${u.tags.workHistorySummary}`
+          : (u.experienceHighlights ?? []).length
+            ? `History (LinkedIn-derived roles):\n${(u.experienceHighlights ?? [])
+                .map((e) => `- ${[e.title, e.company].filter(Boolean).join(" @ ")}${e.startDate ? ` (${e.startDate}${e.endDate ? ` – ${e.endDate}` : " – present"})` : ""}${e.description ? `\n    ${e.description}` : ""}`)
+                .join("\n")}`
+            : "",
         u.ycIntake?.building ? `Building: ${u.ycIntake.building}` : "",
         u.ycIntake?.wantsToMeet ? `Wants to meet: ${u.ycIntake.wantsToMeet}` : "",
         "Sourced automatically from the WeKruit YC pool. Checklist cells are LinkedIn-derived inferences, not recruiter attestations; unknowns are left blank.",
@@ -123,24 +135,104 @@ function build(u) {
   }
 }
 
-// ── pool ──
-const since = new Date(Date.now() - 20 * 3600 * 1000).toISOString()
-const all = (await db.collection("pa-users").where("createdAt", ">=", since).get()).docs.map((d) => ({ id: d.id, ...d.data() }))
-const yc = all.filter((u) => u.ycIntake || String(u.source ?? "").includes("yc") || String(u.firstTouchCampaign ?? "").includes("yc"))
-const enriched = yc.filter((u) => u.experienceHighlights?.length || typeof u.coresignalEmployeeId === "number")
+// ── pool: the WHOLE YC cohort, not one day of it ──
+// The original run was scoped to `createdAt >= now-20h` ("today's 196"). Re-running it the next
+// day submits nobody, because every enriched user is older than the window — the cohort had grown
+// past what one day's slice can see. The pool is now the canonical THREE-FIELD YC predicate (same
+// union `runYcIntakeToday` uses; Firestore cannot OR across fields in one query), minus everyone
+// who already has a submission on this job.
+const [bySource, byEventEntry, byCampaign, existing] = await Promise.all([
+  db.collection("pa-users").where("source", "==", "yc_startup_school").limit(5000).get(),
+  db.collection("pa-users").orderBy("ycEventEntryAt", "desc").limit(5000).get(),
+  db.collection("pa-users").where("firstTouchCampaign", "==", "yc-startup-school").limit(5000).get(),
+  db.collection("pa-recruiter-submissions").where("jobId", "==", JOB_ID).select("candidate.linkedinUrl").get(),
+])
+const yc = new Map()
+for (const snap of [bySource, byEventEntry, byCampaign]) {
+  for (const doc of snap.docs) {
+    const d = doc.data() ?? {}
+    // orderBy("ycEventEntryAt") returns every doc that HAS the field — re-check the predicate so a
+    // stray value can never sweep a non-YC candidate into a recruiter submission.
+    const isYc = d.source === "yc_startup_school" || d.firstTouchCampaign === "yc-startup-school"
+      || typeof d.ycEventEntryAt === "string" || !!d.ycIntake
+    if (isYc) yc.set(doc.id, { id: doc.id, ...d })
+  }
+}
+
+// Already-submitted, by BOTH keys: the `yc-photon-be-<uid>` doc id this script mints, and the
+// candidate LinkedIn URL — so a person a human recruiter already submitted is not duplicated
+// under an auto row. (The Idempotency-Key makes a re-POST safe anyway; this keeps the count honest
+// and saves ~200 pointless round-trips.)
+const doneUids = new Set()
+const doneLinkedin = new Set()
+const norm = (s) => String(s ?? "").toLowerCase().replace(/\/+$/, "")
+for (const d of existing.docs) {
+  if (d.id.startsWith("yc-photon-be-")) doneUids.add(d.id.slice("yc-photon-be-".length))
+  const li = norm(d.data().candidate?.linkedinUrl)
+  if (li) doneLinkedin.add(li)
+}
+
+// Names: 21 enriched users carry NO name on pa-users (LinkedIn-only signups never set displayName).
+// The name is already on their YC pool record — the same Coresignal profile their experience came
+// from — so read it there rather than skipping a real candidate over a missing mirror field.
+const poolNameByUid = new Map()
+const needName = [...yc.values()].filter((u) => !(u.displayName ?? u.linkedinOauthName))
+for (let i = 0; i < needName.length; i += 300) {
+  const refs = needName.slice(i, i + 300).map((u) => db.collection("pa-external-candidate-records").doc(`yc-user:${u.id}`))
+  const snaps = await db.getAll(...refs)
+  for (const [j, s] of snaps.entries()) {
+    const n = s.exists ? s.data()?.name : null
+    if (typeof n === "string" && n.trim()) poolNameByUid.set(needName[i + j].id, n.trim())
+  }
+}
+const nameOf = (u) => u.displayName ?? u.linkedinOauthName ?? poolNameByUid.get(u.id) ?? null
+
+// Emails: `paRecruiterSubmission` REQUIRES candidate.email (identity key — validateSubmission
+// rejects with `missing_candidate_email`), and LinkedIn-only signups have none on `pa-users`.
+// The Coresignal profile we ALREADY hold for them carries one for most; read it from our own cache
+// (cache-only, no provider call, no new spend). Identity key only — the recruiter platform never
+// emails candidates (locked rule), so this reaches nobody's inbox.
+const cacheEmailByUid = new Map()
+const needEmail = [...yc.values()].filter((u) => !(u.email ?? u.linkedinOauthEmail) && /linkedin\.com\/in\//i.test(String(u.linkedinUrl ?? "")))
+const pickEmail = (e = {}) => [
+  e.primary_professional_email, e.professional_email,
+  ...(Array.isArray(e.professional_emails_collection) ? e.professional_emails_collection.map((x) => x?.professional_email ?? x?.email) : []),
+  ...(Array.isArray(e.personal_emails_collection) ? e.personal_emails_collection : []),
+].find((x) => typeof x === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))
+for (const u of needEmail) {
+  const url = String(u.linkedinUrl)
+  let doc = null
+  for (const v of new Set([url, url.replace("://linkedin", "://www.linkedin"), url.replace("://www.linkedin", "://linkedin")])) {
+    const q = await db.collection("pa-coresignal-cache").where("linkedinUrl", "==", v).limit(1).get()
+    if (!q.empty) { doc = q.docs[0].data(); break }
+  }
+  if (!doc && typeof u.coresignalEmployeeId === "number") {
+    const q = await db.collection("pa-coresignal-cache").where("coresignalId", "==", u.coresignalEmployeeId).limit(1).get()
+    if (!q.empty) doc = q.docs[0].data()
+  }
+  const em = pickEmail(doc?.employee)
+  if (em) cacheEmailByUid.set(u.id, em)
+}
+const emailOf = (u) => u.email ?? u.linkedinOauthEmail ?? cacheEmailByUid.get(u.id) ?? null
 
 const skipped = []
 const ready = []
-for (const u of enriched) {
+for (const u of yc.values()) {
   const li = typeof u.linkedinUrl === "string" ? u.linkedinUrl : ""
-  if (!/linkedin\.com\/in\//.test(li)) { skipped.push({ u, why: "no real LinkedIn url (oauth placeholder)" }); continue }
-  if (!(u.email ?? u.linkedinOauthEmail)) { skipped.push({ u, why: "no email (CF requires one)" }); continue }
-  if (!(u.displayName ?? u.linkedinOauthName)) { skipped.push({ u, why: "no name" }); continue }
+  if (doneUids.has(u.id) || (li && doneLinkedin.has(norm(li)))) { skipped.push({ u, why: "already submitted to this job" }); continue }
+  if (u.testMode === true || u.isDemo === true) { skipped.push({ u, why: "test/demo user" }); continue }
+  if (!(u.experienceHighlights?.length || typeof u.coresignalEmployeeId === "number")) { skipped.push({ u, why: "no enrichment — nothing for the judge to read" }); continue }
+  // Case-insensitive: a stored `https://LinkedIn.com/in/...` is a real profile, not a placeholder.
+  if (!/linkedin\.com\/in\//i.test(li)) { skipped.push({ u, why: "no real LinkedIn url (oauth placeholder)" }); continue }
+  if (!nameOf(u)) { skipped.push({ u, why: "no name on user or YC pool record" }); continue }
+  if (!emailOf(u)) { skipped.push({ u, why: "no email anywhere (user / YC pool / cached profile) — CF requires one" }); continue }
   ready.push(u)
 }
 
-console.log(`YC today ${yc.length} · enriched ${enriched.length} · submittable ${ready.length} · skipped ${skipped.length}`)
-for (const s of skipped) console.log(`   SKIP ${s.u.phoneE164 ?? s.u.id} — ${s.why}`)
+const tally = new Map()
+for (const s of skipped) tally.set(s.why, (tally.get(s.why) ?? 0) + 1)
+console.log(`YC cohort ${yc.size} · submittable ${ready.length} · skipped ${skipped.length}`)
+for (const [why, n] of [...tally].sort((a, b) => b[1] - a[1])) console.log(`   ${String(n).padStart(4)}× ${why}`)
 
 const batch = ready.slice(0, LIMIT)
 if (!apply) {
