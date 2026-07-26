@@ -1042,7 +1042,14 @@ export async function maybeRunThinClaire(
   if (mediaIsImageAttachment) {
     log("thin_claire.image_attachment.detected", { eventId, userId, mediaUrl: inboundMediaUrl })
   }
-  if (mediaIsImageAttachment && !hasRealUserText(text) && toE164 && isCanaryUser(userId)) {
+  // NO CANARY GATE (Adam 2026-07-26: "for media when people sent different thing can we not make
+  // ourselves look stupid?"). This branch is the HONEST reply for a bare image — it does not assume
+  // the person was sending a résumé. Gated to the dev phones, every real user fell past it into the
+  // résumé-ingest failure path instead, so someone who sent two sunset photos was told "that didn't
+  // read as a résumé on my side 😅 can you send the file itself (PDF)". The image reply is strictly
+  // safer than the one it replaces — it covers the résumé case in its second clause — so there is
+  // nothing left for a canary to de-risk.
+  if (mediaIsImageAttachment && !hasRealUserText(text) && toE164) {
     try {
       const imgTransport = createSendblueTransport({
         db,
