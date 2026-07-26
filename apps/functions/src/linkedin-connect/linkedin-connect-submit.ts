@@ -567,7 +567,7 @@ export async function linkAndEnrichLinkedin(args: {
   enriched: boolean
   alreadyBound: boolean
   /** Distinguishes OUR failure from THEIRS — copy must never blame a link for a missing key. */
-  reason: "enriched" | "already_bound" | "no_key" | "no_match" | "error"
+  reason: "enriched" | "already_bound" | "no_key" | "no_match" | "no_work_history" | "error"
 }> {
   const { db, userId, nowIso } = args
   const log = (e: string, f?: Record<string, unknown>) =>
@@ -668,12 +668,19 @@ export async function linkAndEnrichLinkedin(args: {
           .catch((err) => log("persist_url_failed", { err: String(err) }))
       }
     }
-    log("done", { enriched: out.enriched })
-    return {
-      enriched: out.enriched,
-      alreadyBound: false,
-      reason: out.enriched ? "enriched" : "no_match",
-    }
+    log("done", { enriched: out.enriched, mirrorStatus: out.mirrorStatus, resolved: out.resolved })
+    // WE FOUND THEM vs WE FOUND NOTHING — not the same message. Live 2026-07-26: nishant-jain
+    // resolves to employee 961358028 and paul-trusov to 1003302706, but the provider holds
+    // `experience: 0` and `experience: 1`, so the mirror skips and the old collapse reported
+    // `no_match`. Telling those two "we couldn't fetch your profile, try the www.linkedin.com form"
+    // is useless advice — the form is not the problem, their profile has no work history on it. The
+    // résumé is the only thing that helps, so the copy has to say that instead.
+    const reason = out.enriched
+      ? ("enriched" as const)
+      : out.resolved
+        ? ("no_work_history" as const)
+        : ("no_match" as const)
+    return { enriched: out.enriched, alreadyBound: false, reason }
   } catch (err) {
     log("failed", { err: err instanceof Error ? err.message : String(err) })
     return { enriched: false, alreadyBound: false, reason: "error" }
@@ -700,7 +707,7 @@ export async function enrichFromCoresignal(args: {
   searchByUrl?: typeof searchEmployeeIdByLinkedinUrl
   searchByPhoto?: typeof searchEmployeeIdByPhotoAssetId
   fetchOne?: typeof fetchEmployeeCollect
-}): Promise<{ enriched: boolean }> {
+}): Promise<{ enriched: boolean; mirrorStatus?: string; resolved?: boolean }> {
   const { db, userId, apiKey, nowIso } = args
   const resolved = await resolveLinkedinEmployeeId({
     apiKey,
@@ -712,7 +719,7 @@ export async function enrichFromCoresignal(args: {
   })
   if (resolved === null) {
     logger.info("linkedin_connect.coresignal_no_match", { userId })
-    return { enriched: false }
+    return { enriched: false, resolved: false }
   }
   const employeeId = resolved.employeeId
   logger.info("linkedin_connect.coresignal_resolved", { userId, employeeId, via: resolved.via })
@@ -730,7 +737,7 @@ export async function enrichFromCoresignal(args: {
   })
   if (!employee) {
     logger.info("linkedin_connect.coresignal_collect_unavailable", { userId, employeeId })
-    return { enriched: false }
+    return { enriched: false, resolved: false }
   }
   const draft = normalizeCoresignalCollectV2(employee)
   const record: ExternalCandidateRecord = {
@@ -791,7 +798,7 @@ export async function enrichFromCoresignal(args: {
 
   const enriched = mirror.status === "mirrored" || mirror.status === "refreshed_existing"
   logger.info("linkedin_connect.enrich_done", { userId, mirrorStatus: mirror.status, enriched })
-  return { enriched }
+  return { enriched, mirrorStatus: mirror.status, resolved: true }
 }
 
 /**

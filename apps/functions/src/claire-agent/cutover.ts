@@ -133,6 +133,13 @@ export const LINKEDIN_SHARE_UNREADABLE_REPLY =
 export const LINKEDIN_PASTE_NO_MATCH_REPLY =
   "hmm — i couldn't fetch that profile 😕 can you try the plain www.linkedin.com/in/... form (the share button adds tracking bits that break the lookup)? or just drop your résumé as a PDF and i'll take everything from that"
 
+/**
+ * We FOUND them; the profile just carries no readable work history (provider `experience: []`).
+ * Asking for a different URL format here is useless advice — the link was never the problem.
+ */
+export const LINKEDIN_NO_WORK_HISTORY_REPLY =
+  "found you 👍 but your linkedin doesn't have much work history on it that i can read, so there's not enough for me to describe you properly. drop your résumé here (PDF) and i'll take everything from that instead"
+
 /** OUR side broke (missing key, network, provider 5xx). Never blame their link for our failure. */
 export const LINKEDIN_OUR_SIDE_FAILED_REPLY =
   "argh — my side hiccuped pulling that, nothing to do with your link 🙈 give me a moment and send it once more, or drop your résumé (PDF) and i'll work from that"
@@ -434,7 +441,9 @@ export async function maybeRunThinClaire(
               ? LINKEDIN_ALREADY_CONNECTED_REPLY
               : enrich.reason === "no_key" || enrich.reason === "error"
                 ? LINKEDIN_OUR_SIDE_FAILED_REPLY
-                : LINKEDIN_PASTE_NO_MATCH_REPLY
+                : enrich.reason === "no_work_history"
+                  ? LINKEDIN_NO_WORK_HISTORY_REPLY
+                  : LINKEDIN_PASTE_NO_MATCH_REPLY
           await linkedinTransport!
             .sendText(body, { seq: 1, allowRepeat: true })
             .catch((err) =>

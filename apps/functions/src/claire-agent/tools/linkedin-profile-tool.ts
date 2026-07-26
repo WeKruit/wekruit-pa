@@ -44,6 +44,10 @@ export function buildLinkedinProfileTools(ctx: ClaireToolContext) {
       "words, to paste the plain 'www.linkedin.com/in/theirname' form. " +
       "`not_in_provider` — the link parsed fine but our data provider has nobody at that profile (common for new " +
       "or private accounts). Say that honestly — do NOT imply their link is broken — and offer the résumé instead. " +
+      "`no_work_history` — we FOUND their profile, it just has no work history on it that we can read. Do NOT ask " +
+      "them to resend the link or try a different URL format: the link was fine and a different one changes nothing. " +
+      "Say we found them but the profile is light on roles, and ask for their résumé (PDF) — that is the only thing " +
+      "that helps here. " +
       "`our_side_failed` — OUR problem, not theirs. Apologise for the hiccup and ask them to send it again in a " +
       "moment. NEVER blame their link for this one.",
     parameters: z.object({
@@ -92,6 +96,7 @@ export function buildLinkedinProfileTools(ctx: ClaireToolContext) {
         return { ok: true, outcome: "enriched" as const, delivered: true }
       }
       if (out.reason === "already_bound") return { ok: false, outcome: "already_have_it" as const }
+      if (out.reason === "no_work_history") return { ok: false, outcome: "no_work_history" as const }
       if (out.reason === "no_key" || out.reason === "error") return { ok: false, outcome: "our_side_failed" as const }
       return { ok: false, outcome: "not_in_provider" as const }
     },
