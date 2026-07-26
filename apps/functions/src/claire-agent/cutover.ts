@@ -678,6 +678,22 @@ export async function maybeRunThinClaire(
       log("thin_claire.resume_ingest.failure_no_fallback", { eventId, userId, reason })
       return
     }
+    // DON'T ANNOUNCE A RÉSUMÉ FAILURE FOR SOMETHING THAT WAS NEVER A RÉSUMÉ (live 2026-07-26,
+    // +16508800410). He pasted his LinkedIn AND his headshot in the same breath. The link enriched
+    // fine, but the photo — a separate inbound with media and NO text, so the webhook's
+    // link-preview rule cannot see a URL to drop — fell into the résumé path, and between the
+    // LinkedIn ack and the pitch he got "that didn't read as a résumé, send the file (PDF)".
+    // If we already hold their background, an unreadable image is a non-event: stay quiet rather
+    // than manufacture a problem the person does not have.
+    try {
+      const uSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      if (hasFetchedBackground((uSnap.data() ?? {}) as Record<string, unknown>)) {
+        log("thin_claire.resume_ingest.failure_suppressed_have_background", { eventId, userId, reason })
+        return
+      }
+    } catch {
+      /* read error → fall through and reply, silence is the worse failure */
+    }
     try {
       const failTransport = createSendblueTransport({
         db,
