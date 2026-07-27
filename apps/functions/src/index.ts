@@ -337,6 +337,10 @@ export { paAdminRecruiterSubmissionsList } from "./admin-recruiter-submissions-l
 // supply we already paid to acquire. Label-only: writes roleRecommendations,
 // never a status, never a new submission.
 export { paAdminRecommendRolesForSubmission } from "./admin-recommend-roles.js"
+// Operator marks a candidate's durable quality tier from the submission drawer without rejecting
+// them — "strong, wrong role, find them later". Writes the SAME globalCandidateTier the rejection
+// flows write (no second quality vocabulary); the existing tier browse surfaces them.
+export { paAdminMarkCandidateQuality } from "./admin-mark-candidate-quality.js"
 // All interview bookings (pa-interview-bookings) for /admin/interviews +
 // per-row operator outcome-stamp (completed/no_show/cancelled). The list reuses
 // the runSchedulingStatus projection; the outcome action writes the booking
