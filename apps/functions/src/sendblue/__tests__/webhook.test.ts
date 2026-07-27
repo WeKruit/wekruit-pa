@@ -105,20 +105,37 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
       return Promise.resolve({ id: `tap_${tapbacks.length}` })
     },
   }
+  const outboundDocRef = (id: string) => ({
+    async create(data: DocData) {
+      if (outbound.has(id)) {
+        const err: Error & { code?: number } = new Error("ALREADY_EXISTS")
+        err.code = 6
+        throw err
+      }
+      outbound.set(id, { ...data })
+    },
+    async set(data: DocData, _opts?: unknown) {
+      outbound.set(id, { ...(outbound.get(id) ?? {}), ...data })
+    },
+    async get() {
+      const data = outbound.get(id)
+      return { exists: data !== undefined, data: () => data, id }
+    },
+  })
   const outboundCollection = {
-    doc(id: string) {
+    doc: outboundDocRef,
+    // Outbound delivery-status tracking queries by messageHandle. Without this the
+    // is_outbound branch threw into its own non-fatal catch, so a status payload here
+    // silently exercised the error path instead of the real no-row/matched branches.
+    // (The status state machine itself is covered in webhook-outbound-status.test.ts.)
+    where(field: string, op: string, val: unknown) {
       return {
-        async create(data: DocData) {
-          if (outbound.has(id)) {
-            const err: Error & { code?: number } = new Error("ALREADY_EXISTS")
-            err.code = 6
-            throw err
-          }
-          outbound.set(id, { ...data })
-        },
+        limit(_n: number) { return this },
         async get() {
-          const data = outbound.get(id)
-          return { exists: data !== undefined, data: () => data, id }
+          const matches = [...outbound.entries()]
+            .filter(([, d]) => field === "messageHandle" && op === "==" && d.messageHandle === val)
+            .map(([id, d]) => ({ id, data: () => d, ref: outboundDocRef(id) }))
+          return { docs: matches, empty: matches.length === 0, size: matches.length }
         },
       }
     },

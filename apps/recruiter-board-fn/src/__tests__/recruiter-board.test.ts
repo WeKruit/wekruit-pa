@@ -2553,13 +2553,29 @@ interface FakeDoc {
   data: () => Record<string, unknown>
 }
 
-function fakeDb(docs: FakeDoc[]): unknown {
+/**
+ * `companies` maps a normalized pa-companies doc id -> its `domain` field.
+ *
+ * Without `doc`/`getAll` this stub made `fetchCollabJobs` throw inside the website-hydration
+ * block on every test with a company name — caught by its own try/catch, so the suite still
+ * passed while printing "pa-companies hydration failed" 5× per run and never once exercising
+ * the hydration path. Fail-open error handling hides missing coverage: the stub has to be able
+ * to answer the read for the assertion to mean anything.
+ */
+function fakeDb(docs: FakeDoc[], companies: Record<string, string> = {}): unknown {
   return {
-    collection: () => ({
+    collection: (collectionName: string) => ({
       where: () => ({
         get: async () => ({ docs }),
       }),
+      doc: (docId: string) => ({ collectionName, id: docId }),
     }),
+    getAll: async (...refs: { collectionName: string; id: string }[]) =>
+      refs.map((ref) => ({
+        id: ref.id,
+        exists: ref.collectionName === "pa-companies" && ref.id in companies,
+        data: () => ({ domain: companies[ref.id] }),
+      })),
   }
 }
 
@@ -2909,6 +2925,63 @@ describe("fetchCollabJobs synthesized default payload", () => {
     assert.ok(drift, "expected recruiter_board.synthesized_default_payload log")
     assert.equal(drift!.meta.count, 1)
     assert.deepEqual(drift!.meta.ids, ["sekai-founding-engineer"])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// pa-companies website hydration
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("fetchCollabJobs company website hydration", () => {
+  it("hydrates companyWebsite from the pa-companies domain", async () => {
+    const db = fakeDb(
+      [{ id: "sekai-founding-engineer", data: () => ({ title: "Founding Engineer", companyName: "Sekai" }) }],
+      { sekai: "sekai.ai" },
+    )
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: true })
+    assert.equal(jobs[0]!.companyWebsite, "https://sekai.ai")
+  })
+
+  it("normalizes the company name into the pa-companies doc id", async () => {
+    // "Helium Robotics, Inc." -> "helium-robotics-inc". A mismatch here is a silent no-website bug.
+    const db = fakeDb(
+      [{ id: "helium-pe", data: () => ({ title: "PE", companyName: "Helium Robotics, Inc." }) }],
+      { "helium-robotics-inc": "helium.com" },
+    )
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: true })
+    assert.equal(jobs[0]!.companyWebsite, "https://helium.com")
+  })
+
+  it("leaves companyWebsite unset when the company has no pa-companies row", async () => {
+    const db = fakeDb([{ id: "ghost-role", data: () => ({ title: "Role", companyName: "Ghost" }) }], {})
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: true })
+    assert.equal(jobs[0]!.companyWebsite, undefined)
+  })
+
+  it("still returns jobs when the pa-companies read throws, and says so once", async () => {
+    // Websites are decoration; a Firestore blip must not take the whole board down with it.
+    // Capture the warn rather than letting it print: asserting on it is a stronger check than
+    // eyeballing it, and it keeps the deploy log free of a line that reads like a real incident.
+    const warns: string[] = []
+    const originalWarn = logger.warn
+    ;(logger as { warn: unknown }).warn = (msg: string) => {
+      warns.push(msg)
+    }
+    let jobs
+    try {
+      const db = {
+        ...(fakeDb([{ id: "sekai-fe", data: () => ({ title: "FE", companyName: "Sekai" }) }]) as object),
+        getAll: async () => {
+          throw new Error("permission-denied")
+        },
+      }
+      ;({ jobs } = await fetchCollabJobs(db as never, { isAdmin: true }))
+    } finally {
+      ;(logger as { warn: unknown }).warn = originalWarn
+    }
+    assert.equal(jobs!.length, 1)
+    assert.equal(jobs![0]!.companyWebsite, undefined)
+    assert.deepEqual(warns, ["pa-companies hydration failed, continuing without websites"])
   })
 })
 
