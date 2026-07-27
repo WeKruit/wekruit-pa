@@ -530,7 +530,7 @@ export async function defaultFetchResumeText(
   }
 }
 
-function renderJdBlocks(job: Record<string, unknown>): string {
+export function renderJdBlocks(job: Record<string, unknown>): string {
   // jdBlocks is hand-seeded and empty for most real jobs; fall back to deriving
   // it from descriptionMd so the AI judge always sees the JD context.
   const blocks: JdBlock[] =
@@ -606,6 +606,35 @@ function renderResearch(research: SubmissionEvalResearch | undefined): string {
  * an incentivised party, and unlike Coresignal it is keyed to the candidate's own authenticated
  * LinkedIn connection rather than a URL someone pasted.
  */
+const MONTHS: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+}
+
+/**
+ * Sortable "YYYYMM" key for the free-text dates the enrichment stores — "June 2018", "2023",
+ * "05/2026", "now". Ongoing roles (no end, or "now"/"present") sort above every dated one, since
+ * what someone is doing today decides seniority more than when they finished an internship.
+ * Unparseable → "000000", which sinks rather than jumping the queue on a bad string.
+ */
+function roleRecencyKey(end: string | undefined, start: string | undefined): string {
+  const raw = (end ?? "").trim()
+  if (!raw || /^(now|present|current)$/i.test(raw)) return "999999"
+  const parse = (value: string): string | undefined => {
+    const s = value.trim().toLowerCase()
+    const monthYear = s.match(/^([a-z]{3})[a-z]*\.?\s+(\d{4})$/)
+    if (monthYear) return `${monthYear[2]}${MONTHS[monthYear[1]!] ?? "00"}`
+    const numeric = s.match(/^(\d{1,2})\s*[/-]\s*(\d{4})$/)
+    if (numeric) return `${numeric[2]}${numeric[1]!.padStart(2, "0")}`
+    const iso = s.match(/^(\d{4})-(\d{2})/)
+    if (iso) return `${iso[1]}${iso[2]}`
+    const yearOnly = s.match(/^(\d{4})$/)
+    if (yearOnly) return `${yearOnly[1]}00`
+    return undefined
+  }
+  return parse(raw) ?? parse(start ?? "") ?? "000000"
+}
+
 export interface WekruitProfileEvidence {
   displayName?: string
   recentRoleTitle?: string
@@ -626,8 +655,12 @@ export async function loadWekruitProfile(
     if (!snap.exists) return undefined
     const u = (snap.data() ?? {}) as Record<string, unknown>
     const tags = asRecord(u.tags) ?? {}
+    // `experienceHighlights` is stored OLDEST-FIRST and capped upstream. Slicing the head fed the
+    // judge a candidate's student years and dropped their current role: measured on a Microsoft
+    // Office-of-the-CTO engineer whose array held ten 2018–2025 internships and not the senior
+    // role at all, the judge concluded "largely internships/TA/mentoring" and scored 2/4. Sort
+    // newest-first so the window keeps the roles that decide seniority.
     const experience = (Array.isArray(u.experienceHighlights) ? u.experienceHighlights : [])
-      .slice(0, 12)
       .map((raw) => {
         const e = asRecord(raw) ?? {}
         const start = cleanString(e.startDate)
@@ -637,8 +670,14 @@ export async function loadWekruitProfile(
           company: cleanString(e.company),
           dates: start ? `${start}–${end ?? "now"}` : undefined,
           description: cleanString(e.description)?.slice(0, 600),
+          // The enrichment sets `currentRole` on in-progress roles. Trust it above the free-text
+          // dates, which are unparseable often enough ("2023", "05/2026") to matter.
+          _sort: `${e.currentRole === true ? "1" : "0"}${roleRecencyKey(end, start)}`,
         }
       })
+      .sort((a, b) => b._sort.localeCompare(a._sort))
+      .slice(0, 12)
+      .map(({ _sort, ...role }) => role)
     const profile: WekruitProfileEvidence = {
       displayName: cleanString(u.displayName) ?? cleanString(u.linkedinOauthName),
       recentRoleTitle: cleanString(tags.recentRoleTitle) ?? cleanString(u.recentRoleTitle),
@@ -671,14 +710,24 @@ function renderWekruitProfile(profile: WekruitProfileEvidence | undefined): stri
       (e.description ? `\n    ${e.description}` : ""),
     )
     .join("\n")
+  // The role list is capped upstream, so a candidate's CURRENT role is sometimes absent from it
+  // entirely — measured on a Microsoft Office-of-the-CTO engineer whose stored roles were ten
+  // student-era entries. Left unsaid, a judge told to "weigh the experience section" reads that
+  // truncation as the person's whole career and marks them internship-level. Say so explicitly.
+  const currentInList =
+    !profile.recentRoleTitle ||
+    profile.experience.some((e) => (e.title ?? "").toLowerCase() === profile.recentRoleTitle!.toLowerCase())
   return [
     profile.displayName ? `Profile name: ${profile.displayName}` : "",
     profile.recentRoleTitle
-      ? `Current: ${profile.recentRoleTitle}${profile.recentCompany ? ` @ ${profile.recentCompany}` : ""}`
+      ? `CURRENT ROLE: ${profile.recentRoleTitle}${profile.recentCompany ? ` @ ${profile.recentCompany}` : ""}`
       : "",
-    profile.workHistorySummary ? `Work history: ${profile.workHistorySummary}` : "",
+    profile.workHistorySummary ? `Work history (most recent first): ${profile.workHistorySummary}` : "",
     profile.building ? `Currently building (candidate's own words): ${profile.building}` : "",
-    `Experience:\n${exp || "(none recorded)"}`,
+    `Experience (most recent first):\n${exp || "(none recorded)"}`,
+    currentInList
+      ? ""
+      : "NOTE: this role list is truncated and does NOT contain the CURRENT ROLE above. Judge seniority from the current role and the work-history line, NOT from the earliest entries below them — their absence here is a storage limit, not evidence the person never held them.",
   ]
     .filter(Boolean)
     .join("\n")

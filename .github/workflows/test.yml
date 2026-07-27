@@ -29,7 +29,15 @@ jobs:
   typecheck-and-test:
     name: typecheck + unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The suite outgrew 15m and started cancelling mid-test-run — on main as well as on branches,
+    # so a green tick was becoming luck rather than evidence. Measured 2026-07-27 on a real run:
+    # setup 26s + install 7s + build 3m03 + typecheck 1m30 = 4m40 before a single test executes,
+    # and the tests themselves were still going at 10m13 when the ceiling killed them.
+    #
+    # 30 keeps the hang-protection this exists for while fitting the work. The number to watch is
+    # TEST WALL-CLOCK, now >10m across ~3800 tests: if it passes ~20m, parallelise the workspaces
+    # rather than raising this again.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
