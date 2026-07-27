@@ -11,7 +11,9 @@
  * derived from a per-employer token, and every tool will hard-filter on it.
  */
 import { getAuth } from "firebase-admin/auth"
+import { getFirestore } from "firebase-admin/firestore"
 import { defineSecret } from "firebase-functions/params"
+import { lookupAccessToken } from "../mcp-oauth/store.js"
 
 // Local (non-exported) to avoid a TS2742 export-portability error on the inferred
 // SecretParam type. http.ts declares its own same-named secret for the function's
@@ -60,10 +62,21 @@ export async function requireHeadhunterPrincipal(
       return { uid: decoded.uid, scope: "internal" }
     }
   } catch {
-    /* fall through to the rejection below */
+    /* not an ID token — try an OAuth access token below */
   }
+
+  // Tokens minted by paMcpOauth (the connector path). They are only ever issued after the same
+  // admin gate this function enforces, so accepting one widens no trust — it just lets a client
+  // that can speak OAuth but not static bearers reach the same surface.
+  try {
+    const issued = await lookupAccessToken(getFirestore(), bearer, Date.now())
+    if (issued) return { uid: issued.principalUid, scope: "internal" }
+  } catch {
+    /* store unavailable — fall through to the rejection below */
+  }
+
   throw new McpAuthError(
-    "not authorized for the headhunter MCP (admin custom claim or PA_ADMIN_TOKEN required)",
+    "not authorized for the headhunter MCP (admin custom claim, PA_ADMIN_TOKEN, or an OAuth access token required)",
   )
 }
 

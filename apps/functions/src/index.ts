@@ -307,6 +307,8 @@ export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
 // as MCP tools; admin-claim / PA_ADMIN_TOKEN gated; passed-candidate PII redacted
 // server-side for the untrusted LLM client. See headhunter-mcp/.
 export { paHeadhunterMcp } from "./headhunter-mcp/http.js"
+// OAuth authorization server for MCP clients that cannot send a static bearer (claude.ai / Cowork).
+export { paMcpOauth } from "./mcp-oauth/http.js"
 // AI-headhunter Slack receiver (Bolt + @openai/agents loop; tools = paHeadhunterMcp).
 export { paHeadhunterSlack } from "./headhunter-slack/http.js"
 export { paAdminPartnerStats, paAdminSetAwaitingHm } from "./admin-partner-stats.js"
