@@ -31,4 +31,28 @@ describe("Recruiter submissions master-detail layout", () => {
     assert.match(pageSource, /Stored on this recruiter submission/)
     assert.match(pageSource, /start this recruiter conversation/)
   })
+
+  // Regression (Adam 2026-07-26): reject a candidate, save, click the next one — the feedback
+  // note, status and reasons were still the PREVIOUS candidate's, and Save wrote them onto the
+  // new person. Every detail panel seeds its drafts from `useState(row.…)`, which runs once per
+  // mount; without a per-row key React reuses the instance and never re-seeds.
+  it("keys every row-detail panel by row id so drafts re-seed when you switch candidates", () => {
+    const panels = [
+      "RowDetailPanel",
+      "RecruiterQualityDetailPanel",
+      "SourcedCandidateDetailPanel",
+      "RoleApplicationDetailPanel",
+      "RoleQuestionDetailPanel",
+    ]
+    for (const panel of panels) {
+      const open = pageSource.indexOf(`<${panel}\n`)
+      assert.notEqual(open, -1, `${panel} render site not found`)
+      const props = pageSource.slice(open, open + 900)
+      assert.match(
+        props,
+        /key=\{(selectedRow|row)\.id\}/,
+        `${panel} must be keyed by row id, or its drafts keep the previous row's values`,
+      )
+    }
+  })
 })
