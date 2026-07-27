@@ -15,6 +15,7 @@ import {
   runGetCandidateEvidence,
   runRecordJobRanking,
   runRecordCandidateReviews,
+  runFindJob,
 } from "../headhunter-mcp/shortlist.js"
 
 const JOB = "photon-backend-engineer-high-concurrency"
@@ -331,5 +332,113 @@ describe("job brief + review write-back", () => {
     assert.equal(r.returned, 1)
     assert.equal(r.rows[0]!.name, "Cand todo")
     assert.equal(r.dropped.reasons.already_reviewed, 1)
+  })
+})
+
+describe("the shortlist payload survives the MCP emitter", () => {
+  // capForAgent slices ANY array over 25 rows. Applied to the shortlist it cut 248 candidates to
+  // 25 while the body still read `returned: 248` — a confident, complete-looking, wrong view.
+  // list_job_shortlist and get_candidate_evidence therefore emit uncapped; they bound and report
+  // their own size. This test exists so nobody quietly routes them back through the cap.
+  it("capForAgent would gut a large shortlist — proving why the uncapped emitter exists", async () => {
+    const { capForAgent } = await import("../headhunter-mcp/tools.js")
+    const payload = {
+      returned: 248,
+      rows: Array.from({ length: 248 }, (_, i) => ({ name: `cand-${i}` })),
+    }
+    const capped = capForAgent(payload) as { rows: unknown[]; returned: number }
+    assert.equal(capped.rows.length, 25)
+    assert.equal(capped.returned, 248, "the count stays 248 while only 25 rows survive — the trap")
+  })
+
+  it("the shortlist runner itself never exceeds its stated limit", async () => {
+    const mfs = new MockFirestore()
+    for (let i = 0; i < 40; i++) {
+      await seed(mfs, `c${i}`, submission(`c${i}`), {
+        experienceHighlights: [{ title: "SWE", company: "Acme", description: "Rust services." }],
+      })
+    }
+    const r = await runListJobShortlist({ db: asFirestore(mfs) as never, jobId: JOB, limit: 30 })
+    assert.equal(r.rows.length, 30)
+    assert.equal(r.returned, 30, "returned must equal rows.length — never a count the payload cannot back")
+    assert.equal(r.dropped.reasons.over_limit, 10)
+  })
+})
+
+describe("find_job", () => {
+  async function seedJobs(mfs: MockFirestore) {
+    await mfs.collection("pa-jobs").doc("photon-backend-engineer-high-concurrency")
+      .set({ title: "Backend Engineer", companyName: "Photon", publicId: "pub-photon" })
+    await mfs.collection("pa-jobs").doc("hs-11005382-invoko-product-designer")
+      .set({ title: "Product Designer", companyName: "invoko.ai" })
+    await mfs.collection("pa-jobs").doc("hyde-ai-builder-nyc")
+      .set({ title: "AI Builder (NYC)", companyName: "Hyde" })
+  }
+
+  it("resolves plain words", async () => {
+    const mfs = new MockFirestore()
+    await seedJobs(mfs)
+    const r = await runFindJob({ db: asFirestore(mfs) as never, query: "photon backend" })
+    assert.equal(r.resolved?.jobId, "photon-backend-engineer-high-concurrency")
+    assert.equal(r.resolved?.matchedVia, "title_company")
+  })
+
+  it("resolves a pasted URL by any path segment, not just the last", async () => {
+    const mfs = new MockFirestore()
+    await seedJobs(mfs)
+    const r = await runFindJob({
+      db: asFirestore(mfs) as never,
+      query: "https://wekruit-pa.web.app/admin/recruiter-hub/photon-backend-engineer-high-concurrency?tab=board",
+    })
+    assert.equal(r.resolved?.jobId, "photon-backend-engineer-high-concurrency")
+    assert.equal(r.resolved?.matchedVia, "url_segment")
+  })
+
+  it("resolves a publicId", async () => {
+    const mfs = new MockFirestore()
+    await seedJobs(mfs)
+    const r = await runFindJob({ db: asFirestore(mfs) as never, query: "pub-photon" })
+    assert.equal(r.resolved?.jobId, "photon-backend-engineer-high-concurrency")
+    assert.equal(r.resolved?.matchedVia, "public_id")
+  })
+
+  it("returns the options instead of guessing when ambiguous", async () => {
+    const mfs = new MockFirestore()
+    await seedJobs(mfs)
+    await mfs.collection("pa-jobs").doc("photon-ios").set({ title: "iOS Engineer", companyName: "Photon" })
+    const r = await runFindJob({ db: asFirestore(mfs) as never, query: "photon" })
+    assert.equal(r.resolved, undefined, "guessing here would score a pool against the wrong rubric")
+    assert.equal(r.matches.length, 2)
+    assert.match(r.note ?? "", /2 jobs matched/)
+  })
+
+  it("names the known jobs when nothing matches", async () => {
+    const mfs = new MockFirestore()
+    await seedJobs(mfs)
+    const r = await runFindJob({ db: asFirestore(mfs) as never, query: "quantum blacksmith" })
+    assert.deepEqual(r.matches, [])
+    assert.match(r.note ?? "", /no job matched/)
+    assert.match(r.note ?? "", /Backend Engineer @ Photon/)
+  })
+
+  it("list_job_shortlist accepts free text and reports what it resolved", async () => {
+    const mfs = new MockFirestore()
+    await seedJobs(mfs)
+    await seed(mfs, "a", submission("a"), {
+      experienceHighlights: [{ title: "SWE", company: "Acme", description: "Rust services." }],
+    })
+    const r = await runListJobShortlist({ db: asFirestore(mfs) as never, jobId: "photon backend" })
+    assert.equal(r.jobId, "photon-backend-engineer-high-concurrency")
+    assert.match(r.resolvedFrom ?? "", /resolved "photon backend"/)
+    assert.equal(r.returned, 1)
+  })
+
+  it("an ambiguous query returns jobCandidates rather than a wrong pool", async () => {
+    const mfs = new MockFirestore()
+    await seedJobs(mfs)
+    await mfs.collection("pa-jobs").doc("photon-ios").set({ title: "iOS Engineer", companyName: "Photon" })
+    const r = await runListJobShortlist({ db: asFirestore(mfs) as never, jobId: "photon" })
+    assert.equal(r.returned, 0)
+    assert.equal(r.jobCandidates?.length, 2)
   })
 })

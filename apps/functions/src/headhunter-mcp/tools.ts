@@ -48,6 +48,7 @@ import {
   runGetCandidateEvidence,
   runRecordJobRanking,
   runRecordCandidateReviews,
+  runFindJob,
 } from "./shortlist.js"
 import { runCoresignalAgenticSearch } from "../admin-coresignal-agentic-search.js"
 
@@ -77,7 +78,7 @@ const MAX_ROWS = 25
  * array property longer than MAX_ROWS is sliced and annotated with a
  * `<field>_truncated` note so the agent knows to filter for more.
  */
-function capForAgent(value: unknown): unknown {
+export function capForAgent(value: unknown): unknown {
   if (Array.isArray(value)) {
     const sliced = value.slice(0, MAX_ROWS).map(capForAgent)
     return value.length > MAX_ROWS
@@ -101,6 +102,21 @@ function capForAgent(value: unknown): unknown {
 
 function jsonContent(value: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(capForAgent(value), null, 2) }] }
+}
+
+/**
+ * Emit WITHOUT the 25-row cap, for tools whose whole purpose is to hand over a large set.
+ *
+ * `capForAgent` is the right default — it stops an unbounded admin list from blowing the context.
+ * But applied to the shortlist it silently cut 248 candidates to 25 while the response still said
+ * `returned: 248`, which is the worst possible failure: a confident, wrong, complete-looking view.
+ *
+ * Only safe for tools that bound and report their OWN size. Both callers do: list_job_shortlist
+ * hard-caps at 250 (measured ~55k tokens for 248) and enumerates every row it withheld with a
+ * reason; get_candidate_evidence is a single candidate (~3k tokens).
+ */
+function jsonContentFull(value: unknown): ToolResult {
+  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] }
 }
 
 /**
@@ -517,6 +533,14 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
   // specifics only. These three let a stronger model do the comparison the checklist cannot —
   // a compact list it can hold in one context, detail on demand, and a written-back ranking.
 
+  register<{ query: string }>(server, "find_job", {
+    title: "Find a job by link, name, or company",
+    description:
+      "Resolve a pasted job URL, a job id, or plain words (\"photon backend\", \"the invoko designer role\") to a jobId. Returns the single match when it is unambiguous, or the shortlist of candidates when it is not — it never guesses, because scoring a candidate pool against the wrong rubric is worse than asking. You usually do NOT need to call this: list_job_shortlist accepts the same free text directly.",
+    inputSchema: { query: z.string().min(1) },
+    annotations: READ_ONLY,
+  }, async (a) => jsonContent(await runFindJob({ db, query: a.query })))
+
   register<{
     jobId: string
     limit?: number
@@ -526,16 +550,16 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
   }>(server, "list_job_shortlist", {
     title: "List a job's candidates for ranking",
     description:
-      "The JOB (title, company, comp, full JD, and the hard/fit/bonus/anti checklist) plus a COMPACT row per candidate (~220 tokens each) — current role, best-calibre employer in their verified history WITH the role that earned it (internships are flagged), school strength, GPA/degree/company pillars, seniority, stack signals found in DESCRIBED work, the batch checklist tally, and what evidence that judge actually had. Built for YOU to judge against the JD: the tally grades implementation specifics only and does NOT grade school, employer calibre, GPA, seniority or corroboration — weigh those yourself. ~250 candidates fit in ~55k tokens. Drops only extreme mismatches and reports every drop with its reason; nothing is silently truncated. filter='unreviewed' to resume a partial pass, 'needs_attention' to re-read only what you flagged. Call get_candidate_evidence before penalising anyone whose evidence looks thin.",
+      "Accepts a jobId, a pasted job URL, or plain words (\"photon backend\") in `jobId` — it resolves them, and returns jobCandidates instead of guessing when the query is ambiguous. Returns the JOB (title, company, comp, full JD, and the hard/fit/bonus/anti checklist) plus a COMPACT row per candidate (~220 tokens each) — current role, best-calibre employer in their verified history WITH the role that earned it (internships are flagged), school strength, GPA/degree/company pillars, seniority, stack signals found in DESCRIBED work, the batch checklist tally, and what evidence that judge actually had. Built for YOU to judge against the JD: the tally grades implementation specifics only and does NOT grade school, employer calibre, GPA, seniority or corroboration — weigh those yourself. ~250 candidates fit in ~55k tokens. Drops only extreme mismatches and reports every drop with its reason; nothing is silently truncated. filter='unreviewed' to resume a partial pass, 'needs_attention' to re-read only what you flagged. Call get_candidate_evidence before penalising anyone whose evidence looks thin.",
     inputSchema: {
-      jobId: z.string().min(1),
+      jobId: z.string().min(1).describe("A jobId, a pasted job URL, or plain words like \"photon backend\" — resolved automatically."),
       limit: z.number().int().min(1).max(250).optional(),
       requireEngineering: z.boolean().optional(),
       filter: z.enum(["all", "unreviewed", "needs_attention"]).optional(),
       includeJd: z.boolean().optional(),
     },
     annotations: READ_ONLY,
-  }, async (a) => jsonContent(await runListJobShortlist({
+  }, async (a) => jsonContentFull(await runListJobShortlist({
     db, jobId: a.jobId, limit: a.limit, requireEngineering: a.requireEngineering,
     filter: a.filter, includeJd: a.includeJd,
   })))
@@ -546,7 +570,7 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
       "Everything we hold on one submission: every role with its description (newest first), the independent LinkedIn research, recruiter notes, résumé link, and the AI evaluation with its reasons and background pillars. Use after list_job_shortlist on the candidates you want to judge closely.",
     inputSchema: { submissionId: z.string().min(1) },
     annotations: READ_ONLY,
-  }, async (a) => jsonContent(await runGetCandidateEvidence({ db, submissionId: a.submissionId })))
+  }, async (a) => jsonContentFull(await runGetCandidateEvidence({ db, submissionId: a.submissionId })))
 
   register<{
     jobId: string

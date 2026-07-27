@@ -140,6 +140,10 @@ export interface ShortlistResult {
   /** Stated so a thin row is never mistaken for a weak candidate. */
   evidenceCaveat: string
   rows: ShortlistRow[]
+  /** Present when the caller passed a URL or free text instead of a jobId. */
+  resolvedFrom?: string
+  /** Present when the query matched several jobs — pick one and call again. */
+  jobCandidates?: JobMatch[]
 }
 
 /**
@@ -161,6 +165,7 @@ function dropReason(row: ShortlistRow, requireEngineering: boolean): string | nu
 
 export async function runListJobShortlist(args: {
   db: Db
+  /** A jobId, a pasted job URL, or plain words ("photon backend") — resolved before anything else. */
   jobId: string
   limit?: number
   requireEngineering?: boolean
@@ -170,6 +175,36 @@ export async function runListJobShortlist(args: {
   const limit = Math.max(1, Math.min(args.limit ?? 120, 250))
   const requireEngineering = args.requireEngineering ?? true
   const filter = args.filter ?? "all"
+
+  // Accept whatever the caller has to hand. Only resolve when the literal string is not already a
+  // job — a valid id must never be reinterpreted as a search term.
+  let jobId = str(args.jobId)
+  let resolvedNote: string | undefined
+  // Treat the literal string as an id when EITHER a job doc or any submission carries it. Keying
+  // only on the job doc broke a job whose pa-jobs row is missing but whose board is populated —
+  // it silently returned zero candidates, which reads as "nobody applied".
+  const literalIsJob =
+    (await args.db.collection(JOBS).doc(jobId).get()).exists ||
+    !(await args.db.collection(SUBMISSIONS).where("jobId", "==", jobId).limit(1).get()).empty
+  if (!literalIsJob) {
+    const found = await runFindJob({ db: args.db, query: jobId })
+    if (found.resolved) {
+      resolvedNote = `resolved "${jobId}" -> ${found.resolved.jobId} (${found.resolved.matchedVia})`
+      jobId = found.resolved.jobId
+    } else {
+      // Ambiguous or unknown: say so rather than score against a guessed rubric.
+      return {
+        jobId,
+        returned: 0,
+        totalSubmissions: 0,
+        dropped: { count: 0, reasons: {}, sample: [] },
+        evidenceCaveat: found.note ?? "job not resolved",
+        rows: [],
+        ...(found.matches.length ? { jobCandidates: found.matches } : {}),
+      } as ShortlistResult
+    }
+  }
+  args = { ...args, jobId }
 
   // The JD + rubric are per-JOB, so the cost is paid once rather than per candidate. Without them
   // a client is ranking against its own idea of the role instead of the one we are hiring for.
@@ -332,6 +367,7 @@ export async function runListJobShortlist(args: {
     jobId: args.jobId,
     ...(jobTitle ? { jobTitle } : {}),
     ...(job ? { job } : {}),
+    ...(resolvedNote ? { resolvedFrom: resolvedNote } : {}),
     returned: Math.min(kept.length, limit),
     totalSubmissions: snap.size,
     dropped: { count: built.length - kept.length + overflow, reasons: dropReasons, sample: dropSample },
@@ -557,4 +593,97 @@ export async function runRecordCandidateReviews(args: {
   }
 
   return { ok: true, jobId: args.jobId, written, skipped, summary }
+}
+
+export interface JobMatch {
+  jobId: string
+  title?: string
+  company?: string
+  matchedVia: "doc_id" | "public_id" | "url_segment" | "title_company"
+  submissions?: number
+}
+
+/**
+ * Turn whatever a human says into a jobId.
+ *
+ * Nobody should have to know that a role is `photon-backend-engineer-high-concurrency`. This takes
+ * a URL, a doc id, a publicId, or plain words ("photon backend", "the Invoko designer role") and
+ * resolves them against the whole `pa-jobs` collection — 39 docs, so a full scan costs nothing and
+ * beats maintaining an index.
+ *
+ * Ambiguity is RETURNED, never guessed: silently picking one of two plausible roles would score a
+ * candidate pool against the wrong rubric, which is worse than asking.
+ */
+export async function runFindJob(args: {
+  db: Db
+  query: string
+  countSubmissions?: boolean
+}): Promise<{ query: string; resolved?: JobMatch; matches: JobMatch[]; note?: string }> {
+  const query = str(args.query)
+  if (!query) return { query, matches: [], note: "empty query" }
+
+  const snap = await args.db.collection(JOBS).get()
+  const jobs = snap.docs.map((d) => {
+    const j = (d.data() ?? {}) as Rec
+    return {
+      id: d.id,
+      title: str(j.title),
+      company: str(j.companyName) || str(j.company) || str(rec(rec(j.recruiterBoard).label).company),
+      publicId: str(j.publicId),
+    }
+  })
+
+  // A pasted link: try every path segment, longest first — the id is rarely the last one.
+  const segments = query.includes("/")
+    ? query.split(/[/?#]/).map((s) => str(s)).filter(Boolean).sort((a, b) => b.length - a.length)
+    : []
+  const needles = [query, ...segments]
+
+  for (const n of needles) {
+    const byId = jobs.find((j) => j.id === n)
+    if (byId) {
+      return finish(byId, n === query ? "doc_id" : "url_segment")
+    }
+    const byPublic = jobs.find((j) => j.publicId && j.publicId === n)
+    if (byPublic) return finish(byPublic, "public_id")
+  }
+
+  // Word-overlap on title + company. Every word must appear somewhere, so "photon backend" hits
+  // the Photon backend role and not every backend role we have.
+  const words = query.toLowerCase().split(/[^a-z0-9+#.]+/).filter((w) => w.length > 2)
+  const scored = jobs
+    .map((j) => {
+      const hay = `${j.id} ${j.title} ${j.company}`.toLowerCase()
+      const hits = words.filter((w) => hay.includes(w)).length
+      return { j, hits }
+    })
+    .filter((x) => words.length > 0 && x.hits === words.length)
+    .sort((a, b) => b.hits - a.hits)
+
+  const matches: JobMatch[] = scored.map(({ j }) => ({
+    jobId: j.id,
+    ...(j.title ? { title: j.title } : {}),
+    ...(j.company ? { company: j.company } : {}),
+    matchedVia: "title_company" as const,
+  }))
+
+  if (matches.length === 1) return { query, resolved: matches[0], matches }
+  if (matches.length === 0) {
+    return {
+      query,
+      matches: [],
+      note: `no job matched "${query}". Known jobs: ${jobs.slice(0, 20).map((j) => `${j.title || j.id} @ ${j.company || "?"}`).join("; ")}`,
+    }
+  }
+  return { query, matches, note: `${matches.length} jobs matched — pass a jobId from this list, or narrow the query.` }
+
+  function finish(j: { id: string; title: string; company: string }, via: JobMatch["matchedVia"]) {
+    const m: JobMatch = {
+      jobId: j.id,
+      ...(j.title ? { title: j.title } : {}),
+      ...(j.company ? { company: j.company } : {}),
+      matchedVia: via,
+    }
+    return { query, resolved: m, matches: [m] }
+  }
 }
