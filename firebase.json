@@ -95,6 +95,34 @@
           }
         },
         {
+          "source": "/.well-known/oauth-authorization-server",
+          "function": {
+            "functionId": "paMcpOauth",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/.well-known/oauth-protected-resource",
+          "function": {
+            "functionId": "paMcpOauth",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/oauth/**",
+          "function": {
+            "functionId": "paMcpOauth",
+            "region": "us-central1"
+          }
+        },
+        {
+          "source": "/mcp",
+          "function": {
+            "functionId": "paHeadhunterMcp",
+            "region": "us-central1"
+          }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }

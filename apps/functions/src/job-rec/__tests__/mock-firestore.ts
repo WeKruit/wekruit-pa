@@ -19,7 +19,7 @@ type DocSnap = {
 export class MockFirestore {
   /** collectionPath -> docId -> data */
   store: Map<string, Map<string, Record<string, unknown>>> = new Map()
-  writeLog: { path: string; id: string; data: Record<string, unknown>; mode: "set" | "merge" }[] = []
+  writeLog: { path: string; id: string; data: Record<string, unknown>; mode: "set" | "merge" | "delete" }[] = []
 
   private getColl(path: string): Map<string, Record<string, unknown>> {
     let m = this.store.get(path)
@@ -61,6 +61,14 @@ class DocRef {
       data: { ...data },
       mode: opts?.merge ? "merge" : "set",
     })
+  }
+
+  /** Single-use credentials (OAuth codes) are consumed by deleting them, not by flagging them. */
+  async delete(): Promise<void> {
+    const coll = (this.mfs as unknown as { getColl: (p: string) => Map<string, Record<string, unknown>> })
+      .getColl(this.collectionPath)
+    coll.delete(this.id)
+    this.mfs.writeLog.push({ path: this.collectionPath, id: this.id, data: {}, mode: "delete" })
   }
 
   async get(): Promise<DocSnap> {

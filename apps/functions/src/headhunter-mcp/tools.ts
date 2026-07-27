@@ -116,7 +116,9 @@ function jsonContent(value: unknown): ToolResult {
  * reason; get_candidate_evidence is a single candidate (~3k tokens).
  */
 function jsonContentFull(value: unknown): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] }
+  // No pretty-print. Measured over the wire on the Photon board: indenting 248 candidates cost
+  // 80k tokens against 55k compact — ~45% of the payload was whitespace a model gains nothing from.
+  return { content: [{ type: "text", text: JSON.stringify(value) }] }
 }
 
 /**
