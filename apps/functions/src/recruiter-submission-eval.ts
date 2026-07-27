@@ -530,7 +530,7 @@ export async function defaultFetchResumeText(
   }
 }
 
-function renderJdBlocks(job: Record<string, unknown>): string {
+export function renderJdBlocks(job: Record<string, unknown>): string {
   // jdBlocks is hand-seeded and empty for most real jobs; fall back to deriving
   // it from descriptionMd so the AI judge always sees the JD context.
   const blocks: JdBlock[] =

@@ -43,6 +43,12 @@ import { runSendEmail } from "./email.js"
 import { runScheduleInterview, runBookInterviewSlot } from "./scheduling.js"
 import { runEmailInterviewOffer } from "./email-interview-offer.js"
 import { runIntakeJob } from "./job-intake.js"
+import {
+  runListJobShortlist,
+  runGetCandidateEvidence,
+  runRecordJobRanking,
+  runRecordCandidateReviews,
+} from "./shortlist.js"
 import { runCoresignalAgenticSearch } from "../admin-coresignal-agentic-search.js"
 
 type Db = ReturnType<typeof getFirestore>
@@ -505,4 +511,102 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
     )
     return jsonContent({ ...evaluation, applied: true, appliedTier: target })
   })
+
+  // ─────────────── RANK-IT-YOURSELF (client does the judging) ───────────────
+  // Our batch judge is a TRIAGE pass: cheap, unattended, auditable, and it grades implementation
+  // specifics only. These three let a stronger model do the comparison the checklist cannot —
+  // a compact list it can hold in one context, detail on demand, and a written-back ranking.
+
+  register<{
+    jobId: string
+    limit?: number
+    requireEngineering?: boolean
+    filter?: "all" | "unreviewed" | "needs_attention"
+    includeJd?: boolean
+  }>(server, "list_job_shortlist", {
+    title: "List a job's candidates for ranking",
+    description:
+      "The JOB (title, company, comp, full JD, and the hard/fit/bonus/anti checklist) plus a COMPACT row per candidate (~220 tokens each) — current role, best-calibre employer in their verified history WITH the role that earned it (internships are flagged), school strength, GPA/degree/company pillars, seniority, stack signals found in DESCRIBED work, the batch checklist tally, and what evidence that judge actually had. Built for YOU to judge against the JD: the tally grades implementation specifics only and does NOT grade school, employer calibre, GPA, seniority or corroboration — weigh those yourself. ~250 candidates fit in ~55k tokens. Drops only extreme mismatches and reports every drop with its reason; nothing is silently truncated. filter='unreviewed' to resume a partial pass, 'needs_attention' to re-read only what you flagged. Call get_candidate_evidence before penalising anyone whose evidence looks thin.",
+    inputSchema: {
+      jobId: z.string().min(1),
+      limit: z.number().int().min(1).max(250).optional(),
+      requireEngineering: z.boolean().optional(),
+      filter: z.enum(["all", "unreviewed", "needs_attention"]).optional(),
+      includeJd: z.boolean().optional(),
+    },
+    annotations: READ_ONLY,
+  }, async (a) => jsonContent(await runListJobShortlist({
+    db, jobId: a.jobId, limit: a.limit, requireEngineering: a.requireEngineering,
+    filter: a.filter, includeJd: a.includeJd,
+  })))
+
+  register<{ submissionId: string }>(server, "get_candidate_evidence", {
+    title: "Full evidence for one candidate",
+    description:
+      "Everything we hold on one submission: every role with its description (newest first), the independent LinkedIn research, recruiter notes, résumé link, and the AI evaluation with its reasons and background pillars. Use after list_job_shortlist on the candidates you want to judge closely.",
+    inputSchema: { submissionId: z.string().min(1) },
+    annotations: READ_ONLY,
+  }, async (a) => jsonContent(await runGetCandidateEvidence({ db, submissionId: a.submissionId })))
+
+  register<{
+    jobId: string
+    model?: string
+    reviews: Array<{
+      submissionId: string
+      verdict: "advance" | "borderline" | "reject"
+      score: number
+      needsHumanAttention: boolean
+      attentionReason?: string
+      reasons?: string[]
+      dimensions?: Record<string, "strong" | "adequate" | "weak" | "unknown">
+    }>
+  }>(server, "record_candidate_reviews", {
+    title: "Record your own review of candidates",
+    description:
+      "Write YOUR verdict, 0-100 score, per-dimension grades (experience, companies, school, gpa, skills) and a needsHumanAttention flag for many candidates in ONE call. Be harsh and comparative: most candidates on a senior role should be 'reject', and needsHumanAttention=true is reserved for the few genuinely worth an operator's time — a flag on everyone is the same as a flag on no one. Judge recruiter-submitted candidates by the same bar as sourced ones; a self-authored résumé asserting the right keywords is WEAKER evidence than a corroborated role, not stronger. Stored as `claudeReview` ALONGSIDE the batch `aiEvaluation`, never over it, so the disagreement between the two becomes eval data. Does NOT change submission status or contact anyone — a 'reject' here means 'not worth attention today', and the candidate stays in the pool for other roles. Re-read your flagged set with list_job_shortlist(filter='needs_attention').",
+    inputSchema: {
+      jobId: z.string().min(1),
+      model: z.string().optional(),
+      reviews: z.array(z.object({
+        submissionId: z.string().min(1),
+        verdict: z.enum(["advance", "borderline", "reject"]),
+        score: z.number().min(0).max(100),
+        needsHumanAttention: z.boolean(),
+        attentionReason: z.string().optional(),
+        reasons: z.array(z.string()).optional(),
+        dimensions: z.object({
+          experience: z.enum(["strong", "adequate", "weak", "unknown"]).optional(),
+          companies: z.enum(["strong", "adequate", "weak", "unknown"]).optional(),
+          school: z.enum(["strong", "adequate", "weak", "unknown"]).optional(),
+          gpa: z.enum(["strong", "adequate", "weak", "unknown"]).optional(),
+          skills: z.enum(["strong", "adequate", "weak", "unknown"]).optional(),
+        }).optional(),
+      })).min(1).max(120),
+    },
+    annotations: MUTATING,
+  }, async (a) => jsonContent(await runRecordCandidateReviews({
+    db, jobId: a.jobId, actor, now: new Date().toISOString(),
+    ...(a.model ? { model: a.model } : {}),
+    reviews: a.reviews as never,
+  })))
+
+  register<{ jobId: string; ranking: Array<{ submissionId: string; rank: number; note?: string }>; rationale?: string }>(
+    server, "record_job_ranking", {
+    title: "Record your ranking for a job",
+    description:
+      "Persist your ordering of a job's candidates as an auditable artifact, with an optional per-candidate note and an overall rationale. Does NOT change any submission status — ranking is an opinion, advancing is a separate decision. Recording it is what lets your judgement become eval data instead of a lost chat message.",
+    inputSchema: {
+      jobId: z.string().min(1),
+      ranking: z.array(z.object({
+        submissionId: z.string().min(1),
+        rank: z.number().int().min(1),
+        note: z.string().optional(),
+      })).min(1),
+      rationale: z.string().optional(),
+    },
+    annotations: MUTATING,
+  }, async (a) => jsonContent(await runRecordJobRanking({
+    db, jobId: a.jobId, actor, now: new Date().toISOString(),
+    ranking: a.ranking, ...(a.rationale ? { rationale: a.rationale } : {}),
+  })))
 }
