@@ -949,3 +949,94 @@ describe("WeKruit profile is primary evidence in the judge prompt", () => {
     assert.doesNotMatch(prompt, /Experience:\n\(none recorded\)/)
   })
 })
+
+describe("profile evidence is ordered by recency, not storage order", () => {
+  // experienceHighlights arrives OLDEST-FIRST and capped upstream. Slicing the head fed the judge
+  // a candidate's student years: a Microsoft Office-of-the-CTO engineer's stored array held ten
+  // 2018-2025 internships and not the senior role at all, and the judge scored her 2/4 reasoning
+  // "largely internships/TA/mentoring".
+  const OLDEST_FIRST = {
+    id: "real-uid-1",
+    displayName: "Yue H",
+    linkedinUrl: "https://linkedin.com/in/yue-h",
+    createdAt: "2026-07-25T10:00:00.000Z",
+    tags: {
+      recentRoleTitle: "Senior Software Engineer - Office of the CTO",
+      recentCompany: "Microsoft",
+      workHistorySummary: "Senior SWE, Office of the CTO @ Microsoft; SWE II @ Microsoft",
+    },
+    experienceHighlights: [
+      { title: "Data Analyst", company: "NASA", startDate: "June 2018", endDate: "August 2018" },
+      { title: "Software Engineer Intern", company: "Meta", startDate: "January 2021", endDate: "April 2021" },
+      { title: "Software Engineer - Mixed Reality Cloud", company: "Microsoft", startDate: "2023", endDate: "December 2025" },
+    ],
+  }
+
+  it("renders the newest role first even when storage is oldest-first", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc(OLDEST_FIRST.id).set(OLDEST_FIRST)
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const prompt = deps.judgeCalls[0]?.userText ?? ""
+    const mixedReality = prompt.indexOf("Mixed Reality Cloud")
+    const nasa = prompt.indexOf("Data Analyst @ NASA")
+    assert.ok(mixedReality > -1 && nasa > -1, "both roles should render")
+    assert.ok(mixedReality < nasa, "the 2025 role must precede the 2018 internship")
+  })
+
+  it("warns the judge when the truncated list omits the current role", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc(OLDEST_FIRST.id).set(OLDEST_FIRST)
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const prompt = deps.judgeCalls[0]?.userText ?? ""
+    assert.match(prompt, /CURRENT ROLE: Senior Software Engineer - Office of the CTO @ Microsoft/)
+    assert.match(prompt, /does NOT contain the CURRENT ROLE above/)
+  })
+
+  it("stays silent about truncation when the current role IS in the list", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc("real-uid-1").set({
+      ...OLDEST_FIRST,
+      tags: { ...OLDEST_FIRST.tags, recentRoleTitle: "Software Engineer - Mixed Reality Cloud" },
+    })
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    assert.doesNotMatch(deps.judgeCalls[0]?.userText ?? "", /does NOT contain the CURRENT ROLE/)
+  })
+
+  it("an ongoing role outranks every dated one", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc("real-uid-1").set({
+      ...OLDEST_FIRST,
+      tags: { recentRoleTitle: "Staff Engineer", recentCompany: "Acme" },
+      experienceHighlights: [
+        { title: "Staff Engineer", company: "Acme", startDate: "2024" },
+        { title: "Intern", company: "Old Co", startDate: "2019", endDate: "December 2025" },
+      ],
+    })
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const prompt = deps.judgeCalls[0]?.userText ?? ""
+    assert.ok(
+      prompt.indexOf("Staff Engineer @ Acme") < prompt.indexOf("Intern @ Old Co"),
+      "an in-progress role must sort above one that ended, even a later-dated one",
+    )
+  })
+})
