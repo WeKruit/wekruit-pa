@@ -16,6 +16,7 @@ import { SUBMISSION_FEEDBACK_REASONS, feedbackReasonLabel, ReasonChips } from ".
 import { auth, db } from "../lib/firebase.js"
 import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
+import { recommendRolesForSubmission, submitCandidateToRole, type RoleRecommendation } from "../lib/recommend-roles-api.js"
 import {
   upsertCompanySend,
   removeCompanySend,
@@ -4362,6 +4363,123 @@ const companySendTone = (s: CompanySendStatus): Parameters<typeof Badge>[0]["ton
   s === "interested" ? "ok" : s === "passed" ? "warn" : s === "waiting_hm" ? "info" : "muted"
 
 /**
+ * "Wrong role, not a wrong candidate" (Adam 2026-07-26). A candidate rejected here may clear the
+ * bar on one of the ~28 other roles in the pool, several of them founding-engineer shaped.
+ * Rejecting without looking throws away supply we already paid to acquire.
+ *
+ * On demand, never on open: ranking a candidate across the catalogue is an LLM call, and most rows
+ * get skimmed, not re-routed. Cached on the submission, so re-opening is free and only "Re-check"
+ * spends again. Submitting goes through the normal recruiter-submission path (server computes the
+ * score + fires the eval) and carries the ORIGINAL submitter so the sourcing recruiter keeps credit.
+ */
+function OtherRolesPanel({ row }: { row: SubmissionDoc }) {
+  const [items, setItems] = useState<RoleRecommendation[] | null>(
+    (row as { roleRecommendations?: { items?: RoleRecommendation[]; sourceJobId?: string } }).roleRecommendations
+      ?.sourceJobId === row.jobId
+      ? (row as { roleRecommendations?: { items?: RoleRecommendation[] } }).roleRecommendations?.items ?? null
+      : null,
+  )
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [sent, setSent] = useState<Record<string, string>>({})
+
+  const load = async (refresh: boolean) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await recommendRolesForSubmission(row.id, refresh)
+      if (res.ok) setItems(res.result.items)
+      else setErr(res.reason)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const reroute = async (r: RoleRecommendation) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await submitCandidateToRole({
+        submissionId: row.id,
+        jobId: r.jobId,
+        submitter: {
+          name: row.submitter?.name ?? "WeKruit re-route",
+          email: row.submitter?.email ?? "admin1@wekruit.com",
+        },
+        candidate: (row.candidate ?? {}) as Record<string, unknown>,
+        sourceRoleLabel: row.jobTitleSnapshot ?? row.jobId ?? "another role",
+      })
+      if (res.ok) setSent((m) => ({ ...m, [r.jobId]: res.idempotent ? "already there" : "submitted" }))
+      else setErr(`Could not submit to ${r.title}: ${res.reason}`)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Other roles this candidate may fit
+      </h4>
+      {err && <p style={{ color: "#c0392b", fontSize: 12, margin: "0 0 6px" }}>{err}</p>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {items === null && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button type="button" disabled={busy} onClick={() => void load(false)}>
+              {busy ? "Checking…" : "Check other roles"}
+            </button>
+            <span style={{ fontSize: 12, color: "#999" }}>
+              Ranks this candidate against every other open role that has a rubric.
+            </span>
+          </div>
+        )}
+        {items !== null && items.length === 0 && (
+          <p style={{ margin: 0, fontSize: 13, color: "#999" }}>
+            Checked every other open role — none of them fit this candidate. That is a real answer, not an error.
+          </p>
+        )}
+        {items?.map((r) => (
+          <div key={r.jobId} style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>
+                {r.title} <span style={{ color: "#777", fontWeight: 400 }}>@ {r.company}</span>
+              </strong>
+              <Badge tone={r.fitScore >= 0.8 ? "ok" : "info"}>{r.fitScore.toFixed(2)} fit</Badge>
+            </div>
+            <p style={{ margin: 0, fontSize: 13 }}>{r.whyFits}</p>
+            {r.whatsMissing && (
+              <p style={{ margin: 0, fontSize: 12, color: "#b06a00" }}>Still unproven: {r.whatsMissing}</p>
+            )}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button type="button" disabled={busy || !!sent[r.jobId]} onClick={() => void reroute(r)}>
+                {sent[r.jobId] ? `✓ ${sent[r.jobId]}` : "Submit to this role"}
+              </button>
+              <AdminJobLink jobId={r.jobId}>
+                <span style={{ fontSize: 12 }}>View role</span>
+              </AdminJobLink>
+            </div>
+          </div>
+        ))}
+        {items !== null && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void load(true)}
+            style={{ justifySelf: "start", fontSize: 12, background: "none", border: "none", color: "#777", cursor: "pointer", padding: 0 }}
+          >
+            {busy ? "Re-checking…" : "Re-check"}
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
+
+/**
  * Per-company "waiting for hiring manager" tracker. Lets ops mark which companies
  * a candidate was sent to, each with its own status (sent → waiting HM →
  * interested/passed) + hiring-manager feedback. Writes via the admin action
@@ -4925,6 +5043,7 @@ function RowDetailPanel({
             <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No status history stored.</p>
           )}
 
+          <OtherRolesPanel row={row} />
           <CompanySendsPanel submissionId={row.id} initial={row.companySends} />
           <SubmissionConversationPanel row={row} onUpdated={onUpdated} />
 
