@@ -1140,6 +1140,29 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     chips: [
       { id: "job", label: "Job", multi: false, options: jobOptions },
       {
+        // The Status chips are inclusive-only — hiding the 677 rejected rows meant ticking the
+        // other eleven statuses one by one. These two are the subtractive view you actually want
+        // while working a board: drop what you've already ruled out, or show only what still
+        // needs a decision. Chip groups AND together, so this composes with Job / Status / Score.
+        id: "triage",
+        label: "Triage",
+        multi: false,
+        options: [
+          {
+            key: "hideClosed",
+            label: "Hide rejected",
+            title: "Drop rejected + duplicate — the ones you've already ruled out",
+            test: (r: SubmissionDoc) => !NEGATIVE_SUBMISSION_STATUSES.includes(r.status ?? "new"),
+          },
+          {
+            key: "needsReview",
+            label: "Needs review",
+            title: "Only submitted / new / reviewing / backburner",
+            test: (r: SubmissionDoc) => PENDING_SUBMISSION_STATUSES.includes(r.status ?? "new"),
+          },
+        ],
+      },
+      {
         id: "status",
         label: "Status",
         multi: true,
