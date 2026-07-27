@@ -245,6 +245,10 @@ export async function runRecommendRoles(
       return [{ jobId, title: label.title, company: label.company, fitScore, whyFits: str(r.whyFits), whatsMissing: str(r.whatsMissing) }]
     })
     .sort((a, b) => b.fitScore - a.fitScore)
+    // DEDUPE BY ROLE. Observed live 2026-07-26: the model returned the same Maximor role twice for
+    // one candidate, at 0.78 and 0.73, which renders as two cards for one job and two "Submit to
+    // this role" buttons. Sorted desc first, so the survivor is the higher score.
+    .filter((r, i, all) => all.findIndex((o) => o.jobId === r.jobId) === i)
     .slice(0, TOP_N)
 
   const result: RoleRecommendationsDoc = {
