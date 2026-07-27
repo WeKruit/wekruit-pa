@@ -17,6 +17,9 @@ import { auth, db } from "../lib/firebase.js"
 import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { recommendRolesForSubmission, submitCandidateToRole, type RoleRecommendation } from "../lib/recommend-roles-api.js"
+import { markCandidateQuality } from "../lib/mark-candidate-quality-api.js"
+import { REJECTED_CANDIDATES_ROUTE } from "../lib/rejected-candidates-api.js"
+import { CANDIDATE_TIER_LABELS, type CandidateTier } from "@pa/core-types"
 import {
   upsertCompanySend,
   removeCompanySend,
@@ -4363,6 +4366,74 @@ const companySendTone = (s: CompanySendStatus): Parameters<typeof Badge>[0]["ton
   s === "interested" ? "ok" : s === "passed" ? "warn" : s === "waiting_hm" ? "info" : "muted"
 
 /**
+ * Durable candidate quality, marked by hand (Adam 2026-07-26: "tag a candidate as high quality…
+ * so even they are not fit for the role yet we can find them later").
+ *
+ * Writes the SAME `pa-users.globalCandidateTier` the rejection flows write — tier_1 is already
+ * defined as "strong, re-review for new roles". A separate "high quality" flag would be a second
+ * candidate-quality vocabulary for the tier browse, the headhunter tools and the re-review flow to
+ * learn, which CLAUDE.md names as an anti-pattern. The mark is GLOBAL: it outlives this role, this
+ * submission, and this rejection, which is the entire point of the request.
+ */
+function CandidateQualityPanel({ row }: { row: SubmissionDoc }) {
+  const [tier, setTier] = useState<CandidateTier | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [note, setNote] = useState("")
+
+  const mark = async (t: CandidateTier) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await markCandidateQuality({ submissionId: row.id, tier: t, reason: note.trim() || undefined })
+      if (res.ok) setTier(res.globalTier)
+      else setErr(res.reason === "no_candidate_identity_linkedin_required"
+        ? "No LinkedIn on this submission — a global mark needs a durable identity to attach to."
+        : res.reason)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Candidate quality — remembered across every role
+      </h4>
+      {err && <p style={{ color: "#c0392b", fontSize: 12, margin: "0 0 6px" }}>{err}</p>}
+      <div style={{ display: "grid", gap: 8 }}>
+        <p style={{ margin: 0, fontSize: 13, color: "#777" }}>
+          Marks the person, not this submission. Best-wins: a later weaker mark cannot undo a Tier 1.
+          Browse everyone marked at{" "}
+          <a href={REJECTED_CANDIDATES_ROUTE}>Candidates · by tier</a>.
+        </p>
+        <input
+          value={note}
+          disabled={busy}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Why (optional) — e.g. strong infra depth, wrong stack for this role"
+          style={{ padding: 6, fontSize: 13 }}
+        />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {(["tier_1", "tier_2", "tier_3"] as CandidateTier[]).map((t) => (
+            <button key={t} type="button" disabled={busy} onClick={() => void mark(t)}>
+              {CANDIDATE_TIER_LABELS[t]}
+            </button>
+          ))}
+          {tier && (
+            <Badge tone={tier === "tier_1" ? "ok" : tier === "tier_2" ? "info" : "warn"}>
+              now {CANDIDATE_TIER_LABELS[tier]}
+            </Badge>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+/**
  * "Wrong role, not a wrong candidate" (Adam 2026-07-26). A candidate rejected here may clear the
  * bar on one of the ~28 other roles in the pool, several of them founding-engineer shaped.
  * Rejecting without looking throws away supply we already paid to acquire.
@@ -5043,6 +5114,7 @@ function RowDetailPanel({
             <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No status history stored.</p>
           )}
 
+          <CandidateQualityPanel row={row} />
           <OtherRolesPanel row={row} />
           <CompanySendsPanel submissionId={row.id} initial={row.companySends} />
           <SubmissionConversationPanel row={row} onUpdated={onUpdated} />

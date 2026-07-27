@@ -71,7 +71,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     items: [
       { to: "/admin/candidates", label: "All candidates", end: true },
       { to: "/admin/passed-candidates", label: "Passed candidates" },
-      { to: "/admin/rejected-candidates", label: "Rejected · by tier" },
+      { to: "/admin/rejected-candidates", label: "Candidates · by tier" },
       { to: "/admin/identity-conflicts", label: "Identity conflicts", hitl: true },
       { to: "/conversations", label: "iMessage conversations" },
     ],

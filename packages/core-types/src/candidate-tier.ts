@@ -20,7 +20,9 @@ export const CANDIDATE_TIERS = ["tier_1", "tier_2", "tier_3"] as const
 export const CandidateTierSchema = z.enum(CANDIDATE_TIERS)
 export type CandidateTier = (typeof CANDIDATE_TIERS)[number]
 
-export const CANDIDATE_TIER_SOURCES = ["prescreen", "recruiter"] as const
+/** Which flow stamped a tier. `admin` = an operator marked the candidate directly from the
+ *  dashboard, with no rejection involved — "strong, wrong role, find them later". */
+export const CANDIDATE_TIER_SOURCES = ["prescreen", "recruiter", "admin"] as const
 export const CandidateTierSourceSchema = z.enum(CANDIDATE_TIER_SOURCES)
 export type CandidateTierSource = (typeof CANDIDATE_TIER_SOURCES)[number]
 
