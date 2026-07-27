@@ -332,6 +332,11 @@ export { paAdminCandidatePoolCounts } from "./admin-candidate-pool-counts.js"
 // Trimmed list of EVERY recruiter submission (not just the recent 500) so the
 // /admin/recruiter-submissions search + state filter see the whole pool.
 export { paAdminRecruiterSubmissionsList } from "./admin-recruiter-submissions-list.js"
+// "Wrong role, not a wrong candidate" — ranks a submitted candidate across every
+// OTHER role that has a rubric, so an operator can re-route instead of dropping
+// supply we already paid to acquire. Label-only: writes roleRecommendations,
+// never a status, never a new submission.
+export { paAdminRecommendRolesForSubmission } from "./admin-recommend-roles.js"
 // All interview bookings (pa-interview-bookings) for /admin/interviews +
 // per-row operator outcome-stamp (completed/no_show/cancelled). The list reuses
 // the runSchedulingStatus projection; the outcome action writes the booking
