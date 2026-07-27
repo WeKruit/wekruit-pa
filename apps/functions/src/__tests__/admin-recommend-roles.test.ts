@@ -127,6 +127,21 @@ describe("role recommendations — runner", () => {
     assert.deepEqual(res.ok && res.result.items.map((i) => i.jobId), ["vc-founding", "sekai-tl"])
   })
 
+  // Observed live: the model returned the same Maximor role twice for one candidate (0.78, 0.73),
+  // which renders as two cards and two "Submit to this role" buttons for one job.
+  it("collapses a repeated jobId to its highest score", async () => {
+    const { res } = await run([
+      { jobId: "sekai-tl", fitScore: 0.73, whyFits: "second read", whatsMissing: "" },
+      { jobId: "sekai-tl", fitScore: 0.78, whyFits: "first read", whatsMissing: "" },
+      { jobId: "vc-founding", fitScore: 0.6, whyFits: "b", whatsMissing: "" },
+    ])
+    assert.equal(res.ok, true)
+    const items = res.ok ? res.result.items : []
+    assert.deepEqual(items.map((i) => i.jobId), ["sekai-tl", "vc-founding"])
+    assert.equal(items[0]?.fitScore, 0.78)
+    assert.equal(items[0]?.whyFits, "first read")
+  })
+
   it("keeps an empty list empty — a padded recommendation costs a wasted pitch", async () => {
     const { res, writes } = await run([])
     assert.equal(res.ok, true)
