@@ -47,6 +47,7 @@ import {
   type EvaluationOutcome,
   descriptionMdToJdBlocks,
   type JdBlock,
+  PA_COLLECTIONS,
 } from "@pa/core-types"
 import { getEvaluationAttempt, saveEvaluationAttempt } from "@pa/pa-persistence"
 import { getOrFetchCoresignalByLinkedin } from "./lib/coresignal-cache.js"
@@ -225,8 +226,8 @@ export const EVAL_JUDGMENT_JSON_SCHEMA = {
 export const JUDGE_SYSTEM_PROMPT = `You are WeKruit's SUPER CRITICAL recruiter-submission evaluator. A third-party recruiter submitted a candidate against a job rubric and self-reported which checklist items the candidate meets. Recruiters are incentivized to over-claim: every tick is a CLAIM to verify against the candidate info and independent research, NEVER a fact.
 
 Rules:
-- PRIMARY EVIDENCE = the candidate's résumé full text (when provided) + the recruiter's submitted fields/notes. The Coresignal research is CORROBORATION ONLY — it can be stale, sparse, or a wrong-identity match for the pasted LinkedIn URL. When the résumé and the research disagree, TRUST THE RÉSUMÉ. Verify hard items primarily against the résumé; NEVER reject because the research lacks or contradicts what the résumé clearly evidences.
-- NO-RÉSUMÉ FALLBACK: when no résumé text is available (none uploaded, or a link that could not be fetched), the LinkedIn/Coresignal research + the recruiter's submitted fields/notes BECOME your primary evidence — judge fit on what you DO have. A missing résumé is "unverifiable", NOT a disqualifier: do NOT reject merely because the résumé is absent or because hard items cannot be confirmed for lack of one. If the available research/notes plausibly support the hard requirements, prefer verdict "borderline" (human review) so a human can request the résumé. Reject ONLY when the AVAILABLE evidence shows a clear MISMATCH against a hard requirement — wrong field/role, clearly insufficient experience, or an applicable anti-signal — never on absence of a résumé alone. (Still apply the WRONG-IDENTITY GUARD below: research that is a different person is neither evidence FOR nor AGAINST.)
+- PRIMARY EVIDENCE = the candidate's résumé full text (when provided) AND the "WeKruit profile" block + the recruiter's submitted fields/notes. The WeKruit profile is OUR OWN enrichment, extracted from the candidate's authenticated LinkedIn connection — it is NOT a recruiter claim and NOT a pasted-URL lookup, so it carries the same evidentiary weight as the résumé and OUTRANKS both the recruiter's notes and the Coresignal research. A hard item is MET when the WeKruit profile evidences it, exactly as if the résumé had. The Coresignal research is CORROBORATION ONLY — it can be stale, sparse, or a wrong-identity match for the pasted LinkedIn URL. When the résumé and the research disagree, TRUST THE RÉSUMÉ. Verify hard items primarily against the résumé and the WeKruit profile; NEVER reject because the research lacks or contradicts what they clearly evidence.
+- NO-RÉSUMÉ FALLBACK: when no résumé text is available (none uploaded, or a link that could not be fetched), the WeKruit profile + the LinkedIn/Coresignal research + the recruiter's submitted fields/notes BECOME your primary evidence — judge fit on what you DO have. A candidate with a substantive WeKruit profile is NOT unverified: named companies, titles, dates and descriptions there are concrete evidence, and hard items they support must be counted as MET rather than banked as gaps for want of a PDF. A missing résumé is "unverifiable", NOT a disqualifier: do NOT reject merely because the résumé is absent or because hard items cannot be confirmed for lack of one. If the available research/notes plausibly support the hard requirements, prefer verdict "borderline" (human review) so a human can request the résumé. Reject ONLY when the AVAILABLE evidence shows a clear MISMATCH against a hard requirement — wrong field/role, clearly insufficient experience, or an applicable anti-signal — never on absence of a résumé alone. (Still apply the WRONG-IDENTITY GUARD below: research that is a different person is neither evidence FOR nor AGAINST.)
 - WRONG-IDENTITY GUARD (check FIRST): the independent research is fetched from the LinkedIn URL the recruiter pasted, which CAN BE WRONG — a mistyped/ambiguous URL or a common-name collision resolves a DIFFERENT person. Before using research as evidence, sanity-check it plausibly belongs to THIS candidate: compare the research subject's name, profession/field, and seniority against the candidate's submitted name, current role, resume notes, and skills. If the research SHARPLY CONFLICTS with the candidate's own resume — a fundamentally different profession or field (e.g. research shows a pharmacist / Walgreens pharmacy manager while the resume and current role are a senior software engineer) — treat the research as a LIKELY WRONG-IDENTITY match: **set \`identityConflict\`: true**, DO NOT use the research as disqualifying evidence, DO NOT reject on it, judge on the submitted resume/notes alone, prefer verdict "borderline" (human review), and state the identity conflict explicitly in \`reasons\`. Only treat research as authoritative when it is consistent with the candidate's own info; set \`identityConflict\`: false otherwise (including when research is simply absent/sparse — that is "unverifiable", NOT a conflict and NOT disqualifying).
 - Independently assess EVERY hard (must-have) item. An item counts as met ONLY when the candidate info or research contains concrete supporting evidence (named companies, durations, specific work). Unmet or unverifiable hard items go in checklist.hard.gaps, listed by their exact item text — WITH ONE EXCEPTION, below.
 - A NAMED TECHNOLOGY IS NOT EXPERIENCE WITH IT. Résumés are keyword-stuffed for filters: a "Skills" / "Technologies" / "Tools" inventory, a summary or objective line, a coursework list, or a certification names a technology WITHOUT showing any work done in it. Those are CLAIMS, identical in weight to a recruiter tick. A BACKGROUND item is met only when the WORK ITSELF is described — what system they built, at which named company or project, over what period, and what part they personally owned. "Skills: distributed systems, Kafka, microservices" with no bullet describing a system they actually built does NOT meet a distributed-systems item: bank it as a gap exactly as if the technology were absent, and say in reasons that it appears only as a listed skill with no supporting work. Judge the experience section, not the keyword section. Conversely, do NOT demand the keyword: work plainly described in the bullets counts as met even when no skills list names it.
@@ -591,6 +592,98 @@ function renderResearch(research: SubmissionEvalResearch | undefined): string {
   ].join("\n")
 }
 
+/**
+ * The candidate's own WeKruit profile — the enrichment the platform already holds.
+ *
+ * This was the evaluator's blind spot. The judge had four inputs (recruiter fields, résumé,
+ * Coresignal, ticks) and none of them was our own extraction, so a candidate whose `pa-users`
+ * doc listed rust/typescript/golang/microservices was scored "no concrete evidence" for exactly
+ * those. Measured across 258 Photon submissions: 254 had no résumé and no research, scoring a
+ * mean 0.49/4 hard, while the 4 with a résumé averaged 3.50/4 — the score was tracking document
+ * availability, not the person.
+ *
+ * Ranked as PRIMARY evidence alongside the résumé: unlike recruiter notes it is not a claim by
+ * an incentivised party, and unlike Coresignal it is keyed to the candidate's own authenticated
+ * LinkedIn connection rather than a URL someone pasted.
+ */
+export interface WekruitProfileEvidence {
+  displayName?: string
+  recentRoleTitle?: string
+  recentCompany?: string
+  workHistorySummary?: string
+  experience: Array<{ title?: string; company?: string; dates?: string; description?: string }>
+  building?: string
+}
+
+export async function loadWekruitProfile(
+  db: Firestore,
+  candidateId: string | undefined,
+  log?: (event: string, fields?: Record<string, unknown>) => void,
+): Promise<WekruitProfileEvidence | undefined> {
+  if (!candidateId) return undefined
+  try {
+    const snap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+    if (!snap.exists) return undefined
+    const u = (snap.data() ?? {}) as Record<string, unknown>
+    const tags = asRecord(u.tags) ?? {}
+    const experience = (Array.isArray(u.experienceHighlights) ? u.experienceHighlights : [])
+      .slice(0, 12)
+      .map((raw) => {
+        const e = asRecord(raw) ?? {}
+        const start = cleanString(e.startDate)
+        const end = cleanString(e.endDate)
+        return {
+          title: cleanString(e.title),
+          company: cleanString(e.company),
+          dates: start ? `${start}–${end ?? "now"}` : undefined,
+          description: cleanString(e.description)?.slice(0, 600),
+        }
+      })
+    const profile: WekruitProfileEvidence = {
+      displayName: cleanString(u.displayName) ?? cleanString(u.linkedinOauthName),
+      recentRoleTitle: cleanString(tags.recentRoleTitle) ?? cleanString(u.recentRoleTitle),
+      recentCompany: cleanString(tags.recentCompany) ?? cleanString(u.recentCompany),
+      workHistorySummary: cleanString(tags.workHistorySummary),
+      experience,
+      building: cleanString(asRecord(u.ycIntake)?.building),
+    }
+    // A doc with no work history is a stub — say nothing rather than render an empty section the
+    // judge could read as "we looked and there is nothing there".
+    const empty = experience.length === 0 && !profile.workHistorySummary && !profile.building
+    if (empty) {
+      log?.("wekruit_profile_empty", { candidateId })
+      return undefined
+    }
+    return profile
+  } catch (err) {
+    log?.("wekruit_profile_load_failed", { candidateId, error: String(err) })
+    return undefined
+  }
+}
+
+function renderWekruitProfile(profile: WekruitProfileEvidence | undefined): string {
+  if (!profile) {
+    return "(no WeKruit profile on file for this candidate — judge on the résumé/research/notes below)"
+  }
+  const exp = profile.experience
+    .map((e) =>
+      `- ${[e.title, e.company].filter(Boolean).join(" @ ") || "(role)"}${e.dates ? ` (${e.dates})` : ""}` +
+      (e.description ? `\n    ${e.description}` : ""),
+    )
+    .join("\n")
+  return [
+    profile.displayName ? `Profile name: ${profile.displayName}` : "",
+    profile.recentRoleTitle
+      ? `Current: ${profile.recentRoleTitle}${profile.recentCompany ? ` @ ${profile.recentCompany}` : ""}`
+      : "",
+    profile.workHistorySummary ? `Work history: ${profile.workHistorySummary}` : "",
+    profile.building ? `Currently building (candidate's own words): ${profile.building}` : "",
+    `Experience:\n${exp || "(none recorded)"}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
 function renderRecruiterBackgroundFlag(submission: Record<string, unknown>): string {
   const bg = asRecord(submission.candidateBackground)
   if (!bg) return "(recruiter did not flag any background pillars)"
@@ -648,6 +741,7 @@ export function buildJudgeUserText(args: {
   submission: Record<string, unknown>
   research: SubmissionEvalResearch | undefined
   resumeText?: string
+  wekruitProfile?: WekruitProfileEvidence
 }): string {
   const title = cleanString(args.job.title) ?? cleanString(asRecord(args.job.prescreenConfig)?.jobTitle) ?? args.jobId
   const company =
@@ -673,6 +767,9 @@ ${args.candidate.email ? `Email: ${args.candidate.email}\n` : ""}${args.candidat
 
 ## Candidate résumé (full text — PRIMARY, ground-truth evidence about THIS person; trust it over the LinkedIn research when they disagree)
 ${args.resumeText ? args.resumeText.slice(0, 12_000) : "(no résumé text available — apply the NO-RÉSUMÉ FALLBACK rule: judge fit on the research + recruiter notes as primary evidence; do NOT reject solely for the missing résumé; prefer borderline if plausibly qualified)"}
+
+## WeKruit profile (PRIMARY evidence — our OWN verified enrichment of this candidate, from their authenticated LinkedIn connection; not a recruiter claim. Treat it as evidence of the same standing as the résumé.)
+${renderWekruitProfile(args.wekruitProfile)}
 
 ## Independent research (Coresignal — CORROBORATION only; may be stale/wrong or a different person for the pasted URL)
 ${renderResearch(args.research)}
@@ -1050,17 +1147,21 @@ export async function runRecruiterSubmissionEval(
     // for a valid URL, so the résumé is the source of truth; research corroborates.
     const resumeUrl = cleanString(asRecord(submission.candidate)?.resumeUrl)
     const fetchResume = deps.fetchResumeText ?? ((u: string) => defaultFetchResumeText(u, deps.log))
-    const [research, resumeText] = await Promise.all([
-      researchCandidate(candidate.linkedinUrl ?? candidate.link, deps, raw.submissionId),
-      resumeUrl ? fetchResume(resumeUrl) : Promise.resolve(undefined),
-    ])
     const evaluatedAt = now()
+    // Identity FIRST — it resolves which pa-users doc is this person, and the WeKruit profile we
+    // feed the judge is read from that doc. This used to run after the prompt was assembled, so
+    // the enrichment could not have been included even if the block had existed.
     const tracking = await ensureRecruiterSubmissionCandidateTracked(deps.db, {
       submissionId: raw.submissionId,
       submission,
       now: evaluatedAt,
       writeCreatedEvent: true,
     })
+    const [research, resumeText, wekruitProfile] = await Promise.all([
+      researchCandidate(candidate.linkedinUrl ?? candidate.link, deps, raw.submissionId),
+      resumeUrl ? fetchResume(resumeUrl) : Promise.resolve(undefined),
+      loadWekruitProfile(deps.db, tracking.candidateId ?? cleanString(submission.candidateId), deps.log),
+    ])
     const trackingPatch = tracking.status === "tracked" && tracking.candidateId
       ? {
           candidateId: tracking.candidateId,
@@ -1073,7 +1174,7 @@ export async function runRecruiterSubmissionEval(
         }
       : {}
 
-    const userText = buildJudgeUserText({ jobId, job, groups, candidate, ticks, submission, research, resumeText })
+    const userText = buildJudgeUserText({ jobId, job, groups, candidate, ticks, submission, research, resumeText, wekruitProfile })
     const { judgment, usedModel } = await judgeSubmission(deps, userText, raw.submissionId, groups)
 
     const aiEvaluation: SubmissionAiEvaluation = {
