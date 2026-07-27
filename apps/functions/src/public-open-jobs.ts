@@ -764,7 +764,8 @@ export async function runOpenJobs(
 
   const filtered: OpenJobRow[] = []
   for (const row of snapshot.rows) {
-    if (row.firstSeenAt) {
+    // Collab jobs are manually curated — skip freshness expiry.
+    if (params.source !== "collab" && row.firstSeenAt) {
       const ms = Date.parse(row.firstSeenAt)
       if (Number.isFinite(ms) && ms < freshThresholdMs) continue
     }
