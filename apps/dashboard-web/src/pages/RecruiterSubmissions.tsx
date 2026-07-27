@@ -1530,6 +1530,12 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
         <div className="sub-masterdetail__detail">
           {selectedRow ? (
             <RowDetailPanel
+              // KEYED BY ROW — do not remove. Every detail panel seeds its drafts from
+              // `useState(row.…)`, which runs ONCE per mount. Without a key React reuses the same
+              // instance when you click the next candidate, so the previous person's status,
+              // note, rating, reasons and payout stay in the form — and Save writes them onto the
+              // new candidate. The id forces a remount, which re-seeds every draft.
+              key={selectedRow.id}
               row={selectedRow}
               role={jobsByKey.get(selectedRow.jobId ?? "") ?? jobsByKey.get(selectedRow.inboundJobId ?? "") ?? null}
               onClose={() => setExpandedId(null)}
@@ -2867,6 +2873,7 @@ function RecruiterQualityPanel() {
         if (!row) return null
         return (
           <RecruiterQualityDetailPanel
+            key={row.id}
             row={row}
             onClose={() => setExpandedId(null)}
             onUpdated={(profile) => {
@@ -3216,6 +3223,7 @@ function RecruiterSourcedCandidatesPanel() {
         if (!row) return null
         return (
           <SourcedCandidateDetailPanel
+            key={row.id}
             row={row}
             onClose={() => setExpandedId(null)}
             onUpdated={(next) => {
@@ -3628,6 +3636,7 @@ function RecruiterRoleApplicationsPanel() {
         if (!row) return null
         return (
           <RoleApplicationDetailPanel
+            key={row.id}
             row={row}
             review={reviewsById.get(row.id) ?? buildRoleApplicationReview({
               application: row,
@@ -3979,6 +3988,7 @@ function RecruiterRoleQuestionsPanel() {
         if (!row) return null
         return (
           <RoleQuestionDetailPanel
+            key={row.id}
             row={row}
             onClose={() => setExpandedId(null)}
             onUpdated={(next) => {
