@@ -2958,17 +2958,30 @@ describe("fetchCollabJobs company website hydration", () => {
     assert.equal(jobs[0]!.companyWebsite, undefined)
   })
 
-  it("still returns jobs when the pa-companies read throws", async () => {
+  it("still returns jobs when the pa-companies read throws, and says so once", async () => {
     // Websites are decoration; a Firestore blip must not take the whole board down with it.
-    const db = {
-      ...(fakeDb([{ id: "sekai-fe", data: () => ({ title: "FE", companyName: "Sekai" }) }]) as object),
-      getAll: async () => {
-        throw new Error("permission-denied")
-      },
+    // Capture the warn rather than letting it print: asserting on it is a stronger check than
+    // eyeballing it, and it keeps the deploy log free of a line that reads like a real incident.
+    const warns: string[] = []
+    const originalWarn = logger.warn
+    ;(logger as { warn: unknown }).warn = (msg: string) => {
+      warns.push(msg)
     }
-    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: true })
-    assert.equal(jobs.length, 1)
-    assert.equal(jobs[0]!.companyWebsite, undefined)
+    let jobs
+    try {
+      const db = {
+        ...(fakeDb([{ id: "sekai-fe", data: () => ({ title: "FE", companyName: "Sekai" }) }]) as object),
+        getAll: async () => {
+          throw new Error("permission-denied")
+        },
+      }
+      ;({ jobs } = await fetchCollabJobs(db as never, { isAdmin: true }))
+    } finally {
+      ;(logger as { warn: unknown }).warn = originalWarn
+    }
+    assert.equal(jobs!.length, 1)
+    assert.equal(jobs![0]!.companyWebsite, undefined)
+    assert.deepEqual(warns, ["pa-companies hydration failed, continuing without websites"])
   })
 })
 
