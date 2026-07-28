@@ -21,8 +21,21 @@ export const TOKENS = "pa-mcp-oauth-tokens"
 
 /** Authorization codes live only long enough to be redeemed by a redirect that just fired. */
 export const CODE_TTL_MS = 60_000
-/** One working day. No refresh tokens in v1 — a smaller surface beats saving a daily re-auth. */
-export const ACCESS_TOKEN_TTL_MS = 8 * 60 * 60 * 1000
+/**
+ * 30 days.
+ *
+ * Started at 8h on the reasoning that short-lived beats convenient against admin tooling. In
+ * practice this server has TWO internal users and no refresh-token flow, so an 8h token meant a
+ * browser round-trip every working day for a tool people reach for a few times a week — friction
+ * that pushes everyone back to sharing the long-lived static bearer instead, which is strictly
+ * worse. A month-long token that nobody works around beats a daily one that everybody does.
+ *
+ * The tradeoff is a longer window if a token leaks. Mitigated by: tokens are stored hashed and are
+ * never logged; the value only ever exists in the client's own config; and revocation is a single
+ * doc delete from `pa-mcp-oauth-tokens` (keyed by SHA-256 of the token). Revisit if this server
+ * ever serves more than a handful of operators, or gains a refresh flow that makes short TTLs free.
+ */
+export const ACCESS_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 export function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex")

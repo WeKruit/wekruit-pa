@@ -112,8 +112,8 @@ function jsonContent(value: unknown): ToolResult {
  * `returned: 248`, which is the worst possible failure: a confident, wrong, complete-looking view.
  *
  * Only safe for tools that bound and report their OWN size. Both callers do: list_job_shortlist
- * hard-caps at 250 (measured ~55k tokens for 248) and enumerates every row it withheld with a
- * reason; get_candidate_evidence is a single candidate (~3k tokens).
+ * caps at 1000 (measured ~65k tokens for the whole 271-candidate pool) and enumerates every row it
+ * withheld with a reason; get_candidate_evidence is a single candidate (~3k tokens).
  */
 function jsonContentFull(value: unknown): ToolResult {
   // No pretty-print. Measured over the wire on the Photon board: indenting 248 candidates cost
@@ -552,11 +552,11 @@ export function registerHeadhunterTools(server: McpServer, ctx: HeadhunterToolCo
   }>(server, "list_job_shortlist", {
     title: "List a job's candidates for ranking",
     description:
-      "Accepts a jobId, a pasted job URL, or plain words (\"photon backend\") in `jobId` — it resolves them, and returns jobCandidates instead of guessing when the query is ambiguous. Returns the JOB (title, company, comp, full JD, and the hard/fit/bonus/anti checklist) plus a COMPACT row per candidate (~220 tokens each) — current role, best-calibre employer in their verified history WITH the role that earned it (internships are flagged), school strength, GPA/degree/company pillars, seniority, stack signals found in DESCRIBED work, the batch checklist tally, and what evidence that judge actually had. Built for YOU to judge against the JD: the tally grades implementation specifics only and does NOT grade school, employer calibre, GPA, seniority or corroboration — weigh those yourself. ~250 candidates fit in ~55k tokens. Drops only extreme mismatches and reports every drop with its reason; nothing is silently truncated. filter='unreviewed' to resume a partial pass, 'needs_attention' to re-read only what you flagged. Call get_candidate_evidence before penalising anyone whose evidence looks thin.",
+      "Accepts a jobId, a pasted job URL, or plain words (\"photon backend\") in `jobId` — it resolves them, and returns jobCandidates instead of guessing when the query is ambiguous. Returns the JOB (title, company, comp, full JD, and the hard/fit/bonus/anti checklist) plus a COMPACT row per candidate (~220 tokens each) — current role, best-calibre employer in their verified history WITH the role that earned it (internships are flagged), school strength, GPA/degree/company pillars, seniority, stack signals found in DESCRIBED work, the batch checklist tally, and what evidence that judge actually had. Built for YOU to judge against the JD: the tally grades implementation specifics only and does NOT grade school, employer calibre, GPA, seniority or corroboration — weigh those yourself. Returns the WHOLE pool by default (~271 candidates ≈ 65k tokens) — you do the filtering, not us. Drops only extreme mismatches and reports every drop with its reason; nothing is silently truncated. filter='unreviewed' to resume a partial pass, 'needs_attention' to re-read only what you flagged. Call get_candidate_evidence before penalising anyone whose evidence looks thin.",
     inputSchema: {
       jobId: z.string().min(1).describe("A jobId, a pasted job URL, or plain words like \"photon backend\" — resolved automatically."),
-      limit: z.number().int().min(1).max(250).optional(),
-      requireEngineering: z.boolean().optional(),
+      limit: z.number().int().min(1).max(1000).optional().describe("Defaults to the whole pool. Only set this if a response is genuinely too large."),
+      requireEngineering: z.boolean().optional().describe("Opt-in server-side pre-filter that drops candidates with NO evidence of any kind. Off by default — you filter, not us."),
       filter: z.enum(["all", "unreviewed", "needs_attention"]).optional(),
       includeJd: z.boolean().optional(),
     },

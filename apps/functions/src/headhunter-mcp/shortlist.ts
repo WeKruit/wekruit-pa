@@ -147,9 +147,16 @@ export interface ShortlistResult {
 }
 
 /**
- * Deterministic extreme-mismatch drop. Conservative ON PURPOSE — it only fires when EVERY signal
- * is absent, so it removes the clearly-irrelevant and never adjudicates a close call. Ranking is
- * the client's job; this only keeps the payload inside a context window.
+ * Deterministic extreme-mismatch drop — OFF by default.
+ *
+ * This originally ran always, to keep the payload inside a context window. Measured 2026-07-27 that
+ * was solving a problem that does not exist at this scale: the whole 271-candidate pool is ~65k
+ * tokens, and the filter removed 10 people. A screen with worse judgement than the model, running
+ * BEFORE the model, for no meaningful saving.
+ *
+ * It survives as an opt-in for a pool genuinely too large to send. Still conservative when enabled:
+ * it fires only when EVERY signal is absent, so it removes the clearly-irrelevant and never
+ * adjudicates a close call.
  */
 function dropReason(row: ShortlistRow, requireEngineering: boolean): string | null {
   if (!requireEngineering) return null
@@ -168,12 +175,15 @@ export async function runListJobShortlist(args: {
   /** A jobId, a pasted job URL, or plain words ("photon backend") — resolved before anything else. */
   jobId: string
   limit?: number
+  /** Opt-in pre-filter for a pool too large to send whole. Off by default — the model filters. */
   requireEngineering?: boolean
   filter?: "all" | "unreviewed" | "needs_attention"
   includeJd?: boolean
 }): Promise<ShortlistResult> {
-  const limit = Math.max(1, Math.min(args.limit ?? 120, 250))
-  const requireEngineering = args.requireEngineering ?? true
+  // Default to the whole pool. The cap is a backstop against a pool that genuinely cannot fit,
+  // not a default that quietly excludes people — at 271 candidates the old 250 was cutting 21.
+  const limit = Math.max(1, Math.min(args.limit ?? 1000, 1000))
+  const requireEngineering = args.requireEngineering ?? false
   const filter = args.filter ?? "all"
 
   // Accept whatever the caller has to hand. Only resolve when the literal string is not already a
