@@ -178,7 +178,7 @@ describe("token exchange", () => {
     const body = r.json as Record<string, unknown>
     const token = String(body.access_token)
     assert.equal(body.token_type, "Bearer")
-    assert.equal(body.expires_in, 8 * 3600)
+    assert.equal(body.expires_in, 30 * 24 * 3600)
     assert.equal(body.refresh_token, undefined, "no refresh token in v1 — smaller surface")
 
     // The plaintext token must not appear anywhere in the store.
@@ -245,8 +245,8 @@ describe("token exchange", () => {
       grant_type: "authorization_code", code, code_verifier: v, client_id: clientId,
     })
     const token = String((r.json as Record<string, unknown>).access_token)
-    const after9h = Date.parse("2026-07-27T13:30:00.000Z")
-    assert.equal(await lookupAccessToken(asFirestore(mfs) as never, token, after9h), undefined)
+    const after31d = Date.parse("2026-08-27T04:00:00.000Z")
+    assert.equal(await lookupAccessToken(asFirestore(mfs) as never, token, after31d), undefined)
   })
 })
 

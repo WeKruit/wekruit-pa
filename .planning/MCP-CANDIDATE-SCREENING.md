@@ -15,35 +15,40 @@ weigh those against each other.
 
 ## Setup
 
-### Recommended — OAuth (no shared secret in your shell history or config)
-
-```bash
-claude mcp add --transport http wekruit https://wekruit-pa.web.app/mcp
-```
-
-Claude Code discovers the authorization server from the `WWW-Authenticate` header, registers
-itself, and opens a browser. Paste the admin token once on the consent page; you get an 8-hour
-token and the secret never lands in `~/.claude.json`.
-
-### Alternative — static bearer
+### Claude Code — static bearer (simplest)
 
 ```bash
 claude mcp add --transport http wekruit https://us-central1-wekruit-5f89b.cloudfunctions.net/paHeadhunterMcp --header "Authorization: Bearer $PA_ADMIN_TOKEN"
 ```
 
-Simpler, but the long-lived secret ends up in your shell history and local config.
+Never expires, no browser round-trip. The tradeoff is that the long-lived secret sits in your shell
+history and `~/.claude.json` — fine for a two-person internal tool, less so as the team grows.
+
+### Claude Code — OAuth, if you would rather the secret not be stored
+
+```bash
+claude mcp add --transport http wekruit https://wekruit-pa.web.app/mcp
+```
+
+Claude Code discovers the authorization server from the `WWW-Authenticate` header, registers itself,
+and opens a browser. Paste the admin token once on the consent page. Tokens last **30 days** and the
+secret never lands in local config.
 
 ### Cowork / claude.ai
 
 **Settings → Connectors → Add custom connector**, URL `https://wekruit-pa.web.app/mcp`, leave the
-OAuth client fields **blank** — dynamic registration handles them.
+OAuth client fields **blank** — dynamic registration handles them. OAuth is the only option here:
+the connector UI has no header field, so the static bearer cannot be used.
 
 ### Known limitation
 
-Both paths still gate on the shared `PA_ADMIN_TOKEN` at the consent screen, so onboarding a
-teammate means handing them that secret. Per-person access needs Google sign-in on the consent page
-(the trust model already accepts a Firebase admin ID token — only the form doesn't offer it yet).
-Until then, treat the token as team-shared and rotate it when someone leaves.
+Every path gates on the shared `PA_ADMIN_TOKEN`, so onboarding a teammate means handing them that
+secret and there is no per-person audit trail. Per-person access needs Google sign-in on the consent
+page — `requireHeadhunterPrincipal` already accepts a Firebase admin ID token, the form just does not
+offer it. Until then: treat the token as team-shared and rotate it when someone leaves.
+
+To revoke one OAuth token without rotating the shared secret, delete its doc from
+`pa-mcp-oauth-tokens` (the doc id is the SHA-256 of the token).
 
 ## The evaluation prompt
 
