@@ -1134,6 +1134,10 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     // `aiVerdictRank` is advance(3) > borderline(2) > reject(1) > pending(0), tie-broken by
     // confidence, so the top of page 1 is the shortlist. Recency is one click on Submitted.
     defaultSort: { key: "aiVerdictRank", dir: "desc" },
+    // Open with the 679 already-rejected rows hidden (Adam 2026-07-27: "by default we should
+    // filter out the rejected submissions"). Still a chip, so one click brings them back, and
+    // Reset returns to this view rather than the unfiltered firehose.
+    defaultChips: { triage: ["hideClosed"] },
     pageSize: 50,
     search: (r, q) =>
       (r.submitter?.name?.toLowerCase().includes(q) ?? false) ||
