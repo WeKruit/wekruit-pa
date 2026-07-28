@@ -42,7 +42,20 @@ async function seed(mfs: MockFirestore, id: string, sub: Record<string, unknown>
 }
 
 describe("list_job_shortlist", () => {
-  it("reports every drop with a reason and never truncates silently", async () => {
+  it("returns everyone by default — the model filters, not us", async () => {
+    const mfs = new MockFirestore()
+    // A candidate with no evidence of any kind. The old default dropped them server-side; that
+    // pre-screen had worse judgement than the model and ran before it, for a saving that measured
+    // 10 rows out of 271. Now they arrive and the client decides.
+    await seed(mfs, "bare", submission("bare", {
+      aiEvaluation: { verdict: "reject", checklist: { hard: { met: 0, total: 4, gaps: [] } }, research: { companies: [], education: [] } },
+    }), { experienceHighlights: [] })
+    const all = await runListJobShortlist({ db: asFirestore(mfs) as never, jobId: JOB })
+    assert.equal(all.returned, 1)
+    assert.equal(all.dropped.count, 0)
+  })
+
+  it("reports every drop with a reason when the pre-filter is opted into", async () => {
     const mfs = new MockFirestore()
     await seed(mfs, "keep", submission("keep"), {
       experienceHighlights: [{ title: "SWE", company: "Acme", description: "Built Kafka pipelines." }],
@@ -52,7 +65,7 @@ describe("list_job_shortlist", () => {
       aiEvaluation: { verdict: "reject", checklist: { hard: { met: 0, total: 4, gaps: [] } }, research: { companies: [], education: [] } },
     }), { experienceHighlights: [] })
 
-    const r = await runListJobShortlist({ db: asFirestore(mfs) as never, jobId: JOB })
+    const r = await runListJobShortlist({ db: asFirestore(mfs) as never, jobId: JOB, requireEngineering: true })
 
     assert.equal(r.totalSubmissions, 2)
     assert.equal(r.returned, 1)
@@ -85,7 +98,7 @@ describe("list_job_shortlist", () => {
       },
     }), { experienceHighlights: [{ title: "Senior Software Engineer", company: "Microsoft" }] })
 
-    const r = await runListJobShortlist({ db: asFirestore(mfs) as never, jobId: JOB })
+    const r = await runListJobShortlist({ db: asFirestore(mfs) as never, jobId: JOB, requireEngineering: true })
     assert.equal(r.returned, 1, "a tier-A employer offsets an empty description — must not be dropped")
     assert.equal(r.rows[0]!.evidence.describedRoles, 0)
     assert.deepEqual(r.rows[0]!.describedStack, [], "no described work -> no stack claimed")

@@ -60,8 +60,8 @@ jobId all work.
 You have the `wekruit` MCP. Screen every candidate for **photon backend** and tell me only who
 deserves my time.
 
-**1. Pull the pool.** Call `list_job_shortlist` with `jobId: "photon backend"` and `limit: 250`. It
-returns the job — title, company, comp, full JD, and the hard/fit/bonus/anti checklist — followed by
+**1. Pull the pool.** Call `list_job_shortlist` with `jobId: "photon backend"`. It returns the whole
+pool by default — do not set a `limit`. It returns the job — title, company, comp, full JD, and the hard/fit/bonus/anti checklist — followed by
 one compact row per candidate. Judge against **that** rubric, not your own idea of the role.
 
 **2. Judge harshly and comparatively.** This is a senior backend role at a startup. Most candidates
@@ -112,9 +112,13 @@ and are reported as `already_reviewed`, so nothing is silently skipped.
 
 ## Scale
 
-Measured live on the Photon board: **248 of 258 candidates in ~55k tokens** (~220 each), with 10
-dropped as `no_evidence_of_any_kind`. `get_candidate_evidence` is ~3k tokens per candidate, so
-20-30 deep-dives fit comfortably alongside the list.
+Measured live: the whole **271-candidate pool is ~65k tokens** (~220 each). `get_candidate_evidence`
+is ~3k tokens per candidate, so 20-30 deep-dives fit comfortably alongside the list.
+
+**The server does not pre-filter.** An earlier version dropped candidates with no evidence of any
+kind before sending; measured, that was 10 rows out of 271 — a screen with worse judgement than the
+model, running before the model, for no meaningful saving. `requireEngineering: true` opts back into
+it if a pool is ever genuinely too large to send.
 
 Every response reports what it withheld and why — over-limit, already reviewed, not flagged,
 extreme mismatch. A partial view can never read as "this is everyone".
