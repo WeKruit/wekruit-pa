@@ -18,6 +18,7 @@ import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
 import { recommendRolesForSubmission, submitCandidateToRole, type RoleRecommendation } from "../lib/recommend-roles-api.js"
 import { markCandidateQuality } from "../lib/mark-candidate-quality-api.js"
+import { submitterSortKey, isWekruitInternalSubmitter } from "../lib/submitter-sort.js"
 import { REJECTED_CANDIDATES_ROUTE } from "../lib/rejected-candidates-api.js"
 import { CANDIDATE_TIER_LABELS, type CandidateTier } from "@pa/core-types"
 import {
@@ -140,6 +141,7 @@ interface SubmissionDoc {
   sheetSyncError?: string | null
   createdAt?: { seconds: number } | null
   createdAtMs?: number
+  submitterRank?: string
   hardScorePct?: number
   aiVerdictRank?: number
 }
@@ -1083,6 +1085,7 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
         if (cancelled) return
         const all = (listResult.rows as (Omit<SubmissionDoc, "id"> & { id: string })[]).map((data) => {
           const createdAtMs = data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0
+          const submitterRank = submitterSortKey(data.submitter)
           const hardScorePct = data.score?.hardTotal
             ? data.score.hardChecked / data.score.hardTotal
             : 0
@@ -1092,7 +1095,7 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
           const RANK: Record<string, number> = { advance: 3, borderline: 2, reject: 1 }
           const vRank = RANK[data.aiEvaluation?.verdict ?? ""] ?? 0
           const aiVerdictRank = vRank + Math.min(0.99, data.aiEvaluation?.confidence ?? 0)
-          return { ...data, createdAtMs, hardScorePct, aiVerdictRank }
+          return { ...data, createdAtMs, submitterRank, hardScorePct, aiVerdictRank }
         })
         const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
         for (const d of jobSnap.docs) {
@@ -1378,11 +1381,20 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
       ),
     },
     {
-      key: "submitter",
+      // Sorted on the derived band key, not the raw object — sorting on `submitter` would compare
+      // "[object Object]" against itself and silently do nothing. Ascending = outside recruiters
+      // first, which is the direction the first click gives you.
+      key: "submitterRank",
       label: "Submitter",
+      sortable: true,
       render: (r) => (
         <>
-          <div>{r.submitter?.name ?? "—"}</div>
+          <div>
+            {r.submitter?.name ?? "—"}
+            {isWekruitInternalSubmitter(r.submitter?.email) && (
+              <span style={{ marginLeft: 6, color: "#999", fontSize: 10, textTransform: "uppercase" }}>ours</span>
+            )}
+          </div>
           <div style={{ color: "#777", fontSize: 11 }}>{r.submitter?.email ?? ""}</div>
         </>
       ),
