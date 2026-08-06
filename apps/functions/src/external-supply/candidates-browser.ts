@@ -435,7 +435,7 @@ export async function runGetCandidateDetail(
 export const paExternalSupplyGetCandidateDetail = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     maxInstances: 1,
   },

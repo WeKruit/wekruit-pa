@@ -284,7 +284,7 @@ export async function handleMailgunWebhook(
 export const paExternalSupplyMailgunWebhook = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     maxInstances: 1,
     cors: false,

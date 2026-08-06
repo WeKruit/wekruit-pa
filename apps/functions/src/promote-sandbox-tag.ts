@@ -169,7 +169,7 @@ export function authorizeAdminCallable(req: {
 export const paPromoteSandboxTag = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     secrets: [PA_ADMIN_TOKEN],
   },
   async (req): Promise<PromoteSandboxTagResult> => {

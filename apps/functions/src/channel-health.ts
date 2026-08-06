@@ -590,7 +590,7 @@ export const paChannelHealthDaily = onSchedule(
   {
     schedule: "0 8 * * *",
     timeZone: "UTC",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 300,
     region: "us-central1",
     // Route alerts to EMAIL (Adam 2026-06-14) + Slack via notifyOps — bind both

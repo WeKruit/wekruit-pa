@@ -41,7 +41,7 @@ export interface RunGitHubEnrichResult {
 export const paExternalSupplyRunGitHubEnrich = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
   },
   async (req): Promise<RunGitHubEnrichResult> => {

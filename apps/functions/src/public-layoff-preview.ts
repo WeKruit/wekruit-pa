@@ -222,7 +222,7 @@ export const paPublicLayoffPreview = onRequest(
   {
     region: "us-central1",
     cors: false,
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 20,
     concurrency: 40,
   },

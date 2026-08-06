@@ -175,7 +175,7 @@ export async function runCandidateFlywheelCorrection(
 }
 
 export const paCandidateProfileCorrection = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 30, maxInstances: 1 },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 30, maxInstances: 1 },
   async (req): Promise<CandidateFlywheelCorrectionResult> => {
     return runCandidateFlywheelCorrection(req.data, req.auth, { db: getFirestore() })
   },

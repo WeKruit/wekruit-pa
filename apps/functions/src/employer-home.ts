@@ -122,7 +122,7 @@ export async function runEmployerMyReqs(
 }
 
 export const paEmployerMyReqs = onCall<EmployerMyReqsInput>(
-  { region: "us-central1", cors: true, memory: "256MiB", timeoutSeconds: 60 },
+  { region: "us-central1", cors: true, memory: "512MiB", timeoutSeconds: 60 },
   async (req): Promise<EmployerMyReqsOutput> => runEmployerMyReqs(req.data, { db: getFirestore() }),
 )
 
@@ -237,7 +237,7 @@ export async function runEmployerOnboardingState(
 }
 
 export const paEmployerOnboardingState = onCall<EmployerOnboardingStateInput>(
-  { region: "us-central1", cors: true, memory: "256MiB", timeoutSeconds: 60 },
+  { region: "us-central1", cors: true, memory: "512MiB", timeoutSeconds: 60 },
   async (req): Promise<EmployerOnboardingStateOutput> =>
     runEmployerOnboardingState(req.data, { db: getFirestore() }),
 )

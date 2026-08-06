@@ -481,7 +481,7 @@ export function authorizeWekruitAdmin(req: {
 export const paAdminDeleteUser = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 120,
     secrets: [QDRANT_URL, QDRANT_API_KEY, PA_ADMIN_TOKEN],
   },
