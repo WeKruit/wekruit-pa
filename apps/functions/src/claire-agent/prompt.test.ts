@@ -184,7 +184,9 @@ test("ENTRY POSTURE — yc_startup_school renders the founder-scene no-push dire
   const withPosture = buildClaireTurnContext({ mode: "triage", lang: "en", entryPosture: "yc_startup_school" })
   assert.match(withPosture, /ENTRY POSTURE — YC STARTUP SCHOOL/)
   assert.match(withPosture, /do NOT run any structured intake/)
-  assert.match(withPosture, /text them RIGHT HERE and email them/)
+  // Adam 2026-07-25: matches are delivered immediately by match_yc_people — no date/time promise.
+  assert.match(withPosture, /text them people worth meeting RIGHT HERE/)
+  assert.match(withPosture, /NEVER promise a delivery date or time/)
   // Adam-LOCKED 2026-07-23: people matching, NEVER job recommendations (investors sign up too).
   assert.match(withPosture, /PEOPLE-matching/)
   assert.match(withPosture, /may be an investor or a founder, NOT a candidate/)
@@ -212,7 +214,7 @@ test("warm greeting example names are fenced — live probe caught 'hey Adam' bl
   assert.match(warm, /greet WITHOUT any name/)
 })
 
-test("YC EVENT INTAKE directive renders slots + one-nudge consequence + no-timing match close", () => {
+test("YC EVENT INTAKE directive renders slots + one-nudge consequence + immediate match close", () => {
   // nudgeLinkedin turn (the ONE mode-selector-flagged turn) → mandatory consequence heads-up.
   const nudgeTurn = buildClaireTurnContext({
     mode: "triage",
@@ -225,9 +227,11 @@ test("YC EVENT INTAKE directive renders slots + one-nudge consequence + no-timin
   assert.match(nudgeTurn, /founders see a much thinner profile/)
   assert.match(nudgeTurn, /what are they building/)
   assert.match(nudgeTurn, /record_yc_intake\(field='building'\)/)
-  assert.match(nudgeTurn, /once you find a good match/)
-  assert.match(nudgeTurn, /no timing promise/)
-  assert.doesNotMatch(nudgeTurn, /TONIGHT AROUND 7PM|7pm|7 pm|tonight/i)
+  // Matches land IMMEDIATELY now (Adam 2026-07-25): the complete-intake close CALLS the people
+  // matcher instead of promising a delivery time.
+  assert.match(nudgeTurn, /call match_yc_people RIGHT AWAY/)
+  assert.doesNotMatch(nudgeTurn, /July 25 at 7pm PT/)
+  assert.doesNotMatch(nudgeTurn, /docs\.google\.com/i)
 
   // Already nudged (flag absent, LinkedIn still unconnected) → hard "never again".
   const afterNudge = buildClaireTurnContext({
@@ -251,4 +255,42 @@ test("YC EVENT INTAKE directive renders slots + one-nudge consequence + no-timin
   // Intake absent → no intake block (plain posture only).
   const plain = buildClaireTurnContext({ mode: "triage", lang: "en", entryPosture: "yc_startup_school" })
   assert.doesNotMatch(plain, /YC EVENT INTAKE \(they scanned/)
+})
+
+test("YC LINKEDIN-URL ASK: thanks them, says LinkedIn didn't pass the profile, never 'once you're linked'", () => {
+  const ask = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "building", offerLinkedin: false, askLinkedinUrl: true },
+  })
+  assert.match(ask, /ASK FOR THEIR LINKEDIN URL — MANDATORY THIS TURN/)
+  assert.match(ask, /connect DID work/)
+  assert.match(ask, /paste their LinkedIn profile URL/)
+  // The exact contradiction that confused a live user this morning must be forbidden, and the
+  // "already imported" line (which is what these people used to get) must be gone.
+  assert.match(ask, /NEVER say 'once you're linked'/)
+  assert.doesNotMatch(ask, /- Their background is already imported/)
+  assert.doesNotMatch(ask, /LINKEDIN NUDGE — MANDATORY THIS TURN/)
+
+  // Fires after intake completion too — and the "ask NOTHING further" rule is exempted so the two
+  // directives don't contradict each other in the same prompt.
+  const done = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "wants_to_meet", offerLinkedin: false, intakeComplete: true, askLinkedinUrl: true },
+  })
+  assert.match(done, /ASK FOR THEIR LINKEDIN URL/)
+  assert.match(done, /ask NOTHING further EXCEPT the mandatory LinkedIn-URL ask/)
+
+  // Flag absent → byte-unchanged behaviour (the "already imported" line still owns that turn).
+  const off = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    entryPosture: "yc_startup_school",
+    ycEventIntake: { next: "building", offerLinkedin: false },
+  })
+  assert.doesNotMatch(off, /ASK FOR THEIR LINKEDIN URL/)
+  assert.match(off, /- Their background is already imported/)
 })

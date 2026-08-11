@@ -61,6 +61,53 @@ function deterministicRecruiterCandidateId(handleHash: string): string {
   return `cand_recruiter_${handleHash.slice(0, 32)}`
 }
 
+/**
+ * Find the candidate we ALREADY hold for this LinkedIn URL, before minting a new one.
+ *
+ * The handle index is not the only place identity lives: a candidate who came in through the
+ * LinkedIn OAuth/paste enrich path has a `pa-users` doc carrying their canonical `linkedinUrl`
+ * and full `experienceHighlights`, and may never have claimed a `pa-candidate-handles` row.
+ * Minting on a handle miss therefore creates a SECOND doc for a person we already know — the
+ * enriched profile stays behind under the old id, and every downstream reader (submission eval,
+ * matching, outreach) sees an empty record.
+ *
+ * Measured 2026-07-27: 236 of 258 Photon submissions pointed at such a shadow, and the
+ * evaluator scored a Microsoft senior engineer "no concrete evidence" while her real profile
+ * held rust/typescript/golang/microservices. This is v2.0 rule #12 — LinkedIn URL is the primary
+ * external identity handle — so a URL we can already resolve must never mint a new person.
+ *
+ * Deliberately narrow: exact canonical-URL equality only. No name or email fuzz — a wrong merge
+ * silently fuses two people's histories, which is worse than a duplicate.
+ */
+async function findExistingCandidateByLinkedin(
+  db: Firestore,
+  canonicalLinkedInUrl: string,
+): Promise<string | undefined> {
+  try {
+    const snap = await db
+      .collection(PA_COLLECTIONS.users)
+      .where("linkedinUrl", "==", canonicalLinkedInUrl)
+      .limit(10)
+      .get()
+    const docs = snap.docs.filter((d) => !d.id.startsWith("cand_recruiter_"))
+    if (docs.length === 0) return undefined
+    // Prefer the doc that actually carries enrichment; among equals, the oldest, so repeat
+    // submissions keep converging on one id instead of ping-ponging between candidates.
+    const scored = docs
+      .map((d) => {
+        const data = (d.data() ?? {}) as Record<string, unknown>
+        const exp = Array.isArray(data.experienceHighlights) ? data.experienceHighlights.length : 0
+        return { id: d.id, exp, createdAt: typeof data.createdAt === "string" ? data.createdAt : "" }
+      })
+      .sort((a, b) => (b.exp - a.exp) || a.createdAt.localeCompare(b.createdAt))
+    return scored[0]?.id
+  } catch {
+    // Index missing / transient read error → fall through to the mint path. Losing the merge is
+    // recoverable; failing the whole submission is not.
+    return undefined
+  }
+}
+
 function hasString(data: Record<string, unknown>, key: string): boolean {
   return typeof data[key] === "string" && (data[key] as string).trim().length > 0
 }
@@ -96,7 +143,12 @@ export async function ensureRecruiterSubmissionCandidateTracked(
   const handleRef = db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId)
   const handleSnap = await handleRef.get()
   const handleData = handleSnap.data() ?? {}
-  const candidateId = cleanString(handleData.candidateId) ?? deterministicRecruiterCandidateId(handleHash)
+  // Identity precedence: an existing handle claim wins, then a candidate we already hold for this
+  // LinkedIn URL, and only then do we mint. Reversing the last two is what created 236 shadows.
+  const candidateId =
+    cleanString(handleData.candidateId)
+    ?? (await findExistingCandidateByLinkedin(db, canonicalLinkedInUrl))
+    ?? deterministicRecruiterCandidateId(handleHash)
 
   const userRef = db.collection(PA_COLLECTIONS.users).doc(candidateId)
   const userSnap = await userRef.get()
@@ -121,7 +173,13 @@ export async function ensureRecruiterSubmissionCandidateTracked(
     },
   }
   if (!userSnap.exists) userPatch.createdAt = args.now
-  if (!hasString(userData, "candidateLifecycleState")) userPatch.candidateLifecycleState = "prospect"
+  // "prospect" is the entry state for someone we just learned about. Now that a submission can
+  // resolve onto an ALREADY-ENRICHED candidate, only stamp it on a doc we are actually creating —
+  // labelling a live, enriched candidate a fresh prospect would misreport them to every reader
+  // of candidateLifecycleState, outreach policy included.
+  if (!userSnap.exists && !hasString(userData, "candidateLifecycleState")) {
+    userPatch.candidateLifecycleState = "prospect"
+  }
   if (!hasString(userData, "linkedinUrl")) userPatch.linkedinUrl = canonicalLinkedInUrl
   if (name && !hasString(userData, "displayName")) userPatch.displayName = name
   if (email && !hasString(userData, "email")) userPatch.email = email

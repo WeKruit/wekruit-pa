@@ -50,7 +50,7 @@ import {
 } from "@pa/job-rec"
 import { getFlag } from "@pa/pa-persistence"
 import { JOB_REC_FLAG_KEY } from "@pa/job-rec"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
 import { checkAdminToken } from "./admin-bootstrap.js"
 import { logTokenSpend } from "./instrumentation/cost-logger.js"
 import { enqueueRuntimeEventHandoff } from "./runtime-event-handoff.js"
@@ -306,6 +306,11 @@ export async function enqueueReverseMatchNotify(
     const userDoc = await db.collection("pa-users").doc(args.userId).get()
     if (!userDoc.exists) return { ok: false, error: "user_not_found" }
     const ud = userDoc.data() as Record<string, unknown>
+    // YC PEOPLE LANE — never outbound a job pitch (Adam-LOCKED 2026-07-24). The context below is
+    // pure job content (jobTitle/companyName + "include the role/company"), so a YC founder or
+    // investor would receive a job pitch. This path previously had NO YC guard and relied only on
+    // operator discipline ("Caller MUST pre-filter to opted-in users").
+    if (isYcPeopleUser(ud)) return { ok: false, error: "yc_people_no_job_content" }
     if (typeof ud.phoneE164 === "string") phoneE164 = ud.phoneE164
   } catch (err) {
     return {

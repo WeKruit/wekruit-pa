@@ -363,6 +363,56 @@ export function outboundBodyHash(body: string): string {
   return createHash("sha256").update(body.trim(), "utf8").digest("hex")
 }
 
+export type RecentOutboundRow = { id: string; data: Record<string, unknown> }
+
+/**
+ * Read this user's most-recent `pa-outbound` rows, newest first. Shared by the
+ * duplicate guard and the multi-bubble order gate below (both need "what else
+ * did we recently queue for this user?").
+ *
+ * No new composite index REQUIRED — when the (userId, createdAt) index is
+ * missing the orderBy query throws and we retry WITHOUT orderBy + sort
+ * client-side. FAIL-OPEN: any error returns [] (callers then behave as if there
+ * were no siblings, i.e. the send proceeds).
+ */
+export async function readRecentOutboundRows(
+  db: Firestore,
+  userId: string,
+  limit: number,
+  log?: (...args: unknown[]) => void
+): Promise<RecentOutboundRow[]> {
+  try {
+    let docs: Array<{ id: string; data: () => Record<string, unknown> | undefined }>
+    try {
+      const snap = await db
+        .collection(OUT)
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get()
+      docs = snap.docs as typeof docs
+    } catch {
+      // Composite index missing → single-field query, sort client-side.
+      const snap = await db
+        .collection(OUT)
+        .where("userId", "==", userId)
+        .limit(limit * 3)
+        .get()
+      docs = [...(snap.docs as typeof docs)].sort((a, b) => {
+        const ta = String(a.data()?.createdAt ?? "")
+        const tb = String(b.data()?.createdAt ?? "")
+        return tb.localeCompare(ta)
+      })
+      docs = docs.slice(0, limit)
+    }
+    return docs.map((d) => ({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> }))
+  } catch (err) {
+    log?.("[sendblue][outbox] recent-outbound query failed (fail-open)",
+      err instanceof Error ? err.message : String(err))
+    return []
+  }
+}
+
 /**
  * 2026-06-10 trust audit (fix 3) — find a recently SENT row carrying the same
  * userId + identical body within DUPLICATE_WINDOW_MS. Live evidence: identical
@@ -370,11 +420,9 @@ export function outboundBodyHash(body: string): string {
  * same question 4x in 3min) — upstream producers raced past their idempotency
  * keys, so the outbox is the last-line choke.
  *
- * Cheap by design: ONE query by userId ordered createdAt desc limit 20; body
- * hashes compared client-side (no new composite index REQUIRED — when the
- * (userId, createdAt) index is missing the orderBy query throws and we retry
- * WITHOUT orderBy + sort client-side). FAIL-OPEN: any error returns null (the
- * send proceeds as today).
+ * Cheap by design: ONE `readRecentOutboundRows` read; body hashes compared
+ * client-side. FAIL-OPEN: a query error yields no rows → returns null (the send
+ * proceeds as today).
  */
 export async function findRecentDuplicateOutbound(
   db: Firestore,
@@ -387,38 +435,7 @@ export async function findRecentDuplicateOutbound(
   }
 ): Promise<{ docId: string } | null> {
   const targetHash = outboundBodyHash(input.body)
-  type Row = { id: string; data: Record<string, unknown> }
-  let rows: Row[] = []
-  try {
-    let docs: Array<{ id: string; data: () => Record<string, unknown> | undefined }>
-    try {
-      const snap = await db
-        .collection(OUT)
-        .where("userId", "==", input.userId)
-        .orderBy("createdAt", "desc")
-        .limit(DUPLICATE_QUERY_LIMIT)
-        .get()
-      docs = snap.docs as typeof docs
-    } catch {
-      // Composite index missing → single-field query, sort client-side.
-      const snap = await db
-        .collection(OUT)
-        .where("userId", "==", input.userId)
-        .limit(DUPLICATE_QUERY_LIMIT * 3)
-        .get()
-      docs = [...(snap.docs as typeof docs)].sort((a, b) => {
-        const ta = String(a.data()?.createdAt ?? "")
-        const tb = String(b.data()?.createdAt ?? "")
-        return tb.localeCompare(ta)
-      })
-      docs = docs.slice(0, DUPLICATE_QUERY_LIMIT)
-    }
-    rows = docs.map((d) => ({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> }))
-  } catch (err) {
-    input.log?.("[sendblue][outbox] duplicate-guard query failed (fail-open)",
-      err instanceof Error ? err.message : String(err))
-    return null
-  }
+  const rows = await readRecentOutboundRows(db, input.userId, DUPLICATE_QUERY_LIMIT, input.log)
   for (const row of rows) {
     if (row.id === input.excludeDocId) continue
     const status = String(row.data.status ?? "")
@@ -430,6 +447,110 @@ export async function findRecentDuplicateOutbound(
     if (outboundBodyHash(body) === targetHash) return { docId: row.id }
   }
   return null
+}
+
+// ── 2026-07-25 incident — multi-bubble ORDER gate ───────────────────────────
+//
+// Live evidence (user 1d89ed3c, 7-bubble YC people burst, every row paced+sent,
+// no retries): rows were CREATED ~1.2s apart in the right order, but two of the
+// seven were picked up ~15s late by their own CF invocation (cold start /
+// concurrency), so they landed AFTER the closer:
+//   seq=1 created 11:42:03.5 → sent 11:42:18.8   ← 15s
+//   seq=5 created 11:42:08.3 → sent 11:42:22.6   ← 14s
+// `paced:true` removes OUR dwell (the 2026-05-30 length-skew bug) but cannot
+// impose ordering: each row is consumed by an INDEPENDENT invocation and nothing
+// makes a later seq wait for an earlier one. This gate is that missing edge.
+//
+// Only paced rows with seq > 0 enter it, so the single-bubble path (no seq, no
+// paced) is byte-identical to before — zero extra reads, zero extra latency.
+/** Longest a later bubble waits for an earlier one before sending anyway. */
+const SEQ_ORDER_MAX_WAIT_MS = 20_000
+/** Re-check interval while waiting. */
+const SEQ_ORDER_POLL_MS = 500
+/** Rows further apart than this are different bursts and never ordered against each other. */
+const SEQ_ORDER_GROUP_WINDOW_MS = 2 * 60 * 1000
+/** Sibling scan size. Bursts are ≤ ~8 bubbles; a miss just means no wait (fail-open). */
+const SEQ_ORDER_QUERY_LIMIT = 20
+
+/**
+ * True when `row` is an earlier bubble of the same burst that is STILL IN
+ * FLIGHT, i.e. this row must not be POSTed yet.
+ *
+ * Group key is implicit — same user + `paced` + a lower `seq` + created inside
+ * SEQ_ORDER_GROUP_WINDOW_MS before us. No new field, no new index, and it works
+ * for every producer that pairs {seq, paced} (delivery.ts, matching-tools,
+ * yc-people-tools, cutover fast pitch).
+ *
+ * NON-BLOCKING by design when the predecessor reached ANY terminal status
+ * (sent / failed / duplicate_skipped / blocked_* / dead_letter): a predecessor
+ * that will never send must not hold the rest of the burst hostage.
+ */
+export function isBlockingEarlierBubble(
+  row: Record<string, unknown>,
+  self: { seq: number; createdAtMs: number }
+): boolean {
+  if (row.paced !== true) return false
+  const seq = row.seq
+  if (typeof seq !== "number" || seq >= self.seq) return false
+  const status = String(row.status ?? "")
+  if (status !== "pending" && status !== "sending") return false
+  const createdMs = Date.parse(String(row.createdAt ?? ""))
+  if (!Number.isFinite(createdMs)) return false
+  const age = self.createdAtMs - createdMs
+  return age >= 0 && age <= SEQ_ORDER_GROUP_WINDOW_MS
+}
+
+/**
+ * Block until every earlier bubble of this burst has left the queue.
+ *
+ * ESCAPE HATCH (required — a stuck predecessor must never wedge the thread):
+ * after SEQ_ORDER_MAX_WAIT_MS we log and RETURN, and the caller sends anyway.
+ * Out-of-order beats undelivered. 20s comfortably covers the observed 15s
+ * lateness while staying far under the CF's 120s timeout, so the row's claim is
+ * never abandoned mid-wait (and if the instance does die, the existing 10-min
+ * stale-sending sweep reclaims it).
+ *
+ * FAIL-OPEN everywhere else: a query error yields no siblings → no wait.
+ */
+export async function awaitEarlierBubblesSent(
+  db: Firestore,
+  input: {
+    docId: string
+    userId: string
+    seq: number
+    createdAtMs: number
+    log?: (...args: unknown[]) => void
+    /** Injected in tests. Real elapsed wall time — deliberately NOT deps.now (a pinned clock would spin). */
+    nowMs?: () => number
+    sleep?: (ms: number) => Promise<void>
+  }
+): Promise<{ waitedMs: number; timedOut: boolean; blockedBy?: string }> {
+  const nowMs = input.nowMs ?? (() => Date.now())
+  const sleep = input.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const startedMs = nowMs()
+  for (;;) {
+    const rows = await readRecentOutboundRows(db, input.userId, SEQ_ORDER_QUERY_LIMIT, input.log)
+    const blocker = rows.find(
+      (row) =>
+        row.id !== input.docId &&
+        isBlockingEarlierBubble(row.data, { seq: input.seq, createdAtMs: input.createdAtMs })
+    )
+    const waitedMs = nowMs() - startedMs
+    if (!blocker) return { waitedMs, timedOut: false }
+    if (waitedMs >= SEQ_ORDER_MAX_WAIT_MS) {
+      input.log?.("pa.outbox.seq_gate_timeout", {
+        severity: "WARNING",
+        docId: input.docId,
+        userId: input.userId,
+        seq: input.seq,
+        blockedBy: blocker.id,
+        blockedByStatus: String(blocker.data.status ?? ""),
+        waitedMs,
+      })
+      return { waitedMs, timedOut: true, blockedBy: blocker.id }
+    }
+    await sleep(SEQ_ORDER_POLL_MS)
+  }
 }
 
 /**
@@ -727,6 +848,35 @@ export async function paSendblueOutboxHandler(
     return
   }
 
+  // ---- 3. MULTI-BUBBLE ORDER GATE (2026-07-25 incident) ------------------
+  // A later bubble must not overtake an earlier one whose invocation was slow.
+  // Placed HERE — after the claim (so the row is ours and cannot be double-sent
+  // while we wait) but BEFORE every side effect — so the transcript append, the
+  // quota counter and the Sendblue POST all happen in seq order, not just the
+  // POST. Single-bubble rows carry no seq/paced and skip it entirely.
+  const rowSeq = (data as { seq?: unknown }).seq
+  if ((data as { paced?: unknown }).paced === true && typeof rowSeq === "number" && rowSeq > 0) {
+    const rowCreatedMs = Date.parse(String((data as { createdAt?: unknown }).createdAt ?? ""))
+    if (Number.isFinite(rowCreatedMs)) {
+      const gate = await awaitEarlierBubblesSent(deps.db, {
+        docId,
+        userId,
+        seq: rowSeq,
+        createdAtMs: rowCreatedMs,
+        log,
+      })
+      if (gate.waitedMs > 0) {
+        log("pa.outbox.seq_gate_waited", {
+          docId,
+          userId,
+          seq: rowSeq,
+          waitedMs: gate.waitedMs,
+          timedOut: gate.timedOut,
+        })
+      }
+    }
+  }
+
   // ---- 3a. Synthetic / test recipient hard block (2026-06-19 incident) ----
   // Reserved +1999999xxxx range or any e2e/harness-marked row is terminally
   // blocked BEFORE any duplicate guard, quota, typing, evidence check, or POST.
@@ -848,7 +998,22 @@ export async function paSendblueOutboxHandler(
   let user: OutboxUser | null = null
   if (deps.getUser) {
     user = await deps.getUser(deps.db, userId)
-    if (!user) {
+    // IDENTITY NOTICES SURVIVE A MISSING USER (live YC event, 2026-07-25). Someone whose iPhone
+    // sends iMessage from their Apple ID EMAIL has no `pa-users` doc yet, so
+    // `email-sender-resolution.ts` falls back to `ownerId = emailHandle` — an id that by definition
+    // resolves to nothing here. The row then died as "user not found" BEFORE Sendblue was ever
+    // called. The notice it was carrying is the one that says "text me from your phone number
+    // instead", so the only people who could ever receive it were the ones who did not need it: 8
+    // attendees texted, were correctly identified, and got total silence.
+    //
+    // Safe because this row type already carries its own authorization — `runtimeApproved`, an
+    // `ensureEmailInboundEvidence` write, and RULE 1's existing `pa_identity_notice` exemption a few
+    // lines below (same reasoning: it is a direct reply into the thread the inbound just arrived
+    // from). The only downstream read of `user` is `user?.senderNumber`, already optional, which
+    // falls back to the pool pick.
+    const identityNotice =
+      String((data as { runtimeSource?: unknown }).runtimeSource ?? "") === "pa_identity_notice"
+    if (!user && !identityNotice) {
       await ref.set(
         {
           status: "failed",

@@ -812,3 +812,231 @@ describe("buildResearchFromEmployee", () => {
     assert.deepEqual(research.risks, ["no work experience listed on Coresignal profile"])
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity resolution + the WeKruit profile evidence block
+//
+// The defect these cover, measured on the Photon board 2026-07-27: 236 of 258 submissions had
+// minted a `cand_recruiter_*` shadow for a candidate we already held enriched, and the judge was
+// never shown our own enrichment even when it pointed at the right doc. Net effect — 254
+// submissions with no résumé averaged 0.49/4 hard while the 4 with one averaged 3.50/4, i.e. the
+// score measured document availability, not the person.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ENRICHED_USER = {
+  id: "real-uid-1",
+  displayName: "Yue H",
+  linkedinUrl: "https://linkedin.com/in/yue-h",
+  createdAt: "2026-07-25T10:00:00.000Z",
+  tags: {
+    recentRoleTitle: "Staff Backend Engineer",
+    recentCompany: "Databricks",
+    workHistorySummary: "Staff Backend Engineer @ Databricks; SWE @ Stripe",
+  },
+  experienceHighlights: [
+    {
+      title: "Staff Backend Engineer",
+      company: "Databricks",
+      startDate: "2022",
+      endDate: "now",
+      description: "Rust and TypeScript microservices for a high-concurrency message router.",
+    },
+    { title: "Software Engineer", company: "Stripe", startDate: "2019", endDate: "2022" },
+  ],
+  ycIntake: { building: "an agent that reconciles invoices" },
+}
+
+describe("submission identity resolves to the candidate we already hold", () => {
+  it("uses the existing enriched pa-users doc instead of minting a cand_recruiter shadow", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc(ENRICHED_USER.id).set(ENRICHED_USER)
+
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, makeDeps(mfs))
+
+    const sub = (await mfs.collection(SUBMISSIONS).doc("sub-1").get()).data() ?? {}
+    assert.equal(sub.candidateId, "real-uid-1", "must reuse the enriched profile, not mint a shadow")
+    assert.ok(
+      !String(sub.candidateId).startsWith("cand_recruiter_"),
+      "a candidate we already hold must never get a second identity",
+    )
+  })
+
+  it("still mints when we genuinely have never seen this LinkedIn URL", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, makeDeps(mfs))
+
+    const sub = (await mfs.collection(SUBMISSIONS).doc("sub-1").get()).data() ?? {}
+    assert.match(String(sub.candidateId), /^cand_recruiter_/, "new person still gets a new id")
+  })
+
+  it("never resolves onto another shadow doc, even on an exact URL match", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    // A previously-minted shadow carrying the same canonical URL must not be treated as the
+    // person of record — that would make the original bug self-perpetuating.
+    await mfs.collection("pa-users").doc("cand_recruiter_deadbeef").set({
+      id: "cand_recruiter_deadbeef",
+      linkedinUrl: "https://linkedin.com/in/yue-h",
+      createdAt: "2026-07-26T10:00:00.000Z",
+    })
+    await mfs.collection("pa-users").doc(ENRICHED_USER.id).set(ENRICHED_USER)
+
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, makeDeps(mfs))
+
+    const sub = (await mfs.collection(SUBMISSIONS).doc("sub-1").get()).data() ?? {}
+    assert.equal(sub.candidateId, "real-uid-1")
+  })
+
+  it("does not stamp candidateLifecycleState=prospect on an existing enriched candidate", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc(ENRICHED_USER.id).set(ENRICHED_USER)
+
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, makeDeps(mfs))
+
+    const user = (await mfs.collection("pa-users").doc("real-uid-1").get()).data() ?? {}
+    assert.equal(
+      user.candidateLifecycleState,
+      undefined,
+      "a live candidate must not be relabelled a fresh prospect by a recruiter submission",
+    )
+  })
+})
+
+describe("WeKruit profile is primary evidence in the judge prompt", () => {
+  it("renders our own enrichment — titles, companies, dates and descriptions", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc(ENRICHED_USER.id).set(ENRICHED_USER)
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const prompt = deps.judgeCalls[0]?.userText ?? ""
+    assert.match(prompt, /## WeKruit profile \(PRIMARY evidence/)
+    assert.match(prompt, /Staff Backend Engineer @ Databricks \(2022–now\)/)
+    assert.match(prompt, /Rust and TypeScript microservices for a high-concurrency message router\./)
+    assert.match(prompt, /Software Engineer @ Stripe \(2019–2022\)/)
+    assert.match(prompt, /Currently building \(candidate's own words\): an agent that reconciles invoices/)
+  })
+
+  it("says nothing rather than render an empty section for a stub profile", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    // A shadow doc: exists, but holds no work history. An empty "Experience: (none)" block reads
+    // to the judge as "we looked and this person has nothing", which is worse than silence.
+    await mfs.collection("pa-users").doc("real-uid-1").set({
+      id: "real-uid-1",
+      linkedinUrl: "https://linkedin.com/in/yue-h",
+      displayName: "Yue H",
+      createdAt: "2026-07-25T10:00:00.000Z",
+    })
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const prompt = deps.judgeCalls[0]?.userText ?? ""
+    assert.match(prompt, /\(no WeKruit profile on file for this candidate/)
+    assert.doesNotMatch(prompt, /Experience:\n\(none recorded\)/)
+  })
+})
+
+describe("profile evidence is ordered by recency, not storage order", () => {
+  // experienceHighlights arrives OLDEST-FIRST and capped upstream. Slicing the head fed the judge
+  // a candidate's student years: a Microsoft Office-of-the-CTO engineer's stored array held ten
+  // 2018-2025 internships and not the senior role at all, and the judge scored her 2/4 reasoning
+  // "largely internships/TA/mentoring".
+  const OLDEST_FIRST = {
+    id: "real-uid-1",
+    displayName: "Yue H",
+    linkedinUrl: "https://linkedin.com/in/yue-h",
+    createdAt: "2026-07-25T10:00:00.000Z",
+    tags: {
+      recentRoleTitle: "Senior Software Engineer - Office of the CTO",
+      recentCompany: "Microsoft",
+      workHistorySummary: "Senior SWE, Office of the CTO @ Microsoft; SWE II @ Microsoft",
+    },
+    experienceHighlights: [
+      { title: "Data Analyst", company: "NASA", startDate: "June 2018", endDate: "August 2018" },
+      { title: "Software Engineer Intern", company: "Meta", startDate: "January 2021", endDate: "April 2021" },
+      { title: "Software Engineer - Mixed Reality Cloud", company: "Microsoft", startDate: "2023", endDate: "December 2025" },
+    ],
+  }
+
+  it("renders the newest role first even when storage is oldest-first", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc(OLDEST_FIRST.id).set(OLDEST_FIRST)
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const prompt = deps.judgeCalls[0]?.userText ?? ""
+    const mixedReality = prompt.indexOf("Mixed Reality Cloud")
+    const nasa = prompt.indexOf("Data Analyst @ NASA")
+    assert.ok(mixedReality > -1 && nasa > -1, "both roles should render")
+    assert.ok(mixedReality < nasa, "the 2025 role must precede the 2018 internship")
+  })
+
+  it("warns the judge when the truncated list omits the current role", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc(OLDEST_FIRST.id).set(OLDEST_FIRST)
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const prompt = deps.judgeCalls[0]?.userText ?? ""
+    assert.match(prompt, /CURRENT ROLE: Senior Software Engineer - Office of the CTO @ Microsoft/)
+    assert.match(prompt, /does NOT contain the CURRENT ROLE above/)
+  })
+
+  it("stays silent about truncation when the current role IS in the list", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc("real-uid-1").set({
+      ...OLDEST_FIRST,
+      tags: { ...OLDEST_FIRST.tags, recentRoleTitle: "Software Engineer - Mixed Reality Cloud" },
+    })
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    assert.doesNotMatch(deps.judgeCalls[0]?.userText ?? "", /does NOT contain the CURRENT ROLE/)
+  })
+
+  it("an ongoing role outranks every dated one", async () => {
+    const mfs = new MockFirestore()
+    await seedJob(mfs)
+    await seedSubmission(mfs)
+    await mfs.collection("pa-users").doc("real-uid-1").set({
+      ...OLDEST_FIRST,
+      tags: { recentRoleTitle: "Staff Engineer", recentCompany: "Acme" },
+      experienceHighlights: [
+        { title: "Staff Engineer", company: "Acme", startDate: "2024" },
+        { title: "Intern", company: "Old Co", startDate: "2019", endDate: "December 2025" },
+      ],
+    })
+
+    const deps = makeDeps(mfs)
+    await runRecruiterSubmissionEval({ submissionId: "sub-1", submission: {} }, deps)
+
+    const prompt = deps.judgeCalls[0]?.userText ?? ""
+    assert.ok(
+      prompt.indexOf("Staff Engineer @ Acme") < prompt.indexOf("Intern @ Old Co"),
+      "an in-progress role must sort above one that ended, even a later-dated one",
+    )
+  })
+})

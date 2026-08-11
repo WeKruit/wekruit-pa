@@ -1,6 +1,37 @@
 import { z } from "zod"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
 import type { ConnectorContext, ConnectorDef, ConnectorNarrationTemplates } from "./connector-types.js"
+
+/**
+ * YC people-lane hold for the LEGACY connector surface (Adam-LOCKED 2026-07-24: "we don't wanna
+ * ask anything about the job including daily ask for users from YC").
+ *
+ * The thin-Claire tool surface (apps/functions/src/claire-agent/tools/matching-tools.ts) has had
+ * these guards since 2026-07-23, but this parallel legacy orchestrator path had ZERO YC awareness
+ * — and cutover.ts still falls through to it for several turn shapes, so it is live. Worst of the
+ * set is set-daily-job-recommendation-subscription: it IS the recurring daily job-rec opt-in and
+ * it writes pa-job-profiles.status="active", enrolling a YC user in the paJobRecDaily cadence.
+ *
+ * Fail-CLOSED for job content specifically: if the user read fails we cannot prove the user is
+ * NOT a YC person, and sending a founder/investor a job rec is the violation we are preventing.
+ * Every guarded connector already has a structured non-throwing "declined" return shape, so a
+ * hold degrades to a graceful refusal, never an exception.
+ */
+async function isYcJobHold(ctx: ConnectorContext): Promise<boolean> {
+  try {
+    const snap = await ctx.db.collection(PA_COLLECTIONS.users).doc(ctx.userId).get()
+    return isYcPeopleUser(snap.data() ?? {})
+  } catch {
+    return true
+  }
+}
+
+/** Reason string surfaced to the runtime when the YC hold blocks a job connector. */
+const YC_HOLD_REASON = "yc_people_lane_no_job_content"
+
+/** Candidate-safe summary the runtime speaks when the hold fires. */
+const YC_HOLD_SUMMARY =
+  "For YC Startup School this is people-matching (founders, investors, operators worth meeting) — job-role matching is off for YC entirely."
 
 export type { MatchConnectorHooks } from "./connector-types.js"
 
@@ -135,6 +166,17 @@ export const FIND_MATCH_CONNECTOR: ConnectorDef<
   expectedLatencyMs: 3500,
   narration: FIND_MATCH_NARRATION,
   execute: async (input, ctx) => {
+    // YC people lane — never surface job matches (see isYcJobHold).
+    if (await isYcJobHold(ctx)) {
+      return {
+        ok: false as const,
+        source: "find-match" as const,
+        reason: YC_HOLD_REASON,
+        jobCount: 0,
+        summary: YC_HOLD_SUMMARY,
+        message: null,
+      }
+    }
     const hook = ctx.hooks?.findMatch
     if (!hook) {
       return {
@@ -187,6 +229,18 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
   outputSchema: SetMatchingPreferencesOutputSchema,
   expectedLatencyMs: 600,
   execute: async (input, ctx) => {
+    // YC people lane — these are job-SEARCH preferences (visa sponsorship, target role, salary,
+    // job type). Persisting them both implies a job hunt to the model and feeds the matcher.
+    if (await isYcJobHold(ctx)) {
+      return {
+        ok: false,
+        source: "set-matching-preferences",
+        reason: YC_HOLD_REASON,
+        hardConstraint: false,
+        updatedTags: [],
+        summary: YC_HOLD_SUMMARY,
+      }
+    }
     const tagsPatch: Record<string, unknown> = {}
     const updatedTags: string[] = []
 
@@ -317,6 +371,20 @@ export const SET_DAILY_JOB_RECOMMENDATION_SUBSCRIPTION_CONNECTOR: ConnectorDef<
   outputSchema: SetDailyJobRecommendationSubscriptionOutputSchema,
   expectedLatencyMs: 600,
   execute: async (input, ctx) => {
+    // YC people lane — this connector IS the recurring daily job-rec opt-in, and opting in writes
+    // pa-job-profiles.status="active", enrolling the user in the paJobRecDaily cadence. Adam-LOCKED:
+    // no daily ask for YC users. An opt-OUT is harmless, but we refuse both so the model never
+    // gets a success signal that would make it CONFIRM a daily job subscription to a YC person.
+    if (await isYcJobHold(ctx)) {
+      return {
+        ok: false,
+        source: "set-daily-job-recommendation-subscription",
+        optedIn: false,
+        jobProfileStatus: "paused" as const,
+        reason: YC_HOLD_REASON,
+        summary: YC_HOLD_SUMMARY,
+      }
+    }
     const now = new Date().toISOString()
     const status = input.optedIn ? "active" : "paused"
     const source = input.source ?? "claire_tool"
@@ -376,6 +444,19 @@ export const MATCH_COLLAB_CONNECTOR: ConnectorDef<
   expectedLatencyMs: 4000,
   narration: MATCH_COLLAB_NARRATION,
   execute: async (input, ctx) => {
+    // YC people lane — never surface collab/partner job matches either (see isYcJobHold).
+    if (await isYcJobHold(ctx)) {
+      return {
+        ok: false as const,
+        source: "match-against-collab-jobs" as const,
+        reason: YC_HOLD_REASON,
+        jobCount: 0,
+        topJobId: null,
+        topTitle: null,
+        topCompany: null,
+        summary: YC_HOLD_SUMMARY,
+      }
+    }
     const hook = ctx.hooks?.matchCollabJobs
     if (!hook) {
       return {

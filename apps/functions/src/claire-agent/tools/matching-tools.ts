@@ -60,6 +60,7 @@ import { parseResumeText } from "@pa/pa-resume-parser"
 import { reEnrichUserTagsFromParsedResume } from "../../cv-ingest/cv-ingest.js"
 import { queryMatchingJobsV16, recordRecommendedJobs, isPlausibleAtsUrl } from "@pa/job-rec"
 import type { FeedbackEvent } from "@pa/core-types"
+import { isYcPeopleUser } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
 // Rec-card image model (flag-gated, fail-open). `resolveRecCardMediaUrl` returns the Sendblue-acceptable
 // image url for a job WITHOUT enqueuing (cache-read → shape-guard → liveness → lazy-gen+persist), so the
@@ -135,14 +136,17 @@ async function readMatchingSlice(
 /**
  * True when a pa-users doc is a YC Startup School person (any of the three canonical
  * flags). Pure predicate — no I/O.
+ *
+ * 2026-07-24: the definition now lives in @pa/core-types (`isYcPeopleUser`) so apps/job-rec —
+ * which cannot import from apps/functions — shares ONE predicate instead of its own narrower
+ * `source`-only copy that leaked real event-QR users into the job-rec audience.
+ *
+ * NOTE: this must be an IMPORT + re-export, never a bare `export { x } from "..."`. A pure
+ * re-export creates NO local binding, so `isYcJobRecHeld` below would hit a ReferenceError that its
+ * own `catch { return false }` swallows — silently DISABLING every YC job-tool hold. The
+ * find-match-delivery tests caught exactly that.
  */
-export function isYcPeopleUser(u: Record<string, unknown>): boolean {
-  return (
-    (u as { source?: unknown }).source === "yc_startup_school" ||
-    Boolean((u as { ycEventEntryAt?: unknown }).ycEventEntryAt) ||
-    (u as { firstTouchCampaign?: unknown }).firstTouchCampaign === "yc-startup-school"
-  )
-}
+export { isYcPeopleUser }
 
 /**
  * YC job-recommendation hold (Adam-LOCKED 2026-07-23): a YC Startup School user gets ZERO
@@ -1420,7 +1424,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           recCount: 0,
           jobs: [] as string[],
           reason:
-            "yc_people_hold: this is a YC Startup School PEOPLE-matching user — we match them with founders/investors/operators, NEVER job roles. Tell them warmly you'll text right here once there is a good match — NEVER list job roles, NEVER pitch openings, NEVER call this tool again this turn.",
+            "yc_people_hold: this is a YC Startup School PEOPLE-matching user — we match them with founders/investors/operators, NEVER job roles. Tell them warmly you'll text them people worth meeting right here — a first few now, more after. NEVER promise a delivery time, NEVER list job roles, NEVER pitch openings, NEVER call this tool again this turn.",
           snapshotTags,
         }
       }

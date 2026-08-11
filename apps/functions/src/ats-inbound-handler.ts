@@ -173,15 +173,27 @@ export async function handleAtsInbound(
 
   const userSnap = await deps.db.collection("pa-users").doc(userId).get()
   createdUser = createdUser || !userSnap.exists
+  // `source` is BACK-FILL ONLY — never overwrite an existing one.
+  //
+  // 2026-07-24: this wrote `source: "candidate"` UNCONDITIONALLY with {merge:true} onto an existing
+  // doc resolved by emailLower. For a website /yc-startup signup, `source` is the ONLY YC signal
+  // (ycEventEntryAt is stamped just on the QR-opener path; firstTouchCampaign just by the QR
+  // campaign) — so a single Handshake application permanently converted a YC founder/investor into
+  // an ordinary candidate and lifted EVERY YC guard in the codebase at once, including the ones
+  // that read the shared predicate. Destroying an identity signal is not a valid merge.
+  //
+  // Preserving whatever is already there also matches this write's own stated intent (back-fill a
+  // legacy doc that has no source). signupSource still records the ATS provenance either way.
+  const existingSource = userSnap.data()?.source
+  const shouldBackfillSource =
+    typeof existingSource !== "string" || existingSource.trim().length === 0
   await deps.db.collection("pa-users").doc(userId).set(
     {
       email: applicant.email,
       emailLower,
       legalName: applicant.name,
       phone: applicant.phone ?? null,
-      // Stamp `source` on merge too — if the user pre-existed without a
-      // source (legacy doc), this back-fills it on the first ATS bind.
-      source: "candidate",
+      ...(shouldBackfillSource ? { source: "candidate" } : {}),
       signupSource: `ats:${applicant.source}`,
       updatedAt: FieldValue.serverTimestamp(),
       ...(userSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),

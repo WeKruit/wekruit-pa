@@ -83,7 +83,9 @@ export async function applyGlobalCandidateTier(
     source,
     reusable: isReusableTier(globalTier),
     updatedAt: now,
-    rejectionCount: (existing?.rejectionCount ?? 0) + 1,
+    // An operator marking someone "strong, keep them" is NOT a rejection. Counting it as one made
+    // the browse row read "1 rejection" for a candidate nobody had ever rejected.
+    rejectionCount: (existing?.rejectionCount ?? 0) + (input.source === "admin" ? 0 : 1),
     ...(input.jobId ? { lastJobId: input.jobId } : {}),
     ...(input.reason ? { lastReason: input.reason.slice(0, 500) } : {}),
     humanConfirmed: Boolean(input.humanConfirmed) || Boolean(existing?.humanConfirmed),

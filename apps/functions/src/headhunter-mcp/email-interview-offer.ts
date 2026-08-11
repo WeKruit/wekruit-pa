@@ -22,6 +22,7 @@ import { FieldValue } from "firebase-admin/firestore"
 import type { ClaireToolContext } from "../claire-agent/types.js"
 import { buildInterviewOffer } from "../claire-agent/tools/scheduling-tools.js"
 import { isSchedulingEligible } from "../claire-agent/scheduling-gate.js"
+import { isYcPeopleUser } from "@pa/core-types"
 import { sendMailgun, type MailgunConfig } from "../email/mailgun.js"
 import {
   generateConvToken,
@@ -93,6 +94,19 @@ export async function runEmailInterviewOffer(
   const to = (args.candidateEmail ?? "").trim().toLowerCase()
   if (!userId) return { sent: false, reason: "missing_userId" }
   if (!EMAIL_RE.test(to)) return { sent: false, reason: "invalid_recipient_email" }
+
+  // YC PEOPLE LANE — never email a YC founder/investor a JOB interview offer (Adam-LOCKED
+  // 2026-07-24). The candidate-pool tools now exclude YC users, but this send takes a userId
+  // directly from an operator/agent call, so it needs its own gate. Fail-CLOSED: an unreadable user
+  // cannot be proven non-YC, and this is an outbound job offer to a real person.
+  try {
+    const snap = await deps.db.collection("pa-users").doc(userId).get()
+    if (isYcPeopleUser(snap.data() ?? {})) {
+      return { sent: false, reason: "yc_people_no_job_interview", to }
+    }
+  } catch {
+    return { sent: false, reason: "yc_people_check_failed", to }
+  }
 
   // GATE — dev cohort / paSchedulingEnabled only (real candidates no-op).
   if (!(await isSchedulingEligible(deps.db, userId, { env: process.env }))) {

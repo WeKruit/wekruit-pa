@@ -46,6 +46,13 @@ export interface UseTableOptions<T> {
   search?: (row: T, query: string) => boolean
   /** Chip rows. Each row filters via its active chips (multi-AND across rows). */
   chips?: ChipDef<T>[]
+  /**
+   * Chips active on first render, `{ [chipRowId]: [optionKey, …] }`. For boards where the useful
+   * default view is already filtered — a 4.6k-row submissions list opening with 679 rejected rows
+   * mixed in is nobody's starting point. Still a chip, so one click turns it off, and Reset returns
+   * HERE rather than to the unfiltered firehose.
+   */
+  defaultChips?: Record<string, string[]>
   /** Manual filter predicate (always applied). */
   prefilter?: (row: T) => boolean
 }
@@ -91,6 +98,24 @@ export interface UseTableResult<T> {
   reset: () => void
 }
 
+/**
+ * Build the initial `activeChips` state from `options.defaultChips`.
+ *
+ * Exported and pure so the seeding rule is testable without a React renderer. Two properties the
+ * hook depends on: fresh `Set`s every call (the caller's literal must never be mutated by a later
+ * toggle), and empty key-lists dropped (an empty Set is treated as "no filter" everywhere else in
+ * this file, so leaving one in would be a filter row that renders active but filters nothing).
+ */
+export function seedActiveChips(
+  defaultChips: Record<string, string[]> | undefined,
+): Record<string, Set<string>> {
+  const seed: Record<string, Set<string>> = {}
+  for (const [rowId, keys] of Object.entries(defaultChips ?? {})) {
+    if (keys.length) seed[rowId] = new Set(keys)
+  }
+  return seed
+}
+
 export function useTable<T extends { id?: string }>(
   rows: T[],
   options: UseTableOptions<T> = {},
@@ -99,7 +124,8 @@ export function useTable<T extends { id?: string }>(
   const [sort, setSort] = useState<SortState | null>(options.defaultSort ?? null)
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(options.pageSize ?? 50)
-  const [activeChips, setActiveChips] = useState<Record<string, Set<string>>>({})
+  const seedChips = () => seedActiveChips(options.defaultChips)
+  const [activeChips, setActiveChips] = useState<Record<string, Set<string>>>(seedChips)
 
   const toggleSort = useCallback((key: string) => {
     setSort((s) => {
@@ -142,8 +168,11 @@ export function useTable<T extends { id?: string }>(
     setSearch("")
     setSort(options.defaultSort ?? null)
     setPage(0)
-    setActiveChips({})
-  }, [options.defaultSort])
+    // Back to the DEFAULT view, not to no filters at all — otherwise "Reset" on a board that
+    // opens filtered would dump every rejected row back in, which is not what reset means here.
+    setActiveChips(seedChips())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.defaultSort, options.defaultChips])
 
   // Filter
   const filteredRows = useMemo(() => {

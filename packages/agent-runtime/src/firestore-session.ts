@@ -49,6 +49,84 @@ function defaultLog(..._args: unknown[]): void {
 }
 
 /**
+ * The agent's reply reaches us as the SDK's structured-output wrapper — a JSON string
+ * `{"messages":["bubble one","bubble two"]}` (ClaireReplySchema). That envelope must NEVER be
+ * persisted or replayed: `pa-messages` is both the user-visible transcript and the history the
+ * model re-reads, so a stored envelope teaches the model its own serialization format is dialogue
+ * (measured live 2026-07-25: 224/1889 assistant rows in 24h, every one written by `addItems`).
+ *
+ * Returns the flattened prose (possibly `""` when the array is empty — a tool-delivered turn with
+ * no text) when `body` IS a wrapper, and `null` when it is not, so callers can tell "envelope with
+ * nothing in it" from "ordinary prose". Cheap guard first, parse only on a candidate; any parse
+ * error → `null` (treat as ordinary text — we append the model's plain text, never a JSON blob).
+ */
+export function structuredOutputText(body: unknown): string | null {
+  if (typeof body !== "string") return null
+  const trimmed = body.trim()
+  if (!trimmed.startsWith("{") || !trimmed.includes('"messages"')) return null
+  try {
+    const parsed = JSON.parse(trimmed) as { messages?: unknown }
+    if (!Array.isArray(parsed.messages)) return null
+    return parsed.messages
+      .filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+      .join("\n\n")
+      .trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Read-side repair for rows written before the `addItems` fix below (and any other writer that
+ * still lands an envelope). Flattens the wrapper back to the prose that was actually sent.
+ *
+ * ASSISTANT ONLY. The wrapper is the agent's own reply; a USER who happens to paste JSON is
+ * sending us their real message and must never be rewritten.
+ */
+export function unwrapStructuredOutputRow<T extends { role?: string; body?: string }>(row: T): T {
+  if (row?.role !== "assistant") return row
+  const text = structuredOutputText(row?.body)
+  // `null` → not a wrapper, leave alone. `""` → an empty envelope; blank the body so the
+  // empty-assistant filter in getItems drops it instead of replaying `{"messages":[]}`.
+  return text === null ? row : { ...row, body: text }
+}
+
+/** Normalize for duplicate comparison — the wrapper and the delivered bubble differ in whitespace. */
+function dupeKey(body: string): string {
+  return body.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 160)
+}
+
+/**
+ * Collapse an assistant sentence that appears more than once in the window.
+ *
+ * The same turn lands twice — once via `addItems` (the wrapper, now unwrapped above) and once as
+ * the delivered bubble — so without this the model sees every one of its own replies duplicated.
+ * Measured live 2026-07-25: 49 duplicate assistant rows in a single day.
+ *
+ * Only ASSISTANT rows are collapsed, and only against rows already seen in this window: a user
+ * legitimately repeating themselves ("yes" … "yes") is real signal and must survive.
+ */
+function dedupeAdjacentAssistant<T extends { role?: string; body?: string }>(rows: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const row of rows) {
+    if (row?.role !== "assistant" || typeof row.body !== "string") {
+      out.push(row)
+      continue
+    }
+    const key = dupeKey(row.body)
+    if (!key) {
+      out.push(row)
+      continue
+    }
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(row)
+  }
+  return out
+}
+
+/**
  * Public helper so callers (orchestrator, tests) can produce the same
  * idempotency key the Session uses internally. Set this as the
  * `idempotencyKey` on rows you write directly so the SDK's
@@ -176,8 +254,29 @@ export class FirestoreSession implements Session {
       return meta.cleared !== true && meta.popped !== true
     })
     const sorted = live.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    // HISTORY HYGIENE (Adam 2026-07-25, measured on live data): 18% of today's assistant rows
+    // (52/297) were the SDK's raw structured-output wrapper `{"messages":[...]}`, and 49 rows were
+    // the SAME sentence stored twice — once as that wrapper by addItems, once as the delivered
+    // bubble. The model re-reads all of it every turn, so ~a fifth of its context window was JSON
+    // noise plus duplicates. That is what makes it misjudge WHICH message a short reply is
+    // answering (live: it asked "did you mean OpenComment is your product?" one turn after itself
+    // saying "Founder who shipped OpenComment").
+    //
+    // `isStructuredOutputWrapper` already existed in delivery.ts but was only used to exclude these
+    // rows from the dedup set — never from the history the model actually reads.
+    //
+    // We UNWRAP rather than drop: the wrapper is the only copy when a turn produced text the
+    // delivery layer did not separately persist, so dropping it would lose real conversation.
+    const cleaned = dedupeAdjacentAssistant(
+      sorted
+        .map(unwrapStructuredOutputRow)
+        // An assistant row with no text after unwrapping is a tool-delivered turn's empty envelope
+        // (`{"messages":[]}` — 3 of the 10 most recent live samples). Nothing was ever said; replaying
+        // it is pure noise.
+        .filter((r) => r.role !== "assistant" || String(r.body ?? "").trim().length > 0),
+    )
     const cap = limit ?? this.historyLimit
-    const tail = cap > 0 ? sorted.slice(-cap) : sorted
+    const tail = cap > 0 ? cleaned.slice(-cap) : cleaned
     const items: AgentInputItem[] = []
     for (const row of tail) {
       const mapped = chatMessageToInputItem(row)
@@ -206,6 +305,18 @@ export class FirestoreSession implements Session {
           sessionId: this.sessionId,
         })
         continue
+      }
+
+      // ROOT CAUSE of the raw-envelope transcript rows (Adam 2026-07-25). `extracted.body` for an
+      // agent with `outputType` is the model's serialized structured output — the literal
+      // `{"messages":["…"]}` string — and this is the ONLY site that persisted it. Parse once here,
+      // at the single write boundary every caller routes through, so the envelope can never reach
+      // Firestore. Not a wrapper (or unparseable) → the plain text is written as-is; an EMPTY
+      // envelope means the turn delivered via a tool and said nothing, so there is no row to write.
+      const unwrapped = structuredOutputText(extracted.body)
+      if (unwrapped !== null) {
+        if (!unwrapped) continue
+        extracted.body = unwrapped
       }
 
       const idempotencyKey = deriveIdempotencyKey(this.sessionId, extracted.role, extracted.body)

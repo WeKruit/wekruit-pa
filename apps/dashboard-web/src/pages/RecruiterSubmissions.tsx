@@ -16,6 +16,11 @@ import { SUBMISSION_FEEDBACK_REASONS, feedbackReasonLabel, ReasonChips } from ".
 import { auth, db } from "../lib/firebase.js"
 import { cachedLoad, readCache, writeCache } from "../lib/unified-cache.js"
 import { CandidateResumePreview } from "../components/CandidateResumePreview.js"
+import { recommendRolesForSubmission, submitCandidateToRole, type RoleRecommendation } from "../lib/recommend-roles-api.js"
+import { markCandidateQuality } from "../lib/mark-candidate-quality-api.js"
+import { submitterSortKey, isWekruitInternalSubmitter } from "../lib/submitter-sort.js"
+import { REJECTED_CANDIDATES_ROUTE } from "../lib/rejected-candidates-api.js"
+import { CANDIDATE_TIER_LABELS, type CandidateTier } from "@pa/core-types"
 import {
   upsertCompanySend,
   removeCompanySend,
@@ -136,8 +141,9 @@ interface SubmissionDoc {
   sheetSyncError?: string | null
   createdAt?: { seconds: number } | null
   createdAtMs?: number
-  triageSortMs?: number
+  submitterRank?: string
   hardScorePct?: number
+  aiVerdictRank?: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -375,8 +381,6 @@ function payoutAmountLabel(payout?: SubmissionDoc["recruiterPayout"]): string {
 const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "interviewing", "backburner", "offer", "client_review", "hired", "rejected", "duplicate"]
 const ACTIVE_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "interviewing", "backburner", "offer", "client_review"]
 const PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
-const TRIAGE_FIRST_STATUSES = ["submitted", "new", "reviewing"]
-const TRIAGE_SORT_BOOST_MS = 1e15
 const ADVANCED_SUBMISSION_STATUSES = ["advanced", "wekruit_interview", "interviewing", "offer", "client_review", "hired"]
 const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
@@ -426,6 +430,22 @@ function feedbackRatingTone(rating: unknown): "ok" | "warn" | "info" | "muted" {
   if (n >= 3) return "ok"
   if (n === 2) return "info"
   return "warn"
+}
+
+/**
+ * A 1-4 rating SUGGESTED from the AI verdict, shown only while the human rating is unset.
+ *
+ * The rating field itself stays operator-only — the AI never writes status or rating, that rule is
+ * locked. This is display: a board of 190+ machine-sourced rows was a solid wall of "unrated" with
+ * no way to tell a strong row from a weak one without opening each drawer. Same "AI suggests,
+ * human confirms" posture already used for the candidate tier.
+ */
+function suggestedRating(ai: { verdict?: string; confidence?: number } | undefined): number | null {
+  if (!ai?.verdict) return null
+  const c = ai.confidence ?? 0
+  if (ai.verdict === "advance") return c >= 0.7 ? 4 : 3
+  if (ai.verdict === "borderline") return c >= 0.6 ? 3 : 2
+  return 1
 }
 
 function reviewSummaryTone(tone: SubmissionReviewTone): Parameters<typeof Badge>[0]["tone"] {
@@ -1059,19 +1079,23 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
         // ~2.6MB of just the table/search/filter fields so search + the state
         // filter see the whole pool. Cached (in-mem 3-min) for instant re-open.
         const [listResult, jobSnap] = await Promise.all([
-          cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
+          cachedLoad("recruiter-submissions:list:v2", getRecruiterSubmissionsList),
           getDocs(query(collection(db(), "pa-jobs"), limit(500))),
         ])
         if (cancelled) return
         const all = (listResult.rows as (Omit<SubmissionDoc, "id"> & { id: string })[]).map((data) => {
           const createdAtMs = data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0
-          const triageSortMs = TRIAGE_FIRST_STATUSES.includes(data.status ?? "new")
-            ? createdAtMs + TRIAGE_SORT_BOOST_MS
-            : createdAtMs
+          const submitterRank = submitterSortKey(data.submitter)
           const hardScorePct = data.score?.hardTotal
             ? data.score.hardChecked / data.score.hardTotal
             : 0
-          return { ...data, createdAtMs, triageSortMs, hardScorePct }
+          // Sorting the AI column on the raw string would order alphabetically (advance, borderline,
+          // reject) — right by luck, wrong the moment a verdict is renamed. Rank it explicitly, and
+          // break ties by confidence so the strongest advance sits at the top.
+          const RANK: Record<string, number> = { advance: 3, borderline: 2, reject: 1 }
+          const vRank = RANK[data.aiEvaluation?.verdict ?? ""] ?? 0
+          const aiVerdictRank = vRank + Math.min(0.99, data.aiEvaluation?.confidence ?? 0)
+          return { ...data, createdAtMs, submitterRank, hardScorePct, aiVerdictRank }
         })
         const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
         for (const d of jobSnap.docs) {
@@ -1108,7 +1132,15 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
   }, [rows])
 
   const table = useTable<SubmissionDoc>(rows, {
-    defaultSort: { key: "triageSortMs", dir: "desc" },
+    // AI verdict first, not arrival order (Adam 2026-07-26). A 4.6k-row board sorted by
+    // recency makes the strongest candidate indistinguishable from the 3.8k behind them;
+    // `aiVerdictRank` is advance(3) > borderline(2) > reject(1) > pending(0), tie-broken by
+    // confidence, so the top of page 1 is the shortlist. Recency is one click on Submitted.
+    defaultSort: { key: "aiVerdictRank", dir: "desc" },
+    // Open with the 679 already-rejected rows hidden (Adam 2026-07-27: "by default we should
+    // filter out the rejected submissions"). Still a chip, so one click brings them back, and
+    // Reset returns to this view rather than the unfiltered firehose.
+    defaultChips: { triage: ["hideClosed"] },
     pageSize: 50,
     search: (r, q) =>
       (r.submitter?.name?.toLowerCase().includes(q) ?? false) ||
@@ -1118,6 +1150,29 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
       (r.jobTitleSnapshot?.toLowerCase().includes(q) ?? false),
     chips: [
       { id: "job", label: "Job", multi: false, options: jobOptions },
+      {
+        // The Status chips are inclusive-only — hiding the 677 rejected rows meant ticking the
+        // other eleven statuses one by one. These two are the subtractive view you actually want
+        // while working a board: drop what you've already ruled out, or show only what still
+        // needs a decision. Chip groups AND together, so this composes with Job / Status / Score.
+        id: "triage",
+        label: "Triage",
+        multi: false,
+        options: [
+          {
+            key: "hideClosed",
+            label: "Hide rejected",
+            title: "Drop rejected + duplicate — the ones you've already ruled out",
+            test: (r: SubmissionDoc) => !NEGATIVE_SUBMISSION_STATUSES.includes(r.status ?? "new"),
+          },
+          {
+            key: "needsReview",
+            label: "Needs review",
+            title: "Only submitted / new / reviewing / backburner",
+            test: (r: SubmissionDoc) => PENDING_SUBMISSION_STATUSES.includes(r.status ?? "new"),
+          },
+        ],
+      },
       {
         id: "status",
         label: "Status",
@@ -1326,11 +1381,20 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
       ),
     },
     {
-      key: "submitter",
+      // Sorted on the derived band key, not the raw object — sorting on `submitter` would compare
+      // "[object Object]" against itself and silently do nothing. Ascending = outside recruiters
+      // first, which is the direction the first click gives you.
+      key: "submitterRank",
       label: "Submitter",
+      sortable: true,
       render: (r) => (
         <>
-          <div>{r.submitter?.name ?? "—"}</div>
+          <div>
+            {r.submitter?.name ?? "—"}
+            {isWekruitInternalSubmitter(r.submitter?.email) && (
+              <span style={{ marginLeft: 6, color: "#999", fontSize: 10, textTransform: "uppercase" }}>ours</span>
+            )}
+          </div>
           <div style={{ color: "#777", fontSize: 11 }}>{r.submitter?.email ?? ""}</div>
         </>
       ),
@@ -1369,6 +1433,29 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
       render: (r) => {
         const meta = consentBadge(r.candidateConsentStatus)
         return <Badge tone={meta.tone}>{meta.label}</Badge>
+      },
+    },
+    {
+      // The AI verdict, ahead of Hard/Fit/Anti. Those three are the SUBMITTER's checklist claim,
+      // so a batch that honestly leaves unknowns unticked reads 0/4 down the whole page and looks
+      // like every candidate failed. The judge's own read is the signal; it was previously
+      // drawer-only because `aiEvaluation` was absent from the list projection.
+      key: "aiVerdictRank",
+      label: "AI",
+      sortable: true,
+      width: 108,
+      render: (r) => {
+        const v = r.aiEvaluation?.verdict
+        if (!v) return <span style={{ color: "#999" }}>pending</span>
+        // Same palette `statusBadge` uses: ok / warn / info / muted (rejected is "warn" there).
+        const tone = v === "advance" ? "ok" : v === "reject" ? "warn" : "info"
+        const conf = typeof r.aiEvaluation?.confidence === "number" ? r.aiEvaluation.confidence.toFixed(2) : null
+        return (
+          <>
+            <Badge tone={tone}>{v}</Badge>
+            {conf && <div style={{ color: "#777", fontSize: 11, marginTop: 3 }}>{conf}</div>}
+          </>
+        )
       },
     },
     {
@@ -1420,8 +1507,21 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
     {
       key: "recruiterFeedbackRating",
       label: "Rating",
-      width: 84,
-      render: (r) => <Badge tone={feedbackRatingTone(r.recruiterFeedbackRating)}>{feedbackRatingLabel(r.recruiterFeedbackRating)}</Badge>,
+      width: 92,
+      render: (r) => {
+        const human = normalizeFeedbackRating(r.recruiterFeedbackRating)
+        if (human !== null) return <Badge tone={feedbackRatingTone(human)}>{human}/4</Badge>
+        // No human rating yet — show what the AI would say, clearly marked, so a 190-row batch
+        // isn't an undifferentiated wall of "unrated". Suggestion only; nothing is written.
+        const s = suggestedRating(r.aiEvaluation)
+        if (s === null) return <Badge tone="muted">unrated</Badge>
+        return (
+          <>
+            <Badge tone="muted">unrated</Badge>
+            <div style={{ color: "#777", fontSize: 11, marginTop: 3 }}>AI {s}/4</div>
+          </>
+        )
+      },
     },
     {
       key: "feedback",
@@ -1473,6 +1573,12 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
         <div className="sub-masterdetail__detail">
           {selectedRow ? (
             <RowDetailPanel
+              // KEYED BY ROW — do not remove. Every detail panel seeds its drafts from
+              // `useState(row.…)`, which runs ONCE per mount. Without a key React reuses the same
+              // instance when you click the next candidate, so the previous person's status,
+              // note, rating, reasons and payout stay in the form — and Save writes them onto the
+              // new candidate. The id forces a remount, which re-seeds every draft.
+              key={selectedRow.id}
               row={selectedRow}
               role={jobsByKey.get(selectedRow.jobId ?? "") ?? jobsByKey.get(selectedRow.inboundJobId ?? "") ?? null}
               onClose={() => setExpandedId(null)}
@@ -1484,9 +1590,9 @@ export default function RecruiterSubmissions({ section = "submissions", embedded
                 })
                 // Keep the cached list in sync so re-opening the tab shows the
                 // new status immediately (server cache self-heals within 60s).
-                const cached = readCache<RecruiterSubmissionsListResult>("recruiter-submissions:list", 3 * 60_000)
+                const cached = readCache<RecruiterSubmissionsListResult>("recruiter-submissions:list:v2", 3 * 60_000)
                 if (cached) {
-                  writeCache("recruiter-submissions:list", {
+                  writeCache("recruiter-submissions:list:v2", {
                     ...cached.data,
                     rows: cached.data.rows.map((rr) =>
                       (rr as { id?: string }).id === next.id ? { ...rr, ...next } : rr,
@@ -2578,7 +2684,7 @@ function RecruiterQualityPanel() {
     try {
       const [profileSnap, submissionList, candidateSnap, applicationSnap] = await Promise.all([
         getDocs(collection(db(), "pa-recruiter-users")),
-        cachedLoad("recruiter-submissions:list", getRecruiterSubmissionsList),
+        cachedLoad("recruiter-submissions:list:v2", getRecruiterSubmissionsList),
         getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
         getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
       ])
@@ -2810,6 +2916,7 @@ function RecruiterQualityPanel() {
         if (!row) return null
         return (
           <RecruiterQualityDetailPanel
+            key={row.id}
             row={row}
             onClose={() => setExpandedId(null)}
             onUpdated={(profile) => {
@@ -3159,6 +3266,7 @@ function RecruiterSourcedCandidatesPanel() {
         if (!row) return null
         return (
           <SourcedCandidateDetailPanel
+            key={row.id}
             row={row}
             onClose={() => setExpandedId(null)}
             onUpdated={(next) => {
@@ -3571,6 +3679,7 @@ function RecruiterRoleApplicationsPanel() {
         if (!row) return null
         return (
           <RoleApplicationDetailPanel
+            key={row.id}
             row={row}
             review={reviewsById.get(row.id) ?? buildRoleApplicationReview({
               application: row,
@@ -3922,6 +4031,7 @@ function RecruiterRoleQuestionsPanel() {
         if (!row) return null
         return (
           <RoleQuestionDetailPanel
+            key={row.id}
             row={row}
             onClose={() => setExpandedId(null)}
             onUpdated={(next) => {
@@ -4270,6 +4380,191 @@ function ChecklistTierMatrix({ review }: { review: ChecklistTierReview }) {
 const COMPANY_SEND_STATUS_OPTIONS: CompanySendStatus[] = ["sent", "waiting_hm", "interested", "passed"]
 const companySendTone = (s: CompanySendStatus): Parameters<typeof Badge>[0]["tone"] =>
   s === "interested" ? "ok" : s === "passed" ? "warn" : s === "waiting_hm" ? "info" : "muted"
+
+/**
+ * Durable candidate quality, marked by hand (Adam 2026-07-26: "tag a candidate as high quality…
+ * so even they are not fit for the role yet we can find them later").
+ *
+ * Writes the SAME `pa-users.globalCandidateTier` the rejection flows write — tier_1 is already
+ * defined as "strong, re-review for new roles". A separate "high quality" flag would be a second
+ * candidate-quality vocabulary for the tier browse, the headhunter tools and the re-review flow to
+ * learn, which CLAUDE.md names as an anti-pattern. The mark is GLOBAL: it outlives this role, this
+ * submission, and this rejection, which is the entire point of the request.
+ */
+function CandidateQualityPanel({ row }: { row: SubmissionDoc }) {
+  const [tier, setTier] = useState<CandidateTier | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [note, setNote] = useState("")
+
+  const mark = async (t: CandidateTier) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await markCandidateQuality({ submissionId: row.id, tier: t, reason: note.trim() || undefined })
+      if (res.ok) setTier(res.globalTier)
+      else setErr(res.reason === "no_candidate_identity_linkedin_required"
+        ? "No LinkedIn on this submission — a global mark needs a durable identity to attach to."
+        : res.reason)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Candidate quality — remembered across every role
+      </h4>
+      {err && <p style={{ color: "#c0392b", fontSize: 12, margin: "0 0 6px" }}>{err}</p>}
+      <div style={{ display: "grid", gap: 8 }}>
+        <p style={{ margin: 0, fontSize: 13, color: "#777" }}>
+          Marks the person, not this submission. Best-wins: a later weaker mark cannot undo a Tier 1.
+          Browse everyone marked at{" "}
+          <a href={REJECTED_CANDIDATES_ROUTE}>Candidates · by tier</a>.
+        </p>
+        <input
+          value={note}
+          disabled={busy}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Why (optional) — e.g. strong infra depth, wrong stack for this role"
+          style={{ padding: 6, fontSize: 13 }}
+        />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {(["tier_1", "tier_2", "tier_3"] as CandidateTier[]).map((t) => (
+            <button key={t} type="button" disabled={busy} onClick={() => void mark(t)}>
+              {CANDIDATE_TIER_LABELS[t]}
+            </button>
+          ))}
+          {tier && (
+            <Badge tone={tier === "tier_1" ? "ok" : tier === "tier_2" ? "info" : "warn"}>
+              now {CANDIDATE_TIER_LABELS[tier]}
+            </Badge>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+/**
+ * "Wrong role, not a wrong candidate" (Adam 2026-07-26). A candidate rejected here may clear the
+ * bar on one of the ~28 other roles in the pool, several of them founding-engineer shaped.
+ * Rejecting without looking throws away supply we already paid to acquire.
+ *
+ * On demand, never on open: ranking a candidate across the catalogue is an LLM call, and most rows
+ * get skimmed, not re-routed. Cached on the submission, so re-opening is free and only "Re-check"
+ * spends again. Submitting goes through the normal recruiter-submission path (server computes the
+ * score + fires the eval) and carries the ORIGINAL submitter so the sourcing recruiter keeps credit.
+ */
+function OtherRolesPanel({ row }: { row: SubmissionDoc }) {
+  const [items, setItems] = useState<RoleRecommendation[] | null>(
+    (row as { roleRecommendations?: { items?: RoleRecommendation[]; sourceJobId?: string } }).roleRecommendations
+      ?.sourceJobId === row.jobId
+      ? (row as { roleRecommendations?: { items?: RoleRecommendation[] } }).roleRecommendations?.items ?? null
+      : null,
+  )
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [sent, setSent] = useState<Record<string, string>>({})
+
+  const load = async (refresh: boolean) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await recommendRolesForSubmission(row.id, refresh)
+      if (res.ok) setItems(res.result.items)
+      else setErr(res.reason)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const reroute = async (r: RoleRecommendation) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await submitCandidateToRole({
+        submissionId: row.id,
+        jobId: r.jobId,
+        submitter: {
+          name: row.submitter?.name ?? "WeKruit re-route",
+          email: row.submitter?.email ?? "admin1@wekruit.com",
+        },
+        candidate: (row.candidate ?? {}) as Record<string, unknown>,
+        sourceRoleLabel: row.jobTitleSnapshot ?? row.jobId ?? "another role",
+      })
+      if (res.ok) setSent((m) => ({ ...m, [r.jobId]: res.idempotent ? "already there" : "submitted" }))
+      else setErr(`Could not submit to ${r.title}: ${res.reason}`)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <h4 style={{ margin: "16px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+        Other roles this candidate may fit
+      </h4>
+      {err && <p style={{ color: "#c0392b", fontSize: 12, margin: "0 0 6px" }}>{err}</p>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {items === null && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button type="button" disabled={busy} onClick={() => void load(false)}>
+              {busy ? "Checking…" : "Check other roles"}
+            </button>
+            <span style={{ fontSize: 12, color: "#999" }}>
+              Ranks this candidate against every other open role that has a rubric.
+            </span>
+          </div>
+        )}
+        {items !== null && items.length === 0 && (
+          <p style={{ margin: 0, fontSize: 13, color: "#999" }}>
+            Checked every other open role — none of them fit this candidate. That is a real answer, not an error.
+          </p>
+        )}
+        {items?.map((r) => (
+          <div key={r.jobId} style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+              <strong style={{ fontSize: 14 }}>
+                {r.title} <span style={{ color: "#777", fontWeight: 400 }}>@ {r.company}</span>
+              </strong>
+              <Badge tone={r.fitScore >= 0.8 ? "ok" : "info"}>{r.fitScore.toFixed(2)} fit</Badge>
+            </div>
+            <p style={{ margin: 0, fontSize: 13 }}>{r.whyFits}</p>
+            {r.whatsMissing && (
+              <p style={{ margin: 0, fontSize: 12, color: "#b06a00" }}>Still unproven: {r.whatsMissing}</p>
+            )}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button type="button" disabled={busy || !!sent[r.jobId]} onClick={() => void reroute(r)}>
+                {sent[r.jobId] ? `✓ ${sent[r.jobId]}` : "Submit to this role"}
+              </button>
+              <AdminJobLink jobId={r.jobId}>
+                <span style={{ fontSize: 12 }}>View role</span>
+              </AdminJobLink>
+            </div>
+          </div>
+        ))}
+        {items !== null && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void load(true)}
+            style={{ justifySelf: "start", fontSize: 12, background: "none", border: "none", color: "#777", cursor: "pointer", padding: 0 }}
+          >
+            {busy ? "Re-checking…" : "Re-check"}
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
 
 /**
  * Per-company "waiting for hiring manager" tracker. Lets ops mark which companies
@@ -4835,6 +5130,8 @@ function RowDetailPanel({
             <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No status history stored.</p>
           )}
 
+          <CandidateQualityPanel row={row} />
+          <OtherRolesPanel row={row} />
           <CompanySendsPanel submissionId={row.id} initial={row.companySends} />
           <SubmissionConversationPanel row={row} onUpdated={onUpdated} />
 
