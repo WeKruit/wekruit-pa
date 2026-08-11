@@ -26,3 +26,8 @@ test("legacy open route resolves to the canonical candidate market", () => {
   assert.doesNotMatch(source, /import OpenJobs from "\.\/pages\/OpenJobs\.js"/)
   assert.doesNotMatch(source, /<Route path="\/open" element=\{<OpenJobs \/>\} \/>/)
 })
+
+test("Photon has a clean root-level company page", () => {
+  assert.match(source, /<Route path="\/photon" element=\{<CompanyProfile companyIdOverride="photon" \/>\} \/>/)
+  assert.match(source, /<Route path="\/companies\/:companyId" element=\{<CompanyProfile \/>\} \/>/)
+})

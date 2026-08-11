@@ -9,6 +9,109 @@ import {
   type PublicJobOpening,
 } from "../lib/public-jobs.js"
 
+const PHOTON_PROFILE: PublicCompanyProfile = {
+  tagline: "Open-source agent infrastructure for the interfaces people already use.",
+  about:
+    "Photon builds Spectrum, a framework for bringing AI agents into iMessage, WhatsApp, Discord, Slack, Telegram, Instagram, and similar everyday messaging surfaces.",
+  websiteUrl: "https://photon.codes/",
+  hqLocation: "San Francisco, CA",
+  teamSize: "8",
+  foundedYear: "2025",
+  industryLabels: ["AI agent infrastructure", "developer tools", "messaging infrastructure"],
+  funding: {
+    totalRaised: "$5.0M",
+    stage: "Seed",
+  },
+  founders: [
+    {
+      name: "Daniel Tian",
+      title: "Cofounder",
+      linkedinUrl: "https://www.linkedin.com/in/danieltian316",
+    },
+    {
+      name: "Ryan Zhu",
+      title: "Cofounder",
+      linkedinUrl: "https://www.linkedin.com/in/ryanzhuuuu",
+    },
+  ],
+}
+
+const PHOTON_STATIC_JOBS: PublicJobOpening[] = [
+  {
+    id: "wekruit-37429d02-photon-macos-devops",
+    title: "Member of Technical Staff, macOS DevOps",
+    company: "Photon",
+    companyId: "photon",
+    location: "San Francisco, CA (in-person)",
+    salaryRange: "$180K-$240K base",
+    description:
+      "Build, operate, and scale the macOS-heavy infrastructure Photon uses to deliver native iMessage experiences for AI agents.",
+    roleFunction: ["software_engineering", "engineering_and_development"],
+    industrySector: [
+      "artificial_intelligence_and_machine_learning",
+      "software_and_saas",
+      "telecommunications",
+    ],
+    requiredSkills: [
+      "Swift",
+      "macOS administration",
+      "shell scripting",
+      "CI/CD",
+      "Linux",
+      "production infrastructure",
+      "networking",
+      "systems performance",
+    ],
+    seniorityLevel: "mid_level",
+    jobType: "full_time",
+    collaborated: true,
+    companyProfile: PHOTON_PROFILE,
+  },
+  {
+    id: "wekruit-973f2953-photon-objective-c-engineer",
+    title: "Member of Technical Staff, Objective-C",
+    company: "Photon",
+    companyId: "photon",
+    location: "San Francisco, CA (in-person)",
+    salaryRange: "$150K-$225K",
+    description:
+      "Design and build core macOS infrastructure and system components close to the Apple runtime and system frameworks.",
+    roleFunction: ["software_engineering", "engineering_and_development"],
+    industrySector: [
+      "artificial_intelligence_and_machine_learning",
+      "software_and_saas",
+      "telecommunications",
+    ],
+    requiredSkills: [
+      "Objective-C",
+      "macOS",
+      "reverse engineering",
+      "C/C++",
+      "Swift",
+      "Rust",
+      "systems programming",
+      "performance",
+      "reliability",
+    ],
+    seniorityLevel: "mid_level",
+    jobType: "full_time",
+    collaborated: true,
+    companyProfile: PHOTON_PROFILE,
+  },
+]
+
+const STATIC_COMPANY_JOBS: Record<string, PublicJobOpening[]> = {
+  photon: PHOTON_STATIC_JOBS,
+}
+
+function normalizeCompanySlug(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? ""
+}
+
+function getStaticCompanyJobs(companyId: string | undefined): PublicJobOpening[] {
+  return STATIC_COMPANY_JOBS[normalizeCompanySlug(companyId)] ?? []
+}
+
 function extractCompanySummary(jobs: PublicJobOpening[], profile?: PublicCompanyProfile): string {
   if (profile?.tagline) return profile.tagline
   if (profile?.about) return profile.about
@@ -25,8 +128,10 @@ function unique(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))))
 }
 
-export default function CompanyProfile() {
-  const { companyId } = useParams<{ companyId: string }>()
+export default function CompanyProfile({ companyIdOverride }: { companyIdOverride?: string }) {
+  const { companyId: routeCompanyId } = useParams<{ companyId: string }>()
+  const companyId = companyIdOverride ?? routeCompanyId
+  const fallbackJobs = useMemo(() => getStaticCompanyJobs(companyId), [companyId])
   const jobsQuery = useQuery({
     queryKey: ["company-profile", companyId],
     queryFn: () => listPublicJobOpeningsByCompany(companyId!, 32),
@@ -35,9 +140,9 @@ export default function CompanyProfile() {
   })
 
   if (!companyId) return <CompanyEmpty />
-  if (jobsQuery.isLoading) return <CompanyLoading />
-  if (jobsQuery.isError) return <CompanyEmpty message={jobsQuery.error instanceof Error ? jobsQuery.error.message : String(jobsQuery.error)} />
-  const jobs = jobsQuery.data ?? []
+  if (jobsQuery.isLoading && !fallbackJobs.length) return <CompanyLoading />
+  const jobs = jobsQuery.data?.length ? jobsQuery.data : fallbackJobs
+  if (jobsQuery.isError && !fallbackJobs.length) return <CompanyEmpty message={jobsQuery.error instanceof Error ? jobsQuery.error.message : String(jobsQuery.error)} />
   if (!jobs.length) return <CompanyEmpty />
 
   return <CompanyProfileLayout jobs={jobs} />

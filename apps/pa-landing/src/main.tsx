@@ -95,6 +95,7 @@ const fullRoutes = (
     <Route path="/me/privacy" element={<CandidatePrivacy />} />
     <Route path="/market" element={<Market />} />
     <Route path="/jobs" element={<Market />} />
+    <Route path="/photon" element={<CompanyProfile companyIdOverride="photon" />} />
     <Route path="/companies/:companyId" element={<CompanyProfile />} />
     <Route path="/j/:jobId" element={<PublicJob />} />
     <Route path="/j/:jobId/cv" element={<PublicJobCv />} />

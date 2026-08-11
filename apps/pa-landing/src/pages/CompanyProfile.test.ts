@@ -101,3 +101,21 @@ test("CompanyProfile does not use a first role sentence as the company summary",
   assert.doesNotMatch(source, /Own the entire Android development lifecycle/)
   assert.doesNotMatch(source, /Bonus attributes:/)
 })
+
+test("CompanyProfile can render Photon from curated fallback data", () => {
+  assert.match(source, /const PHOTON_PROFILE: PublicCompanyProfile = \{/)
+  assert.match(source, /websiteUrl: "https:\/\/photon\.codes\/"/)
+  assert.match(source, /Photon builds Spectrum, a framework for bringing AI agents into iMessage, WhatsApp, Discord, Slack, Telegram, Instagram/)
+  assert.match(source, /const PHOTON_STATIC_JOBS: PublicJobOpening\[\] = \[/)
+  assert.match(source, /id: "wekruit-37429d02-photon-macos-devops"/)
+  assert.match(source, /title: "Member of Technical Staff, macOS DevOps"/)
+  assert.match(source, /id: "wekruit-973f2953-photon-objective-c-engineer"/)
+  assert.match(source, /title: "Member of Technical Staff, Objective-C"/)
+  assert.match(source, /const STATIC_COMPANY_JOBS: Record<string, PublicJobOpening\[\]> = \{[\s\S]*photon: PHOTON_STATIC_JOBS/)
+})
+
+test("CompanyProfile leaves non-curated companies blank when Firestore has no jobs", () => {
+  assert.match(source, /function getStaticCompanyJobs\(companyId: string \| undefined\): PublicJobOpening\[\] \{[\s\S]*STATIC_COMPANY_JOBS\[normalizeCompanySlug\(companyId\)\] \?\? \[\]/)
+  assert.match(source, /const jobs = jobsQuery\.data\?\.length \? jobsQuery\.data : fallbackJobs/)
+  assert.match(source, /if \(!jobs\.length\) return <CompanyEmpty \/>/)
+})
