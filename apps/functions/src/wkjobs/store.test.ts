@@ -285,7 +285,7 @@ describe("consent", () => {
       version: WKJOBS_CONSENT_VERSION,
       now: () => T0,
     })
-    const record = docs.get(`${WKJOBS_CONSENTS}/cand-123456`) as ConsentRecord
+    const record = docs.get(`${WKJOBS_CONSENTS}/cand-123456`) as unknown as ConsentRecord
     assert.equal(record.version, WKJOBS_CONSENT_VERSION)
     assert.equal(record.acceptedAt, new Date(T0).toISOString())
     assert.equal(record.history.length, 1)
@@ -300,7 +300,7 @@ describe("consent", () => {
       now: () => T0 + 86_400_000,
     })
 
-    const record = docs.get(`${WKJOBS_CONSENTS}/cand-123456`) as ConsentRecord
+    const record = docs.get(`${WKJOBS_CONSENTS}/cand-123456`) as unknown as ConsentRecord
     assert.equal(record.version, "wkjobs-v2", "latest version is current")
     assert.deepEqual(
       record.history.map((h) => h.version),
