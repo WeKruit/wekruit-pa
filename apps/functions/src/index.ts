@@ -3447,3 +3447,8 @@ export {
   paReferOnPrescreenWrite,
   paReferOnEmployerVisibleWrite,
 } from "./refer-program.js"
+
+// wkjobs CLI acquisition surface — OAuth device flow (`/v1/device/*`) plus
+// `/v1/me`, backing the `wkjobs` command-line job search. Strictly additive:
+// reads pa-candidate-auth / pa-users, writes only pa-wkjobs-*. See wkjobs/.
+export { paWkJobsApi } from "./wkjobs/http.js"
