@@ -23,6 +23,16 @@ import type { Firestore } from "firebase-admin/firestore"
 
 export const WKJOBS_DEVICE_CODES = "pa-wkjobs-device-codes"
 export const WKJOBS_TOKENS = "pa-wkjobs-tokens"
+export const WKJOBS_CONSENTS = "pa-wkjobs-consents"
+
+/**
+ * wkjobs gets its own consent rather than reusing the onboarding one, because
+ * it asks for something the web flow never does: permission for a program on
+ * the candidate's own machine to hold a LinkedIn session cookie. Bump this
+ * string whenever that bargain changes — approvals carrying an older version
+ * are refused, so the candidate is re-asked rather than silently grandfathered.
+ */
+export const WKJOBS_CONSENT_VERSION = "wkjobs-2026-08-12"
 
 /** Contract: device codes expire within ten minutes. */
 export const DEVICE_CODE_TTL_SEC = 600
@@ -220,6 +230,36 @@ export async function decideDevice(
     decidedAt: new Date(nowMs).toISOString(),
   })
   return { ok: true }
+}
+
+export interface ConsentRecord {
+  candidateId: string
+  version: string
+  acceptedAt: string
+  /** Every acceptance ever recorded, so a version bump leaves an audit trail. */
+  history: { version: string; acceptedAt: string }[]
+}
+
+/**
+ * Records that this candidate accepted the wkjobs terms. Append-only: a new
+ * acceptance never erases the previous one, so "what did they agree to, and
+ * when" stays answerable after the copy changes.
+ */
+export async function recordConsent(
+  db: Firestore,
+  args: { candidateId: string; version: string; now?: () => number },
+): Promise<void> {
+  const acceptedAt = new Date(args.now ? args.now() : Date.now()).toISOString()
+  const ref = db.collection(WKJOBS_CONSENTS).doc(args.candidateId)
+  const snap = await ref.get()
+  const previous = snap.exists ? ((snap.data() as ConsentRecord).history ?? []) : []
+  const record: ConsentRecord = {
+    candidateId: args.candidateId,
+    version: args.version,
+    acceptedAt,
+    history: [...previous, { version: args.version, acceptedAt }],
+  }
+  await ref.set(record)
 }
 
 export interface TokenRecord {

@@ -15,6 +15,7 @@ import Market from "./pages/Market.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
 import ConnectLinkedin from "./pages/ConnectLinkedin.js"
+import WkJobs from "./pages/WkJobs.js"
 import ConnectPhone from "./pages/ConnectPhone.js"
 import CompanyProfile from "./pages/CompanyProfile.js"
 import Onboarding from "./pages/Onboarding.js"
@@ -113,6 +114,8 @@ const fullRoutes = (
     <Route path="/r/:slug" element={<ReferPublicPage />} />
     <Route path="/me/refer" element={<ReferPage />} />
     <Route path="/connect-linkedin" element={<ConnectLinkedin />} />
+    {/* Device approval for the wkjobs CLI — see pages/WkJobs.tsx. */}
+    <Route path="/wkjobs" element={<WkJobs />} />
     <Route path="/docs/partner/:token" element={<PartnerApiDoc />} />
     <Route path="/recruiters" element={<RecruiterRedirect />} />
     <Route path="/recruiters/job/:jobId" element={<RecruiterRedirect />} />

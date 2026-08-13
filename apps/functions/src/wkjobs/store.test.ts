@@ -10,10 +10,14 @@ import {
   generateUserCode,
   mintToken,
   normalizeUserCode,
+  recordConsent,
   resolveToken,
   sha256,
+  WKJOBS_CONSENT_VERSION,
+  WKJOBS_CONSENTS,
   WKJOBS_DEVICE_CODES,
   WKJOBS_TOKENS,
+  type ConsentRecord,
 } from "./store.js"
 
 /**
@@ -270,6 +274,39 @@ describe("decideDevice", () => {
       now: () => T0 + 601_000,
     })
     assert.deepEqual(result, { ok: false, reason: "expired" })
+  })
+})
+
+describe("consent", () => {
+  it("records the accepted version against the candidate", async () => {
+    const { db, docs } = makeFakeDb()
+    await recordConsent(db, {
+      candidateId: "cand-123456",
+      version: WKJOBS_CONSENT_VERSION,
+      now: () => T0,
+    })
+    const record = docs.get(`${WKJOBS_CONSENTS}/cand-123456`) as ConsentRecord
+    assert.equal(record.version, WKJOBS_CONSENT_VERSION)
+    assert.equal(record.acceptedAt, new Date(T0).toISOString())
+    assert.equal(record.history.length, 1)
+  })
+
+  it("appends rather than overwrites when the terms change", async () => {
+    const { db, docs } = makeFakeDb()
+    await recordConsent(db, { candidateId: "cand-123456", version: "wkjobs-v1", now: () => T0 })
+    await recordConsent(db, {
+      candidateId: "cand-123456",
+      version: "wkjobs-v2",
+      now: () => T0 + 86_400_000,
+    })
+
+    const record = docs.get(`${WKJOBS_CONSENTS}/cand-123456`) as ConsentRecord
+    assert.equal(record.version, "wkjobs-v2", "latest version is current")
+    assert.deepEqual(
+      record.history.map((h) => h.version),
+      ["wkjobs-v1", "wkjobs-v2"],
+      "what they agreed to before stays answerable",
+    )
   })
 })
 

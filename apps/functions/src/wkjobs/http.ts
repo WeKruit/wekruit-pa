@@ -27,7 +27,9 @@ import {
   createDevice,
   decideDevice,
   mintToken,
+  recordConsent,
   resolveToken,
+  WKJOBS_CONSENT_VERSION,
 } from "./store.js"
 
 /**
@@ -36,7 +38,7 @@ import {
  * change, not a redeploy of new code.
  */
 const WKJOBS_VERIFICATION_URL = defineString("WKJOBS_VERIFICATION_URL", {
-  default: "https://wekruit.com/device",
+  default: "https://wekruit.com/wkjobs",
 })
 
 /** Browser origins allowed to call /v1/device/approve. */
@@ -225,10 +227,23 @@ async function handleDeviceApprove(
   const userCode = typeof body.user_code === "string" ? body.user_code : ""
   const approve = body.approve !== false
 
+  // Consent gates approval only. Declining needs no agreement — refusing to
+  // connect must never require accepting terms first.
+  if (approve && body.consent_version !== WKJOBS_CONSENT_VERSION) {
+    res.status(400).json({ reason: "consent_required", consent_version: WKJOBS_CONSENT_VERSION })
+    return
+  }
+
   const result = await decideDevice(db, { userCode, candidateId, approve })
   if (!result.ok) {
     res.status(result.reason === "unknown_code" ? 404 : 409).json({ reason: result.reason })
     return
+  }
+
+  // Recorded after the decision sticks, so a failed approval never leaves a
+  // consent record for a connection that did not happen.
+  if (approve) {
+    await recordConsent(db, { candidateId, version: WKJOBS_CONSENT_VERSION })
   }
   res.status(200).json({ ok: true, approved: approve })
 }
