@@ -65,6 +65,14 @@ export const paHeadhunterMcp = onRequest(
       principal = await requireHeadhunterPrincipal(req.header("authorization"))
     } catch (err) {
       const message = err instanceof McpAuthError ? err.message : "unauthorized"
+      // Point an unauthenticated client at the authorization server (RFC 9728). Without this the
+      // 401 is a dead end: the claude.ai connector has no way to discover where to get a token,
+      // which is exactly what a live probe found on 2026-07-27.
+      const issuer = process.env.PA_MCP_OAUTH_ISSUER || "https://wekruit-pa.web.app"
+      res.setHeader(
+        "WWW-Authenticate",
+        `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
+      )
       res.status(401).json(rpcError(null, -32001, message))
       return
     }

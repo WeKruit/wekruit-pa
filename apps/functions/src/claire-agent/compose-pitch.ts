@@ -695,7 +695,15 @@ export async function composePitchTurn(
   const alreadyPitched =
     Boolean((userDoc as { pitchedAt?: unknown }).pitchedAt) ||
     (userDoc as { onboardingStatus?: unknown }).onboardingStatus === "complete"
-  const resumeIsRich = Boolean(resume) && isThinEvidence(profile) === false
+  // A LINKEDIN MIRROR IS NOT A RÉSUMÉ (live 2026-07-26, +16508800410). `runCoresignalExperiencesMirror`
+  // writes a `parsedCandidateResumes` doc for LinkedIn data too, so `Boolean(resume)` is true for
+  // someone who never sent a document — and the confirmation told him "read through your résumé"
+  // moments after he pasted a LinkedIn link. Key on the artefact's SOURCE, not its existence.
+  const resumeSource = typeof (resume as { source?: unknown } | null)?.source === "string"
+    ? String((resume as { source?: unknown }).source)
+    : ""
+  const isRealResume = Boolean(resume) && resumeSource !== "coresignal_collect_v2"
+  const resumeIsRich = isRealResume && isThinEvidence(profile) === false
   // YC FOUNDER-MATCH ENTRY (Adam 2026-07-20 "换个口吻…不用推进"): a /yc-startup arrival keeps the
   // we-know-you confirmation + pitch, but the CLOSER never pushes ("want me to pull roles?") — it
   // states the notify promise instead: in the founder pool, text here + email when a match pops.
@@ -728,12 +736,16 @@ export async function composePitchTurn(
   // it's an improvement, not a re-pitch). LinkedIn-only keeps the original opener.
   // YC posture NEVER frames the read-back as "your pitch" (Adam 2026-07-20: founder
   // matching is not pitch-coaching) — it's "here's what stands out", then the pool promise.
+  // YC framing (Adam 2026-07-24): the confirmation should say "this is how I'll DESCRIBE YOU",
+  // because the next bubble is exactly that — the line we hand to the founders/investors we intro
+  // them to. "here's what stands out" read like a compliment about them; "how i'll describe you"
+  // tells them what it's FOR, and invites a correction if we got it wrong.
   let confirmation = ycPosture
     ? resumeIsRich
-      ? "got it — read through your résumé, here's what stands out 👀"
+      ? "got it — read through your résumé. here's how i'll describe you to the people i intro you to 👇"
       : profile.recentCompany
-        ? `got it — pulled your ${profile.recentCompany} experience, here's what stands out 👀`
-        : "got it — pulled your experience, here's what stands out 👀"
+        ? `got it — pulled your ${profile.recentCompany} experience. here's how i'll describe you to the people i intro you to 👇`
+        : "got it — pulled your experience. here's how i'll describe you to the people i intro you to 👇"
     : resumeIsRich
       ? "got it — went through your résumé, added the technical detail to your pitch 👍"
       : profile.recentCompany
@@ -790,8 +802,9 @@ export async function composePitchTurn(
     // "peek at who's building, say the word": that invited a
     // find_match job pull, and a founder got pitched SWE openings (Adam 2026-07-23). YC is
     // people matching, not job roles.
+    // NO TIMING PROMISE (Adam 2026-07-25): match_yc_people delivers as soon as the intake lands.
     const pool =
-      "you're in the founder-match pool 🤝 i'll text you right here (and email you) once we find you a good match — founders, investors, operators worth meeting."
+      "you're in the founder-match pool 🤝 i'll text you right here with people worth meeting — founders, investors, operators: a first few as soon as i've got your answers, more after (and i'll email you too)."
     offer = !u.ycIntake?.building
       ? `${pool} while that's brewing — what are you building right now?`
       : !u.ycIntake?.wantsToMeet

@@ -575,9 +575,19 @@ test("YC EVENT INTAKE: incomplete ycIntake → ycEventIntake slot progression ri
     userId: NONCANARY_UID,
     inboundText: "it's an eval harness for agents",
   })
-  assert.deepEqual(mid.ycEventIntake, { next: "wants_to_meet", offerLinkedin: false })
+  // `recorded` carries what is ALREADY on file so the prompt can name it back and forbid re-asking
+  // (2026-07-24 live: "what are you building right now?" asked three times in one thread).
+  assert.deepEqual(mid.ycEventIntake, {
+    next: "wants_to_meet",
+    offerLinkedin: false,
+    recorded: { building: "an eval harness" },
+  })
 
-  // Intake complete → NO ycEventIntake; plain yc posture remains.
+  // Intake complete → ycEventIntake is STILL emitted, carrying intakeComplete + both recorded
+  // answers. It used to be cleared to `undefined` here, which left the model with no directive at
+  // all once intake finished — the live re-ask loop (2026-07-24: "what are you building right now?"
+  // at 04:41, again 04:46, then "what are you hoping to connect with most" 04:50). The prompt now
+  // names both answers back and forbids re-asking.
   const done = await selectClaireMode({
     ...{
       db: makeDb({
@@ -590,7 +600,105 @@ test("YC EVENT INTAKE: incomplete ycIntake → ycEventIntake slot progression ri
     inboundText: "cool thanks",
   })
   assert.equal(done.entryPosture, "yc_startup_school")
-  assert.equal(done.ycEventIntake, undefined)
+  assert.deepEqual(done.ycEventIntake, {
+    next: "wants_to_meet",
+    offerLinkedin: false,
+    intakeComplete: true,
+    recorded: { building: "x", wantsToMeet: "y" },
+  })
+})
+
+test("YC LINKEDIN-URL ASK: the tap worked but LinkedIn gave us no profile (2026-07-25)", async () => {
+  // Live: 87 YC users connected; 54 arrived with a real vanity URL and ALL 54 enriched, 33 got only
+  // the `/oauth-linked/<sub>` placeholder and 1 enriched. They are invisible to the existing beats
+  // because hasIngestedBackground counts the OAuth bind, so offerLinkedin is false for them.
+  const stranded = {
+    source: "yc_startup_school",
+    linkedinOauthLinked: true,
+    linkedinUrl: "https://www.linkedin.com/oauth-linked/7RLX9e4Qjo",
+  }
+  const askFake = makeDb(stranded)
+  const ask = await selectClaireMode({
+    db: askFake.db,
+    userId: NONCANARY_UID,
+    inboundText: "i'm building an eval harness for agents",
+  })
+  assert.equal(ask.ycEventIntake?.askLinkedinUrl, true, "OAuth-linked + placeholder + no background → ask")
+  assert.equal(ask.ycEventIntake?.offerLinkedin, false, "never re-offer the connect link — they connected")
+  assert.equal(
+    askFake.writes().find((w) => (w.ycIntake as Record<string, unknown> | undefined)?.linkedinUrlAskedAt),
+    undefined,
+    "no selection-time stamp — cutover stamps after delivery",
+  )
+
+  // Fires after the intake is finished too: 11 of the 32 had already completed it.
+  const doneToo = await selectClaireMode({
+    db: makeDb({
+      ...stranded,
+      ycIntake: { building: "x", wantsToMeet: "y", completedAt: "2026-07-25T00:00:00.000Z" },
+    }).db,
+    userId: NONCANARY_UID,
+    inboundText: "cool thanks",
+  })
+  assert.equal(doneToo.ycEventIntake?.askLinkedinUrl, true, "completed intake still gets the ask")
+
+  // One-shot, on its OWN stamp — linkedinNudgedAt must NOT swallow it (they were usually nudged
+  // BEFORE they connected, so a shared stamp would silence the ask for exactly the affected people).
+  const nudgedThenLinked = await selectClaireMode({
+    db: makeDb({ ...stranded, ycIntake: { linkedinNudgedAt: "2026-07-25T00:00:00.000Z" } }).db,
+    userId: NONCANARY_UID,
+    inboundText: "ok",
+  })
+  assert.equal(nudgedThenLinked.ycEventIntake?.askLinkedinUrl, true, "nudge stamp does not consume the ask")
+  const alreadyAsked = await selectClaireMode({
+    db: makeDb({ ...stranded, ycIntake: { linkedinUrlAskedAt: "2026-07-25T00:00:00.000Z" } }).db,
+    userId: NONCANARY_UID,
+    inboundText: "ok",
+  })
+  assert.equal(alreadyAsked.ycEventIntake?.askLinkedinUrl, undefined, "stamped → never asked twice")
+
+  // LIVE INCIDENT 2026-07-25 11:54, +13129727824. She was asked for her URL, she sent
+  // `http://linkedin.com/in/sofia-grimm`, and the reply was "can you paste your linkedin profile URL
+  // here exactly (linkedin.com/in/…)" — this flag, computed off a snapshot taken before the enrich
+  // could write. Never ask for what is already in the message.
+  for (const pasted of [
+    "http://linkedin.com/in/sofia-grimm",
+    "https://www.linkedin.com/in/aanya-tolat",
+    "linkedin.com/in/suhaan-mobhani/",
+    "here you go — https://www.linkedin.com/in/jiani-ruan/?utm_source=share",
+  ]) {
+    const supplied = await selectClaireMode({
+      db: makeDb(stranded).db,
+      userId: NONCANARY_UID,
+      inboundText: pasted,
+    })
+    assert.equal(
+      supplied.ycEventIntake?.askLinkedinUrl,
+      undefined,
+      `they just sent "${pasted}" — never ask for it again`,
+    )
+  }
+  // Still asks when the message merely TALKS about LinkedIn without carrying a profile URL.
+  const talkedAbout = await selectClaireMode({
+    db: makeDb(stranded).db,
+    userId: NONCANARY_UID,
+    inboundText: "i connected my linkedin already",
+  })
+  assert.equal(talkedAbout.ycEventIntake?.askLinkedinUrl, true, "no URL in the message → still ask")
+
+  // Who must NEVER get it: an enriched user, someone with a real URL, and someone who never connected.
+  for (const [label, user] of [
+    ["enriched", { ...stranded, experienceHighlights: ["Founder @ Foo"] }],
+    ["real url", { ...stranded, linkedinUrl: "https://www.linkedin.com/in/ada-lovelace" }],
+    ["never connected", { source: "yc_startup_school" }],
+  ] as const) {
+    const d = await selectClaireMode({
+      db: makeDb(user).db,
+      userId: NONCANARY_UID,
+      inboundText: "i'm building an eval harness for agents",
+    })
+    assert.equal(d.ycEventIntake?.askLinkedinUrl, undefined, `${label} → no URL ask`)
+  }
 })
 
 test("YC EVENT ENTRY: existing non-yc user sending the YC opener flips into the event posture (Noah 2026-07-22)", async () => {

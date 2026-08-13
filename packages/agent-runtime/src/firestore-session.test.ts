@@ -209,6 +209,51 @@ test("addItems writes assistant rows only and is idempotent on retry", async () 
   }
 })
 
+test("addItems never persists the raw structured-output envelope", async () => {
+  // Live 2026-07-25: 224 of 1889 assistant rows in 24h were this JSON string, every one written
+  // here. pa-messages is BOTH the user transcript and the history replayed to the model, so the
+  // envelope must be parsed once, at this boundary, and only the delivered bubbles stored.
+  const fake = makeFakeDb()
+  const session = makeSession({ db: fake.db })
+  const envelope = (text: string) =>
+    [
+      {
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text }],
+      },
+    ] as unknown as Parameters<typeof session.addItems>[0]
+
+  await session.addItems(envelope('{"messages":["love the privacy L1 angle","who do you want to meet at YC?"]}'))
+  assert.equal(fake.rows().length, 1)
+  assert.equal(fake.rows()[0]!.body, "love the privacy L1 angle\n\nwho do you want to meet at YC?")
+
+  // An empty envelope means the turn delivered via a tool and said nothing — no row at all.
+  await session.addItems(envelope('{"messages":[]}'))
+  assert.equal(fake.rows().length, 1)
+
+  // Fail-safe: unparseable / non-wrapper JSON is the model's plain text, stored verbatim.
+  await session.addItems(envelope('{"messages":[unclosed'))
+  assert.equal(fake.rows().at(-1)!.body, '{"messages":[unclosed')
+
+  // Nothing that reaches Firestore may be the envelope shape.
+  for (const r of fake.rows()) {
+    const body = String(r.body ?? "").trim()
+    const looksLikeEnvelope =
+      body.startsWith("{") &&
+      body.includes('"messages"') &&
+      (() => {
+        try {
+          return Array.isArray((JSON.parse(body) as { messages?: unknown }).messages)
+        } catch {
+          return false
+        }
+      })()
+    assert.equal(looksLikeEnvelope, false, `envelope leaked into pa-messages: ${body}`)
+  }
+})
+
 test("addItems skips synthetic user inputs so internal prompts do not become transcript memory", async () => {
   const fake = makeFakeDb()
   const session = makeSession({ db: fake.db })

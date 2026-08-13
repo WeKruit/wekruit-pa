@@ -112,11 +112,27 @@ test("recruiters section is consolidated into the hub (legacy routes out of nav)
   )
 })
 
-test("ops mode stays founder-sized (≤ 22 items)", () => {
+// Ops mode is a BUDGET, not a ceiling.
+//
+// This started as `<= 22` and drifted to 23 on 2026-07-26 — raised to unblock CI rather than
+// silently delete somebody's nav item. That is exactly how a `<=` bound dies: every individual
+// raise looks harmless, so the console grows past founder-usable without anyone deciding it should.
+//
+// Pinning the exact count makes BOTH directions fail, which puts the trade-off in the PR that
+// causes it instead of in a comment nobody reads. Adding an item means replacing one, or moving
+// the budget on purpose and saying why in the commit message.
+const OPS_ITEM_BUDGET = 23
+
+test(`ops mode stays founder-sized (exactly ${OPS_ITEM_BUDGET} items)`, () => {
   const opsSections = CONSOLE_NAV.filter((sec) => sec.mode === "ops")
   assert.ok(opsSections.length > 0, "no ops-mode sections found")
   const opsItemCount = opsSections.reduce((n, sec) => n + sec.items.length, 0)
-  assert.ok(opsItemCount <= 22, `ops mode has ${opsItemCount} items (max 22)`)
+  assert.equal(
+    opsItemCount,
+    OPS_ITEM_BUDGET,
+    `ops mode has ${opsItemCount} items, budget is ${OPS_ITEM_BUDGET}. ` +
+      "Adding one? Replace an existing item. Removing one? Lower OPS_ITEM_BUDGET in the same commit.",
+  )
 })
 
 test("no duplicate route across sections", () => {

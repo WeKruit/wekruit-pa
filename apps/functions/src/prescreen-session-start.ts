@@ -24,6 +24,7 @@ import {
   type PrescreenConfig,
 } from "@pa/pa-orchestrator"
 import { readUserPrescreenSharedAnswers, AI_USAGE_SHARED_KEY } from "@pa/pa-orchestrator"
+import { isYcPeopleUser } from "@pa/core-types"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { markFirstInterviewStarted } from "./prescreen-outcome-service.js"
 import { hasResumeOrLinkedInProfileSignal } from "./prescreen-terminal-action.js"
@@ -113,6 +114,12 @@ export interface RunPreScreenResult {
     | "started"
     | "resumed"
     | "not_matched"
+    /**
+     * YC people lane (Adam-LOCKED 2026-07-24) — this user is a YC Startup School person
+     * (founder / investor / operator). They get PEOPLE matching only: no job prescreen,
+     * no job interview, no job questions. Nothing is sent.
+     */
+    | "yc_people_no_job_prescreen"
     /**
      * RULE 2 (2026-06-11 incident) — a session for this (userId, jobId) already
      * reached a non-null `terminal`. NEVER restart a completed screen; the
@@ -909,6 +916,30 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
   const sendSms = args.sendSms ?? sendRuntimeApprovedIMessage
   const nowIso = new Date().toISOString()
   const sessionId = deriveSessionId(args.jobId, args.userId, nowIso)
+
+  // 0.0 YC PEOPLE LANE (Adam-LOCKED 2026-07-24: "we don't wanna ask anything about the job") —
+  // a YC Startup School person never enters a job prescreen. This is the SINGLE choke point every
+  // prescreen start funnels through (copy-paste token trigger, broker trigger, agent tools, voice,
+  // ATS pending trigger, Apply trigger, recovery sweep, cutover continuation), so one guard here
+  // closes all of them — including the ATS pending-trigger path that REWRITES any inbound "hi"
+  // into a job token, and the matched-gate bypass callers below.
+  //
+  // Runs FIRST, before the matched-gate, so `allowMatchedBypass` / `sourceRequestedUserId` cannot
+  // route around it. Fail-OPEN on a read error: prescreen is the revenue path for ordinary
+  // candidates and a Firestore blip must not block the whole fleet's interviews — the several
+  // downstream YC guards still apply.
+  try {
+    const ycSnap = await args.db.collection("pa-users").doc(args.userId).get()
+    if (isYcPeopleUser(ycSnap.data() ?? {})) {
+      log("prescreen.yc_people_no_job_prescreen", { jobId: args.jobId, userId: args.userId })
+      return { ok: false, reason: "yc_people_no_job_prescreen", sessionId }
+    }
+  } catch (err) {
+    log("prescreen.yc_people_check_failed_open", {
+      userId: args.userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
 
   // 0. MATCHED-GATE (2026-05-31) — refuse a prescreen for a job never matched/
   // pushed to this candidate, BEFORE config load + BEFORE supersede (so a foreign

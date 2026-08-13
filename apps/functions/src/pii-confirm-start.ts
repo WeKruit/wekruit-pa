@@ -26,6 +26,7 @@ import type {
   PipelineStateProvider,
 } from "@pa/pa-orchestrator"
 import { INDUSTRY_SECTOR_VOCAB, type IndustrySector } from "@wekruit/shared-tags"
+import { isYcPeopleUser } from "@pa/core-types"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import {
   buildJobRecommendationRuntimeContext,
@@ -133,6 +134,17 @@ export async function runPiiConfirmForUser(
 
   // Skip-if-present: PII already consented.
   const userSnap = await args.db.collection("pa-users").doc(args.userId).get()
+
+  // YC PEOPLE LANE (Adam-LOCKED 2026-07-24: "we don't wanna ask anything about the job") — this
+  // pipeline runs with includeLevel1:true, which appends SIX job-search questions: years of
+  // experience, WORK AUTHORIZATION, target location, SALARY floor, industry and company size.
+  // They emit through sendRuntimeApprovedIMessage, so neither the bubble scrub nor the job-rec
+  // sendImessage backstop covers them. A YC founder/investor must never be asked any of it.
+  if (isYcPeopleUser(userSnap.data() ?? {})) {
+    log("pii_confirm.yc_people_no_job_questions", { userId: args.userId })
+    return { ok: false, skipped: true, reason: "yc_people_no_job_questions" }
+  }
+
   const existing = userSnap.data()?.contactPII as
     | { consentedAt?: string }
     | undefined

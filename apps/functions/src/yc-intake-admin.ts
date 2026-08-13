@@ -20,12 +20,14 @@ import { defineSecret } from "firebase-functions/params"
 import { HttpsError, onCall } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { z } from "zod"
-import { PA_COLLECTIONS } from "@pa/core-types"
+import { PA_COLLECTIONS, isYcPeopleUser } from "@pa/core-types"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
 const YC_SOURCE = "yc_startup_school"
+/** firstTouchCampaign written by the event QR campaign — third canonical YC signal. */
+const YC_CAMPAIGN = "yc-startup-school"
 // Event cohorts are hundreds at most; cap defends against a runaway scan.
 const SCAN_CAP = 5_000
 
@@ -70,24 +72,48 @@ function rowFromDoc(id: string, d: Record<string, unknown>): YcIntakeRow {
 }
 
 export async function runYcIntakeToday(deps: { db: Firestore }): Promise<YcIntakeTodayResult> {
-  const snap = await deps.db
-    .collection(PA_COLLECTIONS.users)
-    .where("source", "==", YC_SOURCE)
-    .limit(SCAN_CAP)
-    .get()
+  // THREE queries, unioned — the canonical YC predicate is an OR across three fields, and Firestore
+  // cannot express that in one query. The old single `source == yc_startup_school` query meant an
+  // event-QR entrant (source: qr_imessage / candidate + ycEventEntryAt) NEVER appeared in the
+  // operator queue, so they silently never got the people send Claire promised them. Event cohorts
+  // are hundreds, so three capped scans + an in-memory de-dupe is the right shape here.
+  const [bySource, byEventEntry, byCampaign] = await Promise.all([
+    deps.db.collection(PA_COLLECTIONS.users).where("source", "==", YC_SOURCE).limit(SCAN_CAP).get(),
+    deps.db
+      .collection(PA_COLLECTIONS.users)
+      .orderBy("ycEventEntryAt", "desc")
+      .limit(SCAN_CAP)
+      .get(),
+    deps.db
+      .collection(PA_COLLECTIONS.users)
+      .where("firstTouchCampaign", "==", YC_CAMPAIGN)
+      .limit(SCAN_CAP)
+      .get(),
+  ])
+  const docs = new Map<string, Record<string, unknown>>()
+  for (const snap of [bySource, byEventEntry, byCampaign]) {
+    for (const doc of snap.docs) {
+      const d = (doc.data() ?? {}) as Record<string, unknown>
+      // orderBy("ycEventEntryAt") returns every doc that HAS the field; re-check the predicate so a
+      // non-YC doc carrying a stray value can never enter the queue.
+      if (!isYcPeopleUser(d)) continue
+      docs.set(doc.id, d)
+    }
+  }
   const ready: YcIntakeRow[] = []
   const incomplete: YcIntakeRow[] = []
-  for (const doc of snap.docs) {
-    const d = (doc.data() ?? {}) as Record<string, unknown>
+  for (const [id, d] of docs) {
     if (d.testMode === true || d.isDemo === true) continue
-    const row = rowFromDoc(doc.id, d)
+    const row = rowFromDoc(id, d)
     if (!row.phoneTail) continue // never surface unreachable rows in a send queue
     if (row.completedAt) ready.push(row)
     else incomplete.push(row)
   }
   ready.sort((a, b) => (a.completedAt ?? "").localeCompare(b.completedAt ?? ""))
   incomplete.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
-  return { ok: true, ready, incomplete, scanned: snap.size, truncated: snap.size >= SCAN_CAP }
+  const scanned = docs.size
+  const truncated = [bySource, byEventEntry, byCampaign].some((s) => s.size >= SCAN_CAP)
+  return { ok: true, ready, incomplete, scanned, truncated }
 }
 
 const SendMatchesInputSchema = z.object({
@@ -112,7 +138,10 @@ export async function runYcSendMatches(
   const snap = await userRef.get()
   if (!snap.exists) return { ok: false, reason: "user_not_found" }
   const d = (snap.data() ?? {}) as Record<string, unknown>
-  if (d.source !== YC_SOURCE) return { ok: false, reason: "not_yc_user" }
+  // Shared predicate, not `source` alone. The narrow check meant an event-QR entrant
+  // (source: qr_imessage/candidate + ycEventEntryAt) returned "not_yc_user" and SILENTLY never got
+  // the 7pm people send they were promised — a bug in the YC lane itself, not a job-leak.
+  if (!isYcPeopleUser(d)) return { ok: false, reason: "not_yc_user" }
   const intake = (d.ycIntake ?? {}) as Record<string, unknown>
   if (typeof intake.completedAt !== "string") return { ok: false, reason: "intake_incomplete" }
   const day = nowIso().slice(0, 10)
@@ -126,7 +155,7 @@ export async function runYcSendMatches(
   // making a delivery-time promise.
   const body = [
     "got it — you're in the YC Startup School people-match pool 🤝",
-    "we're lining up folks worth meeting based on what you shared. i'll text you right here once we find you a good match.",
+    "we're lining up folks worth meeting based on what you shared. i'll text you right here as they land.",
     "reply with anyone you'd especially like to meet, or any context that would make an intro more useful.",
   ]
     .join("\n\n")

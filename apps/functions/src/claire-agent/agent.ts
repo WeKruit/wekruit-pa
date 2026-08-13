@@ -27,6 +27,7 @@ import { type ProcessSessionStore, type ProcessToolContext } from "./tools/proce
 import { buildClairePrompt, buildClaireTurnContext } from "./prompt.js"
 import { buildClaireGuardrails } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverBubblesEx } from "./delivery.js"
+import { scrubYcJobOffers, scrubYcInternalNarration } from "./yc-people-guard.js"
 import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
@@ -479,10 +480,16 @@ function trackTransport(inner: ClaireTransport): {
       sentText++
       return inner.sendText(t, opts)
     },
-    tapback: (r) => {
-      viaTool = true
-      return inner.tapback(r)
-    },
+    // A REACTION IS NOT AN ANSWER (live YC event, 2026-07-25). This used to set `viaTool`, which
+    // makes `deliveredViaTool` true, which suppresses the model's composed reply — so a turn where
+    // the model tapped 👍 AND wrote a real answer delivered only the tapback. Captured verbatim in
+    // `pa-turns`: `deliveredViaTool:true`, `toolCalls:[react_to_user{emphasize}, record_yc_intake]`,
+    // and a perfectly good `finalText` ("love the privacy L1 angle — … who do you want to meet at
+    // YC Startup School?") that no `pa-outbound` row was ever created for. From the attendee's side
+    // they described their startup and got an emphasize bubble and silence.
+    // `noReply` still marks the turn handled — that one is an explicit decision NOT to reply.
+    // A tapback decorates a reply; it never replaces one.
+    tapback: (r) => inner.tapback(r),
     noReply: (r) => {
       viaTool = true
       return inner.noReply(r)
@@ -932,6 +939,7 @@ export async function runClaireTurn(
     judgeModel: deps.judgeModel ?? CLAIRE_MODEL,
     jobId: deps.jobId,
     ...(input.toE164 ? { toE164: input.toE164 } : {}),
+    ...(input.text ? { userText: input.text } : {}),
     log,
     nowIso: deps.nowIso ?? (() => new Date().toISOString()),
     findMatch: deps.findMatch,
@@ -1013,14 +1021,28 @@ export async function runClaireTurn(
   if (deps.ycEventIntake?.kickoff && deps.isSuppressionFallback !== true) {
     let connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
     if (!connectUrl) connectUrl = CONNECT_LINKEDIN_LINK_BASE
+    // WHAT WE PROMISE HERE MUST BE WHAT WE DELIVER (Adam 2026-07-24). This line used to read
+    // "...then will share the list you should go connect and help you match after that!" — but #622
+    // removed the attendee list. So the very first message promised a list we no longer have, users
+    // duly asked for it ("Share the list with me"), and Claire had nothing: live, that produced FIVE
+    // clarifying questions and an invented promise to email an attachment. Promise DIRECT matching
+    // instead, which is what actually happens.
+    // NO TIMING CLAUSE (Adam 2026-07-25): matches are delivered IMMEDIATELY by match_yc_people the
+    // moment the two intake answers land, so the old "your matches land on <date>" promise is now a
+    // lie in the other direction — it would make them wait for something already on its way.
+    const framing =
+      "i'll get a quick idea of what you're building and who you want to meet, then match you with the right Startup School people."
     const parts: string[] = [
       "hey!! welcome 🎉 i'm claire — i match startup school folks with founders who are building + hiring.",
       ...(deps.ycEventIntake.offerLinkedin
         ? [
             `quick unlock so founders see your real background: log in with LinkedIn (one tap) 👉 ${connectUrl}`,
-            "Also will get some idea about you then will share the list you should go connect and help you match after that!",
+            framing,
           ]
-        : ["so — what are you building right now?"]),
+        : // Background already imported → no LinkedIn beat. Still carry the framing so this branch
+          // isn't a thin "so — what are you building?" (live: 3d1TYXwutJuP, b6ag31sPyxKR got exactly
+          // that and it read abrupt next to the LinkedIn version).
+          [framing, "so — what are you building right now?"]),
       "reply STOP anytime to opt out.",
     ]
     const message = parts.join("\n\n")
@@ -1302,6 +1324,36 @@ export async function runClaireTurn(
   })
 
   const deliveredViaTool = tracked.handledViaTool()
+
+  // YC PEOPLE-LANE JOB-OFFER SCRUB (Adam-LOCKED 2026-07-24). #611 omits every job TOOL for a
+  // yc user, so a job listing can never be DELIVERED — but an OFFER is just prose and needs no
+  // tool. The ban was prompt-only (prompt.ts: "NEVER offer 'want me to pull roles'") and the
+  // model emitted that exact phrase to a real YC user 14.5h AFTER the guards were live
+  // (2026-07-24T15:46Z). This is the deterministic backstop. Refusals are preserved (they also
+  // contain job words); only affirmative, non-negated offers are dropped. Non-YC paths never run.
+  if (deps.entryPosture === "yc_startup_school") {
+    const scrub = scrubYcJobOffers(bubbles)
+    if (scrub.scrubbed > 0) {
+      log("yc.job_offer_scrubbed", { userId: input.userId, bubblesScrubbed: scrub.scrubbed })
+      bubbles = scrub.bubbles
+    }
+    // INTERNAL-STATE NARRATION SCRUB (2026-07-25 live event). Same seam, same reason as the
+    // job-offer scrub above: the ban was prompt-side (and payload-side, in the tool's own
+    // `nextAction`) and the model said the banned words to real attendees anyway — "your previous
+    // batch is still on their screen so nothing new came through", three turns running, while the
+    // person kept asking for more people. It is also the only guard that can catch the ECHO case,
+    // where the model reproduces an already-leaked sentence from conversation history with no tool
+    // call involved — no tool return value can reach that, only the delivery seam.
+    const narr = scrubYcInternalNarration(bubbles)
+    if (narr.scrubbed > 0) {
+      log("yc.internal_narration_scrubbed", {
+        userId: input.userId,
+        bubblesScrubbed: narr.scrubbed,
+      })
+      bubbles = narr.bubbles
+    }
+  }
+
   // deliverBubblesEx normalizes each bubble (markdown/length) + caps count; one Sendblue send each.
   // It also reports `suppressedAll` — ≥1 real bubble existed but the cross-turn near-dup dedup dropped
   // EVERY one — which drives the anti-silence fallback below (instead of going silent).
@@ -1340,7 +1392,16 @@ export async function runClaireTurn(
   // Tracks whether ANY net (ask-net / linkedin-offer-net) put a message on the wire after a
   // zero-bubble agent turn — so the anti-silence fallback below only fires when truly nothing went out.
   let netDelivered = false
-  if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked) {
+  // YC PEOPLE LANE — never force an onboarding job question (Adam-LOCKED 2026-07-24). This net
+  // sends buildSharedOnboardingPrompt content VERBATIM through deps.transport.sendText, i.e.
+  // outside the bubble scrub, and that rail includes "What kind of roles are you going for next"
+  // and the US location/remote question. Today mode-selector never returns mode:"onboarding" once
+  // entryPosture is set — but that invariant lives in ANOTHER file, and the narrowed isYcEventUser
+  // predicate (fixed above) is exactly how it used to break. Belt-and-braces, checked locally.
+  const ycPeopleLane = deps.entryPosture === "yc_startup_school"
+  if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked && ycPeopleLane) {
+    log("onboarding.ask_net_suppressed_yc_people", { userId: input.userId, slot: deps.onboardingSlot })
+  } else if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked) {
     const recorded = !!deps.processStore?.onboarding.answers?.[deps.onboardingSlot ?? ""]
     const q = ((recorded ? deps.pendingStep : deps.currentStep) ?? deps.pendingStep ?? "").trim()
     if (q) {
@@ -1380,9 +1441,16 @@ export async function runClaireTurn(
     const connectUrl = m?.[1] ?? ""
     const already = bubbles.some((b) => b.includes("connect-linkedin?token="))
     if (connectUrl && !already) {
+      // YC people lane: LinkedIn is the ONLY enrichment channel we ask for (Adam 2026-07-24) — so
+      // don't frame it as the résumé alternative ("if you'd rather not dig up a résumé"), which
+      // implies a résumé is the default ask. Founders/investors get a straight LinkedIn unlock,
+      // framed as what it buys them: the people we intro see their real background.
       const offer =
-        `oh — and if you'd rather not dig up a résumé, just tap this to connect your LinkedIn and i'll ` +
-        `pull everything automatically (totally optional): ${connectUrl}`
+        deps.entryPosture === "yc_startup_school"
+          ? `oh — and tap this to connect your LinkedIn so the folks we intro you to see your real ` +
+            `background (one tap, totally optional): ${connectUrl}`
+          : `oh — and if you'd rather not dig up a résumé, just tap this to connect your LinkedIn and i'll ` +
+            `pull everything automatically (totally optional): ${connectUrl}`
       await deps.transport
         .sendText(offer)
         .catch((e) => log("onboarding.linkedin_offer_net_failed", { err: String(e) }))
@@ -1548,9 +1616,19 @@ export async function runClaireTurn(
         if (openPrescreen) {
           log("claire.anti_silence_fallback.hard_net_suppressed_prescreen", { userId: input.userId })
         } else {
-          const net = "hey! i'm here 👋 — what are you looking for? i can pull some roles or just chat through your search."
+          // YC people lane gets a PEOPLE-framed net. The default copy offers to "pull some roles",
+          // a job ask a YC founder/investor must never receive (Adam-LOCKED 2026-07-24) — and this
+          // net sends through ctx.transport.sendText DIRECTLY, so it bypasses the bubble scrub
+          // entirely. Swapped rather than suppressed: going silent here is the very bug this net exists to fix.
+          const net =
+            deps.entryPosture === "yc_startup_school"
+              ? "hey! i'm here 👋 — what are you building, and who would you want to meet at Startup School?"
+              : "hey! i'm here 👋 — what are you looking for? i can pull some roles or just chat through your search."
           await ctx.transport.sendText(net).catch(() => {})
-          log("claire.anti_silence_fallback.hard_net_sent", { userId: input.userId })
+          log("claire.anti_silence_fallback.hard_net_sent", {
+            userId: input.userId,
+            ycPeopleLane: deps.entryPosture === "yc_startup_school",
+          })
         }
       }
       // Surface BOTH the original (suppressed) turn's tool calls AND the fallback turn's — the

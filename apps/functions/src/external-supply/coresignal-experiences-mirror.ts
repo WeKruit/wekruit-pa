@@ -458,6 +458,20 @@ export interface MirrorDeps {
    * entirely (fail-open, nothing written). ADDITIVE: empty result writes nothing.
    */
   deriveEmployerSignals?: (rows: EmployerHistoryRow[]) => Promise<EmployerHistorySignals>
+  /**
+   * THE ONE SEAM for "we now have this person's LinkedIn and their enrichment landed"
+   * (Adam 2026-07-25: "只要拿到LinkedIn之后就要走这个", "扫码/网站注册的都要走这个").
+   *
+   * Every entry path converges HERE: website registration (`enrich-from-typed-linkedin.ts`), the
+   * one-tap LinkedIn connect the QR scanner is offered (`linkedin-connect-submit.ts`), and external
+   * supply (`resolve-identity.ts`) all build an `ExternalCandidateRecord` and call this runner. A
+   * per-entry hook would silently miss whichever path is added next, and the copies would drift.
+   *
+   * Runs AFTER `writeBoth`, so the global profile is stored first and this is strictly additive.
+   * Never throws into the mirror — the enrichment is the payload, this is bookkeeping on top.
+   * Wired by `makeFirestoreMirrorDeps` (needs db); absent in tests → no-op.
+   */
+  afterMirror?: (record: ExternalCandidateRecord, userId: string) => Promise<void>
   now?: () => string
   log?: (event: string, fields?: Record<string, unknown>) => void
 }
@@ -601,6 +615,18 @@ export async function runCoresignalExperiencesMirror(
     })
   }
 
+  // The enrichment is stored. ONLY NOW may anything downstream act on it — see `afterMirror`.
+  if (deps.afterMirror) {
+    try {
+      await deps.afterMirror(record, userId)
+    } catch (err) {
+      deps.log?.("coresignal_mirror.after_mirror_error", {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   deps.log?.("coresignal_mirror.ok", {
     userId,
     coresignalEmployeeId,
@@ -616,8 +642,16 @@ export async function runCoresignalExperiencesMirror(
 
 export function makeFirestoreMirrorDeps(
   db: Firestore,
-): Pick<MirrorDeps, "findExistingForUser" | "writeBoth" | "deriveEmployerSignals"> {
+): Pick<MirrorDeps, "findExistingForUser" | "writeBoth" | "deriveEmployerSignals" | "afterMirror"> {
   return {
+    // YC Startup School pool membership. GATED INSIDE `syncYcPoolMember` on `isYcPeopleUser` and
+    // fail-closed there — this wiring is unconditional on purpose, so the gate lives in exactly one
+    // place that a refactor of this factory cannot route around. Dynamic import keeps the descriptor
+    // + embedding dependencies off this module's graph, which half the codebase imports.
+    afterMirror: async (record, userId) => {
+      const { syncYcPoolMember } = await import("../yc-pool-sync.js")
+      await syncYcPoolMember({ db, record, userId })
+    },
     // Employer-history signals default (Adam 2026-06-10): real pa-companies join + gpt-5.4-mini
     // ownership extraction. Lives in deps (not the pure runner) because the join needs db.
     deriveEmployerSignals: (rows: EmployerHistoryRow[]) =>

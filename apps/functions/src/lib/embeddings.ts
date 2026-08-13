@@ -161,7 +161,7 @@ export type ComputeCvEmbeddingDeps = {
  * Resolve an OpenAI client from process env. Returns null when no key is set
  * — caller treats null as "skip embedding, log warn, continue".
  */
-async function defaultEmbeddingClient(): Promise<EmbeddingClient | null> {
+export async function defaultEmbeddingClient(): Promise<EmbeddingClient | null> {
   // 2026-05-07 Adam directive — embedding is real OpenAI
   // (text-embedding-3-small). MUST use PA_OPENAI_AGENT_API_KEY +
   // explicit https://api.openai.com/v1. NEVER fall through to

@@ -560,6 +560,75 @@ export function _resetPoolCache(): void {
 
 export const SENDBLUE_POOL_COUNTERS_DOC = "sendblue-pool-counters"
 
+// ─── PER-DAY new-user counts, per NUMBER ──────────────────────────────────────
+//
+// Adam 2026-07-25: "记录一下每天的new user数量，每个账号一天limit最多1000，这是sendblue，我们可以
+// 根据每个conversation用户的第一句话给哪个号码发信息来决定".
+//
+// Distinct from `SENDBLUE_POOL_COUNTERS_DOC`, which is a LIFETIME counter and had drifted from
+// reality anyway (it read 0/0/0 mid-event while the actual `pa-users.senderNumber` split was
+// 913/439/453). Sendblue's limit is a DAILY one, so it needs a daily denominator — a lifetime
+// counter can only ever be wrong in one direction.
+//
+// Keyed by the NUMBER the person's first message went to, which is the only thing Sendblue itself
+// counts, and one doc per UTC day so the window rolls without a reset job.
+export const SENDBLUE_DAILY_NEW_USERS = "pa-sendblue-daily-new-users"
+/** Sendblue's own per-number daily ceiling for NEW contacts. */
+export const DAILY_NEW_USER_CAP = 1000
+
+/** `2026-07-25` from an ISO stamp. UTC on purpose — Sendblue's window, not ours. */
+export function dailyCountsDocId(nowIso: string): string {
+  return nowIso.slice(0, 10)
+}
+
+/**
+ * Record ONE new user against the number that will text them. Fire-and-forget by design: this is
+ * bookkeeping, and a counter write must never delay or fail a real person's first reply.
+ */
+export async function bumpDailyNewUser(
+  db: Firestore,
+  fromNumber: string,
+  nowIso: string,
+): Promise<void> {
+  const number = fromNumber.trim()
+  if (!number) return
+  try {
+    await db
+      .collection(SENDBLUE_DAILY_NEW_USERS)
+      .doc(dailyCountsDocId(nowIso))
+      .set({ [number]: FieldValue.increment(1), updatedAt: nowIso }, { merge: true })
+  } catch {
+    /* fail-open — never block onboarding on a counter */
+  }
+}
+
+/** Today's per-number new-user counts. `{}` when unreadable, so the caller degrades to "no cap". */
+export async function readDailyNewUsers(
+  db: Firestore,
+  nowIso: string,
+): Promise<Record<string, number>> {
+  try {
+    const snap = await db.collection(SENDBLUE_DAILY_NEW_USERS).doc(dailyCountsDocId(nowIso)).get()
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    const out: Record<string, number> = {}
+    for (const [k, v] of Object.entries(data)) {
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** True when this number has already taken its Sendblue daily allowance of NEW contacts. */
+export function isDailyCapped(
+  counts: Record<string, number>,
+  number: string,
+  cap = DAILY_NEW_USER_CAP,
+): boolean {
+  return (counts[number.trim()] ?? 0) >= cap
+}
+
 /** Counter overlay shape: { [groupId]: assignedNewUsers }. */
 export type SendbluePoolCounters = Record<string, number>
 
@@ -608,8 +677,39 @@ export function overlaySendbluePoolCounters(
 
 /** Pool config with the live new-user counters overlaid (use for capacity-aware picks). */
 export async function loadSendbluePoolWithCounters(db: Firestore): Promise<SendbluePoolConfig | null> {
-  const [pool, counters] = await Promise.all([loadSendbluePool(db), loadSendbluePoolCounters(db)])
-  return overlaySendbluePoolCounters(pool, counters)
+  const [pool, counters, daily] = await Promise.all([
+    loadSendbluePool(db),
+    loadSendbluePoolCounters(db),
+    readDailyNewUsers(db, new Date().toISOString()),
+  ])
+  const overlaid = overlaySendbluePoolCounters(pool, counters)
+  if (!overlaid) return overlaid
+  // DAILY CAP, applied as a status flip rather than a new selector branch: a number that has taken
+  // its Sendblue allowance of new contacts today is simply not `active` for THIS pick, so every
+  // existing selector, group walk and fallback honours it without knowing the rule exists.
+  // Only new-user assignment consults this — an already-bound user keeps their number, because
+  // moving someone mid-conversation is a worse failure than exceeding a soft ceiling.
+  // A group's `numbers` may hold bare strings OR full entries; a bare string carries no status to
+  // flip, so it is left alone and the top-level `numbers` entry (which every pool has) does the
+  // capping for it.
+  const capOne = (n: SendbluePoolNumber): SendbluePoolNumber =>
+    n.number && isDailyCapped(daily, n.number)
+      ? { ...n, status: "daily_capped" as SendbluePoolNumberStatus }
+      : n
+  return {
+    ...overlaid,
+    ...(overlaid.numbers ? { numbers: overlaid.numbers.map(capOne) } : {}),
+    ...(overlaid.groups
+      ? {
+          groups: overlaid.groups.map((g) => ({
+            ...g,
+            ...(g.numbers
+              ? { numbers: g.numbers.map((n) => (typeof n === "string" ? n : capOne(n))) }
+              : {}),
+          })),
+        }
+      : {}),
+  }
 }
 
 /**

@@ -20,7 +20,9 @@
 //   2. layoff-sms-start hands the first message to the Claire runtime
 
 import { onCall, HttpsError } from "firebase-functions/v2/https"
+import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
+import { enrichFromTypedLinkedinUrl } from "./enrich-from-typed-linkedin.js"
 import { getFirestore, FieldValue, type Firestore, type Query } from "firebase-admin/firestore"
 import { getApps, initializeApp } from "firebase-admin/app"
 
@@ -487,6 +489,26 @@ export async function runRegisterLayoffCandidate(
     }
   }
 
+  // AUTO-ENRICH FROM THE TYPED LINKEDIN URL (Adam 2026-07-24). The form has always collected this
+  // URL and then done nothing with it: getOrFetchCoresignalByLinkedin was wired only to the browser
+  // extension, recruiter-submission-eval and prescreen-candidate-eval, never to the candidate's own
+  // signup. 2056 of 6500 users (32%) sat typed-URL-only with zero background as a result.
+  //
+  // FIRE-AND-FORGET on purpose: enrichment is best-effort and involves an external API, so it must
+  // never add latency to — or fail — registration. Everything inside is already fail-open, and it
+  // no-ops when real background exists or the URL is unusable. It writes DATA only; it never emits
+  // a runtime event, so nobody gets an unsolicited text out of it.
+  if (linkedin) {
+    void enrichFromTypedLinkedinUrl({
+      db: deps.db,
+      userId: candidateId,
+      apiKey: process.env.CORESIGNAL_API_KEY ?? null,
+      nowIso: isoNow,
+    }).catch(() => {
+      /* already logged + fail-open inside; never surface to the caller */
+    })
+  }
+
   return {
     candidateId,
     listPosition,
@@ -498,8 +520,21 @@ export async function runRegisterLayoffCandidate(
   }
 }
 
+// Bound so the fire-and-forget typed-URL enrichment inside runRegisterLayoffCandidate can reach
+// Coresignal. Absent key → the helper no-ops (reason "no_key"); registration is unaffected.
+const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
+// The same enrichment now also builds the YC people-pool row (yc-pool-sync.ts, via the mirror's
+// afterMirror seam), which needs the OpenAI key for the descriptor + both embeddings. Without it a
+// YC signup lands in the pool with NO vector, which reads as "present" and matches nobody.
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+
 export const openRegisterLayoffCandidate = onCall<RegisterInput>(
-  { region: "us-central1", cors: true, memory: "512MiB" },
+  {
+    region: "us-central1",
+    cors: true,
+    memory: "512MiB",
+    secrets: [CORESIGNAL_API_KEY, PA_OPENAI_AGENT_API_KEY],
+  },
   async (req) => {
     return runRegisterLayoffCandidate(req.data, { db: getFirestore() })
   },

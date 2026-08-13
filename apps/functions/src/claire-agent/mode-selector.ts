@@ -38,6 +38,7 @@ import {
   isYcEventOpenerText,
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
+import { isYcPeopleUser } from "@pa/core-types"
 import type { ClaireMode } from "./types.js"
 import { DEFAULT_ONBOARDING_SLOTS } from "./reducers/onboarding-fsm.js"
 import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-tools.js"
@@ -60,6 +61,7 @@ import {
 } from "./prescreen-ai-question.js"
 import { isCanaryUser, isClaireEntryUxCanary } from "./canary.js"
 import { isEnrichmentInFlight } from "./enrichment-inflight.js"
+import { extractLinkedinProfileUrl } from "../enrich-from-typed-linkedin.js"
 import { shouldNudgeGmail } from "./gmail-nudge.js"
 
 const USERS = "pa-users"
@@ -174,6 +176,15 @@ export interface ModeDecision {
   ycEventIntake?: {
     next: "building" | "wants_to_meet"
     offerLinkedin: boolean
+    /** What is ALREADY recorded (Adam 2026-07-24, live re-ask bug). Threaded on EVERY yc turn —
+     *  including after `completedAt` — so the prompt can name the recorded answer back and FORBID
+     *  re-asking it. Previously ycEventIntake was cleared once intake completed, which left the
+     *  model with no directive at all: live, one user was asked "what are you building right now?"
+     *  at 04:41, AGAIN at 04:46, then "what are you hoping to connect with most" at 04:50. */
+    recorded?: { building?: string; wantsToMeet?: string }
+    /** True once ycIntake.completedAt is stamped — both people questions are done, so the turn is
+     *  pure conversation: never re-ask, never interrogate, just react and keep the thread warm. */
+    intakeComplete?: boolean
     /** True on the FIRST-CONTACT turn (greeting/opener text, nothing recorded yet) —
      *  agent.ts sends the DETERMINISTIC event kickoff (greeting + LinkedIn link + the
      *  building question) and skips the model, so the opener can never be mis-recorded
@@ -184,6 +195,12 @@ export interface ModeDecision {
      *  thinner profile) MANDATORY that turn. Stamped via ycIntake.linkedinNudgedAt so it
      *  can never repeat (prompt-only "nudge once" under-fired on the 2026-07-22 live probe). */
     nudgeLinkedin?: boolean
+    /** True on exactly ONE turn, for someone whose LinkedIn tap DID work but who arrived with no
+     *  profile URL and no background (LinkedIn's OIDC withholds the vanity URL unless the member's
+     *  public profile is visible — 32 of 87 connected YC users, 0% enriched). The prompt thanks
+     *  them, says plainly that LinkedIn didn't hand us the profile, and asks them to paste the URL.
+     *  Own stamp (`ycIntake.linkedinUrlAskedAt`) — see the mode-selector note. */
+    askLinkedinUrl?: boolean
   }
 }
 
@@ -474,6 +491,28 @@ function hasParsedProfileOnFile(user: Record<string, unknown>): boolean {
  * validated closed enums + identity flags only).
  */
 /**
+ * Do we hold a LinkedIn URL that points at an actual profile? `linkedinUrl` is ALSO where the OAuth
+ * callback parks `https://www.linkedin.com/oauth-linked/<sub>` when LinkedIn's OIDC gives us no
+ * vanity URL — a bind marker, not a profile, and useless to Coresignal.
+ */
+function hasRealLinkedinProfileUrl(user: Record<string, unknown>): boolean {
+  const raw = typeof user.linkedinUrl === "string" ? user.linkedinUrl.trim() : ""
+  return raw.length > 0 && !raw.includes("/oauth-linked/")
+}
+
+/**
+ * Do we hold any actual FETCHED background? This is hasIngestedBackground minus the OAuth bind —
+ * the distinction the 2026-07-25 gap turns on. `linkedinOauthLinked` proves we know who they are,
+ * not that we know anything ABOUT them: 32 of 87 connected YC users had the bind, a placeholder URL
+ * and an empty profile, and every LinkedIn beat treated them as fully imported.
+ */
+export function hasFetchedBackground(user: Record<string, unknown>): boolean {
+  if (hasParsedProfileOnFile(user)) return true
+  if (typeof user.coresignalEmployeeId === "number") return true
+  return Array.isArray(user.experienceHighlights) && user.experienceHighlights.length > 0
+}
+
+/**
  * INGESTED-BACKGROUND SIGNAL (Adam 2026-06-06): did we ingest this candidate's actual BACKGROUND —
  * a LinkedIn bind, a parsed résumé, or an enriched experience timeline? This is the NARROWER cousin of
  * hasAnyProfileSignal: it deliberately EXCLUDES the "answered one onboarding slot" case (a bare
@@ -487,18 +526,18 @@ function hasIngestedBackground(user: Record<string, unknown>): boolean {
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
   if (hasParsedProfileOnFile(user)) return true
   if (user.linkedinOauthLinked === true) return true
-  if (str(user.linkedinUrl)) return true
-  if (str(user.linkedinOauthSub)) return true
+  if (str(user.linkedinOauthSub)) return true // OAuth identity, same proof as the flag above
   if (Array.isArray(user.experienceHighlights) && user.experienceHighlights.length > 0) return true
-  return false
+  return false // a self-typed linkedinUrl alone is NOT background
 }
 
 function hasAnyProfileSignal(user: Record<string, unknown>): boolean {
   if (hasParsedProfileOnFile(user)) return true
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
-  // LinkedIn bind (OAuth-linked identity OR a stored profile URL) — a known/returning candidate.
+  // LinkedIn bind — OAUTH-linked identity only. A stored `linkedinUrl` is NOT a bind: it is free
+  // text typed into the web form, unverified and unfetched (2026-07-24, see hasIngestedBackground).
+  // Counting it here marked users "recognized" and skipped their onboarding on a claim.
   if (user.linkedinOauthLinked === true) return true
-  if (str(user.linkedinUrl)) return true
   if (str(user.linkedinOauthSub)) return true
   // Enriched experience timeline (LinkedIn/Coresignal/résumé merge) is durable known-profile data.
   if (Array.isArray(user.experienceHighlights) && user.experienceHighlights.length > 0) return true
@@ -631,9 +670,27 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // 2. ONBOARDING (reuse the legacy sharedOnboarding durable state; the AGENT records via the tool).
   let user: Record<string, unknown> = {}
   try {
-    const snap = await args.db.collection(USERS).doc(args.userId).get()
+    // ONE RETRY (live incident 2026-07-25). THIS read is the sole source of the YC entry posture:
+    // `isYcPeopleUser` is a pure function of pa-users.source / firstTouchCampaign / ycEventEntryAt, so
+    // a failed read does not merely lose a tone overlay — it makes `isYcEventUser` false, which drops
+    // `entryPosture`, which restores EVERY job tool (tools/index.ts ycPeopleMode), drops the YC prompt
+    // directive, and disables the job-offer delivery scrub. Measured: two yc_startup_school attendees
+    // 20s apart during an inbound backlog answered "who do you want to meet?" and were handed
+    // find_match / set_matching_preferences — one got a job-flavoured non-answer, the other got
+    // literal silence. A single retry removes the transient; a persistent failure still degrades to
+    // triage, but now says so in the log instead of failing open silently.
+    let snap
+    try {
+      snap = await args.db.collection(USERS).doc(args.userId).get()
+    } catch {
+      snap = await args.db.collection(USERS).doc(args.userId).get()
+    }
     user = (snap.exists ? snap.data() : {}) ?? {}
-  } catch {
+  } catch (err) {
+    log("mode.user_read_failed_degraded_to_triage", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
     return { mode: "triage" }
   }
 
@@ -649,6 +706,8 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     wantsToMeet?: unknown
     completedAt?: unknown
     linkedinNudgedAt?: unknown
+    linkedinUrlAskedAt?: unknown
+    kickoffSentAt?: unknown
   } | null
   // EXISTING-USER EVENT ENTRY (Noah live test 2026-07-22): an already-registered user
   // who scans the event QR sends the YC opener but keeps their sticky non-yc source →
@@ -656,11 +715,14 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // flow. The opener text itself flips them in: stamp durable ycEventEntryAt once and
   // treat (source==yc OR ycEventEntryAt OR opener-this-turn) as the yc event user.
   const ycOpenerTurn =
-    user.source !== "yc_startup_school" &&
-    !user.ycEventEntryAt &&
-    isYcEventOpenerText(args.inboundText ?? "")
-  const isYcEventUser =
-    user.source === "yc_startup_school" || !!user.ycEventEntryAt || ycOpenerTurn
+    !isYcPeopleUser(user) && isYcEventOpenerText(args.inboundText ?? "")
+  // 2026-07-24: was an inline `source || ycEventEntryAt` pair that OMITTED
+  // `firstTouchCampaign === "yc-startup-school"` — the third canonical signal. That omission was
+  // not cosmetic: when it missed, `posture` came back empty, which cascaded into ycPeopleMode=false
+  // → EVERY job tool restored → no YC prompt directive → no delivery scrub → and the user could
+  // even land on mode:"onboarding", the job-QUESTION rail. Now uses the one shared predicate from
+  // @pa/core-types so this can never drift narrow again.
+  const isYcEventUser = isYcPeopleUser(user) || ycOpenerTurn
   if (ycOpenerTurn) {
     try {
       await args.db
@@ -673,15 +735,65 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     }
   }
   let ycEventIntake: ModeDecision["ycEventIntake"]
-  if (isYcEventUser && !ycIntakeState?.completedAt) {
+  // What's already on file — threaded on EVERY yc turn so the prompt can reference it instead of
+  // re-asking. `str` keeps only real non-empty strings so a blank never reads as "recorded".
+  const str = (v: unknown) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined)
+  const ycRecorded = {
+    ...(str(ycIntakeState?.building) ? { building: str(ycIntakeState?.building)! } : {}),
+    ...(str(ycIntakeState?.wantsToMeet) ? { wantsToMeet: str(ycIntakeState?.wantsToMeet)! } : {}),
+  }
+  // THE TAP WORKED, THE PROFILE DIDN'T ARRIVE (2026-07-25). LinkedIn's OIDC only returns the member's
+  // vanity URL when their public profile is visible; for everyone else we get name/email/picture and
+  // store a `/oauth-linked/<sub>` placeholder. Measured live: of 87 YC users who connected, 54 came
+  // with a real URL and ALL 54 enriched — the other 33 got a placeholder and 1 enriched. The designed
+  // fallback (resolve them from their profile photo's licdn asset id) has resolved 0 of 28.
+  // So ask them for the URL. They are invisible to the existing LinkedIn beats: `offerLinkedin` is
+  // false for them (hasIngestedBackground counts the OAuth bind), which renders "their background is
+  // already imported — do NOT re-offer LinkedIn". Deterministic flag, not prose the model may skip.
+  // One-shot on its OWN stamp: `linkedinNudgedAt` is a different beat (fires when NOT linked), and
+  // these people were typically nudged BEFORE they connected — sharing a stamp would silence the ask.
+  // NEVER ASK FOR WHAT IS IN THE MESSAGE (live 2026-07-25, +13129727824 11:54): the user pasted
+  // `http://linkedin.com/in/sofia-grimm` and this flag — computed off a snapshot taken before the
+  // enrich could write — made the reply "can you paste your linkedin profile URL here exactly".
+  // Awaiting the enrich in cutover fixes the common case by flipping `hasFetchedBackground`; this
+  // guard covers the rest (Coresignal miss, key absent, URL wrapped in prose so cutover lets the
+  // normal turn run). Pure URL parsing of the inbound text — not intent classification.
+  const askLinkedinUrl =
+    isYcEventUser &&
+    user.linkedinOauthLinked === true &&
+    !hasRealLinkedinProfileUrl(user) &&
+    !hasFetchedBackground(user) &&
+    !extractLinkedinProfileUrl(args.inboundText ?? "") &&
+    !ycIntakeState?.linkedinUrlAskedAt
+  if (isYcEventUser && ycIntakeState?.completedAt) {
+    // INTAKE DONE — still emit a directive (this used to be `undefined`, leaving the model with no
+    // guidance and producing the live re-ask loop). Both answers are named back to it, re-asking is
+    // forbidden, and the turn becomes pure warm conversation.
+    ycEventIntake = {
+      next: "wants_to_meet",
+      offerLinkedin: false,
+      intakeComplete: true,
+      ...(Object.keys(ycRecorded).length > 0 ? { recorded: ycRecorded } : {}),
+      // Fires here too: 11 of the 32 stranded users had already finished intake, and a completed
+      // intake is exactly when the thin profile starts costing them matches.
+      ...(askLinkedinUrl ? { askLinkedinUrl: true } : {}),
+    }
+  } else if (isYcEventUser && !ycIntakeState?.completedAt) {
     // FIRST CONTACT: opener/greeting text + nothing recorded yet → the
     // deterministic event kickoff owns the turn (agent.ts short-circuit).
+    // ONE-SHOT (live incident 2026-07-25): a kickoff is FIRST CONTACT. The text predicate
+    // alone has no memory and scans anywhere in the body — a 6879-char résumé dump tripped
+    // `parseHelloWekruitOpener` and replayed the welcome instead of answering the user, twice.
+    // The stamp is written post-delivery in cutover (selectMode runs twice per inbound).
     const kickoff =
+      !ycIntakeState?.kickoffSentAt &&
       !ycIntakeState?.building &&
       !ycIntakeState?.wantsToMeet &&
       isSharedOnboardingGreetingOrKickoff(args.inboundText ?? "")
     // LinkedIn one-tap leads the intake until real background lands (the
     // Coresignal enrich flips hasIngestedBackground on re-entry).
+    // REAL background only — a self-typed linkedinUrl must NOT suppress the unlock. If we have
+    // nothing fetched, ask them (hasIngestedBackground now means what its name says).
     const offerLinkedin = !hasIngestedBackground(user)
     // ONE deterministic consequence nudge (Adam 2026-07-21: "tell them it will be bad
     // for matching and their image"): the offer went out on the kickoff; the FIRST
@@ -694,8 +806,11 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     ycEventIntake = {
       next: !ycIntakeState?.building ? "building" : "wants_to_meet",
       offerLinkedin,
+      ...(Object.keys(ycRecorded).length > 0 ? { recorded: ycRecorded } : {}),
       ...(kickoff ? { kickoff: true } : {}),
       ...(nudgeLinkedin ? { nudgeLinkedin: true } : {}),
+      // Never on the kickoff turn — that one is deterministic and skips the model entirely.
+      ...(askLinkedinUrl && !kickoff ? { askLinkedinUrl: true } : {}),
     }
   }
   const posture: {

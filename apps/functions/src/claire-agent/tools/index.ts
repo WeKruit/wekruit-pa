@@ -9,6 +9,9 @@ import { buildDeliveryTools } from "./delivery-tools.js"
 import { buildProcessTools, type PrescreenPrompts } from "./process-tools.js"
 import { buildSchedulingTools } from "./scheduling-tools.js"
 import { buildVoiceCallTools } from "./voice-call-tools.js"
+import { buildYcPeopleTools } from "./yc-people-tools.js"
+import { buildWekruitPartnerRolesTools } from "./wekruit-partner-roles-tool.js"
+import { buildLinkedinProfileTools } from "./linkedin-profile-tool.js"
 
 /** Prescreen seed the turn forwards into the FSM tools (qId → DIRECTION + qId → judge RUBRIC). */
 export interface BuildClaireToolsOptions {
@@ -31,6 +34,22 @@ export interface BuildClaireToolsOptions {
 /** From buildMatchingTools, the tools that are NOT job-recommendation — safe for the YC lane. */
 const YC_ALLOWED_MATCHING_TOOLS = new Set(["remember_fact", "privacy", "cv_parse"])
 
+/**
+ * From buildProcessTools, the ONLY process tools the YC lane keeps (Adam-LOCKED 2026-07-24: a YC
+ * user is asked nothing about jobs).
+ *
+ * Dropped: `ask_next_onboarding_question` + `record_onboarding_answer` — the onboarding rail whose
+ * questions ARE job-search questions ("What kind of roles are you going for next", the US
+ * location/remote question). The tool returns that prompt text for the model to read out, and the
+ * delivery scrub cannot catch a question. Also dropped: `ask_next_prescreen_question`,
+ * `score_prescreen_answer`, `explain_prescreen_outcome` — the job-interview machinery, which a YC
+ * person never enters (runPreScreenForUser also refuses them).
+ *
+ * Kept: `record_yc_intake` — the two PEOPLE questions (what are you building / who do you want to
+ * meet). That is the whole point of the lane.
+ */
+const YC_ALLOWED_PROCESS_TOOLS = new Set(["record_yc_intake"])
+
 /** All tools the thin Claire agent can call, in description-routed order. */
 export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsOptions = {}) {
   const matching = buildMatchingTools(ctx)
@@ -40,9 +59,32 @@ export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsO
     ...(opts.ycPeopleMode
       ? matching.filter((t) => YC_ALLOWED_MATCHING_TOOLS.has((t as { name?: string }).name ?? ""))
       : matching),
-    ...buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {}),
+    // INVERSE of the allowlists above: match_yc_people is the YC lane's OWN matcher (people, not
+    // jobs). It is built ONLY here, so no other lane can ever see or call it.
+    ...(opts.ycPeopleMode ? buildYcPeopleTools(ctx) : []),
+    // NARROW AUTHORIZED EXCEPTION (Adam 2026-07-25: "只要他们主动问就没关系"). show_wekruit_partner_roles
+    // is the ONE job-content tool on this lane, and it is YC-ONLY for the same reason match_yc_people
+    // is: it is built here and nowhere else, so no other lane can see it. It is NOT a relaxation of the
+    // job-tool omission above — find_match and friends stay gone. It reads no candidate signal and does
+    // no matching (Adam: "我们不能直接match你在招聘的要不然违法"); it lists our own partner inventory,
+    // and only when the person raised jobs/hiring themselves (enforced in the tool description + prompt).
+    ...(opts.ycPeopleMode ? buildWekruitPartnerRolesTools(ctx) : []),
+    // YC lane: keep only record_yc_intake from the process tools — the onboarding rail's questions
+    // ARE job-search questions, and the prescreen FSM tools are job-interview machinery.
+    ...(opts.ycPeopleMode
+      ? buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {}).filter((t) =>
+          YC_ALLOWED_PROCESS_TOOLS.has((t as { name?: string }).name ?? ""),
+        )
+      : buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {})),
     ...buildDeliveryTools(ctx, { forbidSuppressingDelivery: opts.forbidSuppressingDelivery }),
-    ...buildSchedulingTools(ctx),
+    // YC lane: NO scheduling tools — offer_interview_slots / book_interview_slot book JOB
+    // interviews. People intros are operator-curated, not self-booked from this chat.
+    ...(opts.ycPeopleMode ? [] : buildSchedulingTools(ctx)),
     ...buildVoiceCallTools(ctx),
+    // EVERY LANE. Someone handing us their LinkedIn is not YC-specific, and the decision of whether
+    // they MEANT to hand it over is the model's (Adam 2026-07-25: "why don't we make it a tool call
+    // and ask the agent to decide?"). The tool owns parsing and fetching; the model owns intent and
+    // the words. That replaces a regex that was measurably wrong in both directions.
+    ...buildLinkedinProfileTools(ctx),
   ]
 }

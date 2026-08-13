@@ -262,15 +262,50 @@ const HELLO_WEKRUIT_OPENER_RE =
  *  the code clause. Token = the QR scanToken (UUID) → parses as candidateId like
  *  every other QR opener. */
 export const YC_EVENT_OPENER_PREFIX = "Hey! I'm at YC Startup School — my code is"
-const YC_EVENT_OPENER_RE =
-  /^(?:hey|hi|hello)?[!,.\s]*i['’]?m at yc startup school[\s,!.…—–-]*(?:this is\s+(?:my\s+)?code(?:\s+is)?|my\s+code\s+is|code(?:\s+is)?)?\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+
+/**
+ * When the YC Startup School people-matches actually go out (Adam 2026-07-24).
+ *
+ * This is a REAL commitment we keep — the operator send (paAdminYcSendMatches) runs at that hour —
+ * so Claire may state it. #622 stripped both the attendee list AND this timing; the list stays
+ * removed (there is nothing to share), but the timing comes back because it is true and it tells
+ * the attendee when to expect us.
+ *
+ * ONE constant, because the promise was previously hand-written in 8 places and drifted. If the
+ * event time changes, change it here.
+ */
+export const YC_MATCH_DELIVERY_WHEN = "July 25 at 7pm PT"
+// NOT ANCHORED TO THE START (live YC event, 2026-07-25). It used to require the message to BEGIN
+// with an optional hey/hi/hello and then immediately "i'm at yc startup school". A real attendee
+// personalised the prefilled text to "Hey, I'm Isha! I'm at YC Startup School — my code is …" and
+// the extra "I'm Isha!" made the whole thing miss: she fell out of the YC lane entirely and was
+// handed the full job-seeker flow — "your recruiter at wekruit", "pitching you straight to the
+// hiring managers", "should i prioritize software engineering roles…". Every YC guard we built was
+// bypassed by someone typing their own name into our own prefill.
+// People edit prefilled text. The signal is that the phrase is PRESENT, not that it sits at
+/**
+ * THE PHRASE IS THE WHOLE SIGNAL (Adam 2026-07-25, live: "这个应该就是看YC startup school就好").
+ *
+ * The old pattern spelled out the entire prefilled sentence — an anchored `^(hey|hi|hello)?` then
+ * "i'm at yc startup school" then the code clause. It shattered the moment a real attendee edited
+ * our own prefill: "Hey, I'm Isha! I'm at YC Startup School — my code is …" missed on the two extra
+ * words, so she dropped out of the YC lane entirely and got the full job-seeker flow — "your
+ * recruiter at wekruit", "pitching you straight to the hiring managers", "should i prioritize
+ * software engineering roles". Every YC guard we built was bypassed by someone typing their name.
+ *
+ * Nobody writes "YC Startup School" by accident, so the phrase alone carries it. Anything more
+ * specific is a new way to miss.
+ */
+const YC_EVENT_PHRASE_RE = /yc\s*startup\s*school/i
+/** Token grab, kept SEPARATE from recognition: a mangled/absent code must never un-YC someone. */
+const YC_EVENT_CODE_RE = /([a-z0-9][a-z0-9_-]{7,127})[^a-z0-9]*$/i
 /** True when the text is the YC event QR opener. Used by the mode selector to flip an
  *  EXISTING (non-yc-source) user into the YC event posture when they scan the event QR
  *  (Noah live test 2026-07-22: existing account + YC opener got "want me to pull you
  *  roles?" instead of the event intake — source is first-write-sticky, so the opener
  *  text itself must carry the event entry). */
 export function isYcEventOpenerText(text: string): boolean {
-  return YC_EVENT_OPENER_RE.test(text.trim())
+  return YC_EVENT_PHRASE_RE.test(text)
 }
 
 // Prescreen job opener. Accepts BOTH forms (2026-06-13):
@@ -429,7 +464,9 @@ export function parseHelloWekruitOpener(
     trimmed.match(HI_WEKRUIT_OPENER_RE) ??
     trimmed.match(VERIFICATION_CODE_OPENER_RE) ??
     trimmed.match(HELLO_WEKRUIT_OPENER_RE) ??
-    trimmed.match(YC_EVENT_OPENER_RE)
+    // YC: recognise on the PHRASE, then grab the trailing code separately. Two steps on purpose —
+    // a personalised or reworded opener must still resolve its code.
+    (YC_EVENT_PHRASE_RE.test(trimmed) ? trimmed.match(YC_EVENT_CODE_RE) : null)
   if (!match) return null
   const token = match[1]?.trim()
   if (!token) return null
