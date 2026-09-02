@@ -164,7 +164,7 @@ function percentile(values: number[], pct: number): number | null {
 export const paAdminVoiceTelemetryAggregate = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     secrets: [PA_ADMIN_TOKEN],
   },

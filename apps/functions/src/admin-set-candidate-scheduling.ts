@@ -50,7 +50,7 @@ export interface AdminSetCandidateSchedulingResult {
 }
 
 export const paAdminSetCandidateScheduling = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
   async (req): Promise<AdminSetCandidateSchedulingResult> => {
     const { uid } = authorizeAdminCallable(
       req as { auth?: { token?: { admin?: unknown } }; data?: unknown },
@@ -101,7 +101,7 @@ export interface AdminGetCandidateSchedulingResult {
 }
 
 export const paAdminGetCandidateScheduling = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
   async (req): Promise<AdminGetCandidateSchedulingResult> => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     const parsed = AdminGetCandidateSchedulingInputSchema.safeParse(req.data ?? {})

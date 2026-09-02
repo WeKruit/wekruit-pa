@@ -127,7 +127,7 @@ export const paVoiceCallContext: HttpsFunction = onRequest(
     secrets: [PA_VOICE_CF_SECRET],
     cors: false,
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     maxInstances: 1,
   },
   async (req, res) => {

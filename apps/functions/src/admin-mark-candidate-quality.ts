@@ -99,7 +99,7 @@ const Input = z.object({
 })
 
 export const paAdminMarkCandidateQuality = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
   async (req) => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     const parsed = Input.safeParse(req.data ?? {})

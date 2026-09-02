@@ -46,7 +46,7 @@ export interface RunLinkedInEnrichResult {
 export const paExternalSupplyRunLinkedInEnrich = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 180,
   },
   async (req): Promise<RunLinkedInEnrichResult> => {

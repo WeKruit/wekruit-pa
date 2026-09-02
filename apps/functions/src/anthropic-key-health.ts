@@ -189,7 +189,7 @@ export const paAnthropicKeyHealth = onSchedule(
     // OpenAI primary still serves, so 2h detection is plenty (vs OpenAI's 30min).
     schedule: "0 */2 * * *",
     timeZone: "UTC",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     region: "us-central1",
     secrets: [ANTHROPIC_API_KEY, PA_SLACK_ALERT_WEBHOOK, ...MAILGUN_SECRETS],

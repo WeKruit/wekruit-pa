@@ -37,7 +37,7 @@ export interface PollLinkedInEnrichResult {
 export const paExternalSupplyPollLinkedInEnrich = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
   },
   async (req): Promise<PollLinkedInEnrichResult> => {

@@ -317,7 +317,7 @@ async function buildSnapshot(db: Firestore, partnerSource?: string): Promise<Par
 export const paAdminPartnerStats = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     maxInstances: 5,
     secrets: [PA_ADMIN_TOKEN],
   },

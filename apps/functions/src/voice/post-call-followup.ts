@@ -223,7 +223,7 @@ export const paVoicePostCallFollowup = onDocumentWritten(
   {
     document: "outbound-bookings/{bookingId}",
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     concurrency: 20,
   },

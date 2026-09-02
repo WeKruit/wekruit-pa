@@ -493,7 +493,7 @@ export async function runFlywheelRegressionReplay(
 
 /** Admin callable — replay on demand from the eval/regression dashboard. */
 export const paFlywheelRegressionReplay = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 120, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 120, secrets: [PA_ADMIN_TOKEN] },
   async (req): Promise<RegressionReplayReport> => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     return runFlywheelRegressionReplay(req.data, { db: getFirestore(), writeBack: true })
@@ -502,7 +502,7 @@ export const paFlywheelRegressionReplay = onCall(
 
 /** Scheduled weekly regression replay (Mon 10:00 UTC — after the QA evaluator). */
 export const paFlywheelRegressionReplayWeekly = onSchedule(
-  { schedule: "0 10 * * 1", timeZone: "Etc/UTC", region: "us-central1", memory: "256MiB", timeoutSeconds: 300 },
+  { schedule: "0 10 * * 1", timeZone: "Etc/UTC", region: "us-central1", memory: "512MiB", timeoutSeconds: 300 },
   async () => {
     const report = await runFlywheelRegressionReplay(
       { writeBack: true },
