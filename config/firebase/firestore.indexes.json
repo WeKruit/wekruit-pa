@@ -764,6 +764,12 @@
   ],
   "fieldOverrides": [
     {
+      "_comment": "matching-jobs embeddings are fetched by document id only after hard filtering; indexing every value in each 1536-float array creates large index fanout without serving a query.",
+      "collectionGroup": "matching-jobs",
+      "fieldPath": "embedding",
+      "indexes": []
+    },
+    {
       "_comment": "Operator work-queue badge (work-queue-counts.ts fetchEnrichmentDrafts) — count() over collectionGroup(\"enrichment\") where status in [draft, needs_review]. Collection-group single-field queries need a COLLECTION_GROUP-scoped single-field index; it is NOT auto-created, so the unindexed count() threw failed-precondition (console 400 on every dashboard load). COLLECTION asc/desc preserved so per-job enrichment reads are unaffected.",
       "collectionGroup": "enrichment",
       "fieldPath": "status",

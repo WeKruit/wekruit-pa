@@ -87,8 +87,9 @@ const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
 const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
 const PA_ADMIN_TOKEN_SECRET = defineSecret("PA_ADMIN_TOKEN")
 const MAILGUN_SECRETS = [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION]
+// Admin-only create/resend actions are rare; a cold start is cheaper than
+// reserving two 24/7 instances. paRecruiterMe stays warm for recruiter login.
 const ADMIN_INVITE_ENDPOINT_SCALE = {
-  minInstances: 1,
   maxInstances: 1,
 }
 const RECRUITER_PUBLIC_BASE_URL = "https://wekruit-recruiters.web.app"

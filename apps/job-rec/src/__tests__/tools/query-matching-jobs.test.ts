@@ -1912,3 +1912,18 @@ test("CR3 indexes: firestore.indexes.json contains lastSeenAt composite indexes"
   assert.ok(enumLastSeen, "must have status+industryEnum+lastSeenAt index")
 })
 
+test("cost guard: matching-jobs embedding is excluded from automatic indexes", async () => {
+  const fs = await import("node:fs/promises")
+  const path = await import("node:path")
+  const repoRoot = path.resolve(import.meta.dirname ?? ".", "../../../../..")
+  const indexFile = path.join(repoRoot, "config/firebase/firestore.indexes.json")
+  const json = JSON.parse(await fs.readFile(indexFile, "utf8")) as {
+    fieldOverrides?: { collectionGroup: string; fieldPath: string; indexes: unknown[] }[]
+  }
+  const embeddingOverride = json.fieldOverrides?.find(
+    (override) => override.collectionGroup === "matching-jobs" && override.fieldPath === "embedding"
+  )
+
+  assert.ok(embeddingOverride, "matching-jobs.embedding must have an explicit field override")
+  assert.deepEqual(embeddingOverride.indexes, [], "matching-jobs.embedding must not create single-field indexes")
+})
