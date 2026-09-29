@@ -7,13 +7,16 @@ import {
 } from "lucide-react"
 import { ChatContainer, MainContainer, Message, MessageInput, MessageList } from "@chatscope/chat-ui-kit-react"
 import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css"
-import { CANDIDATES, SAMPLE_JD, type Candidate } from "./sourcing-demo-data.js"
+import { CANDIDATES, RELATED_COMPANIES, SAMPLE_JD, type Candidate } from "./sourcing-demo-data.js"
+import { matchingCompanies, refinedCandidates, type Refinement } from "./sourcing-demo-refinement.js"
 import { rankCandidates, scoreCandidate, type ScoreAxis } from "./sourcing-demo-score.js"
 import "./sourcing-studio-demo.css"
 
-type View = "new" | "brief" | "results" | "shortlist" | "contacts" | "sequence" | "inbox" | "interview" | "workflow"
+type View = "new" | "brief" | "refine" | "results" | "shortlist" | "contacts" | "sequence" | "inbox" | "interview" | "workflow"
 type ChatLine = { sender: "Scout" | "You"; text: string }
 type SequenceStep = { subject: string; body: string; wait: string }
+type RefinementStage = "feedback" | "group" | "industry" | "companies" | "years" | "review"
+type RankAxis = ScoreAxis | "similarity"
 
 const FOLLOWUPS = [
   { label: "Location & work model", question: "Where should this person work? Is hybrid, remote, or relocation possible?", choices: ["Los Angeles · hybrid", "Los Angeles · on-site", "Remote · US"] },
@@ -36,7 +39,22 @@ function followupChoices(index: number, description: string) {
 function personalize(message: string, candidate: Candidate) {
   return message.replaceAll("{{first_name}}", candidate.name.split(" ")[0]).replaceAll("{{current_company}}", candidate.company).replaceAll("{{sender_name}}", "Admin WeKruit")
 }
+function autumnPreviewRow(candidate: Candidate) {
+  return {
+    linkedin_url: { value: `https://www.${candidate.linkedin}`, source_id: "s1" },
+    name: { value: candidate.name, source_id: "s1" },
+    headline: { value: candidate.headline, source_id: "s1" },
+    location: { value: candidate.location, source_id: "s1" },
+    current_company: { value: candidate.company, source_id: "s1" },
+    experience: { value: candidate.employment.map((job) => `${job.title} at ${job.company} (${job.dates})`), source_id: "s1" },
+    skills: { value: candidate.skillsList, source_id: "s1" },
+    company_context: { value: candidate.companyDetail, source_id: "s2" },
+    _sources: { s1: "Fictional LinkedIn-style sample", s2: "Fictional company record" },
+  }
+}
 const SAMPLE_ANSWERS = ["Los Angeles · hybrid", "$120k–$160k OTE", "Flag for review", "PropTech SaaS"]
+const DEFAULT_REFINEMENT: Refinement = { companyGroup: "property", selectedCompanies: ["Buildium", "AppFolio", "Yardi", "RealPage"], industry: "required", minYears: 4 }
+const PEER_GROUPS = { property: "Property management software", commercial: "Commercial real estate technology" } as const
 const AXES: { value: ScoreAxis; label: string }[] = [
   { value: "overall", label: "Best match" },
   { value: "experience", label: "Experience" },
@@ -60,12 +78,17 @@ export default function SourcingStudioDemo() {
   const [answers, setAnswers] = useState(SAMPLE_ANSWERS)
   const [step, setStep] = useState(0)
   const [chat, setChat] = useState<ChatLine[]>([])
-  const [sort, setSort] = useState<ScoreAxis>("overall")
+  const [sort, setSort] = useState<RankAxis>("overall")
+  const [refinement, setRefinement] = useState<Refinement | null>(null)
+  const [refinementDraft, setRefinementDraft] = useState<Refinement>(DEFAULT_REFINEMENT)
+  const [refinementStage, setRefinementStage] = useState<RefinementStage>("feedback")
+  const [refinementChat, setRefinementChat] = useState<ChatLine[]>([])
   const [layout, setLayout] = useState<"cards" | "table">("cards")
   const [criteriaOpen, setCriteriaOpen] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
   const [profile, setProfile] = useState<Candidate | null>(null)
-  const [profileTab, setProfileTab] = useState<"experience" | "match" | "notes">("experience")
+  const [profileTab, setProfileTab] = useState<"overview" | "experience" | "match" | "autumn">("overview")
+  const [profileSideTab, setProfileSideTab] = useState<"notes" | "activity">("notes")
   const [noteDraft, setNoteDraft] = useState("")
   const [notes, setNotes] = useState<Record<string, string[]>>({})
   const [copyState, setCopyState] = useState<"idle" | "copied" | "unavailable">("idle")
@@ -82,9 +105,15 @@ export default function SourcingStudioDemo() {
   const [scheduledInterview, setScheduledInterview] = useState<{ candidateId: string; slot: string } | null>(null)
 
   // ponytail: Every role uses the same five sample profiles; replace this set with Autumn results at integration time.
-  const ranked = useMemo(() => rankCandidates(CANDIDATES, sort), [sort])
+  const ranked = useMemo(() => {
+    if (!refinement) return rankCandidates(CANDIDATES, sort === "similarity" ? "overall" : sort)
+    const matched = refinedCandidates(CANDIDATES, refinement)
+    if (sort === "similarity") return matched
+    const ids = new Set(matched.map((candidate) => candidate.id))
+    return rankCandidates(CANDIDATES, sort).filter((candidate) => ids.has(candidate.id))
+  }, [refinement, sort])
   const selectedProfiles = CANDIDATES.filter((candidate) => selected.includes(candidate.id))
-  const visibleProfiles = view === "shortlist" ? ranked.filter((candidate) => selected.includes(candidate.id)) : ranked
+  const visibleProfiles = view === "shortlist" ? rankCandidates(CANDIDATES, sort === "similarity" ? "overall" : sort).filter((candidate) => selected.includes(candidate.id)) : ranked
   const replyCandidate = CANDIDATES.find((candidate) => candidate.id === replyCandidateId)
   const inviteCandidate = CANDIDATES.find((candidate) => candidate.id === inviteCandidateId)
   const workflowDone = [answers.every(Boolean), Boolean(searchText), selected.length > 0, contactedIds.length > 0, Boolean(scheduledInterview)]
@@ -123,6 +152,8 @@ export default function SourcingStudioDemo() {
     const customTitle = text.replace(/^We are hiring (a|an)\s+/i, "").split(/\s+(?:to|in|based|with)\b/i)[0].trim()
     setRoleName(text === SAMPLE_JD ? "Senior Account Executive" : customTitle.length <= 45 ? customTitle : "Custom role")
     setAnswers(["", "", "", ""])
+    setRefinement(null)
+    setSort("overall")
     setSelected([])
     setContactedIds([])
     setContactFilter("all")
@@ -168,6 +199,64 @@ export default function SourcingStudioDemo() {
     setProfile(null)
   }
 
+  function beginRefinement() {
+    setRefinementDraft(refinement ? { ...refinement, selectedCompanies: [...refinement.selectedCompanies] } : { ...DEFAULT_REFINEMENT, selectedCompanies: [...DEFAULT_REFINEMENT.selectedCompanies] })
+    setRefinementStage("feedback")
+    setRefinementChat([{ sender: "Scout", text: "What is missing from these results? Tell me what your client did not like, and I'll ask a few focused questions before reranking the sample profiles." }])
+    setProfile(null)
+    setView("refine")
+  }
+
+  function answerRefinement(value: string) {
+    const text = value.trim()
+    if (!text || refinementStage === "review") return
+    let nextStage: RefinementStage = refinementStage
+    let reply = ""
+    if (refinementStage === "feedback") {
+      nextStage = "group"
+      reply = "When you say similar companies, which overlap matters more: property-management software vendors, or commercial real-estate technology companies?"
+    } else if (refinementStage === "group") {
+      const companyGroup = /commercial|leasing|cre\b|商业/i.test(text) ? "commercial" : "property"
+      setRefinementDraft((current) => ({ ...current, companyGroup, selectedCompanies: RELATED_COMPANIES.filter((company) => company.group === PEER_GROUPS[companyGroup]).map((company) => company.name) }))
+      nextStage = "industry"
+      reply = "Must they have worked at a company in this industry, or is that just a preference? I will separate proven employer history from an inferred industry fit."
+    } else if (refinementStage === "industry") {
+      const industry = /prefer|加分|优先/i.test(text) ? "preferred" : /not required|no requirement|不要求|无要求/i.test(text) ? "open" : "required"
+      setRefinementDraft((current) => ({ ...current, industry }))
+      nextStage = "companies"
+      const names = RELATED_COMPANIES.filter((company) => company.group === PEER_GROUPS[refinementDraft.companyGroup]).map((company) => company.name)
+      reply = `Here are related companies in the ${PEER_GROUPS[refinementDraft.companyGroup]} group: ${names.join(", ")}. Which should count as comparable employers? Select them on the right, then continue.`
+    } else if (refinementStage === "companies") {
+      const names = RELATED_COMPANIES.filter((company) => text.toLowerCase().includes(company.name.toLowerCase())).map((company) => company.name)
+      const selectedCompanies = names.length ? names : refinementDraft.selectedCompanies
+      if (!selectedCompanies.length) {
+        setRefinementChat((current) => [...current, { sender: "Scout", text: "Choose at least one company or type a company name from the sample list." }])
+        return
+      }
+      setRefinementDraft((current) => ({ ...current, selectedCompanies }))
+      nextStage = "years"
+      reply = `I'll check for actual employment at ${selectedCompanies.join(", ")}. How much experience in the sector should we look for?`
+    } else if (refinementStage === "years") {
+      const minYears = /any|no minimum|不限/i.test(text) ? 1 : /2|two|两/i.test(text) ? 2 : 4
+      setRefinementDraft((current) => ({ ...current, minYears }))
+      nextStage = "review"
+      reply = `Got it. I'll keep actual employment at the selected companies as the filter and ${refinementDraft.industry === "required" ? "require" : refinementDraft.industry === "preferred" ? "prefer" : "show"} ${minYears === 1 ? "any" : minYears + "+ years of"} sector experience. Review the criteria, then apply them.`
+    }
+    setRefinementChat((current) => [...current, { sender: "You", text }, { sender: "Scout", text: reply }])
+    setRefinementStage(nextStage)
+  }
+
+  function applyRefinement() {
+    setRefinement({ ...refinementDraft, selectedCompanies: [...refinementDraft.selectedCompanies] })
+    setSort("similarity")
+    setView("results")
+  }
+
+  function clearRefinement() {
+    setRefinement(null)
+    setSort("overall")
+  }
+
   function toggleShortlist(id: string) {
     setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
     setOutboundStatus("draft")
@@ -175,7 +264,8 @@ export default function SourcingStudioDemo() {
 
   function showProfile(candidate: Candidate) {
     setProfile(candidate)
-    setProfileTab("experience")
+    setProfileTab("overview")
+    setProfileSideTab("notes")
     setCopyState("idle")
   }
 
@@ -226,6 +316,7 @@ export default function SourcingStudioDemo() {
         <nav className="hire-nav">
           <button type="button" className={view === "new" ? "active" : ""} onClick={openNewRole}><PlusCircle size={18} />New Role</button>
           <button type="button" className={view === "brief" ? "active" : ""} onClick={refineBrief}><FolderOpen size={18} />Job Brief</button>
+          <button type="button" className={view === "refine" ? "active" : ""} onClick={beginRefinement}><Sparkles size={18} />Client feedback</button>
           <button type="button" className={view === "shortlist" ? "active" : ""} onClick={() => navigate("shortlist")}><Bookmark size={18} />Shortlist{selected.length > 0 && <span className="hire-nav-count">{selected.length}</span>}</button>
           <button type="button" className={view === "contacts" ? "active" : ""} onClick={() => navigate("contacts")}><Users size={18} />Contacts</button>
           <button type="button" className={view === "sequence" ? "active" : ""} onClick={() => navigate("sequence")}><Send size={18} />Sequence</button>
@@ -270,11 +361,40 @@ export default function SourcingStudioDemo() {
           </div>
         </div>}
 
+        {view === "refine" && <div className="hire-brief-view">
+          <div className="hire-brief-top"><div><span className="hire-eyebrow">CLIENT FEEDBACK</span><h1>Let's sharpen the search.</h1><p>Tell Scout what the client did not like, then make comparable-company experience explicit.</p></div><button type="button" className="hire-outline-button" onClick={() => navigate("results")}>Back to results <ArrowRight size={15} /></button></div>
+          <div className="hire-brief-grid">
+            <section className="hire-chat-panel" aria-label="Client feedback chat">
+              <div className="hire-panel-heading"><Sparkles size={18} /><div><strong>Scout</strong><span>Search refinement</span></div><small>{refinementStage === "review" ? "Ready" : "In progress"}</small></div>
+              <div className="hire-chat-kit"><MainContainer><ChatContainer><MessageList>{refinementChat.map((line, index) => <Message key={index} model={{ message: line.text, sender: line.sender, direction: line.sender === "You" ? "outgoing" : "incoming", position: "single" }} />)}</MessageList>{refinementStage !== "review" && <MessageInput key={refinementStage} placeholder={refinementStage === "feedback" ? "The client wants candidates from similar companies…" : "Type an answer…"} attachButton={false} onSend={(value: string) => answerRefinement(value)} />}</ChatContainer></MainContainer></div>
+              <div className="hire-chat-choices">
+                {refinementStage === "feedback" && ["These candidates lack similar-company experience", "Has this person worked in property technology?"].map((choice) => <button type="button" key={choice} onClick={() => answerRefinement(choice)}>{choice}</button>)}
+                {refinementStage === "group" && ["Property management software", "Commercial real estate technology"].map((choice) => <button type="button" key={choice} onClick={() => answerRefinement(choice)}>{choice}</button>)}
+                {refinementStage === "industry" && ["Required industry background", "Preferred, not required", "No requirement"].map((choice) => <button type="button" key={choice} onClick={() => answerRefinement(choice)}>{choice}</button>)}
+                {refinementStage === "companies" && <button type="button" disabled={!refinementDraft.selectedCompanies.length} onClick={() => answerRefinement(refinementDraft.selectedCompanies.join(", "))}>Use {refinementDraft.selectedCompanies.length} selected {refinementDraft.selectedCompanies.length === 1 ? "company" : "companies"} <ArrowRight size={14} /></button>}
+                {refinementStage === "years" && ["2+ years", "4+ years", "Any industry tenure"].map((choice) => <button type="button" key={choice} onClick={() => answerRefinement(choice)}>{choice}</button>)}
+                {refinementStage === "review" && <button type="button" className="hire-apply-refinement" disabled={!refinementDraft.selectedCompanies.length} onClick={applyRefinement}>Apply filters and rerank <ArrowRight size={14} /></button>}
+              </div>
+            </section>
+            <section className="hire-live-criteria hire-refinement-panel"><div className="hire-panel-heading"><Building2 size={18} /><div><strong>Comparable-company map</strong><span>Illustrative suggestions for this role</span></div></div>
+              <p className="hire-refine-helper">The question is about actual employment at a similar company. A matching industry label alone is weaker evidence.</p>
+              <div className="hire-criterion-row"><span>Company group</span><strong>{PEER_GROUPS[refinementDraft.companyGroup]}</strong></div>
+              <div className="hire-criterion-row"><span>Industry experience</span><strong>{refinementDraft.industry === "required" ? "Required" : refinementDraft.industry === "preferred" ? "Preferred" : "Open"}</strong></div>
+              <div className="hire-criterion-row"><span>Sector tenure</span><strong>{refinementDraft.minYears === 1 ? "Any" : refinementDraft.minYears + "+ years"}</strong></div>
+              <h3>Related companies</h3><p className="hire-refine-helper">Select the employers that should count as comparable.</p>
+              <div className="hire-peer-list">{RELATED_COMPANIES.filter((company) => company.group === PEER_GROUPS[refinementDraft.companyGroup]).map((company) => <label key={company.name}><input type="checkbox" disabled={!(["companies", "review"] as RefinementStage[]).includes(refinementStage)} checked={refinementDraft.selectedCompanies.includes(company.name)} onChange={(event) => setRefinementDraft((current) => ({ ...current, selectedCompanies: event.target.checked ? [...current.selectedCompanies, company.name] : current.selectedCompanies.filter((name) => name !== company.name) }))} /><span><strong>{company.name}</strong><small>{company.note}</small></span></label>)}</div>
+              {refinementStage === "review" && <div className="hire-refine-preview"><strong>{refinedCandidates(CANDIDATES, refinementDraft).length} of 5 sample profiles</strong><span>match the proposed filters. Apply to update the result list.</span></div>}
+              <p className="hire-data-note">Company categories are illustrative. Candidate employment below is fictional sample data, not an Autumn API response.</p>
+            </section>
+          </div>
+        </div>}
+
         {(view === "results" || view === "shortlist") && <div className="hire-results-view">
           {view === "results" ? <><div className="hire-search-box"><Search size={18} /><input aria-label="Search description" value={searchText} onChange={(event) => setSearchText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") beginBrief(searchText, "deep") }} /><button type="button" disabled={!searchText.trim()} onClick={() => beginBrief(searchText, "deep")}>Search</button></div><div className="hire-criteria-line"><span className="hire-criteria-chip">{roleName}</span>{answers[0] && <span className="hire-criteria-chip">{answers[0]}</span>}{answers[3] && <span className="hire-criteria-chip">{answers[3]}</span>}<button type="button" className="hire-criteria-more" onClick={() => setCriteriaOpen(!criteriaOpen)}>{criteriaOpen ? "Hide" : "+2 more"}</button><button type="button" className="hire-text-button" onClick={refineBrief}>Edit</button></div>{criteriaOpen && <div className="hire-criteria-popover">{FOLLOWUPS.map((item, index) => <div key={item.label}><span>{item.label}</span><strong>{answers[index] || "Not specified"}</strong></div>)}</div>}</> : <div className="hire-section-header"><span className="hire-eyebrow">SHORTLIST</span><h1>People worth a closer look.</h1><p>{selectedProfiles.length} candidate{selectedProfiles.length === 1 ? "" : "s"} selected for this role.</p></div>}
           {jobDescription !== SAMPLE_JD && <div className="hire-fixed-data-note">Workflow preview: these five candidate cards and scores are the fixed Senior Account Executive sample. They are not generated from this job description.</div>}
-          <div className="hire-results-toolbar"><label className="hire-select-all"><input type="checkbox" aria-label="Select all visible candidates" checked={visibleProfiles.length > 0 && visibleProfiles.every((candidate) => selected.includes(candidate.id))} onChange={(event) => { setSelected(event.target.checked ? Array.from(new Set([...selected, ...visibleProfiles.map((candidate) => candidate.id)])) : selected.filter((id) => !visibleProfiles.some((candidate) => candidate.id === id))); setOutboundStatus("draft") }} /><span><strong>{view === "results" ? "5 candidate profiles" : selectedProfiles.length + " shortlisted"}</strong><small>Illustrative sample profiles · no live sourcing</small></span></label><div className="hire-toolbar-actions"><label className="hire-sort"><SlidersHorizontal size={15} /><select aria-label="Rank candidates by" value={sort} onChange={(event) => setSort(event.target.value as ScoreAxis)}>{AXES.map((axis) => <option key={axis.value} value={axis.value}>{axis.label}</option>)}</select></label><div className="hire-view-toggle" role="group" aria-label="Result view"><button type="button" className={layout === "cards" ? "active" : ""} onClick={() => setLayout("cards")}><LayoutGrid size={15} />Cards</button><button type="button" className={layout === "table" ? "active" : ""} onClick={() => setLayout("table")}><List size={15} />Table</button></div><button type="button" className="hire-deep-button" onClick={refineBrief}><Sparkles size={15} />Refine in chat</button></div></div>
-          {visibleProfiles.length === 0 ? <div className="hire-empty"><Bookmark size={32} /><h2>Your shortlist is empty</h2><p>Open a candidate profile or use the bookmark control on a result card.</p><button type="button" className="hire-black-button" onClick={() => navigate("results")}>Explore candidates <ArrowRight size={15} /></button></div> : layout === "cards" ? <div className="hire-card-grid">{visibleProfiles.map((candidate) => <article className="hire-candidate-card" key={candidate.id}><div className="hire-card-top"><input type="checkbox" aria-label={"Select " + candidate.name} checked={selected.includes(candidate.id)} onChange={() => toggleShortlist(candidate.id)} /><button type="button" className="hire-candidate-identity" onClick={() => showProfile(candidate)}><span className={"hire-avatar " + candidate.color}>{candidate.initials}</span><span><strong>{candidate.name}</strong><small>{candidate.location}</small></span></button><span className="hire-match-score">{scoreCandidate(candidate)}% match</span></div><button type="button" className="hire-card-history" onClick={() => showProfile(candidate)}><span><BriefcaseBusiness size={16} /><strong>{candidate.role} <em>|</em> {candidate.company}</strong><small>Present</small></span><span><i className="hire-timeline-dot" /><strong>{candidate.previous[0]}</strong><small>Previous</small></span><span><GraduationCap size={16} /><strong>{candidate.skillsList.slice(0, 2).join(" · ")}</strong></span></button><div className="hire-card-evidence"><Sparkles size={13} /><p>{candidate.summary}</p></div><div className="hire-card-actions"><button type="button" onClick={() => toggleShortlist(candidate.id)} aria-label={(selected.includes(candidate.id) ? "Remove " : "Add ") + candidate.name + " shortlist"}><Bookmark size={16} fill={selected.includes(candidate.id) ? "currentColor" : "none"} />{selected.includes(candidate.id) ? "Shortlisted" : "Shortlist"}</button><button type="button" onClick={() => { if (!selected.includes(candidate.id)) toggleShortlist(candidate.id); navigate("sequence") }}><Mail size={15} />Email draft</button><button type="button" aria-label={"View " + candidate.name} onClick={() => showProfile(candidate)}><ArrowRight size={16} /></button></div></article>)}</div> : <div className="hire-table-wrap"><table className="hire-table"><thead><tr><th>Candidate</th><th>Current role</th><th>Company</th><th>Location</th><th>Match</th><th>Shortlist</th></tr></thead><tbody>{visibleProfiles.map((candidate) => <tr key={candidate.id}><td><button type="button" onClick={() => showProfile(candidate)}><span className={"hire-avatar " + candidate.color}>{candidate.initials}</span><strong>{candidate.name}</strong></button></td><td>{candidate.role}</td><td>{candidate.company}</td><td>{candidate.location}</td><td><strong>{scoreCandidate(candidate)}%</strong><small>{candidate.summary}</small></td><td><button type="button" onClick={() => toggleShortlist(candidate.id)}><Bookmark size={17} fill={selected.includes(candidate.id) ? "currentColor" : "none"} /></button></td></tr>)}</tbody></table></div>}
+          {view === "results" && (refinement ? <div className="hire-feedback-banner applied"><Sparkles size={17} /><span><strong>Client feedback applied</strong><small>{PEER_GROUPS[refinement.companyGroup]} · {refinement.selectedCompanies.join(", ")} · {refinement.industry === "required" ? "industry required" : refinement.industry === "preferred" ? "industry preferred" : "industry open"} · {ranked.length} of 5 sample profiles</small></span><button type="button" onClick={beginRefinement}>Adjust in chat</button><button type="button" onClick={clearRefinement}>Clear</button></div> : <div className="hire-feedback-banner"><MessageCircle size={17} /><span><strong>Client not satisfied with the first results?</strong><small>Ask about similar companies, industry background, and minimum experience.</small></span><button type="button" onClick={beginRefinement}>Discuss feedback <ArrowRight size={14} /></button></div>)}
+          <div className="hire-results-toolbar"><label className="hire-select-all"><input type="checkbox" aria-label="Select all visible candidates" checked={visibleProfiles.length > 0 && visibleProfiles.every((candidate) => selected.includes(candidate.id))} onChange={(event) => { setSelected(event.target.checked ? Array.from(new Set([...selected, ...visibleProfiles.map((candidate) => candidate.id)])) : selected.filter((id) => !visibleProfiles.some((candidate) => candidate.id === id))); setOutboundStatus("draft") }} /><span><strong>{view === "results" ? visibleProfiles.length + " candidate profiles" : selectedProfiles.length + " shortlisted"}</strong><small>Illustrative sample profiles · no live sourcing</small></span></label><div className="hire-toolbar-actions"><label className="hire-sort"><SlidersHorizontal size={15} /><select aria-label="Rank candidates by" value={sort} onChange={(event) => setSort(event.target.value as RankAxis)}>{refinement && <option value="similarity">Similar-company fit</option>}{AXES.map((axis) => <option key={axis.value} value={axis.value}>{axis.label}</option>)}</select></label><div className="hire-view-toggle" role="group" aria-label="Result view"><button type="button" className={layout === "cards" ? "active" : ""} onClick={() => setLayout("cards")}><LayoutGrid size={15} />Cards</button><button type="button" className={layout === "table" ? "active" : ""} onClick={() => setLayout("table")}><List size={15} />Table</button></div><button type="button" className="hire-deep-button" onClick={beginRefinement}><Sparkles size={15} />Refine in chat</button></div></div>
+          {visibleProfiles.length === 0 ? <div className="hire-empty"><Bookmark size={32} /><h2>{view === "results" ? "No sample profiles match" : "Your shortlist is empty"}</h2><p>{view === "results" ? "Try another comparable-company group or relax the industry requirement." : "Open a candidate profile or use the bookmark control on a result card."}</p><button type="button" className="hire-black-button" onClick={view === "results" ? beginRefinement : () => navigate("results")}>{view === "results" ? "Adjust filters" : "Explore candidates"} <ArrowRight size={15} /></button></div> : layout === "cards" ? <div className="hire-card-grid">{visibleProfiles.map((candidate) => <article className="hire-candidate-card" key={candidate.id}><div className="hire-card-top"><input type="checkbox" aria-label={"Select " + candidate.name} checked={selected.includes(candidate.id)} onChange={() => toggleShortlist(candidate.id)} /><button type="button" className="hire-candidate-identity" onClick={() => showProfile(candidate)}><span className={"hire-avatar " + candidate.color}>{candidate.initials}</span><span><strong>{candidate.name}</strong><small>{candidate.location}</small></span></button><span className="hire-match-score">{scoreCandidate(candidate)}% match</span></div><button type="button" className="hire-card-history" onClick={() => showProfile(candidate)}><span><BriefcaseBusiness size={16} /><strong>{candidate.role} <em>|</em> {candidate.company}</strong><small>Present</small></span><span><i className="hire-timeline-dot" /><strong>{candidate.previous[0]}</strong><small>Previous</small></span><span><GraduationCap size={16} /><strong>{candidate.skillsList.slice(0, 2).join(" · ")}</strong></span></button><div className="hire-card-evidence"><Sparkles size={13} /><p>{candidate.summary}</p></div>{refinement && view === "results" && <div className="hire-peer-evidence"><Building2 size={13} /><span>Worked at {matchingCompanies(candidate, refinement.selectedCompanies).join(", ") || "no selected company"} · {candidate.industryYears} years in sector</span></div>}<div className="hire-card-actions"><button type="button" onClick={() => toggleShortlist(candidate.id)} aria-label={(selected.includes(candidate.id) ? "Remove " : "Add ") + candidate.name + " shortlist"}><Bookmark size={16} fill={selected.includes(candidate.id) ? "currentColor" : "none"} />{selected.includes(candidate.id) ? "Shortlisted" : "Shortlist"}</button><button type="button" onClick={() => { if (!selected.includes(candidate.id)) toggleShortlist(candidate.id); navigate("sequence") }}><Mail size={15} />Email draft</button><button type="button" aria-label={"View " + candidate.name} onClick={() => showProfile(candidate)}><ArrowRight size={16} /></button></div></article>)}</div> : <div className="hire-table-wrap"><table className="hire-table"><thead><tr><th>Candidate</th><th>Current role</th><th>Company</th><th>Location</th><th>Match</th><th>Shortlist</th></tr></thead><tbody>{visibleProfiles.map((candidate) => <tr key={candidate.id}><td><button type="button" onClick={() => showProfile(candidate)}><span className={"hire-avatar " + candidate.color}>{candidate.initials}</span><strong>{candidate.name}</strong></button></td><td>{candidate.role}</td><td>{candidate.company}</td><td>{candidate.location}</td><td><strong>{scoreCandidate(candidate)}%</strong><small>{refinement && view === "results" ? `Peer employers: ${matchingCompanies(candidate, refinement.selectedCompanies).join(", ")} · ${candidate.industryYears} sector years` : candidate.summary}</small></td><td><button type="button" onClick={() => toggleShortlist(candidate.id)}><Bookmark size={17} fill={selected.includes(candidate.id) ? "currentColor" : "none"} /></button></td></tr>)}</tbody></table></div>}
           <div className="hire-results-bottom"><span>Match score is a fixed demo weighting: experience 45%, skills 30%, location 15%, compensation 10%.</span><button type="button" onClick={() => navigate("sequence")}>Build a sequence <ArrowRight size={14} /></button></div>
         </div>}
 
@@ -331,7 +451,26 @@ export default function SourcingStudioDemo() {
         ] as const).map(([number, title, detail, target], index) => <button type="button" key={number} onClick={() => navigate(target)}><span className={workflowDone[index] ? "done" : ""}>{workflowDone[index] ? <Check size={17} /> : number}</span><div><strong>{title}</strong><p>{detail}</p></div><ArrowRight size={18} /></button>)}</div>{workflowDone.every(Boolean) && <div className="hire-booked"><Check size={18} /><span><strong>Sample recruiting flow complete</strong><small>A candidate was shortlisted, contacted, replied, and scheduled in this browser session.</small></span><button type="button" onClick={() => navigate("contacts")}>View contacts <ArrowRight size={14} /></button></div>}</div>}
       </main>
 
-      {profile && <div className="hire-drawer-layer"><aside className="hire-profile" role="dialog" aria-modal="true" aria-label={profile.name + " profile"}><div className="hire-profile-top"><strong>Profile</strong><div><button type="button" aria-label="Previous candidate" onClick={() => { const index = ranked.findIndex((candidate) => candidate.id === profile.id); showProfile(ranked[(index - 1 + ranked.length) % ranked.length]) }}><ChevronLeft size={18} /></button><button type="button" aria-label="Next candidate" onClick={() => { const index = ranked.findIndex((candidate) => candidate.id === profile.id); showProfile(ranked[(index + 1) % ranked.length]) }}><ChevronRight size={18} /></button><button type="button" aria-label="Close profile" onClick={() => setProfile(null)}><X size={19} /></button></div></div><div className="hire-profile-scroll"><div className="hire-profile-identity"><span className={"hire-avatar " + profile.color}>{profile.initials}</span><div><h2>{profile.name}</h2><p>{profile.role} at {profile.company}</p><small><MapPin size={13} />{profile.location}</small></div><span className="hire-profile-score">{scoreCandidate(profile)}%<small>match</small></span></div><div className="hire-profile-link"><span>LinkedIn</span><code>{profile.linkedin}</code><button type="button" aria-label="Copy sample LinkedIn URL" onClick={() => copyProfileLink(profile)}>{copyState === "copied" ? <Check size={15} /> : <Copy size={15} />}</button><small role="status">{copyState === "copied" ? "Copied" : copyState === "unavailable" ? "Copy unavailable" : ""}</small></div><div className="hire-contact-strip"><Mail size={16} /><span>{profile.email} · sample address</span><button type="button" onClick={() => { if (!selected.includes(profile.id)) toggleShortlist(profile.id); setProfile(null); setView("sequence") }}>Draft email</button></div><div className="hire-profile-actions"><button type="button" className="hire-black-button" onClick={() => { if (!selected.includes(profile.id)) toggleShortlist(profile.id); setProfile(null); setView("sequence") }}><Send size={15} />Email draft</button><button type="button" className="hire-outline-button" onClick={() => toggleShortlist(profile.id)}><Bookmark size={15} fill={selected.includes(profile.id) ? "currentColor" : "none"} />{selected.includes(profile.id) ? "Shortlisted" : "Shortlist"}</button></div><div className="hire-profile-tabs">{(["experience", "match", "notes"] as const).map((tab) => <button type="button" key={tab} className={profileTab === tab ? "active" : ""} onClick={() => setProfileTab(tab)}>{tab === "match" ? "Match & company" : tab === "notes" ? "Notes" : "Experience"}</button>)}</div>{profileTab === "experience" && <div className="hire-profile-body"><h3>Work Experience</h3><div className="hire-experience-row"><span className="hire-company-icon">{profile.company[0]}</span><div><strong>{profile.role}</strong><p>{profile.company} · {profile.companyDetail}</p><small>Present · {profile.years}</small></div></div>{profile.previous.map((company, index) => <div className="hire-experience-row" key={company}><span className="hire-company-icon secondary">{company[0]}</span><div><strong>{index === 0 ? "Previous sales role" : "Earlier experience"}</strong><p>{company}</p><small>Sample record</small></div></div>)}<h3>Skills</h3><div className="hire-skill-list">{profile.skillsList.map((skill) => <span key={skill}>{skill}</span>)}</div></div>}{profileTab === "match" && <div className="hire-profile-body"><div className="hire-match-explanation"><Sparkles size={17} /><p>{profile.summary}</p></div><h3>Why this person appears</h3>{[["Relevant experience", profile.experience], ["Skills overlap", profile.skills], ["Location fit", profile.locationFit], ["Compensation fit", profile.compensationFit]].map(([label, value]) => <div className="hire-match-axis" key={label}><span>{label}</span><strong>{value}%</strong><i><i style={{ width: String(value) + "%" }} /></i></div>)}<div className="hire-unclear"><span>UNCLEAR</span> Visa status is not present in the sample profile. Confirm directly.</div><h3>Current company</h3><div className="hire-company-card"><span className="hire-company-icon">{profile.company[0]}</span><div><strong>{profile.company}</strong><p>{profile.companyDetail}</p><small>{profile.companySize} · HQ {profile.companyHQ}</small></div></div><p className="hire-data-note">Illustrative sample profile. A connected Autumn result should show source links for each field.</p></div>}{profileTab === "notes" && <div className="hire-profile-body"><h3>Recruiting notes</h3><textarea aria-label="Candidate note" placeholder="Add a note for this candidate…" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} /><button type="button" className="hire-black-button" onClick={addNote}>Add note <Plus size={15} /></button>{(notes[profile.id] || []).map((item, index) => <p className="hire-note" key={index}>{item}</p>)}<div className="hire-note-hint"><MessageCircle size={17} />Notes live in this browser session only.</div></div>}</div></aside></div>}
+      {profile && <div className="hire-drawer-layer"><aside className="hire-profile" role="dialog" aria-modal="true" aria-label={profile.name + " profile"}>
+        <div className="hire-profile-top"><strong>Candidate profile <small>· Autumn-shaped sample</small></strong><div><button type="button" aria-label="Previous candidate" onClick={() => { const list = ranked.some((candidate) => candidate.id === profile.id) ? ranked : CANDIDATES; const index = list.findIndex((candidate) => candidate.id === profile.id); showProfile(list[(index - 1 + list.length) % list.length]) }}><ChevronLeft size={18} /></button><button type="button" aria-label="Next candidate" onClick={() => { const list = ranked.some((candidate) => candidate.id === profile.id) ? ranked : CANDIDATES; const index = list.findIndex((candidate) => candidate.id === profile.id); showProfile(list[(index + 1) % list.length]) }}><ChevronRight size={18} /></button><button type="button" aria-label="Close profile" onClick={() => setProfile(null)}><X size={19} /></button></div></div>
+        <div className="hire-profile-scroll">
+          <div className="hire-profile-identity"><span className={"hire-avatar " + profile.color}>{profile.initials}</span><div><h2>{profile.name}</h2><p>{profile.headline}</p><small><MapPin size={13} />{profile.location}</small></div><span className="hire-profile-score">{scoreCandidate(profile)}%<small>base match</small></span></div>
+          <div className="hire-profile-link"><span>LinkedIn URL</span><code>https://www.{profile.linkedin}</code><button type="button" aria-label="Copy sample LinkedIn URL" onClick={() => copyProfileLink(profile)}>{copyState === "copied" ? <Check size={15} /> : <Copy size={15} />}</button><small role="status">{copyState === "copied" ? "Copied" : copyState === "unavailable" ? "Copy unavailable" : "Fictional sample URL"}</small></div>
+          <div className="hire-profile-actions"><button type="button" className="hire-outline-button" onClick={() => toggleShortlist(profile.id)}><Bookmark size={15} fill={selected.includes(profile.id) ? "currentColor" : "none"} />{selected.includes(profile.id) ? "Shortlisted" : "Add to shortlist"}</button><button type="button" className="hire-black-button" onClick={() => { if (!selected.includes(profile.id)) toggleShortlist(profile.id); setProfile(null); setView("sequence") }}><Send size={15} />Add to sequence</button><span className="hire-profile-sample-label">Illustrative record · not fetched from Autumn</span></div>
+          <div className="hire-profile-detail-grid">
+            <div className="hire-profile-main"><div className="hire-profile-tabs">{(["overview", "experience", "match", "autumn"] as const).map((tab) => <button type="button" key={tab} className={profileTab === tab ? "active" : ""} onClick={() => setProfileTab(tab)}>{tab === "match" ? "Match & company" : tab === "autumn" ? "Autumn fields" : tab[0].toUpperCase() + tab.slice(1)}</button>)}</div>
+              {profileTab === "overview" && <div className="hire-profile-body"><div className="hire-profile-facts"><div><span>Status</span><strong>{contactStatus(profile)}</strong></div><div><span>Email</span><strong>{profile.email} <small>sample</small></strong></div><div><span>Industry tenure</span><strong>{profile.industryYears ? profile.industryYears + " years" : "Not shown"}</strong></div><div><span>Visa</span><strong>Not shown · ask candidate</strong></div></div><h3>About</h3><p className="hire-profile-about">{profile.about}</p><h3>Recent experience</h3>{profile.employment.slice(0, 2).map((job) => <div className="hire-experience-row" key={job.company}><span className="hire-company-icon">{job.company[0]}</span><div><strong>{job.title}</strong><p>{job.company} · {job.dates}</p><small>{job.detail}</small></div></div>)}<h3>Skill map</h3><div className="hire-skill-list">{profile.skillsList.map((skill) => <span key={skill}>{skill}</span>)}</div><p className="hire-data-note">Field source: s1 · fictional LinkedIn-style profile. Dates and history are sample data.</p></div>}
+              {profileTab === "experience" && <div className="hire-profile-body"><h3>Work experience <small>source s1 · sample</small></h3>{profile.employment.map((job) => <div className="hire-experience-row" key={job.company}><span className="hire-company-icon">{job.company[0]}</span><div><strong>{job.title}</strong><p>{job.company} · {job.dates}</p><small>{job.detail}</small></div></div>)}<h3>Education</h3><p className="hire-profile-about">{profile.education}</p><h3>Skills</h3><div className="hire-skill-list">{profile.skillsList.map((skill) => <span key={skill}>{skill}</span>)}</div></div>}
+              {profileTab === "match" && <div className="hire-profile-body"><div className="hire-match-explanation"><Sparkles size={17} /><p>{profile.summary}</p></div><h3>Why this person appears</h3>{[["Relevant experience", profile.experience], ["Skills overlap", profile.skills], ["Location fit", profile.locationFit], ["Compensation fit", profile.compensationFit]].map(([label, value]) => <div className="hire-match-axis" key={label}><span>{label}</span><strong>{value}%</strong><i><i style={{ width: String(value) + "%" }} /></i></div>)}<h3>Comparable employer evidence</h3><div className="hire-peer-profile-list">{profile.employment.filter((job) => RELATED_COMPANIES.some((company) => company.name === job.company)).length ? profile.employment.filter((job) => RELATED_COMPANIES.some((company) => company.name === job.company)).map((job) => <span key={job.company}><Check size={13} />{job.company} · {job.title} · {job.dates}</span>) : <p>No selected peer-company employment is shown in this sample profile.</p>}</div><div className="hire-unclear"><span>UNCLEAR</span> Visa status is not present in the sample profile. Confirm directly.</div><h3>Current company</h3><div className="hire-company-card"><span className="hire-company-icon">{profile.company[0]}</span><div><strong>{profile.company}</strong><p>{profile.companyDetail}</p><small>{profile.companySize} · HQ {profile.companyHQ}</small></div></div><p className="hire-data-note">Company context is a fictional s2 record. The score is a fixed demo calculation, not an Autumn field.</p></div>}
+              {profileTab === "autumn" && <div className="hire-profile-body"><div className="hire-autumn-heading"><div><h3>Structured output preview</h3><p>Autumn's documented output cells pair each value with a source_id. This is a fabricated row shaped for the future integration.</p></div></div><div className="hire-autumn-fields">{Object.entries(autumnPreviewRow(profile)).map(([name, cell]) => "value" in cell && <div key={name}><span>{name}</span><strong>{Array.isArray(cell.value) ? cell.value.join(" · ") : cell.value}</strong><small>{cell.source_id}</small></div>)}</div><h3>Sample response row</h3><pre className="hire-autumn-json">{JSON.stringify(autumnPreviewRow(profile), null, 2)}</pre><p className="hire-data-note">No Autumn API call was made. The LinkedIn URL and source map above are placeholders.</p></div>}
+            </div>
+            <div className="hire-profile-side"><div className="hire-side-tabs"><button type="button" className={profileSideTab === "notes" ? "active" : ""} onClick={() => setProfileSideTab("notes")}>Notes</button><button type="button" className={profileSideTab === "activity" ? "active" : ""} onClick={() => setProfileSideTab("activity")}>Activity</button></div>
+              {profileSideTab === "notes" && <div className="hire-side-content"><textarea aria-label="Candidate note" placeholder="Add a note for this candidate…" value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} /><button type="button" className="hire-black-button" onClick={addNote}>Add note <Plus size={15} /></button>{(notes[profile.id] || []).length ? (notes[profile.id] || []).map((item, index) => <p className="hire-note" key={index}>{item}</p>) : <div className="hire-side-empty"><MessageCircle size={25} /><span>No notes yet</span></div>}<p className="hire-data-note">Notes live in this browser session only.</p></div>}
+              {profileSideTab === "activity" && <div className="hire-side-content"><h3>Recruiting activity</h3><div className="hire-activity-item"><Check size={14} /><span>Sample profile available for review</span></div>{selected.includes(profile.id) && <div className="hire-activity-item"><Bookmark size={14} /><span>Added to shortlist</span></div>}{contactedIds.includes(profile.id) && <div className="hire-activity-item"><Mail size={14} /><span>Sample batch marked sent</span></div>}{replyCandidateId === profile.id && <div className="hire-activity-item"><MessageCircle size={14} /><span>Interested reply simulated</span></div>}{scheduledInterview?.candidateId === profile.id && <div className="hire-activity-item"><CalendarDays size={14} /><span>Interview scheduled in demo · {scheduledInterview.slot}</span></div>}<p className="hire-data-note">This is local prototype activity, not a live CRM history.</p></div>}
+            </div>
+          </div>
+        </div>
+      </aside></div>}
     </div>
   )
 }
