@@ -119,6 +119,7 @@ import { EvaluationAgentRanking as ExternalSupplyEvaluationAgentRanking } from "
 // Post-V2 hotfix 2026-05-14 — per-company / per-job sourcing entry surface.
 import { Jobs as ExternalSupplyJobs } from "./pages/external-supply/Jobs.js"
 import { JobWorkspace } from "./pages/admin/JobWorkspace.js"
+import SourcingStudioDemo from "./pages/SourcingStudioDemo.js"
 // Enterprise onboarding (Module A) — wizard shell + persistent checklist home.
 // First slice: client-side state via localStorage (resumable); server-state
 // callable is a later slice.
@@ -307,6 +308,7 @@ export default function App() {
           <Route path="/admin/recruiter-submissions" element={<RecruiterSubmissions section="submissions" />} />
           {/* v2.0 External Supply V1 — Wave D admin surfaces. */}
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
+          <Route path="/admin/sourcing-studio-demo" element={<SourcingStudioDemo />} />
           <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs mode="collab" />} />
           <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs mode="collab" />} />
           <Route path="/admin/external-supply/non-collab-jobs" element={<ExternalSupplyJobs mode="non_collab" />} />
