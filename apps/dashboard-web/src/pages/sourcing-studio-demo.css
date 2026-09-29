@@ -184,6 +184,16 @@
 .hire-empty p { color:#92969e; font-size:12px; max-width:360px; line-height:1.5; }
 .hire-empty .hire-black-button { margin-top:12px; }
 .hire-sequence-stats { display:flex; gap:12px; margin-bottom:18px; }
+.hire-contact-toolbar { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:13px 16px; border:1px solid var(--h-line); border-radius:10px 10px 0 0; background:#fff; }
+.hire-contact-toolbar strong { font-size:12px; }
+.hire-contact-toolbar label { display:flex; align-items:center; gap:9px; color:#9398a0; font-size:11px; }
+.hire-contact-toolbar select { border:1px solid var(--h-line); border-radius:7px; background:#fff; color:#393d44; padding:7px 9px; font-size:11px; }
+.hire-contact-table td { vertical-align:middle; }
+.hire-contact-table td:nth-child(3) small { display:block; margin-top:3px; color:#a2a6ad; font-size:10px; }
+.hire-contact-table td:nth-child(5) small { display:inline; max-width:none; }
+.hire-contact-status { display:inline-block; padding:5px 8px; border-radius:999px; background:#f2edf9; color:#7048b5; font-size:10px; white-space:nowrap; }
+.hire-contact-actions { display:flex; gap:10px; white-space:nowrap; }
+.hire-contact-actions button { font-size:10px !important; color:#7048b5; }
 .hire-sequence-stats>div { flex:1; min-height:78px; border:1px solid var(--h-line); border-radius:11px; padding:14px 18px; display:flex; flex-direction:column; gap:3px; }
 .hire-sequence-stats strong { font-size:22px; font-weight:600; }
 .hire-sequence-stats span { font-size:10px; color:#979ba2; }
@@ -219,6 +229,12 @@
 .hire-step-editor-foot>label { color:#8f9299; display:flex; align-items:center; gap:5px; font-size:10px; }
 .hire-step-editor-foot input { width:52px; border:1px solid #dedfe3; border-radius:5px; padding:5px; color:#333; }
 .hire-step-warning { margin:9px 20px 0; color:#a26251; font-size:10px; }
+.hire-batch-review { display:flex; flex-direction:column; align-items:flex-start; gap:9px; margin:18px 20px 0; padding:16px; border:1px solid #e0d4f1; border-radius:9px; background:#faf8fd; color:#34323a; }
+.hire-batch-review>div { display:flex; align-items:center; gap:7px; color:#7048b5; }
+.hire-batch-review strong { font-size:11px; }
+.hire-batch-review p,.hire-batch-review small { margin:0; color:#85818c; font-size:10px; }
+.hire-batch-review pre { width:100%; max-height:140px; overflow:auto; margin:0; padding:10px; border:1px solid #ebe8ee; border-radius:7px; background:#fff; color:#55515b; font-family:inherit; font-size:10px; white-space:pre-wrap; line-height:1.5; }
+.hire-batch-review .hire-black-button { margin-top:2px; }
 .hire-stage-confirm { display:flex; align-items:flex-start; flex-wrap:wrap; gap:8px; margin:18px 20px 0; border:1px solid #e0d4f1; border-radius:8px; padding:12px; background:#f9f6fe; color:#6f43c1; font-size:10px; line-height:1.45; }
 .hire-stage-confirm span { flex:1; min-width:180px; }
 .hire-stage-confirm button { display:flex; align-items:center; gap:4px; font-size:10px !important; font-weight:700 !important; color:#6e43c0; }
@@ -255,10 +271,17 @@
 .hire-invite-preview>span { display:flex; flex-direction:column; gap:2px; }
 .hire-invite-preview strong { font-size:11px; }
 .hire-invite-preview small { color:#8d8a98; font-size:10px; }
+.hire-invite-preview .hire-black-button { margin-left:auto; white-space:nowrap; }
+.hire-booked { display:flex; align-items:center; gap:10px; margin:0 0 16px; padding:14px 16px; border:1px solid #d8e8db; border-radius:9px; background:#f6fbf7; color:#2e8652; }
+.hire-booked>span { display:flex; flex:1; flex-direction:column; gap:3px; }
+.hire-booked strong { font-size:12px; }
+.hire-booked small { color:#6c8974; font-size:10px; }
+.hire-booked button { display:flex; align-items:center; gap:4px; color:#2e8652; font-size:10px !important; }
 .hire-workflow-list { border-top:1px solid var(--h-line); }
 .hire-workflow-list button { display:grid; grid-template-columns:55px 1fr 20px; align-items:center; gap:16px; width:100%; text-align:left; padding:20px 8px !important; border-bottom:1px solid var(--h-line) !important; }
 .hire-workflow-list button:hover { background:#faf9fc; }
 .hire-workflow-list button>span { font-size:22px; color:#8056c9; }
+.hire-workflow-list button>span.done { display:grid; place-items:center; width:29px; height:29px; border-radius:50%; background:#e6f5e9; color:#2e8652; }
 .hire-workflow-list strong { font-size:13px; }
 .hire-workflow-list p { color:#92969d; margin:4px 0 0; font-size:11px; }
 .hire-drawer-layer { position:fixed; inset:0; z-index:50; pointer-events:none; }
