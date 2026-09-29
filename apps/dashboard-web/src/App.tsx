@@ -1,7 +1,7 @@
 import { getRedirectResult, onAuthStateChanged, signOut } from "firebase/auth"
 import { completeAdminMagicLink } from "./lib/magic-link.js"
 import { useEffect, useState } from "react"
-import { Navigate, Route, Routes } from "react-router-dom"
+import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "./components/console/AppShell.js"
 import { AgentBuilder } from "./pages/AgentBuilder.js"
 import Legal from "./pages/Legal.js"
@@ -133,6 +133,7 @@ import {
 } from "./lib/cross-domain-sso.js"
 
 export default function App() {
+  const location = useLocation()
   const [user, setUser] = useState<unknown | null>(undefined)
   const [redirectHandled, setRedirectHandled] = useState(false)
 
@@ -174,6 +175,11 @@ export default function App() {
 
   const email =
     (user && typeof user === "object" && (user as { email?: string }).email) || "operator"
+
+  // The recruiting concept is its own product surface on the admin host.
+  if (location.pathname.startsWith("/hire")) {
+    return <Routes><Route path="/hire/*" element={<SourcingStudioDemo />} /></Routes>
+  }
 
   return (
     <AppShell
@@ -308,7 +314,7 @@ export default function App() {
           <Route path="/admin/recruiter-submissions" element={<RecruiterSubmissions section="submissions" />} />
           {/* v2.0 External Supply V1 — Wave D admin surfaces. */}
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
-          <Route path="/admin/sourcing-studio-demo" element={<SourcingStudioDemo />} />
+          <Route path="/admin/sourcing-studio-demo" element={<Navigate to="/hire" replace />} />
           <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs mode="collab" />} />
           <Route path="/admin/external-supply/jobs/:companyId" element={<ExternalSupplyJobs mode="collab" />} />
           <Route path="/admin/external-supply/non-collab-jobs" element={<ExternalSupplyJobs mode="non_collab" />} />

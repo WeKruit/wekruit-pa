@@ -138,7 +138,6 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/pending-outbound", label: "Pending outbound", hitl: true },
       { to: "/admin/email-review", label: "Email review", hitl: true },
       { to: "/admin/external-supply", label: "External supply", end: true },
-      { to: "/admin/sourcing-studio-demo", label: "Sourcing studio · demo" },
       { to: "/admin/external-supply/outreach", label: "Outreach campaigns" },
       { to: "/admin/external-supply/sync", label: "Instantly sync" },
       { to: "/admin/external-supply/audit", label: "Audit" },
