@@ -44,6 +44,13 @@ interface PublicJobListItem {
   websiteUrl?: string
 }
 
+interface LogoItem {
+  name: string
+  websiteUrl?: string
+  href?: string
+  ariaLabel?: string
+}
+
 type JobsState =
   | { status: "loading" }
   | { status: "ready"; jobs: PublicJobListItem[] }
@@ -94,6 +101,23 @@ const TRACKED_COMPANIES = [
   { name: "Vercel", websiteUrl: "https://vercel.com" },
   { name: "Perplexity", websiteUrl: "https://perplexity.ai" },
   { name: "Robinhood", websiteUrl: "https://robinhood.com" },
+  { name: "Lyft", websiteUrl: "https://lyft.com" },
+  { name: "Reddit", websiteUrl: "https://reddit.com" },
+  { name: "Twilio", websiteUrl: "https://twilio.com" },
+  { name: "Affirm", websiteUrl: "https://affirm.com" },
+  { name: "Block", websiteUrl: "https://block.xyz" },
+  { name: "Asana", websiteUrl: "https://asana.com" },
+  { name: "Mercury", websiteUrl: "https://mercury.com" },
+  { name: "Brex", websiteUrl: "https://brex.com" },
+  { name: "MongoDB", websiteUrl: "https://mongodb.com" },
+  { name: "Datadog", websiteUrl: "https://datadoghq.com" },
+  { name: "Cohere", websiteUrl: "https://cohere.com" },
+  { name: "ElevenLabs", websiteUrl: "https://elevenlabs.io" },
+  { name: "Scale AI", websiteUrl: "https://scale.com" },
+  { name: "Elastic", websiteUrl: "https://elastic.co" },
+  { name: "SoFi", websiteUrl: "https://sofi.com" },
+  { name: "New Relic", websiteUrl: "https://newrelic.com" },
+  { name: "Smartsheet", websiteUrl: "https://smartsheet.com" },
 ] as const
 
 // Module-level `select` so TanStack memoizes the derived array (a stable fn
@@ -203,6 +227,12 @@ export default function Landing() {
 
   const jobs = state.status === "ready" ? state.jobs : []
   const companies = uniqueCompanies(jobs)
+  const roleBriefLogos: LogoItem[] = companies.map((company) => ({
+    name: company.company,
+    websiteUrl: company.websiteUrl,
+    href: `/j/${company.id}`,
+    ariaLabel: `View ${company.title} at ${company.company}`,
+  }))
   return (
     <CandidateShell hero>
       <style>{LANDING_STYLES}</style>
@@ -321,26 +351,18 @@ export default function Landing() {
                 <p className="wk-muted">No public WeKruit roles are open right now. Keep your profile current; Claire can screen when a real role opens.</p>
               ) : null}
               {companies.length > 0 ? (
-                <div className="wk-represented__logos" aria-label="Companies with WeKruit role briefs">
-                  {companies.map((company) => (
-                    <Link key={company.company} to={`/j/${company.id}`} className="wk-represented__logo" aria-label={`View ${company.title} at ${company.company}`}>
-                      <CompanyLogo name={company.company} websiteUrl={company.websiteUrl} />
-                      <span>{company.company}</span>
-                    </Link>
-                  ))}
+                <div className="wk-represented__rows" aria-label="Companies with WeKruit role briefs">
+                  <CompanyRail items={roleBriefLogos.filter((_, index) => index % 2 === 0)} />
+                  <CompanyRail items={roleBriefLogos.filter((_, index) => index % 2 === 1)} reverse />
                 </div>
               ) : null}
               {jobs.length > 0 ? <Link to="/market" className="wk-represented__browse">Browse all {jobs.length} role briefs <Icon name="arrow-right" size={15} stroke={2} /></Link> : null}
 
               <div className="wk-represented__tracked">
                 <p className="wk-represented__eyebrow">ACROSS THE WIDER MARKET</p>
-                <div className="wk-represented__logos" aria-label="Examples from WeKruit tracked market listings">
-                  {TRACKED_COMPANIES.map((company) => (
-                    <span key={company.name} className="wk-represented__logo">
-                      <CompanyLogo name={company.name} websiteUrl={company.websiteUrl} />
-                      <span>{company.name}</span>
-                    </span>
-                  ))}
+                <div className="wk-represented__rows" aria-label="Examples from WeKruit tracked market listings">
+                  <CompanyRail items={TRACKED_COMPANIES.filter((_, index) => index % 2 === 0)} />
+                  <CompanyRail items={TRACKED_COMPANIES.filter((_, index) => index % 2 === 1)} reverse />
                 </div>
                 <p className="wk-represented__disclosure">Tracked listings are market sources, not WeKruit hiring partnerships. Availability changes.</p>
               </div>
@@ -495,6 +517,29 @@ function StepCard({
 // ────────────────────────────────────────────────────────────────────────────
 // CompanyLogo — website favicon when the role brief supplies a company site
 // ────────────────────────────────────────────────────────────────────────────
+
+function CompanyRail({ items, reverse = false }: { items: readonly LogoItem[]; reverse?: boolean }) {
+  if (items.length === 0) return null
+  return (
+    <div className={`wk-represented__rail${reverse ? " wk-represented__rail--reverse" : ""}`}>
+      <div className="wk-represented__track">
+        {[0, 1].map((copy) => (
+          <div className="wk-represented__group" key={copy} aria-hidden={copy === 1}>
+            {items.map((item) => item.href ? (
+              <Link key={item.name} to={item.href} className="wk-represented__logo" aria-label={item.ariaLabel} tabIndex={copy === 1 ? -1 : undefined}>
+                <CompanyLogo name={item.name} websiteUrl={item.websiteUrl} /><span>{item.name}</span>
+              </Link>
+            ) : (
+              <span key={item.name} className="wk-represented__logo">
+                <CompanyLogo name={item.name} websiteUrl={item.websiteUrl} /><span>{item.name}</span>
+              </span>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function CompanyLogo({ name, websiteUrl }: { name: string; websiteUrl?: string }) {
   const src = faviconUrl(websiteUrl)
@@ -770,61 +815,77 @@ const LANDING_STYLES = `
 .wk-represented {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   overflow: hidden; min-height: 620px;
-  border: 1px solid rgba(34, 51, 40, .13);
+  border: 1px solid var(--wk-border);
   border-radius: 30px;
-  background: #fffdfa;
-  box-shadow: 0 24px 50px -40px rgba(28, 44, 32, .44);
+  background: var(--wk-cream-3);
+  box-shadow: 0 24px 50px -40px rgba(45, 26, 10, .4);
 }
 .wk-represented__promise {
   display: flex; flex-direction: column; justify-content: space-between;
   gap: 72px; padding: clamp(36px, 5vw, 68px);
-  background: #1b3326; color: #f8f7ee;
+  min-width: 0; background: var(--wk-ink); color: var(--wk-cream-3);
 }
 .wk-represented__eyebrow {
   margin: 0; font-size: 11px; font-weight: 700;
   letter-spacing: .19em; text-transform: uppercase;
 }
-.wk-represented__promise .wk-represented__eyebrow { color: #abc4b0; }
+.wk-represented__promise .wk-represented__eyebrow { color: var(--wk-peach-300); }
 .wk-represented__promise h2 {
-  margin: 0 auto auto 0; color: #f8f7ee; font-family: 'Newsreader', serif;
-  font-size: clamp(68px, 7vw, 112px); font-weight: 400;
-  line-height: .93; letter-spacing: -.055em;
+  margin: 0 auto auto 0; max-width: 100%; color: var(--wk-cream-3);
+  font-family: 'Newsreader', serif;
+  font-size: clamp(54px, 5.4vw, 78px); font-weight: 400;
+  line-height: .96; letter-spacing: -.055em;
 }
 .wk-represented__promise > p:last-child {
-  max-width: 470px; margin: 0; color: #d7e1d8;
+  max-width: 470px; margin: 0; color: var(--wk-cream-2);
   font-size: clamp(17px, 1.6vw, 21px); line-height: 1.55;
 }
 .wk-represented__market {
   display: flex; flex-direction: column; align-items: flex-start;
   padding: clamp(32px, 4vw, 56px); min-width: 0;
 }
-.wk-represented__market > .wk-represented__eyebrow { color: #65756a; }
+.wk-represented__market > .wk-represented__eyebrow { color: var(--wk-ink-3); }
 .wk-represented__market h3 {
-  margin: 20px 0 8px; color: #203629;
+  margin: 20px 0 8px; color: var(--wk-ink);
   font-family: 'Newsreader', serif; font-size: clamp(34px, 3vw, 48px);
   font-weight: 400; line-height: 1.05; letter-spacing: -.035em;
 }
 .wk-represented__description {
-  margin: 0 0 25px; color: #5b685f; font-size: 14px; line-height: 1.45;
+  margin: 0 0 25px; color: var(--wk-ink-2); font-size: 14px; line-height: 1.45;
 }
-.wk-represented__logos { display: flex; flex-wrap: wrap; gap: 8px; }
+.wk-represented__rows { display: grid; gap: 9px; width: 100%; }
+.wk-represented__rail {
+  width: 100%; overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent);
+}
+.wk-represented__track {
+  display: flex; width: max-content;
+  animation: wk-company-roll 42s linear infinite;
+}
+.wk-represented__rail--reverse .wk-represented__track { animation-direction: reverse; }
+.wk-represented__tracked .wk-represented__track { animation-duration: 70s; }
+.wk-represented__rail:hover .wk-represented__track,
+.wk-represented__rail:focus-within .wk-represented__track { animation-play-state: paused; }
+.wk-represented__rail:focus-within { overflow-x: auto; mask-image: none; }
+.wk-represented__group { display: flex; flex: none; gap: 8px; padding-right: 8px; }
+@keyframes wk-company-roll { to { transform: translateX(-50%); } }
 .wk-represented__logo {
   display: inline-flex; align-items: center; gap: 8px;
   min-height: 35px; padding: 5px 11px 5px 7px;
-  border: 1px solid #e6eae3; border-radius: 999px;
-  background: #fff; color: #283b2e;
+  border: 1px solid var(--wk-border); border-radius: 999px;
+  background: #fffdf9; color: var(--wk-ink);
   font-size: 13px; font-weight: 600; line-height: 1.2;
   white-space: nowrap; text-decoration: none;
-  box-shadow: 0 2px 5px rgba(20, 48, 28, .04);
+  box-shadow: 0 2px 5px rgba(45, 26, 10, .04);
 }
 a.wk-represented__logo { transition: border-color 180ms ease, transform 180ms ease; }
-a.wk-represented__logo:hover { border-color: #7da48a; transform: translateY(-2px); }
+a.wk-represented__logo:hover { border-color: var(--wk-live); transform: translateY(-2px); }
 a.wk-represented__logo:focus-visible, .wk-represented__browse:focus-visible,
 .wk-represented__cta:focus-visible { outline: 3px solid #d48150; outline-offset: 3px; }
 .wk-represented__mark {
   position: relative; display: inline-grid; place-items: center;
   flex: 0 0 22px; width: 22px; height: 22px;
-  border-radius: 6px; background: #edf2ed; color: #48604d;
+  border-radius: 6px; background: var(--wk-cream-2); color: var(--wk-live);
   font-family: 'Newsreader', serif; font-size: 14px; font-weight: 600;
 }
 .wk-represented__mark img {
@@ -833,30 +894,35 @@ a.wk-represented__logo:focus-visible, .wk-represented__browse:focus-visible,
 }
 .wk-represented__browse {
   display: inline-flex; align-items: center; gap: 6px;
-  margin-top: 15px; color: #24533a; font-size: 13px;
+  margin-top: 15px; color: var(--wk-live-2); font-size: 13px;
   font-weight: 700; text-decoration: underline; text-underline-offset: 3px;
 }
 .wk-represented__tracked {
   width: 100%; margin: 30px 0 27px; padding-top: 23px;
-  border-top: 1px solid #e7ebe4;
+  border-top: 1px solid var(--wk-border);
 }
-.wk-represented__tracked .wk-represented__eyebrow { margin-bottom: 14px; color: #65756a; }
-.wk-represented__tracked .wk-represented__logo { background: #f7f9f5; }
+.wk-represented__tracked .wk-represented__eyebrow { margin-bottom: 14px; color: var(--wk-ink-3); }
+.wk-represented__tracked .wk-represented__logo { background: var(--wk-cream-3); }
 .wk-represented__disclosure {
-  margin: 12px 0 0; color: #68746c; font-size: 11px; line-height: 1.4;
+  margin: 12px 0 0; color: var(--wk-ink-3); font-size: 12px; line-height: 1.4;
 }
 .wk-represented a.wk-represented__cta {
   display: flex; align-items: center; justify-content: center; gap: 10px;
   width: 100%; min-height: 55px; margin-top: auto;
-  border-radius: 999px; background: #245139; color: #fff;
+  border-radius: 999px; background: var(--wk-ink); color: var(--wk-cream-3);
   font-size: 16px; font-weight: 700; text-decoration: none;
-  box-shadow: 0 10px 18px -13px rgba(16, 56, 31, .65);
+  box-shadow: 0 10px 18px -13px rgba(45, 26, 10, .65);
   transition: background 180ms ease, transform 180ms ease;
 }
-.wk-represented a.wk-represented__cta:hover { background: #183e2a; transform: translateY(-2px); }
+.wk-represented a.wk-represented__cta:hover { background: var(--wk-live-2); transform: translateY(-2px); }
 .wk-represented__fine {
-  width: 100%; margin: 12px 0 0; color: #6c776e;
+  width: 100%; margin: 12px 0 0; color: var(--wk-ink-3);
   font-size: 11px; line-height: 1.35; text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wk-represented__rail { overflow-x: auto; mask-image: none; }
+  .wk-represented__track { animation: none; }
+  .wk-represented__group[aria-hidden="true"] { display: none; }
 }
 
 /* Product proof --------------------------------------------------------- */
@@ -986,7 +1052,7 @@ a.wk-represented__logo:focus-visible, .wk-represented__browse:focus-visible,
   .wk-steps { grid-template-columns: 1fr; }
   .wk-represented { grid-template-columns: 1fr; }
   .wk-represented__promise { min-height: 350px; gap: 36px; }
-  .wk-represented__promise h2 { font-size: clamp(68px, 10vw, 96px); }
+  .wk-represented__promise h2 { font-size: clamp(64px, 9vw, 90px); }
   .wk-proof-grid { grid-template-columns: 1fr; margin-bottom: 48px; }
   .wk-proof-card { min-height: 0; }
   .wk-candidate-faq { margin-bottom: 48px; }
@@ -1004,7 +1070,7 @@ a.wk-represented__logo:focus-visible, .wk-represented__browse:focus-visible,
   .wk-section { padding: 56px 0; }
   .wk-represented { border-radius: 22px; }
   .wk-represented__promise { min-height: 300px; padding: 32px; }
-  .wk-represented__promise h2 { font-size: clamp(62px, 15vw, 82px); }
+  .wk-represented__promise h2 { font-size: clamp(40px, 12.5vw, 68px); }
   .wk-represented__market { padding: 32px 22px; }
   .wk-represented__market h3 { font-size: 36px; }
   .wk-section__head { margin-bottom: 28px; }

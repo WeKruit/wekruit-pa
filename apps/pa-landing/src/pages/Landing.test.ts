@@ -184,7 +184,10 @@ test("Landing sequence feed has enough mobile art height for its own rows", () =
 test("Landing separates real role briefs from tracked market examples", () => {
   assert.match(landingSource, /\.filter\(\(row\) => row\.data\.dead !== true\)/)
   assert.match(landingSource, /uniqueCompanies\(jobs\)/)
-  assert.match(landingSource, /to=\{`\/j\/\$\{company\.id\}`\}/)
+  assert.match(landingSource, /href: `\/j\/\$\{company\.id\}`/)
+  assert.match(landingSource, /<CompanyRail items=\{roleBriefLogos\.filter/)
+  assert.match(landingSource, /@keyframes wk-company-roll/)
+  assert.match(landingSource, /@media \(prefers-reduced-motion: reduce\)/)
   assert.match(landingSource, /Browse all \{jobs\.length\} role briefs/)
   assert.match(landingSource, /Tracked listings are market sources, not WeKruit hiring partnerships/)
   assert.match(landingSource, /to="\/onboarding" className="wk-represented__cta"/)
