@@ -179,6 +179,8 @@ test("Landing sequence feed has enough mobile art height for its own rows", () =
     pageStylesSource,
     /@media \(max-width: 880px\) \{[\s\S]*\.seq-feed__row \{[\s\S]*grid-template-columns: 24px minmax\(0, 1fr\) 22px;[\s\S]*min-height: 52px;[\s\S]*padding-block: 8px;/,
   )
+  assert.match(pageStylesSource, /\.seq:not\(\.seq--emp\) \.seq-card__art-stage \{ min-width: 0;/)
+  assert.match(pageStylesSource, /\.seq-feed__role \{ white-space: normal; overflow: visible; text-overflow: clip; \}/)
 })
 
 test("Landing separates real role briefs from tracked market examples", () => {

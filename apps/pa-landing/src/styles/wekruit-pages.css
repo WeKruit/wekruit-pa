@@ -1107,6 +1107,27 @@
   .seq-reveal__bridge { display: none; }
   .seq-stack__layer { width: 220px; height: 130px; }
 }
+@media (max-width: 600px) {
+  .seq:not(.seq--emp) .seq-card__art { padding: 18px; }
+  .seq:not(.seq--emp) .seq-card__art-stage { min-width: 0; max-width: 100%; flex: 0 1 100%; }
+  .seq:not(.seq--emp) .seq-resume,
+  .seq:not(.seq--emp) .seq-imsg,
+  .seq:not(.seq--emp) .seq-feed,
+  .seq:not(.seq--emp) .seq-cal { box-sizing: border-box; min-width: 0; width: 100%; }
+  .seq:not(.seq--emp) .seq-card__art:has(.seq-feed) { aspect-ratio: auto; min-height: 0; }
+  .seq-feed__row { gap: 8px; padding: 9px 10px; }
+  .seq-feed__row--skip { opacity: 0.72; }
+  .seq-feed__role { white-space: normal; overflow: visible; text-overflow: clip; }
+  .seq-feed__foot { white-space: normal; justify-content: space-between; gap: 6px; }
+  .seq-cal__strip { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .seq-cal__day { min-width: 0; padding-inline: 0; }
+  .seq-cal .seq-pill--ok { right: 0; }
+}
+@media (max-width: 360px) {
+  .seq:not(.seq--emp) .wk-container { padding-inline: 12px; }
+  .seq:not(.seq--emp) .seq-card__art { padding: 14px; }
+  .seq:not(.seq--emp) .seq-card__body { padding: 20px 18px 24px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .seq-chip, .seq-resume__scan, .seq-imsg__msg, .seq-imsg__typing span {
     animation: none !important;
