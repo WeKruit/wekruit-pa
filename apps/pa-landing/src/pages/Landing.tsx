@@ -1,19 +1,18 @@
 /**
  * Landing.tsx — `/` candidate-facing landing.
  *
- * Sections: Hero → How it works → Live interviews → Trust signals.
- * Shared atoms (PulseDot, LiveStatusPill, Avatar, CompanyMark, IMessageThread,
- * Icon, CandidateShell) come from CandidateLogin.tsx.
+ * Sections: Hero → How it works → Companies → Trust signals.
+ * Shared atoms (PulseDot, Avatar, IMessageThread, Icon, CandidateShell)
+ * come from CandidateLogin.tsx.
  *
  * Keeps the original Firebase fetch (pa-jobs collection) intact —
- * job cards are re-themed but use the same PublicJobListItem shape.
+ * company links use the same live public role briefs as the market.
  */
 import { useEffect } from "react"
 import { Link } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { trackEvent } from "../lib/analytics.js"
 import { resolveSource } from "../lib/source.js"
-import { formatPublicJobType } from "../lib/public-job-labels.js"
 import {
   PUBLIC_PA_JOBS_RAW_LIMIT,
   PUBLIC_PA_JOBS_RAW_QUERY_KEY,
@@ -25,9 +24,7 @@ import { openJobsEndpoint, OPEN_JOBS_STALE_TIME_MS, OPEN_JOBS_GC_TIME_MS } from 
 import {
   CandidateShell,
   PulseDot,
-  LiveStatusPill,
   Avatar,
-  CompanyMark,
   IMessageThread,
   Icon,
 } from "./CandidateLogin.js"
@@ -35,37 +32,16 @@ import { CandidateSequence } from "../components/Sequence.js"
 
 interface PublicJobListDoc {
   publicVisible?: boolean
-  wekruitCollaborationStatus?: "collaborated" | "not_collaborated"
   title?: string
-  companyId?: string
   companyName?: string
-  location?: string
-  jobType?: string
-  prescreenConfig?: {
-    level1Reveal?: { salaryRange?: string }
-    jobType?: string
-  }
-  /** Optional hiring-manager fields — populated by recruiter intake when present. */
-  hiringManagerName?: string
-  hiringManagerTitle?: string
-  hiringManagerOnline?: boolean
-  /** Optional employer-provided interview capacity; never synthesized. */
-  interviewSeats?: number
+  companyProfile?: { websiteUrl?: string }
 }
 
 interface PublicJobListItem {
   id: string
   title: string
   company: string
-  location?: string
-  salary?: string
-  jobType?: string
-  collaborated: boolean
-  hiringManager: { name?: string; title?: string; online: boolean }
-  /** Deterministic visual props derived from id so the same job always looks the same. */
-  logo: string
-  logoBg: string
-  tone: "warm" | "moss" | "slate"
+  websiteUrl?: string
 }
 
 type JobsState =
@@ -73,43 +49,58 @@ type JobsState =
   | { status: "ready"; jobs: PublicJobListItem[] }
   | { status: "error"; message: string }
 
-const LOGO_BG_POOL = ["#2A1812", "#0F1B2D", "#5E6AD2", "#635BFF", "#0D0D0D", "#1A1A1A", "#374151", "#7C2D12"]
-const TONE_POOL: Array<"warm" | "moss" | "slate"> = ["warm", "slate", "moss"]
 const ALLIANCE_LOGO_URL =
   "https://images.prismic.io/alliance/fe454d0e-2b43-41ff-b606-133e6465cd9b_alliance-logo-animated-white.gif?auto=false&fit=max&w=128&q=75"
 
-function djb2(s: string): number {
-  let h = 5381 >>> 0
-  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) + s.charCodeAt(i)) >>> 0
-  return h
-}
-
 function normalizeJob(id: string, data: PublicJobListDoc): PublicJobListItem {
   const company = data.companyName ?? "Confidential employer"
-  const h = djb2(id || company)
   return {
     id,
     title: data.title ?? "Open role",
     company,
-    location: data.location,
-    salary: data.prescreenConfig?.level1Reveal?.salaryRange,
-    jobType: formatPublicJobType(data.jobType ?? data.prescreenConfig?.jobType),
-    collaborated: data.wekruitCollaborationStatus === "collaborated",
-    hiringManager: {
-      name: data.hiringManagerName,
-      title: data.hiringManagerTitle,
-      online: data.hiringManagerOnline === true,
-    },
-    logo: (company[0] ?? "?").toUpperCase(),
-    logoBg: LOGO_BG_POOL[h % LOGO_BG_POOL.length],
-    tone: TONE_POOL[h % TONE_POOL.length],
+    websiteUrl: data.companyProfile?.websiteUrl,
   }
 }
+
+// ponytail: Show only companies with an actual public brief; the market page
+// retains every role when a company has more than one opening.
+function uniqueCompanies(jobs: PublicJobListItem[]): PublicJobListItem[] {
+  return [...new Map(jobs.map((job) => [job.company.toLowerCase(), job])).values()]
+}
+
+function faviconUrl(websiteUrl?: string): string | undefined {
+  if (!websiteUrl) return undefined
+  try {
+    const url = new URL(websiteUrl)
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(url.hostname)}&sz=64`
+  } catch {
+    return undefined
+  }
+}
+
+// These names appeared in WeKruit's tracked market feed on 2026-09-30.
+// They are market examples, not employer-approved Claire role briefs.
+const TRACKED_COMPANIES = [
+  { name: "Stripe", websiteUrl: "https://stripe.com" },
+  { name: "Notion", websiteUrl: "https://notion.so" },
+  { name: "Airbnb", websiteUrl: "https://airbnb.com" },
+  { name: "Databricks", websiteUrl: "https://databricks.com" },
+  { name: "Figma", websiteUrl: "https://figma.com" },
+  { name: "OpenAI", websiteUrl: "https://openai.com" },
+  { name: "Cloudflare", websiteUrl: "https://cloudflare.com" },
+  { name: "Ramp", websiteUrl: "https://ramp.com" },
+  { name: "Linear", websiteUrl: "https://linear.app" },
+  { name: "Vercel", websiteUrl: "https://vercel.com" },
+  { name: "Perplexity", websiteUrl: "https://perplexity.ai" },
+  { name: "Robinhood", websiteUrl: "https://robinhood.com" },
+] as const
 
 // Module-level `select` so TanStack memoizes the derived array (a stable fn
 // identity means the mapping reruns only when the cached raw rows change).
 function selectHeroJobs(rows: PublicPaJobsRawRow[]): PublicJobListItem[] {
   return rows
+    .filter((row) => row.data.dead !== true)
     .map((row) => normalizeJob(row.id, row.data as PublicJobListDoc))
     .sort((a, b) => `${a.company} ${a.title}`.localeCompare(`${b.company} ${b.title}`))
 }
@@ -211,6 +202,7 @@ export default function Landing() {
   }, [queryClient])
 
   const jobs = state.status === "ready" ? state.jobs : []
+  const companies = uniqueCompanies(jobs)
   return (
     <CandidateShell hero>
       <style>{LANDING_STYLES}</style>
@@ -310,32 +302,54 @@ export default function Landing() {
         <CandidateSequence />
       </section>
 
-      {/* ── Public roles ──────────────────────────────── */}
+      {/* ── Company view of the live role briefs and wider tracked market ── */}
       <section className="wk-section wk-section--live" id="interviews">
         <div className="wk-container">
-          <header className="wk-section__head wk-section__head--row">
-            <div>
-              <p className="wk-eyebrow"><PulseDot size={6} /> Public roles</p>
-              <h2 className="wk-section__h2">Public roles Claire can screen against.</h2>
+          <div className="wk-represented">
+            <div className="wk-represented__promise">
+              <p className="wk-represented__eyebrow">YOUR NEXT MOVE STARTS HERE</p>
+              <h2>Get<br />interviewed.</h2>
+              <p>Tell Claire your story once. She starts the first interview for a real role brief, then keeps your profile working for the next opportunity.</p>
             </div>
-            {state.status === "ready" ? (
-              <p className="wk-section__sub">
-                <strong>{jobs.length} public roles</strong> · Claire starts the interview, then passed profiles go to the hiring team.
-              </p>
-            ) : null}
-          </header>
+            <div className="wk-represented__market">
+              <p className="wk-represented__eyebrow">WEKRUIT ROLE BRIEFS</p>
+              <h3>Meet the teams behind the roles.</h3>
+              <p className="wk-represented__description">These companies have public roles Claire can screen against.</p>
+              {state.status === "loading" ? <p className="wk-muted">Loading public roles…</p> : null}
+              {state.status === "error" ? <p className="wk-error">{state.message}</p> : null}
+              {state.status === "ready" && jobs.length === 0 ? (
+                <p className="wk-muted">No public WeKruit roles are open right now. Keep your profile current; Claire can screen when a real role opens.</p>
+              ) : null}
+              {companies.length > 0 ? (
+                <div className="wk-represented__logos" aria-label="Companies with WeKruit role briefs">
+                  {companies.map((company) => (
+                    <Link key={company.company} to={`/j/${company.id}`} className="wk-represented__logo" aria-label={`View ${company.title} at ${company.company}`}>
+                      <CompanyLogo name={company.company} websiteUrl={company.websiteUrl} />
+                      <span>{company.company}</span>
+                    </Link>
+                  ))}
+                </div>
+              ) : null}
+              {jobs.length > 0 ? <Link to="/market" className="wk-represented__browse">Browse all {jobs.length} role briefs <Icon name="arrow-right" size={15} stroke={2} /></Link> : null}
 
-          {state.status === "loading" ? <p className="wk-muted">Loading public roles…</p> : null}
-          {state.status === "error" ? <p className="wk-error">{state.message}</p> : null}
-          {state.status === "ready" && jobs.length === 0 ? (
-            <p className="wk-muted">No public WeKruit roles are open right now. Keep your profile current; Claire can screen when a real role opens.</p>
-          ) : null}
-
-          {state.status === "ready" && jobs.length > 0 ? (
-            <div className="wk-joblist">
-              {jobs.map((j) => <JobCard key={j.id} job={j} />)}
+              <div className="wk-represented__tracked">
+                <p className="wk-represented__eyebrow">ACROSS THE WIDER MARKET</p>
+                <div className="wk-represented__logos" aria-label="Examples from WeKruit tracked market listings">
+                  {TRACKED_COMPANIES.map((company) => (
+                    <span key={company.name} className="wk-represented__logo">
+                      <CompanyLogo name={company.name} websiteUrl={company.websiteUrl} />
+                      <span>{company.name}</span>
+                    </span>
+                  ))}
+                </div>
+                <p className="wk-represented__disclosure">Tracked listings are market sources, not WeKruit hiring partnerships. Availability changes.</p>
+              </div>
+              <Link to="/onboarding" className="wk-represented__cta" onClick={() => void trackEvent("landing_cta_click", { cta: "company_panel_start_claire" })}>
+                Start with Claire <Icon name="arrow-right" size={18} stroke={2} />
+              </Link>
+              <p className="wk-represented__fine">Your profile is shared only after you pass a role screen and approve it.</p>
             </div>
-          ) : null}
+          </div>
         </div>
       </section>
 
@@ -479,54 +493,16 @@ function StepCard({
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// JobCard — re-themed live interview card
+// CompanyLogo — website favicon when the role brief supplies a company site
 // ────────────────────────────────────────────────────────────────────────────
 
-function JobCard({ job }: { job: PublicJobListItem }) {
+function CompanyLogo({ name, websiteUrl }: { name: string; websiteUrl?: string }) {
+  const src = faviconUrl(websiteUrl)
   return (
-    <Link to={`/j/${job.id}`} className="wk-jobcard" aria-label={`Start Claire interview for ${job.title} at ${job.company}`}>
-      <div className="wk-jobcard__top">
-        <CompanyMark logo={job.logo} bg={job.logoBg} size={44} />
-        {job.hiringManager.online ? (
-          <LiveStatusPill>Claire role interview</LiveStatusPill>
-        ) : (
-          <span className="wk-jobcard__offline">
-            <span className="wk-jobcard__dot" /> Role brief available
-          </span>
-        )}
-      </div>
-      <h3 className="wk-jobcard__title">{job.title}</h3>
-      <p className="wk-jobcard__company">
-        {job.company}{job.location ? <> · <span>{job.location}</span></> : null}
-      </p>
-      <div className="wk-jobcard__chips">
-        {job.jobType ? <span className="wk-chip">{job.jobType}</span> : null}
-        {job.salary ? <span className="wk-chip wk-chip--strong">{job.salary}</span> : null}
-        {job.collaborated ? (
-          <span className="wk-chip wk-chip--collab">
-            <Icon name="check" size={12} stroke={2.2} /> WeKruit collaborated
-          </span>
-        ) : null}
-      </div>
-      {job.hiringManager.name ? (
-        <div className="wk-jobcard__hm">
-          <Avatar name={job.hiringManager.name} size={28} tone={job.tone} />
-          <span className="wk-jobcard__hm-name">
-            Hiring context from <strong>{job.hiringManager.name}</strong>
-            {job.hiringManager.title ? ` · ${job.hiringManager.title}` : ""}
-          </span>
-        </div>
-      ) : null}
-      <div className="wk-jobcard__footer">
-        <span className="wk-jobcard__seats">
-          Claire starts with the role interview
-        </span>
-        <span className="wk-btn wk-btn--primary wk-btn--block wk-jobcard__cta">
-          Interview with Claire
-          <Icon name="arrow-right" size={16} stroke={2} />
-        </span>
-      </div>
-    </Link>
+    <span className="wk-represented__mark" aria-hidden="true">
+      {name[0]?.toUpperCase()}
+      {src ? <img src={src} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true }} /> : null}
+    </span>
   )
 }
 
@@ -790,74 +766,98 @@ const LANDING_STYLES = `
   letter-spacing: -0.005em;
 }
 
-/* Job list -------------------------------------------------------------- */
-.wk-joblist {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
-  align-items: stretch;
+/* Company conversion card ---------------------------------------------- */
+.wk-represented {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  overflow: hidden; min-height: 620px;
+  border: 1px solid rgba(34, 51, 40, .13);
+  border-radius: 30px;
+  background: #fffdfa;
+  box-shadow: 0 24px 50px -40px rgba(28, 44, 32, .44);
 }
-.wk-jobcard {
-  display: flex; flex-direction: column; gap: 12px;
-  height: 100%;
-  padding: 22px;
-  background: var(--wk-cream-3);
-  border: 1px solid var(--wk-border);
-  border-radius: var(--wk-r-md);
-  text-decoration: none; color: inherit;
-  transition: border-color 200ms var(--wk-ease),
-              box-shadow 320ms var(--wk-ease),
-              transform 320ms var(--wk-ease);
+.wk-represented__promise {
+  display: flex; flex-direction: column; justify-content: space-between;
+  gap: 72px; padding: clamp(36px, 5vw, 68px);
+  background: #1b3326; color: #f8f7ee;
 }
-.wk-jobcard:hover, .wk-jobcard:focus-visible {
-  border-color: var(--wk-live-border);
-  box-shadow: 0 2px 0 0 rgba(154,68,33,.06), 0 10px 24px -14px rgba(154,68,33,.20);
-  transform: translateY(-2px);
-  outline: none;
+.wk-represented__eyebrow {
+  margin: 0; font-size: 11px; font-weight: 700;
+  letter-spacing: .19em; text-transform: uppercase;
 }
-.wk-jobcard__top {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+.wk-represented__promise .wk-represented__eyebrow { color: #abc4b0; }
+.wk-represented__promise h2 {
+  margin: 0 auto auto 0; color: #f8f7ee; font-family: 'Newsreader', serif;
+  font-size: clamp(68px, 7vw, 112px); font-weight: 400;
+  line-height: .93; letter-spacing: -.055em;
 }
-.wk-jobcard__offline {
+.wk-represented__promise > p:last-child {
+  max-width: 470px; margin: 0; color: #d7e1d8;
+  font-size: clamp(17px, 1.6vw, 21px); line-height: 1.55;
+}
+.wk-represented__market {
+  display: flex; flex-direction: column; align-items: flex-start;
+  padding: clamp(32px, 4vw, 56px); min-width: 0;
+}
+.wk-represented__market > .wk-represented__eyebrow { color: #65756a; }
+.wk-represented__market h3 {
+  margin: 20px 0 8px; color: #203629;
+  font-family: 'Newsreader', serif; font-size: clamp(34px, 3vw, 48px);
+  font-weight: 400; line-height: 1.05; letter-spacing: -.035em;
+}
+.wk-represented__description {
+  margin: 0 0 25px; color: #5b685f; font-size: 14px; line-height: 1.45;
+}
+.wk-represented__logos { display: flex; flex-wrap: wrap; gap: 8px; }
+.wk-represented__logo {
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 5px 11px 5px 9px;
-  border-radius: var(--wk-r-pill);
-  background: var(--wk-cream-2);
-  border: 1px solid var(--wk-border);
-  color: var(--wk-ink-3);
-  font-size: 12.5px; font-weight: 500;
+  min-height: 35px; padding: 5px 11px 5px 7px;
+  border: 1px solid #e6eae3; border-radius: 999px;
+  background: #fff; color: #283b2e;
+  font-size: 13px; font-weight: 600; line-height: 1.2;
+  white-space: nowrap; text-decoration: none;
+  box-shadow: 0 2px 5px rgba(20, 48, 28, .04);
 }
-.wk-jobcard__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wk-ink-4); display: inline-block; }
-.wk-jobcard__title {
-  font-family: 'Newsreader', serif;
-  font-weight: 400; font-size: 22px;
-  line-height: 1.18; letter-spacing: -0.018em;
-  color: var(--wk-ink); margin: 4px 0 0;
+a.wk-represented__logo { transition: border-color 180ms ease, transform 180ms ease; }
+a.wk-represented__logo:hover { border-color: #7da48a; transform: translateY(-2px); }
+a.wk-represented__logo:focus-visible, .wk-represented__browse:focus-visible,
+.wk-represented__cta:focus-visible { outline: 3px solid #d48150; outline-offset: 3px; }
+.wk-represented__mark {
+  position: relative; display: inline-grid; place-items: center;
+  flex: 0 0 22px; width: 22px; height: 22px;
+  border-radius: 6px; background: #edf2ed; color: #48604d;
+  font-family: 'Newsreader', serif; font-size: 14px; font-weight: 600;
 }
-.wk-jobcard__company { margin: 0; color: var(--wk-ink-2); font-size: 14.5px; }
-.wk-jobcard__company span { color: var(--wk-ink-3); }
-.wk-jobcard__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
-.wk-chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 4px 9px; border-radius: var(--wk-r-pill);
-  background: var(--wk-cream-2); color: var(--wk-ink-2);
-  border: 1px solid var(--wk-border);
-  font-size: 12.5px; font-weight: 500; line-height: 1.4;
+.wk-represented__mark img {
+  position: absolute; width: 18px; height: 18px;
+  object-fit: contain; background: #fff;
 }
-.wk-chip--strong { color: var(--wk-ink); font-weight: 600; }
-.wk-chip--collab { background: var(--wk-live-soft); border-color: var(--wk-live-border); color: var(--wk-live); }
-.wk-jobcard__hm {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 0 0;
-  border-top: 1px dashed var(--wk-border);
-  margin-top: 6px;
+.wk-represented__browse {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 15px; color: #24533a; font-size: 13px;
+  font-weight: 700; text-decoration: underline; text-underline-offset: 3px;
 }
-.wk-jobcard__hm-name { color: var(--wk-ink-2); font-size: 13.5px; line-height: 1.3; }
-.wk-jobcard__hm-name strong { color: var(--wk-ink); font-weight: 600; }
-.wk-jobcard__footer { display: flex; flex-direction: column; gap: 10px; margin-top: auto; padding-top: 6px; }
-.wk-jobcard__seats { color: var(--wk-ink-3); font-size: 12.5px; font-weight: 500; }
-.wk-jobcard__cta { pointer-events: none; }
-.wk-jobcard:hover .wk-jobcard__cta { background: #1C0F04; }
+.wk-represented__tracked {
+  width: 100%; margin: 30px 0 27px; padding-top: 23px;
+  border-top: 1px solid #e7ebe4;
+}
+.wk-represented__tracked .wk-represented__eyebrow { margin-bottom: 14px; color: #65756a; }
+.wk-represented__tracked .wk-represented__logo { background: #f7f9f5; }
+.wk-represented__disclosure {
+  margin: 12px 0 0; color: #68746c; font-size: 11px; line-height: 1.4;
+}
+.wk-represented a.wk-represented__cta {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; min-height: 55px; margin-top: auto;
+  border-radius: 999px; background: #245139; color: #fff;
+  font-size: 16px; font-weight: 700; text-decoration: none;
+  box-shadow: 0 10px 18px -13px rgba(16, 56, 31, .65);
+  transition: background 180ms ease, transform 180ms ease;
+}
+.wk-represented a.wk-represented__cta:hover { background: #183e2a; transform: translateY(-2px); }
+.wk-represented__fine {
+  width: 100%; margin: 12px 0 0; color: #6c776e;
+  font-size: 11px; line-height: 1.35; text-align: center;
+}
 
 /* Product proof --------------------------------------------------------- */
 .wk-proof-grid {
@@ -984,7 +984,9 @@ const LANDING_STYLES = `
   }
   .wk-hero__h1 { font-size: clamp(44px, 6.4vw, 60px); }
   .wk-steps { grid-template-columns: 1fr; }
-  .wk-joblist { grid-template-columns: 1fr; }
+  .wk-represented { grid-template-columns: 1fr; }
+  .wk-represented__promise { min-height: 350px; gap: 36px; }
+  .wk-represented__promise h2 { font-size: clamp(68px, 10vw, 96px); }
   .wk-proof-grid { grid-template-columns: 1fr; margin-bottom: 48px; }
   .wk-proof-card { min-height: 0; }
   .wk-candidate-faq { margin-bottom: 48px; }
@@ -1000,6 +1002,11 @@ const LANDING_STYLES = `
 }
 @media (max-width: 600px) {
   .wk-section { padding: 56px 0; }
+  .wk-represented { border-radius: 22px; }
+  .wk-represented__promise { min-height: 300px; padding: 32px; }
+  .wk-represented__promise h2 { font-size: clamp(62px, 15vw, 82px); }
+  .wk-represented__market { padding: 32px 22px; }
+  .wk-represented__market h3 { font-size: 36px; }
   .wk-section__head { margin-bottom: 28px; }
   .wk-proof-card { padding: 20px; }
   .wk-hero__h1 { font-size: clamp(35px, 9vw, 44px); }

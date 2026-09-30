@@ -41,7 +41,7 @@ test("Landing does not invent role availability or interview scarcity", () => {
 
   assert.match(landingSource, /public roles Claire can screen against/)
   assert.match(landingSource, /Claire interviews against real role briefs/)
-  assert.match(landingSource, /Claire starts with the role interview/)
+  assert.match(landingSource, /She starts the first interview for a real role brief/)
   assert.match(landingSource, /No public WeKruit roles are open right now/)
 })
 
@@ -62,10 +62,7 @@ test("Landing trust section uses product proof instead of fake customer proof", 
 })
 
 test("Landing sample artifacts avoid borrowed real-company proof", () => {
-  assert.doesNotMatch(source, /Maya Okafor/)
-  assert.doesNotMatch(source, /Stripe|Anthropic|Snowflake|Notion|Vercel/)
-  assert.doesNotMatch(source, /Claude APIs/)
-  assert.doesNotMatch(source, /Replit|Linear/)
+  assert.doesNotMatch(sequenceSource, /Maya Okafor|Stripe|Anthropic|Snowflake|Notion|Vercel|Claude APIs|Replit|Linear/)
 
   assert.match(source, /Sample candidate/)
   assert.match(source, /AI infra platform/)
@@ -184,10 +181,14 @@ test("Landing sequence feed has enough mobile art height for its own rows", () =
   )
 })
 
-test("Landing formats public job type chips before rendering candidate cards", () => {
-  assert.match(landingSource, /import \{ formatPublicJobType \} from "\.\.\/lib\/public-job-labels\.js"/)
-  assert.match(landingSource, /jobType: formatPublicJobType\(data\.jobType \?\? data\.prescreenConfig\?\.jobType\)/)
-  assert.doesNotMatch(landingSource, /jobType: data\.jobType \?\? data\.prescreenConfig\?\.jobType/)
+test("Landing separates real role briefs from tracked market examples", () => {
+  assert.match(landingSource, /\.filter\(\(row\) => row\.data\.dead !== true\)/)
+  assert.match(landingSource, /uniqueCompanies\(jobs\)/)
+  assert.match(landingSource, /to=\{`\/j\/\$\{company\.id\}`\}/)
+  assert.match(landingSource, /Browse all \{jobs\.length\} role briefs/)
+  assert.match(landingSource, /Tracked listings are market sources, not WeKruit hiring partnerships/)
+  assert.match(landingSource, /to="\/onboarding" className="wk-represented__cta"/)
+  assert.doesNotMatch(landingSource, /<JobCard/)
 })
 
 test("Landing sequence avoids rough job-board-as-verb copy", () => {
