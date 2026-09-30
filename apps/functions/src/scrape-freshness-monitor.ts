@@ -257,7 +257,7 @@ export const paScrapeFreshnessMonitorDaily = onSchedule(
   {
     schedule: "0 12 * * *",
     timeZone: "UTC",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 120,
     region: "us-central1",
     secrets: ["PA_SLACK_ALERT_WEBHOOK"],
@@ -386,7 +386,7 @@ async function readLatestStatus(): Promise<PublicStatusBody> {
 export const paScrapeFreshnessStatusPublic = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
     cors: true,
     invoker: "public",

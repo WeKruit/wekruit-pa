@@ -424,7 +424,7 @@ export const paJobEnrichmentRefreshDraft = onCall(
 )
 
 export const paJobEnrichmentApproveDraft = onCall(
-  { region: "us-central1", memory: "256MiB", secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", secrets: [PA_ADMIN_TOKEN] },
   async (req) => {
     const actor = authorizeJobEnrichmentAdmin(req as CallableAuthLike)
     const parsed = ApproveDraftInputSchema.safeParse(req.data)
@@ -438,7 +438,7 @@ export const paJobEnrichmentApproveDraft = onCall(
 )
 
 export const paJobEnrichmentRejectDraft = onCall(
-  { region: "us-central1", memory: "256MiB", secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", secrets: [PA_ADMIN_TOKEN] },
   async (req) => {
     const actor = authorizeJobEnrichmentAdmin(req as CallableAuthLike)
     const parsed = RejectDraftInputSchema.safeParse(req.data)
@@ -452,7 +452,7 @@ export const paJobEnrichmentRejectDraft = onCall(
 )
 
 export const paJobEnrichmentSaveCorrections = onCall(
-  { region: "us-central1", memory: "256MiB", secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", secrets: [PA_ADMIN_TOKEN] },
   async (req) => {
     const actor = authorizeJobEnrichmentAdmin(req as CallableAuthLike)
     const parsed = SaveCorrectionsInputSchema.safeParse(req.data)

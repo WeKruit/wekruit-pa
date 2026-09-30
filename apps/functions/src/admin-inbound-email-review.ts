@@ -181,7 +181,7 @@ export async function runAdminInboundEmailDrafts(
 }
 
 export const paAdminInboundEmailDrafts = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, maxInstances: 2, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, maxInstances: 2, secrets: [PA_ADMIN_TOKEN] },
   async (req) => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     return runAdminInboundEmailDrafts(req.data, { db: getFirestore() })
@@ -367,7 +367,7 @@ export async function runAdminSendInboundEmailDraft(
 export const paAdminSendInboundEmailDraft = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     maxInstances: 2,
     secrets: [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION, PA_ADMIN_TOKEN],
@@ -445,7 +445,7 @@ export async function runAdminInboundUnmatchedList(
 }
 
 export const paAdminInboundUnmatchedList = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, maxInstances: 2, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, maxInstances: 2, secrets: [PA_ADMIN_TOKEN] },
   async (req) => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     return runAdminInboundUnmatchedList(req.data, { db: getFirestore() })

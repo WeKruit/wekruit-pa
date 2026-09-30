@@ -228,7 +228,7 @@ export async function runEmployerPassedCandidateIntroDecision(
 }
 
 export const paEmployerPassedCandidateIntroDecision = onCall<EmployerPassedCandidateIntroDecisionInput>(
-  { region: "us-central1", cors: true, memory: "256MiB", timeoutSeconds: 60 },
+  { region: "us-central1", cors: true, memory: "512MiB", timeoutSeconds: 60 },
   async (req): Promise<AdminPassedCandidateIntroDecisionResult> =>
     runEmployerPassedCandidateIntroDecision(req.data, { db: getFirestore() }),
 )

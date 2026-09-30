@@ -140,7 +140,7 @@ async function buildBody(): Promise<QualityBody> {
 export const paScrapeQualitySamplePublic = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
     cors: true,
     invoker: "public",

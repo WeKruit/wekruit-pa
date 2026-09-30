@@ -64,7 +64,7 @@ export function runGetExternalSupplyConfig(
 export const paExternalSupplyGetConfig = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
   },
   async (req): Promise<ExternalSupplyConfigResult> => {

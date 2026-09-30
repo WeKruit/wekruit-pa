@@ -528,7 +528,7 @@ async function hasActivePrescreenSession(db: ReturnType<typeof getFirestore>, ca
 export const paCandidateLifecycleTrigger = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     maxInstances: 1,
     secrets: [PA_ADMIN_TOKEN],
   },

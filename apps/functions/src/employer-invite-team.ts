@@ -92,7 +92,7 @@ export const paEmployerInviteTeam = onCall<EmployerInviteTeamInput>(
   {
     region: "us-central1",
     cors: true,
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     secrets: ["MAILGUN_API_KEY", "MAILGUN_DOMAIN", "MAILGUN_FROM", "MAILGUN_REGION"],
   },

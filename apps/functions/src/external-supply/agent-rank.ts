@@ -911,14 +911,14 @@ export const paExternalSupplyRunAgentRanking = onCall(
 )
 
 export const paExternalSupplyApproveAgentTier = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60 },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
   async (req): Promise<ApproveAgentTierResult> => {
     return runApproveAgentTier(req.data, req.auth, { db: getFirestore() })
   },
 )
 
 export const paExternalSupplyOverrideAgentTier = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60 },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
   async (req): Promise<OverrideAgentTierResult> => {
     return runOverrideAgentTier(req.data, req.auth, { db: getFirestore() })
   },

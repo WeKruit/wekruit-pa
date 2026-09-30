@@ -18,7 +18,7 @@ export const paQrScanAbandonedSweep = onSchedule(
   {
     schedule: "every 60 minutes",
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 120,
   },
   async () => {

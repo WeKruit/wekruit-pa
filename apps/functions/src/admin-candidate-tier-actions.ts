@@ -36,7 +36,7 @@ export interface AdminReevaluateCandidateTierResult extends ReevaluateCandidateT
 }
 
 export const paAdminReevaluateCandidateTier = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
   async (req): Promise<AdminReevaluateCandidateTierResult> => {
     const { uid } = authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     const parsed = AdminReevaluateCandidateTierInputSchema.safeParse(req.data ?? {})

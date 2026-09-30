@@ -553,7 +553,7 @@ export async function runCandidatePhoneLinkVerify(
 export const paCandidatePhoneLinkStart = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
   },
   async (req): Promise<CandidatePhoneLinkStartResult> => {
@@ -564,7 +564,7 @@ export const paCandidatePhoneLinkStart = onCall(
 export const paCandidatePhoneLinkVerify = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
   },
   async (req): Promise<CandidatePhoneLinkVerifyResult> => {

@@ -1209,7 +1209,7 @@ async function commitExternalSupplyProjection(args: {
 export const paReviewEvaluationAttempt = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     // Cal.com + Mailgun power the Gap-1 proactive interview invite on a PASS
     // commit (sendProactiveSchedulingInvite → buildInterviewOffer reads

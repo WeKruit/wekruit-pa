@@ -432,7 +432,7 @@ export const paOpenAiKeyHealth = onSchedule(
   {
     schedule: "every 30 minutes",
     timeZone: "UTC",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     region: "us-central1",
     secrets: [

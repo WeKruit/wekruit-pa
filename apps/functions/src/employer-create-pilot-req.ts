@@ -147,7 +147,7 @@ export const paEmployerCreatePilotReq = onCall<EmployerCreatePilotReqInput>(
   {
     region: "us-central1",
     cors: true,
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
   },
   async (req): Promise<EmployerCreatePilotReqOutput> => {

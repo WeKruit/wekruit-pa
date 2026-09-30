@@ -478,7 +478,7 @@ export async function handleCorrectionEventEvalArtifactCreated(
 }
 
 export const paAdminFlywheelEvalSnapshot = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
   async (req): Promise<FlywheelEvalSnapshot> => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     return runAdminFlywheelEvalSnapshot(req.data, { db: getFirestore() })
