@@ -113,6 +113,7 @@ export default function ConnectPhone() {
   const buttonStyle = (disabled: boolean) => ({
     display: "block",
     width: "100%",
+    boxSizing: "border-box" as const,
     marginTop: "1rem",
     padding: "0.85rem 1rem",
     fontSize: 16,

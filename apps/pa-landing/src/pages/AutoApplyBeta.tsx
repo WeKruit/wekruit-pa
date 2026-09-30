@@ -299,8 +299,10 @@ const AUTO_APPLY_STYLES = `
   margin: 0 auto;
   padding: 64px 24px 40px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 40px;
 }
+.wk-aab > * { min-width: 0; }
 
 /* Hero ------------------------------------------------------------------ */
 .wk-aab-hero { text-align: center; display: grid; justify-items: center; gap: 16px; }
@@ -340,7 +342,7 @@ const AUTO_APPLY_STYLES = `
   grid-template-columns: repeat(3, 1fr);
   gap: 14px;
 }
-@media (max-width: 760px) { .wk-aab-steps { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .wk-aab-steps { grid-template-columns: minmax(0, 1fr); } }
 .wk-aab-step {
   background: var(--wk-cream-3);
   border: 1px solid var(--wk-border);

@@ -1122,6 +1122,13 @@
   .seq-cal__strip { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .seq-cal__day { min-width: 0; padding-inline: 0; }
   .seq-cal .seq-pill--ok { right: 0; }
+  .seq--emp .seq-card__art { padding: 18px; }
+  .seq--emp .seq-card__art-stage { min-width: 0; max-width: 100%; flex: 0 1 100%; }
+  .seq--emp .seq-live { box-sizing: border-box; min-width: 0; width: 100%; }
+  .seq--emp .seq-card__art:has(.seq-live) { aspect-ratio: auto; min-height: 0; }
+  .seq-live__row { grid-template-columns: 28px minmax(0, 1fr) 20px; gap: 8px; padding: 9px 10px; }
+  .seq-live__row-top { flex-wrap: wrap; }
+  .seq-live__name, .seq-live__role { white-space: normal; overflow: visible; text-overflow: clip; }
 }
 @media (max-width: 360px) {
   .seq:not(.seq--emp) .wk-container { padding-inline: 12px; }
@@ -1138,6 +1145,23 @@
 /* ============================================================================
    EMPLOYER PAGES (employers.css, ported)
    ========================================================================== */
+.wk-employer-intake__back-short { display: none; }
+.wk-employer-role-progress__inner { grid-template-columns: minmax(0, 1fr) auto; padding: 10px 24px; gap: 12px; }
+.wk-employer-onboarding__grid { grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); }
+.wk-employer-onboarding__stepper { display: flex; flex-direction: column; position: sticky; top: 92px; min-width: 0; }
+.wk-employer-onboarding__step { width: 100%; }
+@media (max-width: 760px) {
+  .wk-employer-onboarding__grid { grid-template-columns: minmax(0, 1fr); }
+  .wk-employer-onboarding__stepper { position: static; flex-direction: row; overflow-x: auto; scroll-snap-type: x proximity; }
+  .wk-employer-onboarding__step { width: auto; flex: 0 0 auto; min-width: 126px; scroll-snap-align: start; }
+}
+@media (max-width: 420px) {
+  .wk-employer-intake__brand-context,
+  .wk-employer-intake__back-full { display: none; }
+  .wk-employer-intake__back-short { display: inline; }
+  .wk-employer-role-progress__inner { grid-template-columns: minmax(0, 1fr); padding-inline: 14px; gap: 8px; }
+  .wk-employer-role-progress__inner > button { width: 100%; }
+}
 .wk-shell--emp { background: var(--cream); min-height: 100vh; display: flex; flex-direction: column; }
 .wk-shell--emp .wk-main { flex: 1; }
 .wk-header--emp { background: rgba(245, 237, 227, 0.78); }
@@ -1821,6 +1845,11 @@
   color: var(--ink-3); font-size: 12.5px; margin-top: 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+@media (max-width: 640px) {
+  .wk-emp-row__top { flex-wrap: wrap; }
+  .wk-emp-row__name { flex-basis: 100%; white-space: normal; overflow: visible; text-overflow: clip; }
+  .wk-emp-row__meta { white-space: normal; overflow: visible; text-overflow: clip; }
+}
 .wk-emp-row__chips { display: inline-flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
 .wk-emp-row__pass {
   font-size: 11px; font-weight: 600;
@@ -2306,6 +2335,9 @@
   .wk-emp-pp__tx-q, .wk-emp-pp__tx-a { grid-template-columns: 1fr; gap: 4px; }
 }
 @media (max-width: 640px) {
+  .wk-emp-peek { grid-template-columns: minmax(0, 1fr); }
+  .wk-emp-stack__row { grid-template-columns: auto minmax(0, 1fr); gap: 8px; padding: 10px; }
+  .wk-emp-stack__pass { grid-column: 2; justify-self: start; }
   .wk-emp-hero {
     padding: 30px 0 28px;
   }

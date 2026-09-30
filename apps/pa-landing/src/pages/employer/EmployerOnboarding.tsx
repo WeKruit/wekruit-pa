@@ -202,14 +202,14 @@ export default function EmployerOnboarding() {
 
       <section style={{ paddingTop: 8, paddingBottom: 96 }}>
         <div className="container-narrow" style={{ maxWidth: 980 }}>
-          <div style={wizardGrid}>
+          <div className="wk-employer-onboarding__grid" style={wizardGrid}>
             <VerticalStepper
               state={state}
               activeIndex={activeIndex}
               onSelect={goToStep}
             />
 
-            <div style={panel}>
+            <div style={{ ...panel, minWidth: 0 }}>
               <div style={panelHead}>
                 <span style={panelEyebrow}>
                   Step {activeIndex + 1} of {WIZARD_STEPS.length}
@@ -333,7 +333,7 @@ function VerticalStepper({
   onSelect: (index: number) => void
 }) {
   return (
-    <nav aria-label="Onboarding steps" style={stepperWrap}>
+    <nav aria-label="Onboarding steps" className="wk-employer-onboarding__stepper" style={stepperWrap}>
       {WIZARD_STEPS.map((step, index) => {
         const status = stepStatus(state, index)
         const isActive = index === activeIndex
@@ -345,6 +345,7 @@ function VerticalStepper({
             disabled={locked}
             onClick={() => !locked && onSelect(index)}
             aria-current={isActive ? "step" : undefined}
+            className="wk-employer-onboarding__step"
             style={{
               ...stepRow,
               ...(isActive ? stepRowActive : null),
@@ -1963,6 +1964,7 @@ function Header() {
             }}
           />
           <em
+            className="wk-employer-intake__brand-context"
             style={{
               fontFamily: "var(--font-serif)",
               fontSize: 20,
@@ -1974,8 +1976,9 @@ function Header() {
             Employers
           </em>
         </Link>
-        <Link to="/employers" className="btn btn--ghost btn--sm" style={{ textDecoration: "none" }}>
-          ← Employer overview
+        <Link to="/employers" className="btn btn--ghost btn--sm" style={{ textDecoration: "none", marginLeft: "auto" }}>
+          <span className="wk-employer-intake__back-full">← Employer overview</span>
+          <span className="wk-employer-intake__back-short">← Overview</span>
         </Link>
       </div>
     </header>
@@ -2015,28 +2018,22 @@ function Footer() {
 
 const wizardGrid: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(220px, 280px) 1fr",
   gap: 24,
   alignItems: "start",
 }
 
 const stepperWrap: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
   gap: 4,
   border: "1px solid var(--border)",
   borderRadius: "var(--r-lg)",
   padding: 10,
   background: "var(--cream-3)",
   boxShadow: "var(--shadow-sm)",
-  position: "sticky",
-  top: 92,
 }
 const stepRow: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 12,
-  width: "100%",
   textAlign: "left",
   padding: "11px 12px",
   border: "1px solid transparent",

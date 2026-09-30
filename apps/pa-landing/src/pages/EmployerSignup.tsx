@@ -419,14 +419,11 @@ function EmployerRolePacketProgressDock({ summary, onFieldJump }: { summary: Emp
       }}
     >
       <div
-        className="container-narrow"
+        className="container-narrow wk-employer-role-progress__inner"
         style={{
           maxWidth: 640,
           marginInline: "auto",
-          padding: "10px 24px",
           display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          gap: 12,
           alignItems: "center",
         }}
       >
@@ -1575,6 +1572,7 @@ function Header() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: 8,
           height: 72,
           maxWidth: 1280,
           marginInline: "auto",
@@ -1593,6 +1591,7 @@ function Header() {
             style={{ display: "inline-block", width: 4, height: 4, borderRadius: 999, background: "var(--peach-300)", alignSelf: "center" }}
           />
           <em
+            className="wk-employer-intake__brand-context"
             style={{
               fontFamily: "var(--font-serif)",
               fontSize: 20,
@@ -1604,8 +1603,9 @@ function Header() {
             Employers
           </em>
         </Link>
-        <Link to="/employers" className="btn btn--ghost btn--sm" style={{ textDecoration: "none" }}>
-          ← Employer overview
+        <Link to="/employers" className="btn btn--ghost btn--sm" style={{ textDecoration: "none", marginLeft: "auto" }}>
+          <span className="wk-employer-intake__back-full">← Employer overview</span>
+          <span className="wk-employer-intake__back-short">← Overview</span>
         </Link>
       </div>
     </header>

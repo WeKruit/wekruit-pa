@@ -1367,9 +1367,10 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
         <section className="wk-pj-hero">
           <div className="wk-container wk-pj-hero__grid">
             <div className="wk-pj-hero__copy">
-              <p className="wk-eyebrow">
-                Interview · {job.companyId ? <Link className="wk-pj-company-link" to={`/companies/${job.companyId}`}>{job.company}</Link> : job.company}
-                {job.collaborated ? <> · <span className="wk-pj-collab">WeKruit collaborated</span></> : null}
+              <p className="wk-eyebrow wk-pj-hero__kicker">
+                <span>Interview</span>
+                <span>{job.companyId ? <Link className="wk-pj-company-link" to={`/companies/${job.companyId}`}>{job.company}</Link> : job.company}</span>
+                {job.collaborated ? <span className="wk-pj-collab">WeKruit collaborated</span> : null}
               </p>
               <h1 className="wk-pj-hero__role">{job.jobTitle}</h1>
               <div className="wk-pj-meta-row">
@@ -1501,7 +1502,10 @@ export const PUBLIC_JOB_STYLES = `
 }
 .wk-pj__back:hover { color: var(--wk-ink); }
 
-.wk-pj-collab { color: var(--wk-live); font-weight: 600; }
+.wk-pj-collab { padding: 3px 8px; border-radius: 999px; background: var(--wk-peach-50); color: var(--wk-live); font-weight: 600; }
+.wk-pj-hero__kicker { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.wk-pj-hero__kicker > span:not(:first-child)::before { content: "·"; margin-right: 8px; color: var(--wk-ink-3); }
+.wk-pj-hero__kicker > .wk-pj-collab::before { display: none; }
 .wk-pj-company-link {
   color: inherit;
   text-decoration: none;
