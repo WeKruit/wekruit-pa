@@ -119,8 +119,7 @@ import { EvaluationAgentRanking as ExternalSupplyEvaluationAgentRanking } from "
 // Post-V2 hotfix 2026-05-14 — per-company / per-job sourcing entry surface.
 import { Jobs as ExternalSupplyJobs } from "./pages/external-supply/Jobs.js"
 import { JobWorkspace } from "./pages/admin/JobWorkspace.js"
-import SourcingStudioDemo from "./pages/CatchemDemo.js"
-import { isLocalHirePreview } from "./lib/local-hire-preview.js"
+import SourcingStudioDemo from "./pages/SourcingStudioDemo.js"
 // Enterprise onboarding (Module A) — wizard shell + persistent checklist home.
 // First slice: client-side state via localStorage (resumable); server-state
 // callable is a later slice.
@@ -134,18 +133,6 @@ import {
 } from "./lib/cross-domain-sso.js"
 
 export default function App() {
-  const location = useLocation()
-
-  // Only the fixture-backed prototype can run without Firebase in local dev.
-  // Keep auth effects in a separate component so this never starts an admin session.
-  if (import.meta.env.DEV && isLocalHirePreview(window.location.hostname, location.pathname)) {
-    return <SourcingStudioDemo />
-  }
-
-  return <AuthenticatedApp />
-}
-
-function AuthenticatedApp() {
   const location = useLocation()
   const [user, setUser] = useState<unknown | null>(undefined)
   const [redirectHandled, setRedirectHandled] = useState(false)
