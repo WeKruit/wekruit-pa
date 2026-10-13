@@ -13,7 +13,7 @@ import { rankCandidates, scoreCandidate, type ScoreAxis } from "./sourcing-demo-
 import "./sourcing-studio-demo.css"
 
 type View = "new" | "brief" | "refine" | "results" | "shortlist" | "contacts" | "sequence" | "inbox" | "interview" | "workflow"
-type ChatLine = { sender: "Scout" | "You"; text: string }
+type ChatLine = { sender: "WeKruit" | "You"; text: string }
 type SequenceStep = { subject: string; body: string; wait: string }
 type RefinementStage = "feedback" | "group" | "industry" | "companies" | "years" | "review"
 type RankAxis = ScoreAxis | "similarity"
@@ -169,8 +169,8 @@ export default function SourcingStudioDemo() {
     setScheduledInterview(null)
     setStep(0)
     setChat([
-      { sender: "Scout", text: "I have the job description. I'll clarify four details before showing the sample candidate workspace." },
-      { sender: "Scout", text: FOLLOWUPS[0].question },
+      { sender: "WeKruit", text: "I have the job description. I'll clarify four details before showing the sample candidate workspace." },
+      { sender: "WeKruit", text: FOLLOWUPS[0].question },
     ])
     setView(searchMode === "fast" ? "results" : "brief")
   }
@@ -183,7 +183,7 @@ export default function SourcingStudioDemo() {
     setChat((current) => [
       ...current,
       { sender: "You", text },
-      { sender: "Scout", text: next < FOLLOWUPS.length ? FOLLOWUPS[next].question : "Brief complete. The sample profiles are ready to review." },
+      { sender: "WeKruit", text: next < FOLLOWUPS.length ? FOLLOWUPS[next].question : "Brief complete. The sample profiles are ready to review." },
     ])
     setStep(next)
     if (next === FOLLOWUPS.length) setView("results")
@@ -192,8 +192,8 @@ export default function SourcingStudioDemo() {
   function refineBrief() {
     setStep(0)
     setChat([
-      { sender: "Scout", text: "Let's refine the search. Your answers will appear in the brief as you go." },
-      { sender: "Scout", text: FOLLOWUPS[0].question },
+      { sender: "WeKruit", text: "Let's refine the search. Your answers will appear in the brief as you go." },
+      { sender: "WeKruit", text: FOLLOWUPS[0].question },
     ])
     setView("brief")
     setProfile(null)
@@ -202,7 +202,7 @@ export default function SourcingStudioDemo() {
   function beginRefinement() {
     setRefinementDraft(refinement ? { ...refinement, selectedCompanies: [...refinement.selectedCompanies] } : { ...DEFAULT_REFINEMENT, selectedCompanies: [...DEFAULT_REFINEMENT.selectedCompanies] })
     setRefinementStage("feedback")
-    setRefinementChat([{ sender: "Scout", text: "What is missing from these results? Tell me what your client did not like, and I'll ask a few focused questions before reranking the sample profiles." }])
+    setRefinementChat([{ sender: "WeKruit", text: "What is missing from these results? Tell me what your client did not like, and I'll ask a few focused questions before reranking the sample profiles." }])
     setProfile(null)
     setView("refine")
   }
@@ -230,7 +230,7 @@ export default function SourcingStudioDemo() {
       const names = RELATED_COMPANIES.filter((company) => text.toLowerCase().includes(company.name.toLowerCase())).map((company) => company.name)
       const selectedCompanies = names.length ? names : refinementDraft.selectedCompanies
       if (!selectedCompanies.length) {
-        setRefinementChat((current) => [...current, { sender: "Scout", text: "Choose at least one company or type a company name from the sample list." }])
+        setRefinementChat((current) => [...current, { sender: "WeKruit", text: "Choose at least one company or type a company name from the sample list." }])
         return
       }
       setRefinementDraft((current) => ({ ...current, selectedCompanies }))
@@ -242,7 +242,7 @@ export default function SourcingStudioDemo() {
       nextStage = "review"
       reply = `Got it. I'll keep actual employment at the selected companies as the filter and ${refinementDraft.industry === "required" ? "require" : refinementDraft.industry === "preferred" ? "prefer" : "show"} ${minYears === 1 ? "any" : minYears + "+ years of"} sector experience. Review the criteria, then apply them.`
     }
-    setRefinementChat((current) => [...current, { sender: "You", text }, { sender: "Scout", text: reply }])
+    setRefinementChat((current) => [...current, { sender: "You", text }, { sender: "WeKruit", text: reply }])
     setRefinementStage(nextStage)
   }
 
@@ -310,7 +310,7 @@ export default function SourcingStudioDemo() {
     <div className="hire">
       <aside className="hire-sidebar" aria-label="Recruiting navigation">
         <div className="hire-brand-row">
-          <button className="hire-brand" type="button" onClick={() => navigate("results")} aria-label="Scout home"><span className="hire-brand-mark">◇</span><span>Scout<span className="hire-brand-dot">.</span></span></button>
+          <button className="hire-brand" type="button" onClick={() => navigate("results")} aria-label="WeKruit home"><img className="hire-brand-logo" src="/wekruit-logo.png" alt="" aria-hidden="true" /><span>WeKruit</span></button>
           <PanelLeft className="hire-sidebar-collapse" size={17} aria-hidden="true" />
         </div>
         <nav className="hire-nav">
@@ -330,7 +330,7 @@ export default function SourcingStudioDemo() {
         <div className="hire-sidebar-bottom">
           <button type="button" className={view === "workflow" ? "active" : ""} onClick={() => navigate("workflow")}><WandSparkles size={17} />Recruiting workflow</button>
           <div className="hire-demo-status"><span className="hire-demo-dot" /> Interactive prototype · Sample data</div>
-          <div className="hire-user"><span>A</span><div><strong>Admin WeKruit</strong><small>Scout workspace</small></div></div>
+          <div className="hire-user"><span>A</span><div><strong>Admin WeKruit</strong><small>WeKruit workspace</small></div></div>
         </div>
       </aside>
 
@@ -344,7 +344,7 @@ export default function SourcingStudioDemo() {
               <div className="hire-composer-foot"><Sparkles size={17} /><div><strong>{mode === "deep" ? "Deep Search" : "Fast Search"}</strong><span>{mode === "deep" ? "Clarify the requirements with a short chat before reviewing candidates." : "Explore the sample talent market now, then refine the brief."}</span></div></div>
             </div>
             <div className="hire-examples"><p>Try an example</p><div><button type="button" onClick={() => { setDraft(SAMPLE_JD); setMode("deep") }}><span>SALES</span><strong>Senior Account Executive</strong><small>Los Angeles · PropTech SaaS · multifamily buyers</small></button><button type="button" onClick={() => { setDraft("We are hiring a Senior Product Manager to build a B2B workflow platform. The role is based in New York and requires 5+ years of product experience."); setMode("deep") }}><span>PRODUCT</span><strong>Senior Product Manager</strong><small>New York · B2B workflows · 5+ years</small></button><button type="button" onClick={() => { setDraft("We are hiring a GTM Engineer with Python, CRM, and outbound automation experience. Remote in the US."); setMode("deep") }}><span>GTM</span><strong>GTM Engineer</strong><small>Remote US · Python · CRM automation</small></button></div></div>
-            <div className="hire-how"><strong>How Scout works</strong><span>1 &nbsp; Describe the role</span><ArrowRight size={13} /><span>2 &nbsp; Review candidates</span><ArrowRight size={13} /><span>3 &nbsp; Plan outreach</span></div>
+            <div className="hire-how"><strong>How WeKruit works</strong><span>1 &nbsp; Describe the role</span><ArrowRight size={13} /><span>2 &nbsp; Review candidates</span><ArrowRight size={13} /><span>3 &nbsp; Plan outreach</span></div>
           </div>
         </div>}
 
@@ -353,7 +353,7 @@ export default function SourcingStudioDemo() {
           <div className="hire-progress"><span className="active">Describe role</span><i /><span className="active">Clarify</span><i /><span>Find candidates</span><i /><span>Outreach</span><i /><span>Interview</span></div>
           <div className="hire-brief-grid">
             <section className="hire-chat-panel" aria-label="Clarification chat">
-              <div className="hire-panel-heading"><Sparkles size={18} /><div><strong>Scout</strong><span>Recruiting assistant</span></div><small>{Math.min(step + 1, FOLLOWUPS.length)} / {FOLLOWUPS.length}</small></div>
+              <div className="hire-panel-heading"><Sparkles size={18} /><div><strong>WeKruit</strong><span>Recruiting assistant</span></div><small>{Math.min(step + 1, FOLLOWUPS.length)} / {FOLLOWUPS.length}</small></div>
               <div className="hire-chat-kit"><MainContainer><ChatContainer><MessageList>{chat.map((line, index) => <Message key={index} model={{ message: line.text, sender: line.sender, direction: line.sender === "You" ? "outgoing" : "incoming", position: "single" }} />)}</MessageList>{step < FOLLOWUPS.length && <MessageInput key={step} placeholder="Type your answer…" attachButton={false} onSend={(value: string) => answerFollowup(value)} />}</ChatContainer></MainContainer></div>
               {step < FOLLOWUPS.length && <div className="hire-chat-choices">{followupChoices(step, jobDescription).map((choice) => <button type="button" key={choice} onClick={() => answerFollowup(choice)}>{choice}</button>)}<button type="button" onClick={() => answerFollowup("Not specified · review later")}>Skip</button></div>}
             </section>
@@ -362,10 +362,10 @@ export default function SourcingStudioDemo() {
         </div>}
 
         {view === "refine" && <div className="hire-brief-view">
-          <div className="hire-brief-top"><div><span className="hire-eyebrow">CLIENT FEEDBACK</span><h1>Let's sharpen the search.</h1><p>Tell Scout what the client did not like, then make comparable-company experience explicit.</p></div><button type="button" className="hire-outline-button" onClick={() => navigate("results")}>Back to results <ArrowRight size={15} /></button></div>
+          <div className="hire-brief-top"><div><span className="hire-eyebrow">CLIENT FEEDBACK</span><h1>Let's sharpen the search.</h1><p>Tell WeKruit what the client did not like, then make comparable-company experience explicit.</p></div><button type="button" className="hire-outline-button" onClick={() => navigate("results")}>Back to results <ArrowRight size={15} /></button></div>
           <div className="hire-brief-grid">
             <section className="hire-chat-panel" aria-label="Client feedback chat">
-              <div className="hire-panel-heading"><Sparkles size={18} /><div><strong>Scout</strong><span>Search refinement</span></div><small>{refinementStage === "review" ? "Ready" : "In progress"}</small></div>
+              <div className="hire-panel-heading"><Sparkles size={18} /><div><strong>WeKruit</strong><span>Search refinement</span></div><small>{refinementStage === "review" ? "Ready" : "In progress"}</small></div>
               <div className="hire-chat-kit"><MainContainer><ChatContainer><MessageList>{refinementChat.map((line, index) => <Message key={index} model={{ message: line.text, sender: line.sender, direction: line.sender === "You" ? "outgoing" : "incoming", position: "single" }} />)}</MessageList>{refinementStage !== "review" && <MessageInput key={refinementStage} placeholder={refinementStage === "feedback" ? "The client wants candidates from similar companies…" : "Type an answer…"} attachButton={false} onSend={(value: string) => answerRefinement(value)} />}</ChatContainer></MainContainer></div>
               <div className="hire-chat-choices">
                 {refinementStage === "feedback" && ["These candidates lack similar-company experience", "Has this person worked in property technology?"].map((choice) => <button type="button" key={choice} onClick={() => answerRefinement(choice)}>{choice}</button>)}
