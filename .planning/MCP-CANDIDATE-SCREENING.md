@@ -18,8 +18,12 @@ weigh those against each other.
 ### Claude Code — static bearer (simplest)
 
 ```bash
-claude mcp add --transport http wekruit https://us-central1-wekruit-5f89b.cloudfunctions.net/paHeadhunterMcp --header "Authorization: Bearer $PA_ADMIN_TOKEN"
+claude mcp add --scope user --transport http wekruit https://us-central1-wekruit-5f89b.cloudfunctions.net/paHeadhunterMcp --header "Authorization: Bearer $PA_ADMIN_TOKEN"
 ```
+
+**`--scope user` is not optional.** Without it the server registers at `local` scope, bound to
+whatever directory you happened to run the command in — so it silently fails to load anywhere else,
+including the repo you actually work in. The symptom is "MCP not loaded in this cwd".
 
 Never expires, no browser round-trip. The tradeoff is that the long-lived secret sits in your shell
 history and `~/.claude.json` — fine for a two-person internal tool, less so as the team grows.
@@ -27,10 +31,10 @@ history and `~/.claude.json` — fine for a two-person internal tool, less so as
 ### Claude Code — OAuth, if you would rather the secret not be stored
 
 ```bash
-claude mcp add --transport http wekruit https://wekruit-pa.web.app/mcp
+claude mcp add --scope user --transport http wekruit https://wekruit-pa.web.app/mcp
 ```
 
-Claude Code discovers the authorization server from the `WWW-Authenticate` header, registers itself,
+Same `--scope user` requirement. Claude Code discovers the authorization server from the `WWW-Authenticate` header, registers itself,
 and opens a browser. Paste the admin token once on the consent page. Tokens last **30 days** and the
 secret never lands in local config.
 
@@ -39,6 +43,16 @@ secret never lands in local config.
 **Settings → Connectors → Add custom connector**, URL `https://wekruit-pa.web.app/mcp`, leave the
 OAuth client fields **blank** — dynamic registration handles them. OAuth is the only option here:
 the connector UI has no header field, so the static bearer cannot be used.
+
+### If a tool call says the server is not loaded
+
+The registration is at `local` scope, tied to one directory. Check with:
+
+```bash
+claude mcp list
+```
+
+Then re-add with `--scope user` (remove the old one first, from the directory it was added in).
 
 ### Known limitation
 
