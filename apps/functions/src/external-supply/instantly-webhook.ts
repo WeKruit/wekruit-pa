@@ -398,7 +398,7 @@ async function lookupPlanByEmailHash(
 export const paExternalSupplyInstantlyWebhook = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     cors: false,
   },

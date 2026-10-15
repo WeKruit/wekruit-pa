@@ -161,7 +161,7 @@ export function makeHealthHandler(input: HealthHandlerInput) {
   return onRequest(
     {
       region: "us-central1",
-      memory: "256MiB",
+      memory: "512MiB",
       timeoutSeconds: 30,
       maxInstances: 1,
       cors: false,

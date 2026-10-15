@@ -424,7 +424,7 @@ export async function resolveLiveRecipientFromUsers(
 export const paPendingOutboundAdmin = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     secrets: [PA_ADMIN_TOKEN],
   },

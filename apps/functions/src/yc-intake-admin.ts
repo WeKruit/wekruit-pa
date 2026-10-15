@@ -180,7 +180,7 @@ export async function runYcSendMatches(
 }
 
 export const paAdminYcIntakeToday = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, secrets: [PA_ADMIN_TOKEN] },
   async (req) => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     return runYcIntakeToday({ db: getFirestore() })

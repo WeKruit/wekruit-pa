@@ -184,7 +184,7 @@ export async function runCoresignalAgenticSearch(
 export const paAdminCoresignalAgenticSearch = onCall<CoresignalAgenticInput>(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 180,
     secrets: [PA_ADMIN_TOKEN, CORESIGNAL_API_KEY],
   },

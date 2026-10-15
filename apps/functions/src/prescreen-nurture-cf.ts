@@ -24,7 +24,7 @@ export const paPrescreenNurtureScheduler = onSchedule(
   {
     schedule: "every 60 minutes",
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 120,
     maxInstances: 1,
     retryCount: 0,

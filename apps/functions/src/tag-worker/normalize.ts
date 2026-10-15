@@ -291,7 +291,7 @@ export const paCanonicalTagWorker = onDocumentCreated(
     timeoutSeconds: 60,
     concurrency: 10,
     maxInstances: 1,
-    memory: "256MiB",
+    memory: "512MiB",
     // retry: false — we drive retry via the scheduled retry fn below
   },
   async (event) => {
@@ -469,7 +469,7 @@ export const paCanonicalTagWorkerRetry = onSchedule(
   {
     schedule: "every 1 minutes",
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 120,
     maxInstances: 1,
   },

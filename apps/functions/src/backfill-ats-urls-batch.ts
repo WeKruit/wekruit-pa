@@ -851,7 +851,7 @@ export const paCostSummaryWeekly = onSchedule(
   {
     schedule: "30 9 * * 1",
     timeZone: "UTC",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 300,
     region: "us-central1",
     // v1.7 Phase 69 — Slack webhook added alongside Mailgun (defense-in-depth).

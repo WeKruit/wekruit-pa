@@ -1962,7 +1962,7 @@ export const memoryAdmin = onRequest(
 export const paRuntimeMode = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
     maxInstances: 1,
     cors: false,
@@ -2074,7 +2074,7 @@ export const paHealthRuntimeMode = makeHealthHandler({
 export const paVersionChannel = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
     maxInstances: 1,
     cors: false,
@@ -2578,7 +2578,7 @@ export const paMessageCoalescer = onRequest(
 export const paJobRecSendTask = onRequest(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     maxInstances: 8,
     cors: false,
@@ -2635,7 +2635,7 @@ export const paCoalesceBufferSweep = onSchedule(
     schedule: "every 1 minutes",
     region: "us-central1",
     secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 120,
     maxInstances: 1,
   },
@@ -3000,7 +3000,7 @@ export const paOnTapbackEvent = onDocumentCreated(
   {
     document: "pa-tapback-events/{id}",
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     concurrency: 1,
     maxInstances: 1,
@@ -3154,7 +3154,7 @@ export const paMatchingPipelineComplete = onRequest(
       MAILGUN_REGION,
       PA_SLACK_ALERT_WEBHOOK,
     ],
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 30,
     cors: false,
   },
@@ -3305,7 +3305,7 @@ export const paPrescreenDriftDetector = onSchedule(
       MAILGUN_FROM,
       MAILGUN_REGION,
     ],
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 540,
   },
   async () => {
@@ -3334,7 +3334,7 @@ export const paOnboardingShadowDiffSweep = onSchedule(
     schedule: "0 3 * * *",
     timeZone: "UTC",
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 300,
     maxInstances: 1,
   },
@@ -3359,7 +3359,7 @@ export const paMemoryCompactionScheduled = onSchedule(
     timeZone: "UTC",
     region: "us-central1",
     secrets: [PA_OPENAI_AGENT_API_KEY, MEMORY_COMPACTION_ENABLED],
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 540,
   },
   async () => {

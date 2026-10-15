@@ -521,7 +521,7 @@ export async function runApproveAgentResearchFinding(
 export const paExternalSupplyGenerateAgentResearchPrompt = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 120,
     maxInstances: 1,
   },
@@ -533,7 +533,7 @@ export const paExternalSupplyGenerateAgentResearchPrompt = onCall(
 export const paExternalSupplyImportAgentResearchResult = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 120,
     maxInstances: 1,
   },
@@ -545,7 +545,7 @@ export const paExternalSupplyImportAgentResearchResult = onCall(
 export const paExternalSupplyApproveAgentResearchFinding = onCall(
   {
     region: "us-central1",
-    memory: "256MiB",
+    memory: "512MiB",
     timeoutSeconds: 60,
     maxInstances: 1,
   },
