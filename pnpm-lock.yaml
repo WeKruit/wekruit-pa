@@ -12,9 +12,15 @@ importers:
         specifier: 4.104.0
         version: 4.104.0(ws@8.20.0)(zod@4.3.6)
     devDependencies:
+      firebase-admin:
+        specifier: ^13.0.0
+        version: 13.8.0
       firebase-tools:
         specifier: 15.3.1
         version: 15.3.1(@cfworker/json-schema@4.1.1)(@types/node@25.6.0)(typescript@6.0.3)
+      yaml:
+        specifier: ^2.8.1
+        version: 2.8.3
       zod:
         specifier: 4.3.6
         version: 4.3.6

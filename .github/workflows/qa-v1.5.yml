@@ -7,18 +7,16 @@
 #
 # Wall time: < 1 minute on a GitHub-hosted Ubuntu runner (the 4 agents run
 # in parallel, each does deterministic checks in <300ms).
+#
+# 2026-07-25 trigger trim: PR-only. The push-on-main run duplicated the PR
+# run of the same tree, and the nightly cron re-ran a deterministic DRY
+# harness against an unchanged main. Run it locally any time: `pnpm qa:v1.5`.
 
 name: qa-v1.5
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    # Nightly at 09:00 UTC = 02:00 PT — matches the daily-batch cron window
-    # so any drift from yesterday's job-rec push surfaces before Adam wakes.
-    - cron: "0 9 * * *"
   workflow_dispatch:
 
 permissions:

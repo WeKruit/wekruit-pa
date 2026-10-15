@@ -6,7 +6,7 @@
  *
  * Implements only the surface `queryMatchingJobsV16` touches:
  *   collection().doc().set/get
- *   collection().where().where().orderBy().limit().get()
+ *   collection().where().where().orderBy().limit().select().get()
  *   subcollection enumeration (jdrel cache reads)
  *   runTransaction (unused by the matcher read path, included for parity)
  *
@@ -66,6 +66,15 @@ class Query {
 
   limit(n) {
     return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, n)
+  }
+
+  // ponytail: no-op field projection, same as apps/job-rec/src/__tests__/mock-firestore.ts.
+  // V16 calls .select(...MATCH_LEAN_FIELDS) on the bulk scan to skip the 1536-float embedding.
+  // The golden corpus carries ONLY lean fields, so returning full docs is byte-identical to a
+  // real projection. If a golden ever gains a non-lean field (embedding, jdText, …), make this
+  // actually project so the eval can't score on data production never reads.
+  select(..._fields) {
+    return this
   }
 
   async get() {
